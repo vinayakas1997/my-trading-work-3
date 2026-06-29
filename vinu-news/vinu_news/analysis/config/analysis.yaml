@@ -1,0 +1,11 @@
+dedup:
+  similarity_threshold: 0.25
+  thread_match_threshold: 0.30
+  lookback_hours: 48
+  require_ticker_or_entity_overlap: true
+
+lead_pick:
+  prefer_recency_tiebreak: true
+
+threads:
+  headline_cleanup: true

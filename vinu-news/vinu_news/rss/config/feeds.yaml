@@ -1,0 +1,180 @@
+feeds:
+  # Tier 1 — Wire services & regulators
+  - id: ap_top_news
+    url: https://rsshub.app/apnews/topics/ap-top-news
+    source: AP
+    region: GLOBAL
+    tier: 1
+    category: MARKETS
+    enabled: true
+
+  - id: sec_press
+    url: https://www.sec.gov/news/pressreleases.rss
+    source: SEC
+    region: US
+    tier: 1
+    category: REGULATORY
+    enabled: true
+
+  - id: federal_reserve
+    url: https://www.federalreserve.gov/feeds/press_all.xml
+    source: FEDERAL RESERVE
+    region: US
+    tier: 1
+    category: ECONOMIC
+    enabled: true
+
+  - id: ecb_press
+    url: https://www.ecb.europa.eu/rss/press.html
+    source: ECB
+    region: EU
+    tier: 1
+    category: ECONOMIC
+    enabled: true
+
+  - id: boe_news
+    url: https://www.bankofengland.co.uk/rss/news
+    source: BANK OF ENGLAND
+    region: EU
+    tier: 1
+    category: ECONOMIC
+    enabled: true
+
+  - id: un_news
+    url: https://news.un.org/feed/subscribe/en/news/all/rss.xml
+    source: UN NEWS
+    region: GLOBAL
+    tier: 1
+    category: GEOPOLITICS
+    enabled: true
+
+  # Tier 2 — Global & financial media
+  - id: bloomberg_markets
+    url: https://feeds.bloomberg.com/markets/news.rss
+    source: BLOOMBERG
+    region: GLOBAL
+    tier: 2
+    category: MARKETS
+    enabled: true
+
+  - id: wsj_markets
+    url: https://feeds.a.dj.com/rss/RSSMarketsMain.xml
+    source: WSJ
+    region: US
+    tier: 2
+    category: MARKETS
+    enabled: true
+
+  - id: wsj_world
+    url: https://feeds.a.dj.com/rss/RSSWorldNews.xml
+    source: WSJ
+    region: GLOBAL
+    tier: 2
+    category: GEOPOLITICS
+    enabled: true
+
+  - id: cnbc_finance
+    url: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114
+    source: CNBC
+    region: US
+    tier: 2
+    category: MARKETS
+    enabled: true
+
+  - id: marketwatch
+    url: https://feeds.marketwatch.com/marketwatch/topstories/
+    source: MARKETWATCH
+    region: US
+    tier: 2
+    category: MARKETS
+    enabled: true
+
+  - id: seeking_alpha
+    url: https://seekingalpha.com/market_currents.xml
+    source: SEEKING ALPHA
+    region: US
+    tier: 2
+    category: MARKETS
+    enabled: true
+
+  - id: investing_com
+    url: https://www.investing.com/rss/news.rss
+    source: INVESTING.COM
+    region: GLOBAL
+    tier: 2
+    category: MARKETS
+    enabled: true
+
+  - id: economist_finance
+    url: https://www.economist.com/finance-and-economics/rss.xml
+    source: ECONOMIST
+    region: GLOBAL
+    tier: 2
+    category: ECONOMIC
+    enabled: true
+
+  - id: nikkei_asia
+    url: https://asia.nikkei.com/rss/feed/nar
+    source: NIKKEI
+    region: ASIA
+    tier: 2
+    category: MARKETS
+    enabled: true
+
+  - id: scmp
+    url: https://www.scmp.com/rss/91/feed
+    source: SCMP
+    region: ASIA
+    tier: 2
+    category: MARKETS
+    enabled: true
+
+  - id: bbc_world
+    url: http://feeds.bbci.co.uk/news/world/rss.xml
+    source: BBC
+    region: GLOBAL
+    tier: 2
+    category: GEOPOLITICS
+    enabled: true
+
+  # Tier 3 — Blogs & geopolitical intelligence
+  - id: zerohedge
+    url: https://feeds.feedburner.com/zerohedge/feed
+    source: ZEROHEDGE
+    region: US
+    tier: 3
+    category: MARKETS
+    enabled: true
+
+  - id: calculated_risk
+    url: https://feeds.feedburner.com/CalculatedRisk
+    source: CALCULATED RISK
+    region: US
+    tier: 3
+    category: ECONOMIC
+    enabled: true
+
+  - id: wolf_street
+    url: https://wolfstreet.com/feed/
+    source: WOLF STREET
+    region: US
+    tier: 3
+    category: MARKETS
+    enabled: true
+
+  - id: bellingcat
+    url: https://www.bellingcat.com/feed/
+    source: BELLINGCAT
+    region: GLOBAL
+    tier: 3
+    category: DEFENSE
+    enabled: true
+
+  # Tier 4 — Tech & forums
+  - id: hacker_news
+    url: https://hnrss.org/frontpage
+    source: HACKER NEWS
+    region: GLOBAL
+    tier: 4
+    category: TECH
+    enabled: true

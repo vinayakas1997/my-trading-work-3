@@ -1,0 +1,33 @@
+services:
+  ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["vinu-news-ingest", "--interval", "600"]
+    env_file: .env
+    environment:
+      VINU_NEWS_DB_PATH: /data/news.db
+      VINU_NEWS_STORAGE: sqlite
+    volumes:
+      - vinu_data:/data
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["vinu-news-serve", "--host", "0.0.0.0", "--port", "8080"]
+    env_file: .env
+    environment:
+      VINU_NEWS_DB_PATH: /data/news.db
+      VINU_NEWS_STORAGE: sqlite
+    ports:
+      - "8080:8080"
+    volumes:
+      - vinu_data:/data
+    restart: unless-stopped
+    depends_on:
+      - ingest
+
+volumes:
+  vinu_data:

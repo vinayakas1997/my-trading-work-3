@@ -1,0 +1,40 @@
+"""Pydantic schemas for HTTP API."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+
+class DataResponse(BaseModel):
+    count: int
+    data: list[dict[str, Any]]
+
+
+class SettingsResponse(BaseModel):
+    mode: str
+    poll_interval_sec: int
+
+
+class SettingsPatchRequest(BaseModel):
+    mode: str | None = None
+    poll_interval_sec: int | None = Field(default=None, ge=60)
+
+
+class WatchlistResponse(BaseModel):
+    tickers: list[str]
+
+
+class WatchlistAddRequest(BaseModel):
+    tickers: list[str] = Field(min_length=1)
+
+
+class ThreadDetailResponse(BaseModel):
+    thread: dict[str, Any]
+    articles: list[dict[str, Any]]
+
+
+class IngestTriggerResponse(BaseModel):
+    ok: bool
+    summary: dict[str, Any]

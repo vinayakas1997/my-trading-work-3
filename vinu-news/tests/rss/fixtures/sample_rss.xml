@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Sample Feed</title>
+    <item>
+      <title>AAPL beats earnings estimates</title>
+      <link>https://example.com/aapl-earnings</link>
+      <description>Apple reported strong quarterly results.</description>
+      <pubDate>Sun, 14 Jun 2026 12:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Fed holds rates steady</title>
+      <link>https://example.com/fed-rates</link>
+      <description>The Federal Reserve kept interest rates unchanged.</description>
+      <pubDate>Sun, 14 Jun 2026 10:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

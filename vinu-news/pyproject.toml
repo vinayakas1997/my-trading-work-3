@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vinu-news"
+version = "0.2.0"
+description = "Installable news ingestion and HTTP API for financial RSS"
+requires-python = ">=3.10"
+dependencies = [
+  "feedparser>=6.0",
+  "requests>=2.31",
+  "pyyaml>=6.0",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "pydantic>=2.0",
+  "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+postgres = ["psycopg[binary]>=3.1"]
+
+[project.scripts]
+vinu-news-ingest = "vinu_news.cli:ingest_main"
+vinu-news-serve = "vinu_news.cli:serve_main"
+vinu-news-query = "vinu_news.cli:query_main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vinu_news*"]
+
+[tool.setuptools.package-data]
+vinu_news = ["**/*.yaml", "**/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
