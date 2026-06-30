@@ -1,0 +1,13 @@
+providers:
+  - id: polygon
+    enabled: true
+    priority: 1
+    roles: [backfill, live]
+  - id: alpaca
+    enabled: true
+    priority: 2
+    roles: [live, backfill]
+  - id: yahoo
+    enabled: true
+    priority: 99
+    roles: [fallback]

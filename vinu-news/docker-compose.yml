@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["vinu-news-ingest", "--interval", "600"]
+    command: ["vinu-news-ingest", "--continuous"]
     env_file: .env
     environment:
       VINU_NEWS_DB_PATH: /data/news.db

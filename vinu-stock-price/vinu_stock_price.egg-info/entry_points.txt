@@ -1,0 +1,5 @@
+[console_scripts]
+vinu-stock-backfill = vinu_stock.cli:backfill_main
+vinu-stock-ingest = vinu_stock.cli:ingest_main
+vinu-stock-query = vinu_stock.cli:query_main
+vinu-stock-serve = vinu_stock.cli:serve_main

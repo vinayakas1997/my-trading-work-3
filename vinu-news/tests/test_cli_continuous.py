@@ -4,18 +4,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import vinu_news.config as config_module
 from vinu_news.cli import ingest_main
 
 
 @patch("vinu_news.cli.time.sleep", side_effect=KeyboardInterrupt)
 @patch("vinu_news.cli.NewsService")
-def test_continuous_uses_env_interval(mock_service_cls, mock_sleep, monkeypatch):
-    monkeypatch.setenv("VINU_NEWS_POLL_INTERVAL_SEC", "120")
-    config_module._ENV_LOADED = False
-
+def test_continuous_uses_db_poll_interval(mock_service_cls, mock_sleep):
     mock_instance = MagicMock()
     mock_instance.run_ingestion_cycle.return_value = MagicMock(format_report=lambda: "ok")
+    mock_instance.get_settings.return_value.poll_interval_sec = 120
     mock_service_cls.return_value.__enter__.return_value = mock_instance
 
     with pytest.raises(KeyboardInterrupt):

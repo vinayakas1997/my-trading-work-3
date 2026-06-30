@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from starlette.staticfiles import StaticFiles
 
 from vinu_news.server import routes_config, routes_read
 from vinu_news.server.schemas import IngestTriggerResponse
@@ -51,6 +53,10 @@ def create_app(service: NewsService | None = None) -> FastAPI:
                 "raw_count": result.raw_count,
             },
         )
+
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.is_dir():
+        app.mount("/ui", StaticFiles(directory=static_dir, html=True), name="ui")
 
     return app
 

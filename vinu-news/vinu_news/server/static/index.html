@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>vinu-news</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #f5f5f5;
+      color: #1a1a1a;
+      line-height: 1.5;
+    }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 1rem; }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0; }
+    .health {
+      font-size: 0.8rem;
+      padding: 0.25rem 0.6rem;
+      border-radius: 999px;
+      background: #e8e8e8;
+    }
+    .health.ok { background: #d4edda; color: #155724; }
+    .health.err { background: #f8d7da; color: #721c24; }
+    .tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid #ccc;
+      margin-bottom: 1rem;
+    }
+    .tabs button {
+      padding: 0.6rem 1rem;
+      border: none;
+      background: none;
+      cursor: pointer;
+      font-size: 0.95rem;
+      color: #666;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+    }
+    .tabs button.active {
+      color: #1a1a1a;
+      font-weight: 600;
+      border-bottom-color: #2563eb;
+    }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .card {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    label { display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.35rem; }
+    .radio-group { margin-bottom: 1rem; }
+    .radio-group label { display: flex; align-items: flex-start; gap: 0.5rem; font-weight: 400; margin-bottom: 0.5rem; }
+    input[type="number"], input[type="text"] {
+      width: 100%;
+      padding: 0.5rem 0.6rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 0.95rem;
+    }
+    .row { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .row input { flex: 1; }
+    button.btn {
+      padding: 0.5rem 1rem;
+      border: 1px solid #2563eb;
+      background: #2563eb;
+      color: #fff;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    button.btn:hover { background: #1d4ed8; }
+    button.btn.secondary {
+      background: #fff;
+      color: #2563eb;
+    }
+    button.btn.secondary:hover { background: #eff6ff; }
+    button.btn.danger {
+      border-color: #dc2626;
+      background: #fff;
+      color: #dc2626;
+      padding: 0.2rem 0.5rem;
+      font-size: 0.8rem;
+    }
+    .ticker-list { list-style: none; padding: 0; margin: 0; }
+    .ticker-list li {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.4rem 0;
+      border-bottom: 1px solid #eee;
+    }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.75rem; }
+    .chip {
+      padding: 0.25rem 0.6rem;
+      border: 1px solid #ccc;
+      border-radius: 999px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    .chip:hover, .chip.active { border-color: #2563eb; background: #eff6ff; }
+    .view-toggle { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .view-toggle button { font-size: 0.85rem; }
+    .article {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 0.85rem 1rem;
+      margin-bottom: 0.6rem;
+    }
+    .article h3 { margin: 0 0 0.35rem; font-size: 1rem; }
+    .article .meta { font-size: 0.8rem; color: #666; margin-bottom: 0.35rem; }
+    .article .summary { font-size: 0.9rem; color: #444; margin: 0 0 0.5rem; }
+    .article a { font-size: 0.85rem; color: #2563eb; }
+    .status-msg { font-size: 0.85rem; color: #666; margin-top: 0.5rem; }
+    .toast {
+      position: fixed;
+      bottom: 1rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #721c24;
+      color: #fff;
+      padding: 0.6rem 1rem;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      display: none;
+      z-index: 100;
+    }
+    .toast.show { display: block; }
+    .empty { color: #888; font-size: 0.9rem; padding: 1rem 0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>vinu-news</h1>
+      <span id="health" class="health">loading…</span>
+    </header>
+
+    <nav class="tabs">
+      <button type="button" data-tab="settings" class="active">Settings</button>
+      <button type="button" data-tab="search">Search &amp; News</button>
+    </nav>
+
+    <section id="panel-settings" class="panel active">
+      <div class="card">
+        <label>Collection mode</label>
+        <div class="radio-group">
+          <label>
+            <input type="radio" name="mode" value="ticker">
+            Ticker only — save watchlist matches
+          </label>
+          <label>
+            <input type="radio" name="mode" value="all">
+            All news — save everything from RSS
+          </label>
+        </div>
+
+        <label for="poll-interval">Poll interval (seconds, min 60)</label>
+        <input type="number" id="poll-interval" min="60" value="600">
+        <p class="status-msg">Applies after the current ingest sleep cycle ends.</p>
+      </div>
+
+      <div class="card">
+        <label for="add-tickers">Watchlist</label>
+        <div class="row">
+          <input type="text" id="add-tickers" placeholder="AAPL, NVDA, TSLA">
+          <button type="button" class="btn" id="btn-add-tickers">Add</button>
+        </div>
+        <ul id="watchlist" class="ticker-list"></ul>
+      </div>
+
+      <div class="card">
+        <button type="button" class="btn" id="btn-poll-now">Poll now</button>
+        <p id="poll-status" class="status-msg"></p>
+      </div>
+    </section>
+
+    <section id="panel-search" class="panel">
+      <div class="card">
+        <div class="row">
+          <input type="text" id="search-q" placeholder="Search headlines…">
+          <button type="button" class="btn" id="btn-search">Search</button>
+        </div>
+
+        <label>Tickers</label>
+        <div id="chips" class="chips"></div>
+
+        <div class="view-toggle">
+          <button type="button" class="btn secondary" data-view="watchlist">All watchlist</button>
+          <button type="button" class="btn secondary active" data-view="latest">Latest</button>
+        </div>
+      </div>
+
+      <div id="results"></div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => document.querySelectorAll(sel);
+
+    function showError(msg) {
+      const t = $("#toast");
+      t.textContent = msg;
+      t.classList.add("show");
+      setTimeout(() => t.classList.remove("show"), 4000);
+    }
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, {
+        headers: { "Content-Type": "application/json", ...opts.headers },
+        ...opts,
+      });
+      if (!res.ok) {
+        let detail = res.statusText;
+        try {
+          const j = await res.json();
+          detail = j.detail || JSON.stringify(j);
+        } catch (_) {}
+        throw new Error(detail);
+      }
+      if (res.status === 204) return null;
+      return res.json();
+    }
+
+    function relTime(ts) {
+      if (!ts) return "";
+      const sec = Math.floor(Date.now() / 1000 - ts);
+      if (sec < 60) return "just now";
+      if (sec < 3600) return Math.floor(sec / 60) + "m ago";
+      if (sec < 86400) return Math.floor(sec / 3600) + "h ago";
+      return Math.floor(sec / 86400) + "d ago";
+    }
+
+    function truncate(s, n) {
+      if (!s) return "";
+      return s.length <= n ? s : s.slice(0, n).trim() + "…";
+    }
+
+    function renderArticles(data) {
+      const el = $("#results");
+      if (!data || data.count === 0) {
+        el.innerHTML = '<p class="empty">No articles found.</p>';
+        return;
+      }
+      el.innerHTML = data.data.map((a) => `
+        <article class="article">
+          <h3>${escapeHtml(a.headline || "")}</h3>
+          <div class="meta">
+            ${escapeHtml(a.source || "")} · ${escapeHtml(a.region || "")} · ${relTime(a.sort_ts)}
+            ${a.impact ? " · impact: " + escapeHtml(a.impact) : ""}
+            ${a.tickers ? " · " + escapeHtml(a.tickers) : ""}
+          </div>
+          <p class="summary">${escapeHtml(truncate(a.summary, 160))}</p>
+          ${a.link ? `<a href="${escapeHtml(a.link)}" target="_blank" rel="noopener">Open →</a>` : ""}
+        </article>
+      `).join("");
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    async function loadHealth() {
+      const h = $("#health");
+      try {
+        const data = await api("/health");
+        h.textContent = `${data.article_count} articles · ${data.mode}`;
+        h.className = "health ok";
+      } catch (e) {
+        h.textContent = "offline";
+        h.className = "health err";
+      }
+    }
+
+    async function loadSettings() {
+      const data = await api("/settings");
+      $$(`input[name="mode"][value="${data.mode}"]`).forEach((r) => { r.checked = true; });
+      $("#poll-interval").value = data.poll_interval_sec;
+    }
+
+    async function saveMode(mode) {
+      await api("/settings", { method: "PATCH", body: JSON.stringify({ mode }) });
+      loadHealth();
+    }
+
+    async function savePollInterval() {
+      const v = parseInt($("#poll-interval").value, 10);
+      if (v < 60) { showError("Poll interval must be at least 60"); return; }
+      await api("/settings", { method: "PATCH", body: JSON.stringify({ poll_interval_sec: v }) });
+    }
+
+    async function loadWatchlistSettings() {
+      const data = await api("/watchlist/tickers");
+      const ul = $("#watchlist");
+      if (!data.tickers.length) {
+        ul.innerHTML = '<li class="empty">No tickers yet.</li>';
+        return;
+      }
+      ul.innerHTML = data.tickers.map((t) => `
+        <li>
+          <span>${escapeHtml(t)}</span>
+          <button type="button" class="btn danger" data-remove="${escapeHtml(t)}">remove</button>
+        </li>
+      `).join("");
+      ul.querySelectorAll("[data-remove]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          try {
+            await api(`/watchlist/tickers/${encodeURIComponent(btn.dataset.remove)}`, { method: "DELETE" });
+            loadWatchlistSettings();
+            loadHealth();
+          } catch (e) { showError(e.message); }
+        });
+      });
+    }
+
+    async function loadChips() {
+      const data = await api("/watchlist/tickers");
+      const el = $("#chips");
+      if (!data.tickers.length) {
+        el.innerHTML = '<span class="empty">Add tickers in Settings.</span>';
+        return;
+      }
+      el.innerHTML = data.tickers.map((t) =>
+        `<button type="button" class="chip" data-ticker="${escapeHtml(t)}">${escapeHtml(t)}</button>`
+      ).join("");
+      el.querySelectorAll(".chip").forEach((chip) => {
+        chip.addEventListener("click", async () => {
+          $$(".chip").forEach((c) => c.classList.remove("active"));
+          chip.classList.add("active");
+          try {
+            const rows = await api(`/ticker/${encodeURIComponent(chip.dataset.ticker)}?days=7&limit=20`);
+            renderArticles(rows);
+          } catch (e) { showError(e.message); }
+        });
+      });
+    }
+
+    async function runSearch() {
+      const q = $("#search-q").value.trim();
+      if (!q) return;
+      const rows = await api(`/search?q=${encodeURIComponent(q)}&limit=20`);
+      renderArticles(rows);
+    }
+
+    async function loadView(view) {
+      $$(".view-toggle button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.view === view);
+      });
+      if (view === "watchlist") {
+        const rows = await api("/watchlist/news?days=7&limit=20");
+        renderArticles(rows);
+      } else {
+        const rows = await api("/latest?limit=20");
+        renderArticles(rows);
+      }
+    }
+
+    $$(".tabs button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        $$(".tabs button").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        $$(".panel").forEach((p) => p.classList.remove("active"));
+        $(`#panel-${btn.dataset.tab}`).classList.add("active");
+        if (btn.dataset.tab === "search") {
+          loadChips();
+          loadView("latest");
+        }
+      });
+    });
+
+    $$('input[name="mode"]').forEach((r) => {
+      r.addEventListener("change", () => {
+        if (r.checked) saveMode(r.value).catch((e) => showError(e.message));
+      });
+    });
+
+    $("#poll-interval").addEventListener("change", () => {
+      savePollInterval().catch((e) => showError(e.message));
+    });
+
+    $("#btn-add-tickers").addEventListener("click", async () => {
+      const raw = $("#add-tickers").value.trim();
+      if (!raw) return;
+      const tickers = raw.split(/[,\s]+/).map((t) => t.trim().toUpperCase()).filter(Boolean);
+      try {
+        await api("/watchlist/tickers", { method: "POST", body: JSON.stringify({ tickers }) });
+        $("#add-tickers").value = "";
+        loadWatchlistSettings();
+        loadHealth();
+      } catch (e) { showError(e.message); }
+    });
+
+    $("#btn-poll-now").addEventListener("click", async () => {
+      const st = $("#poll-status");
+      st.textContent = "Polling…";
+      try {
+        const data = await api("/ingest/trigger", { method: "POST" });
+        const s = data.summary;
+        st.textContent = `Inserted ${s.inserted} · mode ${s.mode} · ${s.leads_after_filter} leads after filter`;
+        loadHealth();
+      } catch (e) {
+        st.textContent = "";
+        showError(e.message);
+      }
+    });
+
+    $("#btn-search").addEventListener("click", () => runSearch().catch((e) => showError(e.message)));
+    $("#search-q").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") runSearch().catch((err) => showError(err.message));
+    });
+
+    $$(".view-toggle button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        loadView(btn.dataset.view).catch((e) => showError(e.message));
+      });
+    });
+
+    loadHealth();
+    loadSettings().catch((e) => showError(e.message));
+    loadWatchlistSettings().catch((e) => showError(e.message));
+  </script>
+</body>
+</html>

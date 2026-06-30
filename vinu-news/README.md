@@ -85,6 +85,25 @@ vinu-news-serve
 
 Open interactive docs: http://127.0.0.1:8080/docs
 
+Open the web UI: http://127.0.0.1:8080/ui
+
+## Web UI
+
+After `vinu-news-serve` or `docker compose up`, open:
+
+```
+http://localhost:8080/ui
+```
+
+Two tabs:
+
+- **Settings** — mode (`ticker` / `all`), poll interval, watchlist, manual poll
+- **Search & News** — FTS search, ticker chips, watchlist/latest feeds
+
+Poll interval changes apply on the **next** ingest sleep cycle (no container restart).
+
+For remote access, expose port 8080 via Cloudflare Tunnel or ngrok and open `/ui` on that URL.
+
 ## Environment
 
 Copy [`.env.example`](.env.example) to `.env`. Variables are loaded automatically.
@@ -174,8 +193,8 @@ docker compose up --build
 
 Services:
 
-- **ingest** — polls every 600s into shared volume (`VINU_NEWS_MODE=ticker` from `.env`)
-- **api** — HTTP on port 8080
+- **ingest** — polls continuously; interval read from DB each cycle (`VINU_NEWS_POLL_INTERVAL_SEC` on first boot)
+- **api** — HTTP on port 8080 (API at `/`, UI at `/ui`)
 
 ## Production notes
 

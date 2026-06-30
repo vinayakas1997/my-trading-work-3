@@ -77,7 +77,8 @@ def ingest_main(argv: list[str] | None = None) -> None:
 
     while True:
         run_cycle()
-        sleep_sec = interval
+        with NewsService() as service:
+            sleep_sec = service.get_settings().poll_interval_sec
         logging.info("Sleeping %s seconds until next poll", sleep_sec)
         time.sleep(sleep_sec)
 

@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>vinu-stock-price</title>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #f5f5f5; color: #1a1a1a; line-height: 1.5; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 1rem; }
+    header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0; }
+    .health { font-size: 0.8rem; padding: 0.25rem 0.6rem; border-radius: 999px; background: #e8e8e8; }
+    .health.ok { background: #d4edda; color: #155724; }
+    .health.err { background: #f8d7da; color: #721c24; }
+    .tabs { display: flex; border-bottom: 1px solid #ccc; margin-bottom: 1rem; }
+    .tabs button { padding: 0.6rem 1rem; border: none; background: none; cursor: pointer; font-size: 0.95rem; color: #666; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+    .tabs button.active { color: #1a1a1a; font-weight: 600; border-bottom-color: #2563eb; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
+    label { display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.35rem; }
+    input[type="number"], input[type="text"], select {
+      width: 100%; padding: 0.5rem 0.6rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.95rem;
+    }
+    .row { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+    .row > * { flex: 1; min-width: 100px; }
+    button.btn { padding: 0.5rem 1rem; border: 1px solid #2563eb; background: #2563eb; color: #fff; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }
+    button.btn:hover { background: #1d4ed8; }
+    button.btn.secondary { background: #fff; color: #2563eb; }
+    button.btn.danger { border-color: #dc2626; background: #fff; color: #dc2626; padding: 0.2rem 0.5rem; font-size: 0.8rem; }
+    .ticker-list { list-style: none; padding: 0; margin: 0; }
+    .ticker-list li { display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0; border-bottom: 1px solid #eee; }
+    .badges { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
+    .badge { font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 999px; border: 1px solid #ccc; background: #fafafa; }
+    .badge.ok { border-color: #86efac; background: #f0fdf4; }
+    .badge.warn { border-color: #fcd34d; background: #fffbeb; }
+    .status-msg { font-size: 0.85rem; color: #666; margin-top: 0.5rem; }
+    .readonly { font-size: 0.9rem; color: #444; padding: 0.5rem; background: #f9f9f9; border-radius: 4px; word-break: break-all; }
+    table.data { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    table.data th, table.data td { border: 1px solid #eee; padding: 0.35rem 0.5rem; text-align: left; }
+    table.data th { background: #f9f9f9; font-weight: 600; }
+    tr.row-fresh td:first-child { border-left: 3px solid #22c55e; }
+    tr.row-stale td:first-child { border-left: 3px solid #eab308; }
+    tr.row-empty td:first-child { border-left: 3px solid #d1d5db; }
+    .symbol-link { color: #2563eb; cursor: pointer; text-decoration: underline; }
+    .table-wrap { max-height: 280px; overflow: auto; }
+    #sparkline { width: 100%; height: 120px; display: block; background: #fafafa; border: 1px solid #eee; border-radius: 4px; margin-bottom: 0.75rem; }
+    #chart { width: 100%; height: 320px; border: 1px solid #eee; border-radius: 4px; margin-top: 0.75rem; }
+    .view-toggle { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .toast { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); background: #721c24; color: #fff; padding: 0.6rem 1rem; border-radius: 4px; font-size: 0.9rem; display: none; z-index: 100; }
+    .toast.show { display: block; }
+    .empty { color: #888; font-size: 0.9rem; padding: 0.5rem 0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>vinu-stock-price</h1>
+      <span id="health" class="health">loading…</span>
+    </header>
+
+    <nav class="tabs">
+      <button type="button" data-tab="settings" class="active">Settings</button>
+      <button type="button" data-tab="coverage">Coverage</button>
+      <button type="button" data-tab="prices">Prices</button>
+    </nav>
+
+    <section id="panel-settings" class="panel active">
+      <div class="card">
+        <label for="poll-interval">Poll interval (seconds, min 10)</label>
+        <input type="number" id="poll-interval" min="10" value="60">
+        <p class="status-msg">Applies after the current ingest sleep cycle ends.</p>
+
+        <label for="default-provider">Default provider</label>
+        <select id="default-provider">
+          <option value="polygon">polygon</option>
+          <option value="alpaca">alpaca</option>
+          <option value="yahoo">yahoo</option>
+        </select>
+
+        <label>Data root</label>
+        <div id="data-root" class="readonly">—</div>
+
+        <label>Provider keys</label>
+        <div id="provider-badges" class="badges"></div>
+      </div>
+
+      <div class="card">
+        <label for="add-tickers">Watchlist</label>
+        <div class="row">
+          <input type="text" id="add-tickers" placeholder="AAPL, NVDA">
+          <button type="button" class="btn" id="btn-add-tickers">Add</button>
+        </div>
+        <ul id="watchlist" class="ticker-list"></ul>
+      </div>
+
+      <div class="card">
+        <button type="button" class="btn" id="btn-ingest">Ingest now</button>
+        <button type="button" class="btn secondary" id="btn-backfill">Backfill watchlist</button>
+        <p id="action-status" class="status-msg"></p>
+      </div>
+    </section>
+
+    <section id="panel-coverage" class="panel">
+      <div class="card">
+        <div class="row">
+          <button type="button" class="btn secondary" id="btn-refresh-catalog">Refresh</button>
+        </div>
+        <div id="catalog-table"></div>
+      </div>
+    </section>
+
+    <section id="panel-prices" class="panel">
+      <div class="card">
+        <div class="row">
+          <div>
+            <label for="price-symbol">Symbol</label>
+            <select id="price-symbol"></select>
+          </div>
+          <div>
+            <label for="price-interval">Interval</label>
+            <select id="price-interval">
+              <option value="1m">1m</option>
+              <option value="5m" selected>5m</option>
+              <option value="15m">15m</option>
+              <option value="30m">30m</option>
+              <option value="1h">1h</option>
+              <option value="4h">4h</option>
+              <option value="1d">1d</option>
+            </select>
+          </div>
+          <div>
+            <label for="price-days">Days</label>
+            <select id="price-days">
+              <option value="1">1</option>
+              <option value="7" selected>7</option>
+              <option value="30">30</option>
+            </select>
+          </div>
+          <div>
+            <label for="price-provider">Provider</label>
+            <select id="price-provider">
+              <option value="">all</option>
+              <option value="polygon">polygon</option>
+              <option value="alpaca">alpaca</option>
+              <option value="yahoo">yahoo</option>
+            </select>
+          </div>
+        </div>
+        <button type="button" class="btn" id="btn-load-candles">Load</button>
+        <p id="price-summary" class="status-msg"></p>
+
+        <div class="view-toggle">
+          <button type="button" class="btn secondary active" data-price-view="all">All</button>
+          <button type="button" class="btn secondary" data-price-view="table">Table</button>
+          <button type="button" class="btn secondary" data-price-view="chart">Chart</button>
+        </div>
+
+        <canvas id="sparkline"></canvas>
+        <div id="candles-table" class="table-wrap"></div>
+        <div id="chart"></div>
+      </div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => document.querySelectorAll(sel);
+    let chartApi = null;
+    let candleSeries = null;
+    let lastCandles = [];
+
+    function showError(msg) {
+      const t = $("#toast");
+      t.textContent = msg;
+      t.classList.add("show");
+      setTimeout(() => t.classList.remove("show"), 4000);
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement("div");
+      d.textContent = String(s ?? "");
+      return d.innerHTML;
+    }
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, {
+        headers: { "Content-Type": "application/json", ...opts.headers },
+        ...opts,
+      });
+      if (!res.ok) {
+        let detail = res.statusText;
+        try {
+          const j = await res.json();
+          detail = j.detail || JSON.stringify(j);
+        } catch (_) {}
+        throw new Error(detail);
+      }
+      if (res.status === 204) return null;
+      return res.json();
+    }
+
+    function fmtTs(ts) {
+      if (!ts) return "—";
+      return new Date(ts * 1000).toLocaleString();
+    }
+
+    function rowClass(entry) {
+      if (!entry.last_bar_ts) return "row-empty";
+      const age = Date.now() / 1000 - entry.last_bar_ts;
+      return age < 172800 ? "row-fresh" : "row-stale";
+    }
+
+    async function loadHealth() {
+      const h = $("#health");
+      try {
+        const data = await api("/health");
+        h.textContent = `${data.symbol_count} symbols · ${data.watchlist_size} watchlist`;
+        h.className = "health ok";
+        const badges = $("#provider-badges");
+        badges.innerHTML = (data.providers || []).map((p) => {
+          const cls = p.configured ? "ok" : "warn";
+          const label = p.configured ? "configured" : "not configured";
+          return `<span class="badge ${cls}">${escapeHtml(p.id)} · ${label} · p${p.priority}</span>`;
+        }).join("");
+      } catch (_) {
+        h.textContent = "offline";
+        h.className = "health err";
+      }
+    }
+
+    async function loadSettings() {
+      const data = await api("/settings");
+      $("#poll-interval").value = data.poll_interval_sec;
+      $("#default-provider").value = data.default_provider || "polygon";
+      $("#data-root").textContent = data.data_root || "—";
+    }
+
+    async function savePollInterval() {
+      const v = parseInt($("#poll-interval").value, 10);
+      if (v < 10) { showError("Poll interval must be at least 10"); return; }
+      await api("/settings", { method: "PATCH", body: JSON.stringify({ poll_interval_sec: v }) });
+    }
+
+    async function saveDefaultProvider() {
+      const v = $("#default-provider").value;
+      await api("/settings", { method: "PATCH", body: JSON.stringify({ default_provider: v }) });
+    }
+
+    async function loadWatchlist() {
+      const data = await api("/watchlist/tickers");
+      const ul = $("#watchlist");
+      if (!data.tickers.length) {
+        ul.innerHTML = '<li class="empty">No tickers yet.</li>';
+      } else {
+        ul.innerHTML = data.tickers.map((t) => `
+          <li><span>${escapeHtml(t)}</span>
+          <button type="button" class="btn danger" data-remove="${escapeHtml(t)}">remove</button></li>
+        `).join("");
+        ul.querySelectorAll("[data-remove]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            try {
+              await api(`/watchlist/tickers/${encodeURIComponent(btn.dataset.remove)}`, { method: "DELETE" });
+              loadWatchlist();
+              loadSymbolOptions();
+              loadHealth();
+            } catch (e) { showError(e.message); }
+          });
+        });
+      }
+      return data.tickers;
+    }
+
+    async function loadSymbolOptions(selectSymbol) {
+      const wl = await api("/watchlist/tickers");
+      let catalog = [];
+      try {
+        const cat = await api("/catalog");
+        catalog = cat.data.map((r) => r.symbol);
+      } catch (_) {}
+      const symbols = [...new Set([...wl.tickers, ...catalog])].sort();
+      const sel = $("#price-symbol");
+      sel.innerHTML = symbols.length
+        ? symbols.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")
+        : '<option value="">—</option>';
+      if (selectSymbol && symbols.includes(selectSymbol)) sel.value = selectSymbol;
+    }
+
+    async function loadCatalog() {
+      const el = $("#catalog-table");
+      try {
+        const data = await api("/catalog");
+        if (!data.count) {
+          el.innerHTML = '<p class="empty">No symbols in catalog — add watchlist tickers and run backfill.</p>';
+          return;
+        }
+        el.innerHTML = `<table class="data"><thead><tr>
+          <th>Symbol</th><th>Provider</th><th>First</th><th>Last</th><th>Archive</th><th>Status</th>
+        </tr></thead><tbody>${data.data.map((r) => `
+          <tr class="${rowClass(r)}">
+            <td><span class="symbol-link" data-symbol="${escapeHtml(r.symbol)}">${escapeHtml(r.symbol)}</span></td>
+            <td>${escapeHtml(r.provider || "")}</td>
+            <td>${fmtTs(r.first_bar_ts)}</td>
+            <td>${fmtTs(r.last_bar_ts)}</td>
+            <td>${escapeHtml(r.archive_through || "—")}</td>
+            <td>${escapeHtml(r.backfill_status || "")}</td>
+          </tr>`).join("")}</tbody></table>`;
+        el.querySelectorAll(".symbol-link").forEach((link) => {
+          link.addEventListener("click", () => openPrices(link.dataset.symbol));
+        });
+      } catch (e) {
+        el.innerHTML = `<p class="empty">${escapeHtml(e.message)}</p>`;
+      }
+    }
+
+    function openPrices(symbol) {
+      $$(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === "prices"));
+      $$(".panel").forEach((p) => p.classList.remove("active"));
+      $("#panel-prices").classList.add("active");
+      loadSymbolOptions(symbol).then(() => loadCandles()).catch((e) => showError(e.message));
+    }
+
+    function drawSparkline(rows) {
+      const canvas = $("#sparkline");
+      const ctx = canvas.getContext("2d");
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, w, h);
+      if (!rows.length) return;
+      const closes = rows.map((r) => Number(r.close));
+      const min = Math.min(...closes);
+      const max = Math.max(...closes);
+      const pad = 8;
+      ctx.strokeStyle = "#2563eb";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      rows.forEach((r, i) => {
+        const x = pad + (i / Math.max(1, rows.length - 1)) * (w - pad * 2);
+        const y = h - pad - ((Number(r.close) - min) / Math.max(1e-9, max - min)) * (h - pad * 2);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    function renderCandleTable(rows) {
+      const el = $("#candles-table");
+      if (!rows.length) {
+        el.innerHTML = '<p class="empty">No bars in range. Run backfill or increase days.</p>';
+        return;
+      }
+      // Newest first in table display
+      const sorted = [...rows].sort((a, b) => b.bar_ts - a.bar_ts);
+      el.innerHTML = `<table class="data"><thead><tr>
+        <th>Time</th><th>O</th><th>H</th><th>L</th><th>C</th><th>Vol</th><th>Provider</th>
+      </tr></thead><tbody>${sorted.map((r) => `
+        <tr>
+          <td>${fmtTs(r.bar_ts)}</td>
+          <td>${Number(r.open).toFixed(2)}</td>
+          <td>${Number(r.high).toFixed(2)}</td>
+          <td>${Number(r.low).toFixed(2)}</td>
+          <td>${Number(r.close).toFixed(2)}</td>
+          <td>${Number(r.volume)}</td>
+          <td>${escapeHtml(r.provider || "")}</td>
+        </tr>`).join("")}</tbody></table>`;
+    }
+
+    function renderChart(rows) {
+      const container = $("#chart");
+      if (!window.LightweightCharts) return;
+      if (!chartApi) {
+        chartApi = LightweightCharts.createChart(container, {
+          width: container.clientWidth,
+          height: 320,
+          layout: { background: { color: "#fff" }, textColor: "#333" },
+          grid: { vertLines: { color: "#eee" }, horzLines: { color: "#eee" } },
+        });
+        candleSeries = chartApi.addCandlestickSeries();
+        window.addEventListener("resize", () => {
+          if (chartApi) chartApi.applyOptions({ width: container.clientWidth });
+        });
+      }
+      const data = rows.map((r) => ({
+        time: r.bar_ts,
+        open: Number(r.open),
+        high: Number(r.high),
+        low: Number(r.low),
+        close: Number(r.close),
+      }));
+      candleSeries.setData(data);
+      chartApi.timeScale().fitContent();
+    }
+
+    function setPriceView(view) {
+      $$("[data-price-view]").forEach((b) => b.classList.toggle("active", b.dataset.priceView === view));
+      const showSpark = view === "all" || view === "table";
+      const showTable = view === "all" || view === "table";
+      const showChart = view === "all" || view === "chart";
+      $("#sparkline").style.display = showSpark ? "block" : "none";
+      $("#candles-table").style.display = showTable ? "block" : "none";
+      $("#chart").style.display = showChart ? "block" : "none";
+      if (showChart && lastCandles.length) renderChart(lastCandles);
+    }
+
+    async function loadCandles() {
+      const symbol = $("#price-symbol").value;
+      if (!symbol) { showError("Select a symbol"); return; }
+      const interval = $("#price-interval").value;
+      const days = $("#price-days").value;
+      const provider = $("#price-provider").value;
+      let url = `/candles/${encodeURIComponent(symbol)}?interval=${interval}&days=${days}&limit=5000`;
+      if (provider) url += `&provider=${encodeURIComponent(provider)}`;
+      const data = await api(url);
+      lastCandles = data.data || [];
+      const summary = $("#price-summary");
+      if (!data.count) {
+        summary.textContent = "0 bars — no data in range. Run backfill or increase days.";
+      } else {
+        const first = lastCandles[0];
+        const last = lastCandles[lastCandles.length - 1];
+        summary.textContent = `${data.count} bars · ${fmtTs(first.bar_ts)} → ${fmtTs(last.bar_ts)}`;
+      }
+      drawSparkline(lastCandles);
+      renderCandleTable(lastCandles);
+      renderChart(lastCandles);
+    }
+
+    $$(".tabs button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        $$(".tabs button").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        $$(".panel").forEach((p) => p.classList.remove("active"));
+        $(`#panel-${btn.dataset.tab}`).classList.add("active");
+        if (btn.dataset.tab === "coverage") loadCatalog();
+        if (btn.dataset.tab === "prices") loadSymbolOptions();
+      });
+    });
+
+    $("#poll-interval").addEventListener("change", () => savePollInterval().catch((e) => showError(e.message)));
+    $("#default-provider").addEventListener("change", () => saveDefaultProvider().catch((e) => showError(e.message)));
+
+    $("#btn-add-tickers").addEventListener("click", async () => {
+      const raw = $("#add-tickers").value.trim();
+      if (!raw) return;
+      const tickers = raw.split(/[,\s]+/).map((t) => t.trim().toUpperCase()).filter(Boolean);
+      try {
+        await api("/watchlist/tickers", { method: "POST", body: JSON.stringify({ tickers }) });
+        $("#add-tickers").value = "";
+        loadWatchlist();
+        loadSymbolOptions();
+        loadHealth();
+      } catch (e) { showError(e.message); }
+    });
+
+    $("#btn-ingest").addEventListener("click", async () => {
+      const st = $("#action-status");
+      st.textContent = "Ingesting…";
+      try {
+        const data = await api("/ingest/trigger", { method: "POST" });
+        const s = data.summary;
+        st.textContent = `Added ${s.bars_added} bars · polled ${s.symbols_polled} symbols`;
+        loadHealth();
+        loadCatalog();
+      } catch (e) { st.textContent = ""; showError(e.message); }
+    });
+
+    $("#btn-backfill").addEventListener("click", async () => {
+      const st = $("#action-status");
+      st.textContent = "Backfilling…";
+      try {
+        const data = await api("/backfill/trigger", { method: "POST" });
+        const s = data.summary;
+        st.textContent = `Years OK: ${s.years_ok} · failed: ${s.years_failed} · rows: ${s.total_rows}`;
+        loadHealth();
+        loadCatalog();
+      } catch (e) { st.textContent = ""; showError(e.message); }
+    });
+
+    $("#btn-refresh-catalog").addEventListener("click", () => loadCatalog().catch((e) => showError(e.message)));
+    $("#btn-load-candles").addEventListener("click", () => loadCandles().catch((e) => showError(e.message)));
+
+    $$("[data-price-view]").forEach((btn) => {
+      btn.addEventListener("click", () => setPriceView(btn.dataset.priceView));
+    });
+
+    loadHealth();
+    loadSettings().catch((e) => showError(e.message));
+    loadWatchlist().catch((e) => showError(e.message));
+    setPriceView("all");
+  </script>
+</body>
+</html>

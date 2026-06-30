@@ -31,7 +31,7 @@ where = ["."]
 include = ["vinu_news*"]
 
 [tool.setuptools.package-data]
-vinu_news = ["**/*.yaml", "**/*.sql"]
+vinu_news = ["**/*.yaml", "**/*.sql", "server/static/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

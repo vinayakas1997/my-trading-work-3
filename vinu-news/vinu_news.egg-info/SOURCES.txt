@@ -85,6 +85,7 @@ vinu_news/server/app.py
 vinu_news/server/routes_config.py
 vinu_news/server/routes_read.py
 vinu_news/server/schemas.py
+vinu_news/server/static/index.html
 vinu_news/settings/__init__.py
 vinu_news/settings/schema.sql
 vinu_news/settings/store.py

@@ -61,3 +61,10 @@ def test_latest_empty(client: TestClient):
 def test_search_requires_query(client: TestClient):
     resp = client.get("/search")
     assert resp.status_code == 422
+
+
+def test_ui_page(client: TestClient):
+    resp = client.get("/ui/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers.get("content-type", "")
+    assert "vinu-news" in resp.text
