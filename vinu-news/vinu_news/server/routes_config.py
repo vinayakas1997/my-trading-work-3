@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from vinu_news.server.schemas import (
     SettingsPatchRequest,
     SettingsResponse,
+    ToggleEnabledRequest,
     WatchlistAddRequest,
     WatchlistResponse,
 )
@@ -23,7 +24,12 @@ def get_service() -> NewsService:
 def read_settings() -> SettingsResponse:
     service = get_service()
     view = service.get_settings()
-    return SettingsResponse(mode=view.mode, poll_interval_sec=view.poll_interval_sec)
+    return SettingsResponse(
+        mode=view.mode,
+        poll_interval_sec=view.poll_interval_sec,
+        llm_analysis_mode=view.llm_analysis_mode,
+        llm_analysis_concurrency=view.llm_analysis_concurrency,
+    )
 
 
 @router.patch("/settings", response_model=SettingsResponse)
@@ -33,10 +39,17 @@ def patch_settings(body: SettingsPatchRequest) -> SettingsResponse:
         view = service.patch_settings(
             mode=body.mode,
             poll_interval_sec=body.poll_interval_sec,
+            llm_analysis_mode=body.llm_analysis_mode,
+            llm_analysis_concurrency=body.llm_analysis_concurrency,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return SettingsResponse(mode=view.mode, poll_interval_sec=view.poll_interval_sec)
+    return SettingsResponse(
+        mode=view.mode,
+        poll_interval_sec=view.poll_interval_sec,
+        llm_analysis_mode=view.llm_analysis_mode,
+        llm_analysis_concurrency=view.llm_analysis_concurrency,
+    )
 
 
 @router.get("/watchlist/tickers", response_model=WatchlistResponse)
@@ -78,3 +91,63 @@ def ingest_ticker_news(days: int = 7) -> dict:
         "inserted": result.inserted,
         "watchlist_size": result.watchlist_size,
     }
+
+
+@router.get("/feeds")
+def list_feeds(all: bool = False) -> dict:
+    from vinu_news.rss.config.feed_loader import load_feeds
+    try:
+        feeds = load_feeds(only_enabled=not all)
+        return {
+            "feeds": [
+                {
+                    "id": f.id,
+                    "url": f.url,
+                    "source": f.source,
+                    "region": f.region,
+                    "tier": f.tier,
+                    "category": f.category,
+                    "enabled": f.enabled,
+                }
+                for f in feeds
+            ]
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.patch("/feeds/{feed_id}")
+def toggle_feed(feed_id: str, body: ToggleEnabledRequest) -> dict:
+    from vinu_news.rss.config.feed_loader import set_feed_enabled
+    try:
+        feed = set_feed_enabled(feed_id, body.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "id": feed.id,
+        "url": feed.url,
+        "source": feed.source,
+        "region": feed.region,
+        "tier": feed.tier,
+        "category": feed.category,
+        "enabled": feed.enabled,
+    }
+
+
+@router.get("/providers")
+def list_providers() -> dict:
+    from vinu_news.providers.config.loader import load_ticker_news_providers
+    configs = load_ticker_news_providers()
+    return {
+        "providers": [{"id": c.id, "enabled": c.enabled, "priority": c.priority} for c in configs]
+    }
+
+
+@router.patch("/providers/{provider_id}")
+def toggle_provider(provider_id: str, body: ToggleEnabledRequest) -> dict:
+    from vinu_news.providers.config.loader import set_provider_enabled
+    try:
+        provider = set_provider_enabled(provider_id, body.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"id": provider.id, "enabled": provider.enabled, "priority": provider.priority}

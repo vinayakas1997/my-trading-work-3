@@ -26,9 +26,13 @@ def health() -> dict:
 
 
 @router.get("/latest", response_model=DataResponse)
-def latest(limit: int = Query(default=20, ge=1, le=500)) -> DataResponse:
+def latest(
+    limit: int = Query(default=20, ge=1, le=500),
+    date: str | None = Query(default=None),
+    provider: str | None = Query(default=None),
+) -> DataResponse:
     service = get_service()
-    rows = service.get_latest(limit)
+    rows = service.get_latest(limit, date=date, provider=provider)
     return DataResponse(count=len(rows), data=rows)
 
 

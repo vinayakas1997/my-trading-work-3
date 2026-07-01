@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from vinu_news.rss.config.feed_loader import load_feeds
@@ -17,6 +21,35 @@ from vinu_news.providers.registry import TickerNewsRegistry
 from vinu_news.settings.store import SettingsView
 from vinu_news.storage.base import StorageBackend
 from vinu_news.storage.factory import create_storage
+from vinu_news.net import request as http_request
+
+LOG = logging.getLogger(__name__)
+
+
+def _run_auto_analysis_batch(
+    db_path: Path, config: VinuConfig, links: list[str], concurrency: int
+) -> None:
+    """Background worker: deep-analyze newly ingested links via the LLM.
+
+    Runs off the main ingest thread so a slow/unreachable LLM never delays
+    fetching or the next poll cycle. Each worker opens its own DB
+    connection since sqlite3 connections aren't safe to share across
+    threads.
+    """
+    from vinu_news.analysis.llm.analyze import analyze_article
+    from vinu_news.analysis.storage.repository import NewsRepository
+
+    def _one(link: str) -> None:
+        repo = NewsRepository(db_path)
+        try:
+            analyze_article(repo, link, config=config)
+        except Exception:
+            LOG.warning("Auto LLM analysis failed for %s", link, exc_info=True)
+        finally:
+            repo.close()
+
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+        list(pool.map(_one, links))
 
 
 @dataclass
@@ -86,6 +119,20 @@ class NewsService:
 
         return StockPriceClient(self._config.stock_api_url)
 
+    def _maybe_auto_analyze(self, links: list[str], settings: SettingsView) -> None:
+        if not links or settings.llm_analysis_mode != "auto":
+            return
+        from vinu_news.analysis.llm.client import LlmClient
+
+        if not LlmClient(self._config).is_configured():
+            return
+        thread = threading.Thread(
+            target=_run_auto_analysis_batch,
+            args=(self._config.db_path, self._config, links, settings.llm_analysis_concurrency),
+            daemon=True,
+        )
+        thread.start()
+
     def _enrich_with_price_reaction(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         from vinu_news.analysis.post_enrichment.price_reaction import enrich_article_with_reaction
 
@@ -115,10 +162,14 @@ class NewsService:
         *,
         mode: str | None = None,
         poll_interval_sec: int | None = None,
+        llm_analysis_mode: str | None = None,
+        llm_analysis_concurrency: int | None = None,
     ) -> SettingsView:
         return self._storage.patch_settings(
             mode=mode,
             poll_interval_sec=poll_interval_sec,
+            llm_analysis_mode=llm_analysis_mode,
+            llm_analysis_concurrency=llm_analysis_concurrency,
         )
 
     def get_watchlist(self) -> list[str]:
@@ -129,6 +180,16 @@ class NewsService:
 
     def remove_watchlist_ticker(self, ticker: str) -> bool:
         return self._storage.remove_watchlist_ticker(ticker)
+
+    def pop_pending_ticker_fetch(self) -> list[str]:
+        """Return tickers added since the last fetch, marking them handled."""
+        pending = self._storage.list_pending_ticker_fetch()
+        if pending:
+            self._storage.clear_pending_ticker_fetch(pending)
+        return pending
+
+    def clear_all_pending_ticker_fetch(self) -> None:
+        self._storage.clear_all_pending_ticker_fetch()
 
     def sync_watchlist_from_shared(self) -> dict[str, object]:
         path = self._config.shared_watchlist_path
@@ -199,6 +260,7 @@ class NewsService:
                 thread_matched_skipped = persist_result.thread_matched_skipped
                 threads_created = persist_result.threads_created
                 threads_updated = persist_result.threads_updated
+                self._maybe_auto_analyze(persist_result.inserted_links, settings)
 
         return IngestionCycleResult(
             feeds_polled=len(feeds),
@@ -293,6 +355,7 @@ class NewsService:
             thread_matched_skipped = persist_result.thread_matched_skipped
             threads_created = persist_result.threads_created
             threads_updated = persist_result.threads_updated
+            self._maybe_auto_analyze(persist_result.inserted_links, settings)
 
         return IngestionCycleResult(
             feeds_polled=len(watchlist),
@@ -315,7 +378,22 @@ class NewsService:
         )
 
     def health(self) -> dict[str, Any]:
-        return self._storage.health_info()
+        info = self._storage.health_info()
+        info["llm_model"] = self._config.llm_model
+        
+        # Check if LLM is active
+        llm_active = False
+        if self._config.llm_base_url:
+            try:
+                res = http_request(
+                    "GET", self._config.llm_base_url.rstrip("/") + "/models", timeout=1.0
+                )
+                if res.status_code == 200:
+                    llm_active = True
+            except Exception:
+                pass
+        info["llm_active"] = llm_active
+        return info
 
     @staticmethod
     def ts_days_ago(days: int) -> int:
@@ -328,8 +406,13 @@ class NewsService:
         start = end - timedelta(days=max(0, days - 1))
         return start.isoformat(), end.isoformat()
 
-    def get_latest(self, limit: int = 20) -> list[dict[str, Any]]:
-        return self._storage.get_latest(limit)
+    def get_latest(
+        self,
+        limit: int = 20,
+        date: str | None = None,
+        provider: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._storage.get_latest(limit, date=date, provider=provider)
 
     def get_articles_since(self, since_ts: int, limit: int = 100) -> list[dict[str, Any]]:
         return self._storage.get_articles_since(since_ts, limit)

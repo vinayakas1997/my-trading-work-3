@@ -13,7 +13,7 @@
       color: #1a1a1a;
       line-height: 1.5;
     }
-    .wrap { max-width: 720px; margin: 0 auto; padding: 1rem; }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 1rem; }
     header {
       display: flex;
       align-items: center;
@@ -27,8 +27,8 @@
       border-radius: 999px;
       background: #e8e8e8;
     }
-    .health.ok { background: #d4edda; color: #155724; }
-    .health.err { background: #f8d7da; color: #721c24; }
+    .health.ok { background: #16a34a; color: #fff; }
+    .health.err { background: #dc2626; color: #fff; font-weight: 600; }
     .tabs {
       display: flex;
       gap: 0;
@@ -140,18 +140,58 @@
     }
     .toast.show { display: block; }
     .empty { color: #888; font-size: 0.9rem; padding: 1rem 0; }
+    .info-layout { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .info-menu { width: 220px; flex-shrink: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+    .info-menu button {
+      text-align: left;
+      width: 100%;
+      border: 1px solid #ddd;
+      padding: 0.6rem 0.8rem;
+      background: #fff;
+      font-size: 0.9rem;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: all 0.2s ease;
+    }
+    .info-menu button:hover { border-color: #2563eb; background: #f9fafb; }
+    .info-menu button.active { border-color: #2563eb; background: #eff6ff; color: #2563eb; font-weight: 600; }
+    .info-content { flex: 1; min-width: 0; }
+    .info-pane { display: none; }
+    .info-pane.active { display: block; }
+    @media (max-width: 600px) {
+      .info-menu { width: 100%; }
+    }
+    @keyframes spin {
+      100% { transform: rotate(360deg); }
+    }
+    .btn-analyze:hover {
+      background: #ede9fe !important;
+      border-color: #c084fc !important;
+    }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      if (window.mermaid) {
+        window.mermaid.initialize({ startOnLoad: false, theme: 'default' });
+      }
+    });
+  </script>
 </head>
 <body>
   <div class="wrap">
     <header>
       <h1>vinu-news</h1>
-      <span id="health" class="health">loading…</span>
+      <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <span id="health" class="health">loading…</span>
+        <span id="llm-status" class="health" style="display: none;">LLM: loading…</span>
+      </div>
     </header>
 
     <nav class="tabs">
       <button type="button" data-tab="settings" class="active">Settings</button>
       <button type="button" data-tab="search">Search &amp; News</button>
+      <button type="button" data-tab="info">Information</button>
     </nav>
 
     <section id="panel-settings" class="panel active">
@@ -174,12 +214,38 @@
       </div>
 
       <div class="card">
+        <label>Deep LLM analysis</label>
+        <div class="radio-group">
+          <label>
+            <input type="radio" name="llm-analysis-mode" value="auto">
+            Auto — analyze every new article in the background
+          </label>
+          <label>
+            <input type="radio" name="llm-analysis-mode" value="manual">
+            Manual — only analyze via the "Run LLM Analysis" button
+          </label>
+        </div>
+
+        <label for="llm-analysis-concurrency">Background analysis concurrency (1-20)</label>
+        <input type="number" id="llm-analysis-concurrency" min="1" max="20" value="3">
+        <p class="status-msg">Max articles analyzed by the LLM at the same time when Auto is on.</p>
+      </div>
+
+      <div class="card">
         <label for="add-tickers">Watchlist</label>
         <div class="row">
           <input type="text" id="add-tickers" placeholder="AAPL, NVDA, TSLA">
           <button type="button" class="btn" id="btn-add-tickers">Add</button>
         </div>
         <ul id="watchlist" class="ticker-list"></ul>
+      </div>
+
+      <div class="card">
+        <label>News sources</label>
+        <div id="provider-checks" style="display: flex; flex-wrap: wrap; gap: 0.75rem;"></div>
+        <p class="status-msg">Unchecking a provider stops it from being queried on the next ticker-news fetch.</p>
+        <div id="feed-checks" style="display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 0.5rem;"></div>
+        <p class="status-msg">Unchecking an RSS feed stops it from being polled on the next ingestion cycle.</p>
       </div>
 
       <div class="card">
@@ -202,9 +268,220 @@
           <button type="button" class="btn secondary" data-view="watchlist">All watchlist</button>
           <button type="button" class="btn secondary active" data-view="latest">Latest</button>
         </div>
+
+        <div style="display: flex; gap: 1rem; align-items: center; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #eee; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 0.35rem;">
+            <label for="filter-date" style="font-size: 0.8rem; font-weight: 600; color: #475569; margin: 0;">📅 Date:</label>
+            <input type="date" id="filter-date" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid #cbd5e1; outline: none; background: #fff; cursor: pointer;">
+          </div>
+          <div style="display: flex; align-items: center; gap: 0.35rem;">
+            <label for="filter-provider" style="font-size: 0.8rem; font-weight: 600; color: #475569; margin: 0;">🔌 Provider:</label>
+            <select id="filter-provider" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid #cbd5e1; outline: none; background: #fff; cursor: pointer;">
+              <option value="all">All Providers</option>
+            </select>
+          </div>
+          <button type="button" id="btn-clear-filters" style="background: #f1f5f9; border: 1px solid #cbd5e1; color: #475569; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.78rem; cursor: pointer; font-weight: 500; transition: all 0.2s ease;">
+            Reset Filters
+          </button>
+        </div>
       </div>
 
       <div id="results"></div>
+
+      <div id="pagination" style="display: none; align-items: center; justify-content: center; gap: 0.75rem; margin: 1rem 0;">
+        <button type="button" class="btn secondary" id="btn-page-back">Back</button>
+        <span style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; color: #475569;">
+          Page
+          <input type="number" id="page-input" min="1" style="width: 60px; text-align: center;">
+          <span id="page-total"></span>
+        </span>
+        <button type="button" class="btn secondary" id="btn-page-next">Next</button>
+      </div>
+    </section>
+
+    <section id="panel-info" class="panel">
+      <div class="info-layout">
+        <!-- Left Sidebar Menu -->
+        <div class="info-menu">
+          <button type="button" data-info-tab="db" class="info-menu-btn active">
+            🗄️ Database Tables
+          </button>
+          <button type="button" data-info-tab="flow" class="info-menu-btn">
+            🔄 Full Dataflow
+          </button>
+          <button type="button" data-info-tab="feeds" class="info-menu-btn">
+            🔌 News Providers
+          </button>
+        </div>
+
+        <!-- Right Content Area -->
+        <div class="info-content">
+          <!-- Sub-panel: DB Info -->
+          <div id="info-panel-db" class="info-pane active">
+            <div class="card" style="margin-bottom: 0;">
+              <h2 style="font-size: 1.15rem; margin-top: 0; margin-bottom: 0.75rem; font-weight: 600;">Database Tables Information</h2>
+              <p style="font-size: 0.9rem; color: #555; margin-bottom: 1.25rem;">
+                The system runs on a SQLite database containing <strong>10 logical tables</strong> (plus FTS5 search index tables). Here is a breakdown of what each table is used for:
+              </p>
+
+              <h3 style="font-size: 0.95rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; color: #2563eb; border-bottom: 1px solid #eee; padding-bottom: 0.25rem;">1. Ingestion &amp; Content</h3>
+              <ul style="padding-left: 1.2rem; font-size: 0.88rem; line-height: 1.6; margin-bottom: 1rem; color: #333;">
+                <li><strong>articles</strong>: Stores processed news leads (headline, summary, source, sentiment, impact, and other extraction metadata).</li>
+                <li><strong>watchlist_tickers</strong>: Contains active stock symbols being monitored (e.g. AAPL, NVDA).</li>
+                <li><strong>vinu_settings</strong>: Stores runtime application config (e.g. collection mode, poll interval).</li>
+                <li><strong>feed_health</strong>: Monitors feed latency, success rates, failure streaks, and recent HTTP/parse errors for the 22 RSS channels.</li>
+              </ul>
+
+              <h3 style="font-size: 0.95rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; color: #2563eb; border-bottom: 1px solid #eee; padding-bottom: 0.25rem;">2. Grouping &amp; Analytics</h3>
+              <ul style="padding-left: 1.2rem; font-size: 0.88rem; line-height: 1.6; margin-bottom: 1rem; color: #333;">
+                <li><strong>story_threads</strong>: Groups semantically similar articles together over time into unified story lines.</li>
+                <li><strong>article_ticker_mentions</strong>: A junction table mapping articles to tickers with dominance weights and primary indicators.</li>
+                <li><strong>thread_daily_snapshots</strong>: Stores daily aggregated statistics (sentiment distributions) per story thread.</li>
+                <li><strong>ticker_daily_stats</strong>: Aggregates daily metrics per ticker (total articles, bullish/bearish count).</li>
+              </ul>
+
+              <h3 style="font-size: 0.95rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; color: #2563eb; border-bottom: 1px solid #eee; padding-bottom: 0.25rem;">3. Enrichment &amp; Integrations</h3>
+              <ul style="padding-left: 1.2rem; font-size: 0.88rem; line-height: 1.6; margin-bottom: 0; color: #333;">
+                <li><strong>news_analysis</strong>: Caches the on-demand, deep LLM analysis (sentiment, confidence score, risk flags, and summary).</li>
+                <li><strong>article_price_reaction</strong>: Tracks price differences before and after an article is published for primary tickers (integrates with stock service).</li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- Sub-panel: Full Dataflow -->
+          <div id="info-panel-flow" class="info-pane">
+            <!-- Card 1: Pipeline Without LLM -->
+            <div class="card" style="background: #f1f5f9; border-color: #cbd5e1; margin-bottom: 1.25rem;">
+              <h2 style="font-size: 1.15rem; margin-top: 0; margin-bottom: 0.5rem; font-weight: 600; color: #334155; display: flex; align-items: center; gap: 0.5rem;">
+                ⚙️ Ingestion &amp; Analysis Pipeline (Without LLM)
+              </h2>
+              <p style="font-size: 0.85rem; color: #475569; margin-bottom: 1.25rem; font-style: italic;">
+                Deterministic rule-based ingestion. Every poll cycle runs this pipeline to process feed content quickly.
+              </p>
+
+              <div style="display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.88rem; line-height: 1.5; color: #334155;">
+                <div style="background: #fff; padding: 0.75rem; border-radius: 4px; border: 1px solid #cbd5e1;">
+                  <strong style="color: #0f172a; display: block; margin-bottom: 0.25rem;">1. Ingestion Source</strong>
+                  Loads RSS feeds configured in <code>feeds.yaml</code> and queries Yahoo News via <code>run_ticker_news_ingest</code>.
+                </div>
+                <div style="background: #fff; padding: 0.75rem; border-radius: 4px; border: 1px solid #cbd5e1;">
+                  <strong style="color: #0f172a; display: block; margin-bottom: 0.25rem;">2. Pre-Enrichment &amp; 9-Stage Rules</strong>
+                  Filters batch duplicate URLs, strips HTML, and classifies:
+                  <ul style="margin: 0.35rem 0 0; padding-left: 1.2rem; font-size: 0.8rem; color: #475569;">
+                    <li><strong>Priority</strong>: FLASH / URGENT / BREAKING / ROUTINE</li>
+                    <li><strong>Sentiment</strong>: BULLISH / BEARISH / NEUTRAL</li>
+                    <li><strong>Impact</strong>: HIGH / MEDIUM / LOW based on rules</li>
+                    <li><strong>Category</strong>: EARNINGS, CRYPTO, DEFENSE, TECH, etc.</li>
+                    <li><strong>Ticker Extraction</strong>: C++ 20-word stop list filters symbols</li>
+                    <li><strong>Threat &amp; Source Credibility</strong>: Evaluates site and content risk indicators</li>
+                  </ul>
+                </div>
+                <div style="background: #fff; padding: 0.75rem; border-radius: 4px; border: 1px solid #cbd5e1;">
+                  <strong style="color: #0f172a; display: block; margin-bottom: 0.25rem;">3. Post-Enrichment Deduplication &amp; Lead Pick</strong>
+                  Performs Country &amp; Person NER. Normalizes synonyms, vectorizes headlines (TF-IDF), clusters duplicates with cosine similarity &ge; 0.25, and picks the best "Lead" article to save.
+                </div>
+                <div style="background: #fff; padding: 0.75rem; border-radius: 4px; border: 1px solid #cbd5e1;">
+                  <strong style="color: #0f172a; display: block; margin-bottom: 0.25rem;">4. Persistence &amp; Thread Matching</strong>
+                  Locks and commits raw news leads to the SQLite database (updating <code>articles</code>, FTS index, daily snapshots, and matches to existing <code>story_threads</code>).
+                </div>
+              </div>
+
+              <!-- Ingestion/Analysis Mermaid Diagram -->
+              <pre class="mermaid" style="margin-top: 1.25rem; background: #fff; padding: 1rem; border-radius: 4px; border: 1px solid #cbd5e1;">
+flowchart TD
+  subgraph Ingest [Ingestion]
+    Feeds[feeds.yaml RSS]
+    TickerNews[Yahoo ticker news]
+    Feeds --> Poll[poll_all_feeds]
+    TickerNews --> TickerIngest[run_ticker_news_ingest]
+    Poll --> Raw[raw articles]
+    TickerIngest --> Raw
+  end
+
+  subgraph Analysis [Rule analysis - no LLM]
+    Raw --> Pre[validate + url dedup]
+    Pre --> Enrich[9-stage enrichment]
+    Enrich --> Post[NER + cosine dedup + lead pick]
+    Post --> Filter[collection filter]
+    Filter --> Persist[persist_leads + threads]
+  end
+
+  subgraph Storage [SQLite]
+    Persist --> Articles[(articles)]
+    Persist --> Threads[(story_threads)]
+    Persist --> FTS[(articles_fts)]
+    Poll --> FH[(feed_health)]
+  end
+
+  subgraph API [HTTP API]
+    Articles --> Routes[GET /latest /ticker /search /threads]
+  end
+              </pre>
+            </div>
+
+            <!-- Card 2: Pipeline With LLM -->
+            <div class="card" style="background: #faf5ff; border-color: #e9d5ff; margin-bottom: 0;">
+              <h2 style="font-size: 1.15rem; margin-top: 0; margin-bottom: 0.5rem; font-weight: 600; color: #581c87; display: flex; align-items: center; gap: 0.5rem;">
+                🧠 Deep Article Analysis Pipeline (With LLM)
+              </h2>
+              <p style="font-size: 0.85rem; color: #6b21a8; margin-bottom: 1.25rem; font-style: italic;">
+                On-demand intelligence trigger. Only runs when a client asks to analyze an article's context.
+              </p>
+
+              <div style="display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.88rem; line-height: 1.5; color: #581c87;">
+                <div style="background: #fff; padding: 0.75rem; border-radius: 4px; border: 1px solid #e9d5ff;">
+                  <strong style="color: #3b0764; display: block; margin-bottom: 0.25rem;">1. API Request Trigger</strong>
+                  Client sends a <code>POST /news/analyze</code> containing the article ID or link. The system looks up the article in the raw <code>articles</code> table.
+                </div>
+                <div style="background: #fff; padding: 0.75rem; border-radius: 4px; border: 1px solid #e9d5ff;">
+                  <strong style="color: #3b0764; display: block; margin-bottom: 0.25rem;">2. Cache Table Lookup</strong>
+                  The system queries the <code>news_analysis</code> cache table. If a match is found and its age is within the configured TTL (e.g. 24 hours), the cached JSON result is returned immediately.
+                </div>
+                <div style="background: #fff; padding: 0.75rem; border-radius: 4px; border: 1px solid #e9d5ff;">
+                  <strong style="color: #3b0764; display: block; margin-bottom: 0.25rem;">3. LLM API Query &amp; Cache Store</strong>
+                  On a cache miss, the system formats the user prompt (injecting article details), queries the OpenAI-compatible or local Ollama (<code>llama3.2</code>) service, parses and standardizes the JSON response, stores it in <code>news_analysis</code>, and returns it.
+                </div>
+              </div>
+
+              <!-- LLM Mermaid Diagram -->
+              <pre class="mermaid" style="margin-top: 1.25rem; background: #fff; padding: 1rem; border-radius: 4px; border: 1px solid #e9d5ff;">
+flowchart TD
+  subgraph base [Always running - section 1]
+    Ingest[RSS + rule pipeline]
+    Ingest --> DB[(articles)]
+  end
+
+  subgraph llm [LLM path - on demand]
+    User[POST /news/analyze] --> Analyze[analyze_article]
+    Analyze --> Lookup[Load article from DB]
+    Lookup --> CacheHit{news_analysis cache?}
+    CacheHit -->|TTL hit| Return[Return JSON]
+    CacheHit -->|miss| LLM[LlmClient]
+    LLM --> Ollama[Ollama / OpenAI-compatible API]
+    Ollama --> Save[save_analysis]
+    Save --> Return
+  end
+
+  DB --> Lookup
+              </pre>
+            </div>
+          </div>
+
+          <!-- Sub-panel: News Providers -->
+          <div id="info-panel-feeds" class="info-pane">
+            <div class="card" style="margin-bottom: 0;">
+              <h2 style="font-size: 1.15rem; margin-top: 0; margin-bottom: 0.75rem; font-weight: 600;">News Providers</h2>
+              <p style="font-size: 0.9rem; color: #555; margin-bottom: 1.25rem;">
+                The following RSS news feeds are loaded from the configuration file <code>feeds.yaml</code> and polled during each ingestion cycle:
+              </p>
+              
+              <div id="feeds-list-container" style="overflow-x: auto;">
+                <p style="font-size: 0.9rem; color: #888; font-style: italic;">Loading news feeds...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
   </div>
 
@@ -252,24 +529,183 @@
       return s.length <= n ? s : s.slice(0, n).trim() + "…";
     }
 
-    function renderArticles(data) {
-      const el = $("#results");
-      if (!data || data.count === 0) {
-        el.innerHTML = '<p class="empty">No articles found.</p>';
-        return;
+    function renderEntities(jsonStr) {
+      if (!jsonStr) return "";
+      try {
+        const parsed = JSON.parse(jsonStr);
+        const parts = [];
+        if (parsed.people && parsed.people.length) {
+          parts.push(`People: <strong>${escapeHtml(parsed.people.join(', '))}</strong>`);
+        }
+        if (parsed.countries && parsed.countries.length) {
+          parts.push(`Countries: <strong>${escapeHtml(parsed.countries.join(', '))}</strong>`);
+        }
+        if (!parts.length) return "";
+        return `
+          <div style="margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed #cbd5e1; font-size: 0.78rem; color: #475569; line-height: 1.4;">
+            ${parts.join(' · ')}
+          </div>
+        `;
+      } catch (e) {
+        return "";
       }
-      el.innerHTML = data.data.map((a) => `
+    }
+
+    function renderLlmColumn(a) {
+      if (a.llm_analysis) {
+        try {
+          const parsed = JSON.parse(a.llm_analysis);
+          return `
+            <div class="llm-analysis-box" style="flex: 1; padding: 0.75rem 1rem; background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 6px; font-size: 0.85rem; color: #581c87; height: 100%; box-sizing: border-box;">
+              <h4 style="margin: 0 0 0.5rem 0; font-size: 0.85rem; font-weight: 700; color: #3b0764; display: flex; align-items: center; gap: 0.25rem;">
+                🧠 Deep LLM Analysis
+              </h4>
+              <p style="margin: 0 0 0.75rem 0; line-height: 1.5; color: #581c87;">${escapeHtml(parsed.summary || "")}</p>
+              <div style="font-size: 0.78rem; color: #6b21a8; font-weight: 600; display: flex; flex-direction: column; gap: 0.35rem; border-top: 1px dashed #d8b4fe; padding-top: 0.5rem;">
+                <div>Sentiment Score: <strong>${parsed.sentiment_score}</strong></div>
+                <div>Confidence: <strong>${parsed.confidence}%</strong></div>
+                ${parsed.risk_flags && parsed.risk_flags.length ? `<div>Risk Flags: <span style="color: #701a75;">${escapeHtml(parsed.risk_flags.join(', '))}</span></div>` : ''}
+              </div>
+            </div>
+          `;
+        } catch(e) {
+          console.error("Failed to parse llm_analysis JSON:", e);
+        }
+      }
+      return `
+        <div style="flex: 1; padding: 1.5rem; background: #fdfdfd; border: 1px dashed #ddd6fe; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; height: 100%; box-sizing: border-box;">
+          <span style="font-size: 1.5rem; margin-bottom: 0.5rem;">🧠</span>
+          <span style="font-size: 0.8rem; color: #6b7280; margin-bottom: 0.75rem;">No LLM analysis cached for this article</span>
+          <button class="btn-analyze" onclick="runLlmAnalysis('${escapeHtml(a.link)}', this)" style="background: #f5f3ff; border: 1px solid #ddd6fe; color: #6d28d9; padding: 0.4rem 0.8rem; border-radius: 4px; font-size: 0.78rem; cursor: pointer; display: inline-flex; align-items: center; gap: 0.25rem; font-weight: 600; transition: all 0.2s ease;">
+            Run LLM Analysis
+          </button>
+        </div>
+      `;
+    }
+
+    function articleCardHtml(a) {
+      return `
         <article class="article">
-          <h3>${escapeHtml(a.headline || "")}</h3>
-          <div class="meta">
+          <h3 style="margin-top: 0; margin-bottom: 0.5rem; font-size: 1.05rem; font-weight: 600; line-height: 1.4;">${escapeHtml(a.headline || "")}</h3>
+          <div class="meta" style="margin-bottom: 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid #f1f5f9; font-size: 0.8rem; color: #64748b;">
             ${escapeHtml(a.source || "")} · ${escapeHtml(a.region || "")} · ${relTime(a.sort_ts)}
             ${a.impact ? " · impact: " + escapeHtml(a.impact) : ""}
             ${a.tickers ? " · " + escapeHtml(a.tickers) : ""}
           </div>
-          <p class="summary">${escapeHtml(truncate(a.summary, 160))}</p>
-          ${a.link ? `<a href="${escapeHtml(a.link)}" target="_blank" rel="noopener">Open →</a>` : ""}
+          <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 300px; background: #f8fafc; padding: 0.75rem 1rem; border-radius: 6px; border: 1px solid #e2e8f0; display: flex; flex-direction: column; justify-content: space-between;">
+              <div>
+                <h4 style="margin: 0 0 0.5rem 0; font-size: 0.85rem; font-weight: 700; color: #475569; display: flex; align-items: center; gap: 0.25rem;">
+                  ⚙️ Raw &amp; Rule Analysis
+                </h4>
+                ${a.summary ? `<p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: #334155; line-height: 1.4;">${escapeHtml(a.summary)}</p>` : `<p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: #64748b; font-style: italic;">No raw summary description provided by source.</p>`}
+              </div>
+              <div>
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 0.5rem; font-size: 0.78rem;">
+                  <div><span style="color: #64748b;">Priority:</span> <strong style="color: #334155;">${escapeHtml(a.priority || "ROUTINE")}</strong></div>
+                  <div><span style="color: #64748b;">Sentiment:</span> <strong style="color: #334155;">${escapeHtml(a.sentiment || "NEUTRAL")}</strong></div>
+                  <div><span style="color: #64748b;">Impact Level:</span> <strong style="color: #334155;">${escapeHtml(a.impact || "LOW")}</strong></div>
+                  <div><span style="color: #64748b;">Category:</span> <strong style="color: #334155;">${escapeHtml(a.category || "MARKETS")}</strong></div>
+                  <div><span style="color: #64748b;">Threat Level:</span> <strong style="color: #334155;">${escapeHtml(a.threat_level || "INFO")}</strong></div>
+                  <div><span style="color: #64748b;">Threat Cat:</span> <strong style="color: #334155;">${escapeHtml(a.threat_cat || "general")}</strong></div>
+                </div>
+                ${renderEntities(a.entities_json)}
+              </div>
+            </div>
+            <div class="llm-column-container" style="flex: 1; min-width: 300px; display: flex; flex-direction: column;">
+              ${renderLlmColumn(a)}
+            </div>
+          </div>
+          <div style="margin-top: 0.75rem; font-size: 0.8rem; text-align: right;">
+            ${a.link ? `<a href="${escapeHtml(a.link)}" target="_blank" rel="noopener" style="color: #2563eb; text-decoration: none; font-weight: 500;">Open Source Article →</a>` : ""}
+          </div>
         </article>
-      `).join("");
+      `;
+    }
+
+    const PAGE_SIZE = 10;
+    let currentArticles = [];
+    let currentPage = 1;
+
+    function renderArticles(data) {
+      currentArticles = (data && data.data) || [];
+      currentPage = 1;
+      renderPage();
+    }
+
+    function renderPage() {
+      const el = $("#results");
+      const total = currentArticles.length;
+      if (!total) {
+        el.innerHTML = '<p class="empty">No articles found.</p>';
+        updatePaginationControls(1, 1);
+        return;
+      }
+      const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+      if (currentPage > totalPages) currentPage = totalPages;
+      if (currentPage < 1) currentPage = 1;
+      const start = (currentPage - 1) * PAGE_SIZE;
+      el.innerHTML = currentArticles.slice(start, start + PAGE_SIZE).map(articleCardHtml).join("");
+      updatePaginationControls(currentPage, totalPages);
+    }
+
+    function updatePaginationControls(page, totalPages) {
+      const bar = $("#pagination");
+      if (totalPages <= 1) {
+        bar.style.display = "none";
+        return;
+      }
+      bar.style.display = "flex";
+      $("#page-input").value = page;
+      $("#page-input").max = totalPages;
+      $("#page-total").textContent = `of ${totalPages}`;
+      $("#btn-page-back").disabled = page <= 1;
+      $("#btn-page-next").disabled = page >= totalPages;
+    }
+
+    function goToPage(page) {
+      const totalPages = Math.max(1, Math.ceil(currentArticles.length / PAGE_SIZE));
+      currentPage = Math.min(Math.max(page, 1), totalPages);
+      renderPage();
+      $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    async function runLlmAnalysis(url, btn) {
+      const container = btn.closest('.llm-column-container');
+      const originalHtml = container.innerHTML;
+      container.innerHTML = `
+        <div style="flex: 1; padding: 1.5rem; background: #fdfdfd; border: 1px dashed #ddd6fe; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; height: 100%; box-sizing: border-box;">
+          <span style="font-size: 0.78rem; color: #6d28d9; font-weight: 600; display: inline-flex; align-items: center; gap: 0.35rem;">
+            <svg class="spinner" viewBox="0 0 50 50" style="width: 14px; height: 14px; animation: spin 1s linear infinite; stroke: #6d28d9; fill: none; stroke-width: 5; stroke-linecap: round;">
+              <circle cx="25" cy="25" r="20"></circle>
+            </svg>
+            Analyzing with Qwen 35B...
+          </span>
+        </div>
+      `;
+      try {
+        const data = await api("/news/analyze", {
+          method: "POST",
+          body: JSON.stringify({ url_or_id: url })
+        });
+        const parsed = data.analysis;
+        container.innerHTML = `
+          <div class="llm-analysis-box" style="flex: 1; padding: 0.75rem 1rem; background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 6px; font-size: 0.85rem; color: #581c87; height: 100%; box-sizing: border-box;">
+            <h4 style="margin: 0 0 0.5rem 0; font-size: 0.85rem; font-weight: 700; color: #3b0764; display: flex; align-items: center; gap: 0.25rem;">
+              🧠 Deep LLM Analysis
+            </h4>
+            <p style="margin: 0 0 0.75rem 0; line-height: 1.5; color: #581c87;">${escapeHtml(parsed.summary || "")}</p>
+            <div style="font-size: 0.78rem; color: #6b21a8; font-weight: 600; display: flex; flex-direction: column; gap: 0.35rem; border-top: 1px dashed #d8b4fe; padding-top: 0.5rem;">
+              <div>Sentiment Score: <strong>${parsed.sentiment_score}</strong></div>
+              <div>Confidence: <strong>${parsed.confidence}%</strong></div>
+              ${parsed.risk_flags && parsed.risk_flags.length ? `<div>Risk Flags: <span style="color: #701a75;">${escapeHtml(parsed.risk_flags.join(', '))}</span></div>` : ''}
+            </div>
+          </div>
+        `;
+      } catch (err) {
+        showError("LLM analysis failed: " + err.message);
+        container.innerHTML = originalHtml;
+      }
     }
 
     function escapeHtml(s) {
@@ -280,13 +716,25 @@
 
     async function loadHealth() {
       const h = $("#health");
+      const llm = $("#llm-status");
       try {
         const data = await api("/health");
         h.textContent = `${data.article_count} articles · ${data.mode}`;
         h.className = "health ok";
+        llm.style.display = "inline-block";
+        if (data.llm_model) {
+          llm.textContent = `LLM: ${data.llm_model} · ${data.llm_active ? 'active' : 'unavailable'}`;
+          llm.className = `health ${data.llm_active ? 'ok' : 'err'}`;
+        } else {
+          llm.textContent = "LLM: not configured";
+          llm.className = "health err";
+        }
       } catch (e) {
         h.textContent = "offline";
         h.className = "health err";
+        llm.textContent = "LLM: offline";
+        llm.className = "health err";
+        llm.style.display = "inline-block";
       }
     }
 
@@ -294,6 +742,8 @@
       const data = await api("/settings");
       $$(`input[name="mode"][value="${data.mode}"]`).forEach((r) => { r.checked = true; });
       $("#poll-interval").value = data.poll_interval_sec;
+      $$(`input[name="llm-analysis-mode"][value="${data.llm_analysis_mode}"]`).forEach((r) => { r.checked = true; });
+      $("#llm-analysis-concurrency").value = data.llm_analysis_concurrency;
     }
 
     async function saveMode(mode) {
@@ -305,6 +755,16 @@
       const v = parseInt($("#poll-interval").value, 10);
       if (v < 60) { showError("Poll interval must be at least 60"); return; }
       await api("/settings", { method: "PATCH", body: JSON.stringify({ poll_interval_sec: v }) });
+    }
+
+    async function saveLlmAnalysisMode(llm_analysis_mode) {
+      await api("/settings", { method: "PATCH", body: JSON.stringify({ llm_analysis_mode }) });
+    }
+
+    async function saveLlmAnalysisConcurrency() {
+      const v = parseInt($("#llm-analysis-concurrency").value, 10);
+      if (v < 1 || v > 20) { showError("Concurrency must be between 1 and 20"); return; }
+      await api("/settings", { method: "PATCH", body: JSON.stringify({ llm_analysis_concurrency: v }) });
     }
 
     async function loadWatchlistSettings() {
@@ -331,6 +791,63 @@
       });
     }
 
+    async function loadProviders() {
+      const data = await api("/providers");
+      const el = $("#provider-checks");
+      const providers = data.providers.filter((p) => p.id !== "fmp");
+      if (!providers.length) {
+        el.innerHTML = '<span class="empty">No providers configured.</span>';
+        return;
+      }
+      el.innerHTML = providers.map((p) => `
+        <label style="display: flex; align-items: center; gap: 0.4rem; font-weight: 400;">
+          <input type="checkbox" data-provider="${escapeHtml(p.id)}" ${p.enabled ? "checked" : ""}>
+          ${escapeHtml(p.id)}
+        </label>
+      `).join("");
+      el.querySelectorAll("[data-provider]").forEach((cb) => {
+        cb.addEventListener("change", async () => {
+          try {
+            await api(`/providers/${encodeURIComponent(cb.dataset.provider)}`, {
+              method: "PATCH",
+              body: JSON.stringify({ enabled: cb.checked }),
+            });
+          } catch (e) {
+            cb.checked = !cb.checked;
+            showError(e.message);
+          }
+        });
+      });
+    }
+
+    async function loadFeedChecks() {
+      const data = await api("/feeds?all=true");
+      const el = $("#feed-checks");
+      if (!data.feeds.length) {
+        el.innerHTML = '<span class="empty">No feeds configured.</span>';
+        return;
+      }
+      el.innerHTML = data.feeds.map((f) => `
+        <label style="display: flex; align-items: center; gap: 0.4rem; font-weight: 400;">
+          <input type="checkbox" data-feed="${escapeHtml(f.id)}" ${f.enabled ? "checked" : ""}>
+          ${escapeHtml(f.source)} (${escapeHtml(f.category)})
+        </label>
+      `).join("");
+      el.querySelectorAll("[data-feed]").forEach((cb) => {
+        cb.addEventListener("change", async () => {
+          try {
+            await api(`/feeds/${encodeURIComponent(cb.dataset.feed)}`, {
+              method: "PATCH",
+              body: JSON.stringify({ enabled: cb.checked }),
+            });
+          } catch (e) {
+            cb.checked = !cb.checked;
+            showError(e.message);
+          }
+        });
+      });
+    }
+
     async function loadChips() {
       const data = await api("/watchlist/tickers");
       const el = $("#chips");
@@ -346,7 +863,7 @@
           $$(".chip").forEach((c) => c.classList.remove("active"));
           chip.classList.add("active");
           try {
-            const rows = await api(`/ticker/${encodeURIComponent(chip.dataset.ticker)}?days=7&limit=20`);
+            const rows = await api(`/ticker/${encodeURIComponent(chip.dataset.ticker)}?days=7&limit=200`);
             renderArticles(rows);
           } catch (e) { showError(e.message); }
         });
@@ -356,8 +873,44 @@
     async function runSearch() {
       const q = $("#search-q").value.trim();
       if (!q) return;
-      const rows = await api(`/search?q=${encodeURIComponent(q)}&limit=20`);
+      const rows = await api(`/search?q=${encodeURIComponent(q)}&limit=200`);
       renderArticles(rows);
+    }
+
+    async function populateProviderFilter() {
+      const select = $("#filter-provider");
+      try {
+        const data = await api("/feeds");
+        if (data.feeds) {
+          const sources = Array.from(new Set(data.feeds.map(f => f.source))).sort();
+          sources.forEach(src => {
+            const opt = document.createElement("option");
+            opt.value = src.toLowerCase();
+            opt.textContent = src;
+            select.appendChild(opt);
+          });
+        }
+      } catch (err) {
+        console.error("Failed to populate provider filter:", err);
+      }
+    }
+
+    async function loadFilteredLatest() {
+      const dateVal = $("#filter-date").value;
+      const providerVal = $("#filter-provider").value;
+      let url = "/latest?limit=200";
+      if (dateVal) {
+        url += `&date=${encodeURIComponent(dateVal)}`;
+      }
+      if (providerVal && providerVal !== "all") {
+        url += `&provider=${encodeURIComponent(providerVal)}`;
+      }
+      try {
+        const rows = await api(url);
+        renderArticles(rows);
+      } catch (err) {
+        showError("Failed to fetch filtered news: " + err.message);
+      }
     }
 
     async function loadView(view) {
@@ -365,11 +918,10 @@
         b.classList.toggle("active", b.dataset.view === view);
       });
       if (view === "watchlist") {
-        const rows = await api("/watchlist/news?days=7&limit=20");
+        const rows = await api("/watchlist/news?days=7&limit=200");
         renderArticles(rows);
       } else {
-        const rows = await api("/latest?limit=20");
-        renderArticles(rows);
+        loadFilteredLatest();
       }
     }
 
@@ -382,6 +934,13 @@
         if (btn.dataset.tab === "search") {
           loadChips();
           loadView("latest");
+        } else if (btn.dataset.tab === "info" && window.mermaid) {
+          const activeSubTabBtn = $(".info-menu button.active");
+          if (activeSubTabBtn && activeSubTabBtn.dataset.infoTab === "flow") {
+            window.mermaid.run({
+              nodes: $$("#info-panel-flow .mermaid")
+            });
+          }
         }
       });
     });
@@ -394,6 +953,16 @@
 
     $("#poll-interval").addEventListener("change", () => {
       savePollInterval().catch((e) => showError(e.message));
+    });
+
+    $$('input[name="llm-analysis-mode"]').forEach((r) => {
+      r.addEventListener("change", () => {
+        if (r.checked) saveLlmAnalysisMode(r.value).catch((e) => showError(e.message));
+      });
+    });
+
+    $("#llm-analysis-concurrency").addEventListener("change", () => {
+      saveLlmAnalysisConcurrency().catch((e) => showError(e.message));
     });
 
     $("#btn-add-tickers").addEventListener("click", async () => {
@@ -422,6 +991,16 @@
       }
     });
 
+    $("#btn-page-back").addEventListener("click", () => goToPage(currentPage - 1));
+    $("#btn-page-next").addEventListener("click", () => goToPage(currentPage + 1));
+    $("#page-input").addEventListener("change", () => {
+      const v = parseInt($("#page-input").value, 10);
+      goToPage(isNaN(v) ? 1 : v);
+    });
+    $("#page-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") $("#page-input").blur();
+    });
+
     $("#btn-search").addEventListener("click", () => runSearch().catch((e) => showError(e.message)));
     $("#search-q").addEventListener("keydown", (e) => {
       if (e.key === "Enter") runSearch().catch((err) => showError(err.message));
@@ -433,9 +1012,92 @@
       });
     });
 
+    async function loadNewsFeeds() {
+      const container = $("#feeds-list-container");
+      try {
+        const data = await api("/feeds");
+        if (!data.feeds || !data.feeds.length) {
+          container.innerHTML = '<p class="empty">No feeds configured.</p>';
+          return;
+        }
+        container.innerHTML = `
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.88rem; text-align: left;">
+            <thead>
+              <tr style="border-bottom: 2px solid #ddd; color: #444; font-weight: 600;">
+                <th style="padding: 0.6rem 0.4rem;">ID</th>
+                <th style="padding: 0.6rem 0.4rem;">Source</th>
+                <th style="padding: 0.6rem 0.4rem;">Category</th>
+                <th style="padding: 0.6rem 0.4rem;">Region</th>
+                <th style="padding: 0.6rem 0.4rem;">Tier</th>
+                <th style="padding: 0.6rem 0.4rem;">Feed URL</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.feeds.map(f => `
+                <tr style="border-bottom: 1px solid #eee; transition: background 0.2s ease;">
+                  <td style="padding: 0.6rem 0.4rem; font-family: monospace; font-weight: bold; color: #1e293b;">${escapeHtml(f.id)}</td>
+                  <td style="padding: 0.6rem 0.4rem; color: #475569;">${escapeHtml(f.source)}</td>
+                  <td style="padding: 0.6rem 0.4rem;"><span style="background: #e2e8f0; color: #475569; padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.75rem;">${escapeHtml(f.category)}</span></td>
+                  <td style="padding: 0.6rem 0.4rem; color: #475569;">${escapeHtml(f.region)}</td>
+                  <td style="padding: 0.6rem 0.4rem; color: #475569;">Tier ${f.tier}</td>
+                  <td style="padding: 0.6rem 0.4rem; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    <a href="${escapeHtml(f.url)}" target="_blank" rel="noopener" style="color: #2563eb; text-decoration: none;">${escapeHtml(f.url)}</a>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (err) {
+        container.innerHTML = `<p class="empty" style="color: #dc2626;">Failed to load feeds: ${escapeHtml(err.message)}</p>`;
+      }
+    }
+
+    $$(".info-menu button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        $$(".info-menu button").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        $$(".info-pane").forEach((p) => p.classList.remove("active"));
+        const target = $(`#info-panel-${btn.dataset.infoTab}`);
+        target.classList.add("active");
+        if (btn.dataset.infoTab === "flow" && window.mermaid) {
+          window.mermaid.run({
+            nodes: target.querySelectorAll('.mermaid')
+          });
+        } else if (btn.dataset.infoTab === "feeds") {
+          loadNewsFeeds();
+        }
+      });
+    });
+
+    $("#filter-date").addEventListener("change", () => {
+      $$(".view-toggle button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.view === "latest");
+      });
+      $$(".chip").forEach((c) => c.classList.remove("active"));
+      loadFilteredLatest();
+    });
+
+    $("#filter-provider").addEventListener("change", () => {
+      $$(".view-toggle button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.view === "latest");
+      });
+      $$(".chip").forEach((c) => c.classList.remove("active"));
+      loadFilteredLatest();
+    });
+
+    $("#btn-clear-filters").addEventListener("click", () => {
+      $("#filter-date").value = "";
+      $("#filter-provider").value = "all";
+      loadFilteredLatest();
+    });
+
     loadHealth();
     loadSettings().catch((e) => showError(e.message));
     loadWatchlistSettings().catch((e) => showError(e.message));
+    loadProviders().catch((e) => showError(e.message));
+    loadFeedChecks().catch((e) => showError(e.message));
+    populateProviderFilter();
   </script>
 </body>
 </html>

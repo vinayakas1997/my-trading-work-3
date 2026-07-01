@@ -17,6 +17,8 @@ DEFAULT_STOCK_API_URL = "http://127.0.0.1:8081"
 DEFAULT_LLM_BASE_URL = "http://127.0.0.1:11434/v1"
 DEFAULT_LLM_MODEL = "llama3.2"
 DEFAULT_LLM_TTL_SEC = 86400
+DEFAULT_LLM_ANALYSIS_MODE = "auto"
+DEFAULT_LLM_ANALYSIS_CONCURRENCY = 3
 
 _ENV_LOADED = False
 
@@ -46,6 +48,8 @@ class VinuConfig:
     llm_model: str
     llm_api_key: str | None
     llm_ttl_sec: int
+    llm_analysis_mode: str
+    llm_analysis_concurrency: int
     fmp_api_key: str
 
 
@@ -72,6 +76,14 @@ def load_config() -> VinuConfig:
         llm_model=os.environ.get("VINU_LLM_MODEL", DEFAULT_LLM_MODEL),
         llm_api_key=os.environ.get("VINU_LLM_API_KEY") or None,
         llm_ttl_sec=int(os.environ.get("VINU_LLM_TTL_SEC", str(DEFAULT_LLM_TTL_SEC))),
+        llm_analysis_mode=os.environ.get(
+            "VINU_LLM_ANALYSIS_MODE", DEFAULT_LLM_ANALYSIS_MODE
+        ).lower(),
+        llm_analysis_concurrency=int(
+            os.environ.get(
+                "VINU_LLM_ANALYSIS_CONCURRENCY", str(DEFAULT_LLM_ANALYSIS_CONCURRENCY)
+            )
+        ),
         fmp_api_key=os.environ.get("FMP_API_KEY", ""),
     )
 
@@ -82,4 +94,6 @@ def settings_env_defaults() -> dict[str, str]:
     return {
         "mode": cfg.default_mode,
         "poll_interval_sec": str(cfg.default_poll_interval_sec),
+        "llm_analysis_mode": cfg.llm_analysis_mode,
+        "llm_analysis_concurrency": str(cfg.llm_analysis_concurrency),
     }

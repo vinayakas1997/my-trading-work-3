@@ -7,6 +7,8 @@ from typing import Any
 
 import requests
 
+from vinu_news.net import request as http_request
+
 LOG = logging.getLogger(__name__)
 
 
@@ -30,7 +32,7 @@ class StockPriceClient:
         if to_ts is not None:
             params["to"] = to_ts
         try:
-            resp = requests.get(url, params=params, timeout=self._timeout)
+            resp = http_request("GET", url, params=params, timeout=self._timeout)
             resp.raise_for_status()
             body = resp.json()
             return list(body.get("data") or [])

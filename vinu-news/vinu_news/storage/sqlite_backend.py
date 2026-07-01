@@ -61,8 +61,15 @@ class SqliteBackend:
         *,
         mode: str | None = None,
         poll_interval_sec: int | None = None,
+        llm_analysis_mode: str | None = None,
+        llm_analysis_concurrency: int | None = None,
     ) -> SettingsView:
-        return self._settings.patch(mode=mode, poll_interval_sec=poll_interval_sec)
+        return self._settings.patch(
+            mode=mode,
+            poll_interval_sec=poll_interval_sec,
+            llm_analysis_mode=llm_analysis_mode,
+            llm_analysis_concurrency=llm_analysis_concurrency,
+        )
 
     def get_watchlist(self) -> list[str]:
         return self._watchlist.list_tickers()
@@ -73,6 +80,15 @@ class SqliteBackend:
     def remove_watchlist_ticker(self, ticker: str) -> bool:
         return self._watchlist.remove_ticker(ticker)
 
+    def list_pending_ticker_fetch(self) -> list[str]:
+        return self._watchlist.list_pending()
+
+    def clear_pending_ticker_fetch(self, tickers: list[str]) -> None:
+        self._watchlist.clear_pending(tickers)
+
+    def clear_all_pending_ticker_fetch(self) -> None:
+        self._watchlist.clear_all_pending()
+
     def sync_watchlist_from_shared(self, path: Path) -> list[str]:
         from vinu_news.watchlist.shared import sync_from_shared
 
@@ -81,16 +97,30 @@ class SqliteBackend:
     def persist_leads(self, leads: list[EnrichedArticle]) -> PersistResult:
         return persist_leads(self._repo, leads)
 
-    def get_latest(self, limit: int = 20) -> list[dict[str, Any]]:
-        rows = self._repo.conn.execute(
-            """
-            SELECT * FROM articles
-            WHERE is_lead = 1
-            ORDER BY sort_ts DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
+    def get_latest(
+        self,
+        limit: int = 20,
+        date: str | None = None,
+        provider: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT a.*, n.analysis_json AS llm_analysis
+            FROM articles a
+            LEFT JOIN news_analysis n ON a.link = n.url
+            WHERE a.is_lead = 1
+        """
+        params = []
+        if date:
+            query += " AND date(a.sort_ts, 'unixepoch') = ?"
+            params.append(date)
+        if provider and provider.lower() != "all":
+            query += " AND UPPER(a.source) = ?"
+            params.append(provider.upper())
+
+        query += " ORDER BY a.sort_ts DESC LIMIT ?"
+        params.append(limit)
+
+        rows = self._repo.conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
     def get_articles_since(self, since_ts: int, limit: int = 100) -> list[dict[str, Any]]:

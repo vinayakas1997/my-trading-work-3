@@ -50,6 +50,8 @@ def test_analyze_article_cached(repo: NewsRepository, monkeypatch):
         llm_model="test",
         llm_api_key=None,
         llm_ttl_sec=3600,
+        llm_analysis_mode="manual",
+        llm_analysis_concurrency=3,
         fmp_api_key="",
     )
 

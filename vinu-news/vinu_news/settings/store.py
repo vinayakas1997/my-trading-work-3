@@ -7,10 +7,13 @@ from dataclasses import dataclass
 from typing import Any
 
 VALID_MODES = frozenset({"all", "ticker"})
+VALID_LLM_ANALYSIS_MODES = frozenset({"auto", "manual"})
 
 DEFAULTS: dict[str, str] = {
     "mode": "ticker",
     "poll_interval_sec": "600",
+    "llm_analysis_mode": "auto",
+    "llm_analysis_concurrency": "3",
 }
 
 
@@ -18,11 +21,15 @@ DEFAULTS: dict[str, str] = {
 class SettingsView:
     mode: str
     poll_interval_sec: int
+    llm_analysis_mode: str
+    llm_analysis_concurrency: int
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode,
             "poll_interval_sec": self.poll_interval_sec,
+            "llm_analysis_mode": self.llm_analysis_mode,
+            "llm_analysis_concurrency": self.llm_analysis_concurrency,
         }
 
 
@@ -57,9 +64,28 @@ class SettingsStore:
             interval = int(data["poll_interval_sec"])
         except (TypeError, ValueError):
             interval = int(DEFAULTS["poll_interval_sec"])
-        return SettingsView(mode=mode, poll_interval_sec=max(60, interval))
+        llm_analysis_mode = data["llm_analysis_mode"].lower()
+        if llm_analysis_mode not in VALID_LLM_ANALYSIS_MODES:
+            llm_analysis_mode = DEFAULTS["llm_analysis_mode"]
+        try:
+            concurrency = int(data["llm_analysis_concurrency"])
+        except (TypeError, ValueError):
+            concurrency = int(DEFAULTS["llm_analysis_concurrency"])
+        return SettingsView(
+            mode=mode,
+            poll_interval_sec=max(60, interval),
+            llm_analysis_mode=llm_analysis_mode,
+            llm_analysis_concurrency=max(1, min(20, concurrency)),
+        )
 
-    def patch(self, *, mode: str | None = None, poll_interval_sec: int | None = None) -> SettingsView:
+    def patch(
+        self,
+        *,
+        mode: str | None = None,
+        poll_interval_sec: int | None = None,
+        llm_analysis_mode: str | None = None,
+        llm_analysis_concurrency: int | None = None,
+    ) -> SettingsView:
         if mode is not None:
             normalized = mode.lower()
             if normalized not in VALID_MODES:
@@ -67,6 +93,15 @@ class SettingsStore:
             self._set("mode", normalized)
         if poll_interval_sec is not None:
             self._set("poll_interval_sec", str(max(60, poll_interval_sec)))
+        if llm_analysis_mode is not None:
+            normalized_llm_mode = llm_analysis_mode.lower()
+            if normalized_llm_mode not in VALID_LLM_ANALYSIS_MODES:
+                raise ValueError(
+                    f"llm_analysis_mode must be one of {sorted(VALID_LLM_ANALYSIS_MODES)}"
+                )
+            self._set("llm_analysis_mode", normalized_llm_mode)
+        if llm_analysis_concurrency is not None:
+            self._set("llm_analysis_concurrency", str(max(1, min(20, llm_analysis_concurrency))))
         self._conn.commit()
         return self.get_all()
 

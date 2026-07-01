@@ -9,6 +9,7 @@ from typing import Any
 import requests
 
 from vinu_news.config import VinuConfig, load_config
+from vinu_news.net import request as http_request
 
 LOG = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class LlmClient:
             "temperature": 0.2,
         }
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = http_request("POST", url, headers=headers, json=payload, timeout=300)
             resp.raise_for_status()
             data = resp.json()
             content = data["choices"][0]["message"]["content"]

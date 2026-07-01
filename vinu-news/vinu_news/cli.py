@@ -63,7 +63,7 @@ def ingest_main(argv: list[str] | None = None) -> None:
     if args.continuous:
         interval = load_config().default_poll_interval_sec
 
-    def run_cycle() -> None:
+    def run_rss_cycle() -> None:
         with NewsService() as service:
             summary = service.run_ingestion_cycle(
                 feed_ids=feed_ids,
@@ -71,16 +71,41 @@ def ingest_main(argv: list[str] | None = None) -> None:
             )
             print(summary.format_report())
 
+    def run_ticker_cycle(tickers: list[str] | None = None) -> None:
+        with NewsService() as service:
+            summary = service.run_ticker_news_ingest(tickers=tickers, dry_run=args.dry_run)
+            if tickers is None:
+                service.clear_all_pending_ticker_fetch()
+            print(summary.format_report())
+
     if args.once or interval is None:
-        run_cycle()
+        run_rss_cycle()
+        run_ticker_cycle()
         return
 
+    tick_sec = 2
     while True:
-        run_cycle()
-        with NewsService() as service:
-            sleep_sec = service.get_settings().poll_interval_sec
-        logging.info("Sleeping %s seconds until next poll", sleep_sec)
-        time.sleep(sleep_sec)
+        run_rss_cycle()
+        run_ticker_cycle()
+
+        elapsed = 0
+        while True:
+            with NewsService() as service:
+                current_interval = service.get_settings().poll_interval_sec
+                pending = service.pop_pending_ticker_fetch()
+            if pending:
+                logging.info(
+                    "New ticker(s) added (%s); fetching news immediately",
+                    ", ".join(pending),
+                )
+                run_ticker_cycle(pending)
+                continue
+            if elapsed >= current_interval:
+                break
+            wait = min(tick_sec, current_interval - elapsed)
+            time.sleep(wait)
+            elapsed += wait
+        logging.info("Woke after %ss (poll interval now %ss)", elapsed, current_interval)
 
 
 def serve_main(argv: list[str] | None = None) -> None:

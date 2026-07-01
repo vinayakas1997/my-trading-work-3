@@ -15,6 +15,15 @@ class WatchlistStore:
 
     def init_schema(self, schema_sql: str) -> None:
         self._conn.executescript(schema_sql)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        cols = {row["name"] for row in self._conn.execute("PRAGMA table_info(watchlist_tickers)")}
+        if "pending_fetch" not in cols:
+            self._conn.execute(
+                "ALTER TABLE watchlist_tickers ADD COLUMN pending_fetch INTEGER NOT NULL DEFAULT 0"
+            )
+            self._conn.commit()
 
     def list_tickers(self) -> list[str]:
         rows = self._conn.execute(
@@ -31,8 +40,8 @@ class WatchlistStore:
                 continue
             cursor = self._conn.execute(
                 """
-                INSERT OR IGNORE INTO watchlist_tickers (ticker, added_at)
-                VALUES (?, ?)
+                INSERT OR IGNORE INTO watchlist_tickers (ticker, added_at, pending_fetch)
+                VALUES (?, ?, 1)
                 """,
                 (symbol, now),
             )
@@ -40,6 +49,26 @@ class WatchlistStore:
                 added.append(symbol)
         self._conn.commit()
         return added
+
+    def list_pending(self) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT ticker FROM watchlist_tickers WHERE pending_fetch = 1 ORDER BY added_at ASC"
+        ).fetchall()
+        return [row["ticker"] for row in rows]
+
+    def clear_pending(self, tickers: list[str]) -> None:
+        if not tickers:
+            return
+        placeholders = ",".join("?" for _ in tickers)
+        self._conn.execute(
+            f"UPDATE watchlist_tickers SET pending_fetch = 0 WHERE ticker IN ({placeholders})",
+            tickers,
+        )
+        self._conn.commit()
+
+    def clear_all_pending(self) -> None:
+        self._conn.execute("UPDATE watchlist_tickers SET pending_fetch = 0 WHERE pending_fetch = 1")
+        self._conn.commit()
 
     def remove_ticker(self, ticker: str) -> bool:
         symbol = ticker.strip().upper()

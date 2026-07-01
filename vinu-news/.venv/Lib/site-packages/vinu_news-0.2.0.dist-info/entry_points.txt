@@ -1,0 +1,4 @@
+[console_scripts]
+vinu-news-ingest = vinu_news.cli:ingest_main
+vinu-news-query = vinu_news.cli:query_main
+vinu-news-serve = vinu_news.cli:serve_main

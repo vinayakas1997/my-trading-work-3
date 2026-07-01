@@ -198,9 +198,10 @@ class NewsRepository:
     def search_articles(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             """
-            SELECT a.*
+            SELECT a.*, n.analysis_json AS llm_analysis
             FROM articles a
             JOIN articles_fts ON a.rowid = articles_fts.rowid
+            LEFT JOIN news_analysis n ON a.link = n.url
             WHERE articles_fts MATCH ?
             ORDER BY rank
             LIMIT ?
@@ -217,9 +218,10 @@ class NewsRepository:
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         query = """
-            SELECT a.*, m.ticker AS mention_ticker, m.dominance, m.is_primary
+            SELECT a.*, m.ticker AS mention_ticker, m.dominance, m.is_primary, n.analysis_json AS llm_analysis
             FROM article_ticker_mentions m
             JOIN articles a ON a.id = m.article_id
+            LEFT JOIN news_analysis n ON a.link = n.url
             WHERE m.ticker = ?
         """
         params: list[Any] = [ticker.upper()]

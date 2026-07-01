@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from vinu_news.analysis.storage.models import EnrichedArticle
 from vinu_news.analysis.storage.repository import NewsRepository, utc_date_from_ts
@@ -22,6 +22,7 @@ class PersistResult:
     thread_matched_skipped: int
     threads_created: int
     threads_updated: int
+    inserted_links: list[str] = field(default_factory=list)
 
 
 def _upsert_thread_snapshot(
@@ -106,6 +107,7 @@ def persist_leads(
         thread_matched_skipped=0,
         threads_created=0,
         threads_updated=0,
+        inserted_links=[],
     )
 
     for item in leads:
@@ -139,6 +141,7 @@ def persist_leads(
         inserted = repo.upsert_article(item)
         if inserted:
             result.inserted += 1
+            result.inserted_links.append(a.link)
             row = thread_row_from_article(item, thread_id)
             with repo.conn:
                 repo.conn.execute(

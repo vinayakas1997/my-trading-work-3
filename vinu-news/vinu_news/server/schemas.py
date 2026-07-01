@@ -15,11 +15,15 @@ class DataResponse(BaseModel):
 class SettingsResponse(BaseModel):
     mode: str
     poll_interval_sec: int
+    llm_analysis_mode: str
+    llm_analysis_concurrency: int
 
 
 class SettingsPatchRequest(BaseModel):
     mode: str | None = None
     poll_interval_sec: int | None = Field(default=None, ge=60)
+    llm_analysis_mode: str | None = None
+    llm_analysis_concurrency: int | None = Field(default=None, ge=1, le=20)
 
 
 class WatchlistResponse(BaseModel):
@@ -48,3 +52,7 @@ class ThreadDetailResponse(BaseModel):
 class IngestTriggerResponse(BaseModel):
     ok: bool
     summary: dict[str, Any]
+
+
+class ToggleEnabledRequest(BaseModel):
+    enabled: bool
