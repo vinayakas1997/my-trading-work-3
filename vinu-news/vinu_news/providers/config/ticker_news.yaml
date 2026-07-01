@@ -1,0 +1,7 @@
+providers:
+  - id: yahoo
+    enabled: true
+    priority: 1
+  - id: fmp
+    enabled: false
+    priority: 2

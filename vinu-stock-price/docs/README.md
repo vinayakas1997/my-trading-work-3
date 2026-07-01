@@ -1,11 +1,12 @@
 # Stock Price System Documentation
 
-Documentation for the **vinu-stock-price** OHLCV archive, live ingest, and query API.
+**Start at the textbook:** [**INDEX.md**](INDEX.md) — chapter-based guide for operators, researchers, and contributors.
 
 | Guide | Description |
 |-------|-------------|
-| [**Complete Guide — Stock Price**](complete_guide_stock_price.md) | Full architecture: Parquet layout, providers, backfill/live flows, API, Docker, tests |
-| [**How to Use**](../how-to/README.md) | Install, backfill, live ingest, CLI/API examples, troubleshooting |
+| [**Textbook INDEX**](INDEX.md) | Master index: providers, storage, ingest, query, API |
+| [**Complete Guide**](complete_guide_stock_price.md) | Legacy monolithic reference (redirect banner) |
+| [**How to Use**](../how-to/README.md) | Practical quick reference |
 
 **Quick start:**
 

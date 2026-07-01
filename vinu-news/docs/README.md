@@ -1,12 +1,16 @@
 # News System Documentation
 
-Documentation for the Fincept-style news ingestion and analysis pipeline.
+**Start at the textbook:** [**INDEX.md**](INDEX.md) — chapter-based guide for operators, researchers, and contributors.
+
+**Architecture (LLM vs rules):** [**book/ARCHITECTURE.md**](book/ARCHITECTURE.md)
 
 | Guide | Description |
 |-------|-------------|
-| [**Complete Guide — News Analysis**](complete_guide_news_analysis.md) | Full architecture: ingestion, enrichment, post-processing, config, CLI, Fincept mapping, troubleshooting |
-| [**News Derived Tables**](news_derived_tables.md) | SQLite schema, column reference, persist logic, SQL/Python research playbooks |
-| [**Component Status**](../news_componete_still_missing.md) | What's built (~92%) vs remaining gaps (LLM, scrapers, UI, trading) |
+| [**book/ARCHITECTURE.md**](book/ARCHITECTURE.md) | **LLM vs rules** — single-page system diagrams (in textbook) |
+| [**Textbook INDEX**](INDEX.md) | Master index: ingestion, analysis, data, API, CLI |
+| [**Complete Guide**](complete_guide_news_analysis.md) | Legacy monolithic reference (redirect banner) |
+| [**News Derived Tables**](news_derived_tables.md) | Legacy schema/SQL reference |
+| [**Component Status**](news_componete_still_missing.md) | Gaps and roadmap |
 
 **Quick start:**
 

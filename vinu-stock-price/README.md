@@ -25,8 +25,15 @@ vinu-stock-backfill AAPL --from-year 2024 --to-year 2024
 # Live append (watchlist)
 vinu-stock-ingest --once
 
-# Query
-vinu-stock-query candles AAPL --interval 5m --days 7
+# Query with indicators (TASK-S01)
+vinu-stock-query candles AAPL --indicators rsi_14,sma_20 --days 30
+
+# Split-adjusted OHLC (Yahoo backfill; TASK-S02)
+curl "http://127.0.0.1:8081/candles/AAPL?adjusted=true&days=7"
+
+# Shared watchlist with vinu-news (TASK-X01)
+# Set VINU_SHARED_WATCHLIST_PATH in .env, then:
+curl -X POST http://127.0.0.1:8081/watchlist/sync
 
 # API
 vinu-stock-serve

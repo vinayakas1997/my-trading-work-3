@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from vinu_stock.catalog.gap_validation import count_session_gaps
 from vinu_stock.catalog.store import CatalogStore
 from vinu_stock.providers.registry import ProviderRegistry
 from vinu_stock.storage import parquet
@@ -40,10 +41,25 @@ def run_year_job(
     out_path = archive_year_path(data_root, sym, year)
     row_count = parquet.write_bars(out_path, result.bars, merge=True)
     catalog.update_bar_range(sym, result.bars, provider=provider_id)
+    has_adj = 1 if provider_id == "yahoo" and any(b.adj_factor != 1.0 for b in result.bars) else 0
+    gap_count = count_session_gaps([b.bar_ts for b in result.bars])
+    now = int(datetime.now(timezone.utc).timestamp())
     catalog.upsert_symbol(
         sym,
         provider=provider_id,
         archive_through=str(year),
         backfill_status="partial",
+        has_adj_data=has_adj,
+        gap_count=gap_count,
+        last_validation_at=now,
     )
+    if gap_count > 0:
+        catalog.log_ingest(
+            sym,
+            bars_added=row_count,
+            from_ts=start_ts,
+            to_ts=end_ts,
+            ok=True,
+            error=f"gap_warning: {gap_count} missing session bars in {year}",
+        )
     return True, row_count, provider_id, ""

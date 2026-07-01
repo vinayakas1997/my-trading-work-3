@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
+from vinu_stock.query.indicators import parse_indicator_names
 from vinu_stock.server.schemas import DataResponse
 from vinu_stock.service import StockService
 
@@ -42,8 +43,14 @@ def candles(
     days: int | None = Query(default=None, ge=1, le=3650),
     provider: str | None = None,
     limit: int = Query(default=5000, ge=1, le=50000),
+    indicators: str | None = Query(default=None, description="Comma-separated indicator names"),
+    adjusted: bool = Query(default=False),
 ) -> DataResponse:
     service = get_service()
+    try:
+        indicator_list = parse_indicator_names(indicators)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     rows = service.get_candles(
         symbol,
         interval=interval,
@@ -52,5 +59,7 @@ def candles(
         days=days,
         provider=provider,
         limit=limit,
+        indicators=indicator_list or None,
+        adjusted=adjusted,
     )
     return DataResponse(count=len(rows), data=rows)

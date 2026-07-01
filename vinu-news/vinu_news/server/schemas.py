@@ -30,6 +30,16 @@ class WatchlistAddRequest(BaseModel):
     tickers: list[str] = Field(min_length=1)
 
 
+class AnalyzeRequest(BaseModel):
+    url_or_id: str = Field(min_length=1)
+
+
+class AnalyzeResponse(BaseModel):
+    url: str
+    cached: bool
+    analysis: dict[str, Any]
+
+
 class ThreadDetailResponse(BaseModel):
     thread: dict[str, Any]
     articles: list[dict[str, Any]]

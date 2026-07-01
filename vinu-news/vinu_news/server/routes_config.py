@@ -57,3 +57,24 @@ def remove_watchlist_ticker(symbol: str) -> WatchlistResponse:
     service = get_service()
     service.remove_watchlist_ticker(symbol)
     return WatchlistResponse(tickers=service.get_watchlist())
+
+
+@router.post("/watchlist/sync")
+def sync_watchlist() -> dict:
+    service = get_service()
+    result = service.sync_watchlist_from_shared()
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=str(result.get("message")))
+    return result
+
+
+@router.post("/ingest/ticker-news")
+def ingest_ticker_news(days: int = 7) -> dict:
+    service = get_service()
+    result = service.run_ticker_news_ingest(days=days)
+    return {
+        "ok": True,
+        "raw_count": result.raw_count,
+        "inserted": result.inserted,
+        "watchlist_size": result.watchlist_size,
+    }

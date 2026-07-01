@@ -94,3 +94,16 @@ CREATE TABLE IF NOT EXISTS feed_health (
     avg_latency_ms    REAL NOT NULL DEFAULT 0,
     last_error        TEXT
 );
+
+CREATE TABLE IF NOT EXISTS news_analysis (
+    url             TEXT PRIMARY KEY,
+    analysis_json   TEXT NOT NULL,
+    created_at      INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS article_price_reaction (
+    article_id        TEXT PRIMARY KEY,
+    price_change_1h REAL,
+    price_change_1d   REAL,
+    computed_at       INTEGER NOT NULL
+);

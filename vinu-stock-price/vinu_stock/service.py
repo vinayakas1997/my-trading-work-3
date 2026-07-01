@@ -85,6 +85,15 @@ class StockService:
     def remove_watchlist_ticker(self, ticker: str) -> bool:
         return self._backend.remove_watchlist_ticker(ticker)
 
+    def sync_watchlist_from_shared(self) -> dict[str, object]:
+        path = self._config.shared_watchlist_path
+        if path is None:
+            return {"ok": False, "message": "VINU_SHARED_WATCHLIST_PATH not set", "added": []}
+        from vinu_stock.watchlist.shared import sync_from_shared
+
+        added = sync_from_shared(self._backend.watchlist, path)
+        return {"ok": True, "added": added, "tickers": self.get_watchlist()}
+
     def get_catalog(self, symbol: str | None = None) -> list[dict[str, Any]]:
         if symbol:
             entry = self._backend.catalog.get_symbol(symbol)
@@ -129,6 +138,8 @@ class StockService:
         days: int | None = None,
         provider: str | None = None,
         limit: int = 5000,
+        indicators: list[str] | None = None,
+        adjusted: bool = False,
     ) -> list[dict[str, Any]]:
         end_ts = to_ts
         start_ts = from_ts
@@ -145,6 +156,8 @@ class StockService:
             to_ts=end_ts,
             provider=provider,
             limit=limit,
+            indicators=indicators,
+            adjusted=adjusted,
         )
 
     def health(self) -> dict[str, Any]:

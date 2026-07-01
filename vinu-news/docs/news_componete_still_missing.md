@@ -1,5 +1,7 @@
 # News Component — Status & Still Missing
 
+> **Legacy status doc.** See textbook **[apx-d-roadmap-gaps](book/part-5-appendices/apx-d-roadmap-gaps.md)** and **[INDEX.md](INDEX.md)**.
+
 This document tracks what is **built** vs what remains to match the full Fincept news stack (from `personal_understanding/step_1_1_news.md`, `step1_ingestion_streaming.md`, and `news_intelligence_pipeline.md`).
 
 **Detailed guides:** [`docs/complete_guide_news_analysis.md`](docs/complete_guide_news_analysis.md) · [`docs/news_derived_tables.md`](docs/news_derived_tables.md) · [`docs/README.md`](docs/README.md)
@@ -81,13 +83,7 @@ These were gaps in earlier versions of this doc; all are implemented now:
 
 ### 1. LLM deep analysis cache
 
-**Fincept reference:** `step_1_1_news.md` §8 — `news_analysis` table
-
-- `/news/analyze` — structured analysis from article URL
-- Cache by URL in SQLite (`analysis_json`)
-- On-demand (user opens article), not on every ingest
-
-**Status:** Not built. Optional until you want AI key takeaways / entity extraction.
+**Status:** Done (TASK-N01). `POST /news/analyze` with OpenAI-compatible local LLM; cached in `news_analysis` table.
 
 ---
 

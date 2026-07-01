@@ -20,6 +20,9 @@ class SymbolCatalogEntry:
     live_file: str | None
     backfill_status: str
     updated_at: int
+    has_adj_data: int = 0
+    gap_count: int = 0
+    last_validation_at: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -32,6 +35,9 @@ class SymbolCatalogEntry:
             "live_file": self.live_file,
             "backfill_status": self.backfill_status,
             "updated_at": self.updated_at,
+            "has_adj_data": self.has_adj_data,
+            "gap_count": self.gap_count,
+            "last_validation_at": self.last_validation_at,
         }
 
 
@@ -42,6 +48,19 @@ class CatalogStore:
 
     def init_schema(self, schema_sql: str) -> None:
         self._conn.executescript(schema_sql)
+        self._migrate_schema()
+
+    def _migrate_schema(self) -> None:
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(symbol_catalog)")}
+        migrations = [
+            ("has_adj_data", "INTEGER NOT NULL DEFAULT 0"),
+            ("gap_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("last_validation_at", "INTEGER"),
+        ]
+        for name, typedef in migrations:
+            if name not in cols:
+                self._conn.execute(f"ALTER TABLE symbol_catalog ADD COLUMN {name} {typedef}")
+        self._conn.commit()
 
     def get_symbol(self, symbol: str) -> SymbolCatalogEntry | None:
         row = self._conn.execute(
@@ -66,6 +85,9 @@ class CatalogStore:
         archive_through: str | None = None,
         live_file: str | None = None,
         backfill_status: str | None = None,
+        has_adj_data: int | None = None,
+        gap_count: int | None = None,
+        last_validation_at: int | None = None,
     ) -> SymbolCatalogEntry:
         sym = symbol.strip().upper()
         now = int(time.time())
@@ -75,8 +97,9 @@ class CatalogStore:
                 """
                 INSERT INTO symbol_catalog (
                     symbol, provider, first_bar_ts, last_bar_ts,
-                    archive_through, live_file, backfill_status, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    archive_through, live_file, backfill_status, updated_at,
+                    has_adj_data, gap_count, last_validation_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sym,
@@ -87,6 +110,9 @@ class CatalogStore:
                     live_file,
                     backfill_status or "pending",
                     now,
+                    has_adj_data or 0,
+                    gap_count or 0,
+                    last_validation_at,
                 ),
             )
         else:
@@ -99,6 +125,9 @@ class CatalogStore:
                     archive_through = COALESCE(?, archive_through),
                     live_file = COALESCE(?, live_file),
                     backfill_status = COALESCE(?, backfill_status),
+                    has_adj_data = COALESCE(?, has_adj_data),
+                    gap_count = COALESCE(?, gap_count),
+                    last_validation_at = COALESCE(?, last_validation_at),
                     updated_at = ?
                 WHERE symbol = ?
                 """,
@@ -109,6 +138,9 @@ class CatalogStore:
                     archive_through,
                     live_file,
                     backfill_status,
+                    has_adj_data,
+                    gap_count,
+                    last_validation_at,
                     now,
                     sym,
                 ),
@@ -221,6 +253,7 @@ class CatalogStore:
 
     @staticmethod
     def _row_to_entry(row: sqlite3.Row) -> SymbolCatalogEntry:
+        keys = row.keys()
         return SymbolCatalogEntry(
             symbol=row["symbol"],
             provider=row["provider"] or "",
@@ -231,6 +264,9 @@ class CatalogStore:
             live_file=row["live_file"],
             backfill_status=row["backfill_status"] or "pending",
             updated_at=row["updated_at"] or 0,
+            has_adj_data=int(row["has_adj_data"]) if "has_adj_data" in keys and row["has_adj_data"] is not None else 0,
+            gap_count=int(row["gap_count"]) if "gap_count" in keys and row["gap_count"] is not None else 0,
+            last_validation_at=row["last_validation_at"] if "last_validation_at" in keys else None,
         )
 
 

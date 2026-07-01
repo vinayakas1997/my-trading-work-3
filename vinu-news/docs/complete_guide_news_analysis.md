@@ -1,5 +1,7 @@
 # Complete Guide — News Analysis Pipeline
 
+> **Legacy guide.** Prefer the chapter-based textbook: **[INDEX.md](INDEX.md)**. This file is kept for reference; content is being split into `docs/book/`.
+
 End-to-end reference for the personal Fincept-style news system: RSS ingestion, rule-based enrichment, post-processing, story threads, and SQLite persistence.
 
 Related docs:

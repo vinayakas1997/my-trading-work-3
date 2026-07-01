@@ -8,6 +8,8 @@ services:
     environment:
       VINU_STOCK_DATA_ROOT: /data
       VINU_STOCK_META_DB_PATH: /data/meta.db
+      # Optional: share watchlist with vinu-news (mount same file path)
+      # VINU_SHARED_WATCHLIST_PATH: /data/shared/watchlist.json
     volumes:
       - vinu_stock_data:/data
     restart: unless-stopped
@@ -21,6 +23,8 @@ services:
     environment:
       VINU_STOCK_DATA_ROOT: /data
       VINU_STOCK_META_DB_PATH: /data/meta.db
+      # Optional: share watchlist with vinu-news (mount same file path)
+      # VINU_SHARED_WATCHLIST_PATH: /data/shared/watchlist.json
     ports:
       - "8081:8081"
     volumes:

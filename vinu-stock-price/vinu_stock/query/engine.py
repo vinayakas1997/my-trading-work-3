@@ -7,6 +7,7 @@ from pathlib import Path
 import duckdb
 
 from vinu_stock.query.aggregate import aggregate_bars
+from vinu_stock.query.indicators import apply_adjusted_prices, apply_indicators
 from vinu_stock.storage.paths import parquet_globs
 
 
@@ -19,6 +20,8 @@ def fetch_candles(
     to_ts: int | None = None,
     provider: str | None = None,
     limit: int = 5000,
+    indicators: list[str] | None = None,
+    adjusted: bool = False,
 ) -> list[dict]:
     patterns = parquet_globs(data_root, symbol)
     if not patterns:
@@ -29,7 +32,8 @@ def fetch_candles(
     try:
         placeholders = ", ".join(f"'{p}'" for p in patterns)
         sql = f"""
-            SELECT symbol, provider, bar_ts, open, high, low, close, volume
+            SELECT symbol, provider, bar_ts, open, high, low, close, volume,
+                   COALESCE(adj_factor, 1.0) AS adj_factor
             FROM read_parquet([{placeholders}], union_by_name=true)
             WHERE symbol = ?
         """
@@ -50,6 +54,12 @@ def fetch_candles(
         records = rows.to_dict(orient="records")
         for rec in records:
             rec["bar_ts"] = int(rec["bar_ts"])
-        return aggregate_bars(records, interval)
+            rec["adj_factor"] = float(rec.get("adj_factor", 1.0) or 1.0)
+        records = aggregate_bars(records, interval)
+        if adjusted:
+            records = apply_adjusted_prices(records)
+        if indicators:
+            records = apply_indicators(records, indicators)
+        return records
     finally:
         conn.close()

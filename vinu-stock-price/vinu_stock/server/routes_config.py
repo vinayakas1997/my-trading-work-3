@@ -61,6 +61,14 @@ def remove_watchlist_ticker(symbol: str) -> WatchlistResponse:
     return WatchlistResponse(tickers=get_service().get_watchlist())
 
 
+@router.post("/watchlist/sync")
+def sync_watchlist() -> dict:
+    result = get_service().sync_watchlist_from_shared()
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=str(result.get("message")))
+    return result
+
+
 @router.post("/backfill/trigger", response_model=TriggerResponse)
 def trigger_backfill() -> TriggerResponse:
     result = get_service().run_backfill()

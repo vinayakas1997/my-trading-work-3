@@ -39,6 +39,7 @@ class VinuStockConfig:
     alpaca_api_key: str
     alpaca_api_secret: str
     alpaca_data_base_url: str
+    shared_watchlist_path: Path | None
 
 
 def load_config() -> VinuStockConfig:
@@ -47,6 +48,8 @@ def load_config() -> VinuStockConfig:
     data_root = Path(data_root_raw) if data_root_raw else DEFAULT_DATA_ROOT
     meta_raw = os.environ.get("VINU_STOCK_META_DB_PATH", "")
     meta_db_path = Path(meta_raw) if meta_raw else data_root / "meta.db"
+    shared_raw = os.environ.get("VINU_SHARED_WATCHLIST_PATH", "").strip()
+    shared_path = Path(shared_raw) if shared_raw else None
     return VinuStockConfig(
         data_root=data_root,
         meta_db_path=meta_db_path,
@@ -62,6 +65,7 @@ def load_config() -> VinuStockConfig:
         alpaca_data_base_url=os.environ.get(
             "ALPACA_DATA_BASE_URL", "https://data.alpaca.markets"
         ),
+        shared_watchlist_path=shared_path,
     )
 
 

@@ -25,6 +25,17 @@ curl -X POST http://localhost:8080/watchlist/tickers \
   -d '{"tickers":["AAPL","NVDA"]}'
 
 curl -X POST http://localhost:8080/ingest/trigger
+
+# Ticker-specific news (Yahoo headlines for watchlist; TASK-N02)
+curl -X POST "http://localhost:8080/ingest/ticker-news?days=7"
+
+# LLM deep analysis (local OpenAI-compatible server; TASK-N01)
+curl -X POST http://localhost:8080/news/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"url_or_id":"https://example.com/article"}'
+
+# Price reaction on ticker news (needs vinu-stock-price on :8081; TASK-N03)
+curl "http://localhost:8080/ticker/AAPL?days=7"
 ```
 
 4. When you want **all** news (not just watchlist), switch mode:

@@ -7,7 +7,10 @@ CREATE TABLE IF NOT EXISTS symbol_catalog (
     archive_through   TEXT,
     live_file         TEXT,
     backfill_status   TEXT NOT NULL DEFAULT 'pending',
-    updated_at        INTEGER NOT NULL DEFAULT 0
+    updated_at        INTEGER NOT NULL DEFAULT 0,
+    has_adj_data      INTEGER NOT NULL DEFAULT 0,
+    gap_count         INTEGER NOT NULL DEFAULT 0,
+    last_validation_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS backfill_jobs (

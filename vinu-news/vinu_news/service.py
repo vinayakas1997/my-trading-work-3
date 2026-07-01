@@ -13,6 +13,7 @@ from vinu_news.rss.storage.feed_health import update_feed_health
 from vinu_news.analysis.pipeline import process_batch
 from vinu_news.config import VinuConfig, load_config
 from vinu_news.collection.filter import filter_leads_for_mode
+from vinu_news.providers.registry import TickerNewsRegistry
 from vinu_news.settings.store import SettingsView
 from vinu_news.storage.base import StorageBackend
 from vinu_news.storage.factory import create_storage
@@ -80,6 +81,18 @@ class NewsService:
         )
         self._owns_storage = storage is None
 
+    def _stock_client(self):
+        from vinu_news.integrations.stock_price import StockPriceClient
+
+        return StockPriceClient(self._config.stock_api_url)
+
+    def _enrich_with_price_reaction(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        from vinu_news.analysis.post_enrichment.price_reaction import enrich_article_with_reaction
+
+        client = self._stock_client()
+        conn = self._storage.repo.conn
+        return [enrich_article_with_reaction(conn, row, client) for row in rows]
+
     @property
     def storage(self) -> StorageBackend:
         return self._storage
@@ -116,6 +129,13 @@ class NewsService:
 
     def remove_watchlist_ticker(self, ticker: str) -> bool:
         return self._storage.remove_watchlist_ticker(ticker)
+
+    def sync_watchlist_from_shared(self) -> dict[str, object]:
+        path = self._config.shared_watchlist_path
+        if path is None:
+            return {"ok": False, "message": "VINU_SHARED_WATCHLIST_PATH not set", "added": []}
+        added = self._storage.sync_watchlist_from_shared(path)
+        return {"ok": True, "added": added, "tickers": self.get_watchlist()}
 
     def run_ingestion_cycle(
         self,
@@ -200,6 +220,100 @@ class NewsService:
             feed_results=feed_results,
         )
 
+    def run_ticker_news_ingest(
+        self,
+        *,
+        tickers: list[str] | None = None,
+        days: int = 7,
+        dry_run: bool = False,
+    ) -> IngestionCycleResult:
+        """Fetch ticker-specific headlines and persist through enrichment pipeline."""
+        settings = self._storage.get_settings()
+        watchlist = tickers or self._storage.get_watchlist()
+        if not watchlist:
+            return IngestionCycleResult(
+                feeds_polled=0,
+                feeds_failed=0,
+                raw_count=0,
+                enriched_count=0,
+                leads_before_filter=0,
+                leads_after_filter=0,
+                inserted=0,
+                clusters_found=0,
+                duplicates_dropped=0,
+                url_dedup_dropped=0,
+                url_skipped=0,
+                thread_matched_skipped=0,
+                threads_created=0,
+                threads_updated=0,
+                mode=settings.mode,
+                watchlist_size=0,
+                feed_results=[],
+            )
+
+        from_ts = self.ts_days_ago(days)
+        to_ts = int(datetime.now(timezone.utc).timestamp())
+        registry = TickerNewsRegistry(self._config)
+        raw_articles: list[dict] = []
+        for symbol in watchlist:
+            raw_articles.extend(registry.fetch_for_ticker(symbol, from_ts, to_ts))
+
+        if dry_run:
+            return IngestionCycleResult(
+                feeds_polled=len(watchlist),
+                feeds_failed=0,
+                raw_count=len(raw_articles),
+                enriched_count=0,
+                leads_before_filter=0,
+                leads_after_filter=0,
+                inserted=0,
+                clusters_found=0,
+                duplicates_dropped=0,
+                url_dedup_dropped=0,
+                url_skipped=0,
+                thread_matched_skipped=0,
+                threads_created=0,
+                threads_updated=0,
+                mode=settings.mode,
+                watchlist_size=len(watchlist),
+                feed_results=[],
+            )
+
+        result = process_batch(raw_articles)
+        leads = filter_leads_for_mode(result.articles, settings.mode, set(watchlist))
+        inserted = 0
+        url_skipped = 0
+        thread_matched_skipped = 0
+        threads_created = 0
+        threads_updated = 0
+        if leads:
+            persist_result = self._storage.persist_leads(leads)
+            inserted = persist_result.inserted
+            url_skipped = persist_result.url_skipped
+            thread_matched_skipped = persist_result.thread_matched_skipped
+            threads_created = persist_result.threads_created
+            threads_updated = persist_result.threads_updated
+
+        return IngestionCycleResult(
+            feeds_polled=len(watchlist),
+            feeds_failed=0,
+            raw_count=len(raw_articles),
+            enriched_count=result.enriched_count,
+            leads_before_filter=len(result.articles),
+            leads_after_filter=len(leads),
+            inserted=inserted,
+            clusters_found=result.clusters_found,
+            duplicates_dropped=result.duplicates_dropped,
+            url_dedup_dropped=result.url_dedup_dropped,
+            url_skipped=url_skipped,
+            thread_matched_skipped=thread_matched_skipped,
+            threads_created=threads_created,
+            threads_updated=threads_updated,
+            mode=settings.mode,
+            watchlist_size=len(watchlist),
+            feed_results=[],
+        )
+
     def health(self) -> dict[str, Any]:
         return self._storage.health_info()
 
@@ -228,7 +342,17 @@ class NewsService:
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         start_ts = self.ts_days_ago(days)
-        return self._storage.get_news_for_ticker(symbol, start_ts, None, limit)
+        rows = self._storage.get_news_for_ticker(symbol, start_ts, None, limit)
+        return self._enrich_with_price_reaction(rows)
+
+    def analyze_article(self, url_or_id: str) -> dict[str, Any]:
+        from vinu_news.analysis.llm.analyze import analyze_article as llm_analyze
+        from vinu_news.analysis.llm.client import LlmClientError
+
+        try:
+            return llm_analyze(self._storage.repo, url_or_id, config=self._config)
+        except LlmClientError as exc:
+            raise RuntimeError(str(exc)) from exc
 
     def get_watchlist_news(
         self,
@@ -275,11 +399,14 @@ class NewsService:
         thread = self._storage.get_thread(thread_id)
         if not thread:
             return None
-        articles = self._storage.get_thread_articles(thread_id, limit)
+        articles = self._enrich_with_price_reaction(
+            self._storage.get_thread_articles(thread_id, limit)
+        )
         return {"thread": thread, "articles": articles}
 
     def get_thread_timeline(self, thread_id: str) -> list[dict[str, Any]]:
-        return self._storage.get_thread_timeline(thread_id)
+        rows = self._storage.get_thread_timeline(thread_id)
+        return self._enrich_with_price_reaction(rows)
 
     def get_ticker_stats(
         self,

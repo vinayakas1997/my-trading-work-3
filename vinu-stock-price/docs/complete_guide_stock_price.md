@@ -1,5 +1,7 @@
 # Complete Guide — Stock Price (vinu-stock-price)
 
+> **Legacy guide.** Prefer the chapter-based textbook: **[INDEX.md](INDEX.md)**. This file is kept for reference; content is being split into `docs/book/`.
+
 End-to-end reference for the **vinu-stock-price** package: Parquet OHLCV storage, provider registry, backfill + live ingest, DuckDB query API, and Docker deployment.
 
 Related docs:

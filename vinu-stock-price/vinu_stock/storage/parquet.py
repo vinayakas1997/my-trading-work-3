@@ -20,6 +20,7 @@ _BAR_FIELDS = [
     ("volume", pa.float64()),
     ("vwap", pa.float64()),
     ("trades", pa.int64()),
+    ("adj_factor", pa.float64()),
 ]
 
 

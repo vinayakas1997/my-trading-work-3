@@ -8,6 +8,8 @@ services:
     environment:
       VINU_NEWS_DB_PATH: /data/news.db
       VINU_NEWS_STORAGE: sqlite
+      # Optional: share watchlist with vinu-stock-price
+      # VINU_SHARED_WATCHLIST_PATH: /data/shared/watchlist.json
     volumes:
       - vinu_data:/data
     restart: unless-stopped
@@ -21,6 +23,8 @@ services:
     environment:
       VINU_NEWS_DB_PATH: /data/news.db
       VINU_NEWS_STORAGE: sqlite
+      # Optional: share watchlist with vinu-stock-price
+      # VINU_SHARED_WATCHLIST_PATH: /data/shared/watchlist.json
     ports:
       - "8080:8080"
     volumes:

@@ -9,6 +9,7 @@ import requests
 
 from vinu_stock.providers.base import EarliestResult, FetchBarsResult
 from vinu_stock.providers.config.settings import REQUEST_TIMEOUT_SEC, USER_AGENT
+from vinu_stock.providers.retry import http_get_with_retry
 from vinu_stock.storage.models import BarRecord
 
 LOG = logging.getLogger(__name__)
@@ -46,8 +47,9 @@ class YahooProvider:
         }
         headers = {"User-Agent": USER_AGENT}
         try:
-            resp = requests.get(url, params=params, headers=headers, timeout=REQUEST_TIMEOUT_SEC)
-            resp.raise_for_status()
+            resp = http_get_with_retry(
+                url, params=params, headers=headers, timeout=REQUEST_TIMEOUT_SEC
+            )
             data = resp.json()
         except requests.RequestException as exc:
             return FetchBarsResult(False, [], str(exc))
@@ -81,6 +83,10 @@ def _parse_yahoo_chart(symbol: str, provider: str, root: dict) -> list[BarRecord
     lows = quote.get("low") or []
     closes = quote.get("close") or []
     volumes = quote.get("volume") or []
+    adjcloses: list = []
+    adj_meta = (result.get("indicators") or {}).get("adjclose")
+    if adj_meta:
+        adjcloses = adj_meta[0].get("adjclose") or []
     sym = symbol.strip().upper()
     for i, ts in enumerate(timestamps):
         if ts is None:
@@ -89,6 +95,8 @@ def _parse_yahoo_chart(symbol: str, provider: str, root: dict) -> list[BarRecord
         if o is None or h is None or l is None or c is None:
             continue
         vol = volumes[i] if i < len(volumes) and volumes[i] is not None else 0.0
+        adj_c = adjcloses[i] if i < len(adjcloses) and adjcloses[i] is not None else None
+        adj_factor = float(adj_c / c) if adj_c is not None and c else 1.0
         bars.append(
             BarRecord(
                 symbol=sym,
@@ -99,6 +107,7 @@ def _parse_yahoo_chart(symbol: str, provider: str, root: dict) -> list[BarRecord
                 low=float(l),
                 close=float(c),
                 volume=float(vol),
+                adj_factor=adj_factor,
             )
         )
     return bars

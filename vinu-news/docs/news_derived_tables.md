@@ -1,5 +1,7 @@
 # News Derived Tables — Schema & Deep Research Guide
 
+> **Legacy guide.** Prefer chapters **[ch17](book/part-3-data/ch17-schema-catalog.md)**, **[ch18](book/part-3-data/ch18-table-articles-threads.md)**, **[ch20](book/part-3-data/ch20-sql-cookbook.md)** and **[INDEX.md](INDEX.md)**.
+
 SQLite database for the news pipeline. All tables live in a **single file**:
 
 ```

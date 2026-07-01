@@ -73,6 +73,11 @@ class SqliteBackend:
     def remove_watchlist_ticker(self, ticker: str) -> bool:
         return self._watchlist.remove_ticker(ticker)
 
+    def sync_watchlist_from_shared(self, path: Path) -> list[str]:
+        from vinu_news.watchlist.shared import sync_from_shared
+
+        return sync_from_shared(self._watchlist, path)
+
     def persist_leads(self, leads: list[EnrichedArticle]) -> PersistResult:
         return persist_leads(self._repo, leads)
 

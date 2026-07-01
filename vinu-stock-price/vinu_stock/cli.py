@@ -123,6 +123,8 @@ def query_main(argv: list[str] | None = None) -> None:
     candles_p.add_argument("--interval", default="1m")
     candles_p.add_argument("--days", type=int, default=7)
     candles_p.add_argument("--limit", type=int, default=100)
+    candles_p.add_argument("--indicators", default=None, help="e.g. rsi_14,sma_20")
+    candles_p.add_argument("--adjusted", action="store_true")
     _parse_data_args(candles_p)
 
     catalog_p = sub.add_parser("catalog", help="List symbol catalog")
@@ -137,11 +139,18 @@ def query_main(argv: list[str] | None = None) -> None:
 
     with StockService() as service:
         if args.command == "candles":
+            from vinu_stock.query.indicators import parse_indicator_names
+
+            indicator_list = None
+            if args.indicators:
+                indicator_list = parse_indicator_names(args.indicators)
             rows = service.get_candles(
                 args.symbol,
                 interval=args.interval,
                 days=args.days,
                 limit=args.limit,
+                indicators=indicator_list,
+                adjusted=args.adjusted,
             )
             print(json.dumps(rows, indent=2))
         elif args.command == "catalog":

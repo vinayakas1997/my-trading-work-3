@@ -42,6 +42,7 @@ def aggregate_bars(rows: list[dict], interval: str) -> list[dict]:
                 "low": float(row["low"]),
                 "close": float(row["close"]),
                 "volume": float(row.get("volume", 0)),
+                "adj_factor": float(row.get("adj_factor", 1.0) or 1.0),
             }
         else:
             agg = buckets[b]
@@ -49,4 +50,5 @@ def aggregate_bars(rows: list[dict], interval: str) -> list[dict]:
             agg["low"] = min(agg["low"], float(row["low"]))
             agg["close"] = float(row["close"])
             agg["volume"] += float(row.get("volume", 0))
+            agg["adj_factor"] = float(row.get("adj_factor", 1.0) or 1.0)
     return [buckets[k] for k in sorted(buckets)]
