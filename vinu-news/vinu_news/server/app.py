@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
@@ -43,7 +44,15 @@ def create_app(service: NewsService | None = None) -> FastAPI:
 
     @app.post("/ingest/trigger", response_model=IngestTriggerResponse, tags=["ingest"])
     def trigger_ingest() -> IngestTriggerResponse:
+        app_service.set_poll_status(last_poll_started_at=int(time.time()))
         result = app_service.run_ingestion_cycle()
+        app_service.set_poll_status(
+            last_poll_finished_at=int(time.time()),
+            last_raw_count=result.raw_count,
+            last_leads_before_filter=result.leads_before_filter,
+            last_leads_after_filter=result.leads_after_filter,
+            last_inserted=result.inserted,
+        )
         return IngestTriggerResponse(
             ok=True,
             summary={

@@ -10,7 +10,7 @@ from vinu_news.analysis.storage.persist import PersistResult, persist_leads
 from vinu_news.analysis.storage.repository import NewsRepository
 
 from vinu_news.config import settings_env_defaults
-from vinu_news.settings.store import SettingsStore, SettingsView
+from vinu_news.settings.store import PollStatusView, SettingsStore, SettingsView
 from vinu_news.watchlist.store import WatchlistStore
 
 _SETTINGS_SCHEMA = (
@@ -72,6 +72,12 @@ class SqliteBackend:
             llm_analysis_concurrency=llm_analysis_concurrency,
             active_tiers=active_tiers,
         )
+
+    def get_poll_status(self) -> PollStatusView:
+        return self._settings.get_poll_status()
+
+    def set_poll_status(self, **fields: int | None) -> None:
+        self._settings.set_poll_status(**fields)
 
     def get_watchlist(self) -> list[str]:
         return self._watchlist.list_tickers()

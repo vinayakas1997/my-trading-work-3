@@ -26,7 +26,10 @@ def article_id_from_link(link: str) -> str:
     return hashlib.sha256(link.encode("utf-8")).hexdigest()
 
 
-def enrich_article(raw: dict[str, Any]) -> EnrichedArticle:
+def enrich_article(
+    raw: dict[str, Any],
+    watchlist: set[str] | None = None,
+) -> EnrichedArticle:
     """
     Run full enrichment pipeline on a raw article dict.
 
@@ -50,7 +53,15 @@ def enrich_article(raw: dict[str, Any]) -> EnrichedArticle:
     sentiment_score = sentiment_result["sentiment_score"]
     impact = classify_impact(priority, sentiment_score)
     category = refine_category(combined, default=feed_category)
-    tickers = extract_tickers(headline, cleaned_summary)
+    tickers = extract_tickers(headline, cleaned_summary, watchlist=watchlist)
+
+    # Propagate provider ticker if present
+    provider_ticker = raw.get("ticker")
+    if provider_ticker:
+        provider_ticker_upper = provider_ticker.upper()
+        if provider_ticker_upper not in tickers:
+            tickers.append(provider_ticker_upper)
+
     lang = detect_language(headline)
     threat = classify_threat(combined, sentiment)
     source_flag = check_source_flag(source)
@@ -91,6 +102,9 @@ def enrich_article(raw: dict[str, Any]) -> EnrichedArticle:
     return EnrichedArticle(article=record, mentions=mentions)
 
 
-def enrich_batch(raw_articles: list[dict[str, Any]]) -> list[EnrichedArticle]:
+def enrich_batch(
+    raw_articles: list[dict[str, Any]],
+    watchlist: set[str] | None = None,
+) -> list[EnrichedArticle]:
     """Enrich a list of raw articles."""
-    return [enrich_article(raw) for raw in raw_articles]
+    return [enrich_article(raw, watchlist=watchlist) for raw in raw_articles]

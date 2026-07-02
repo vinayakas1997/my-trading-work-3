@@ -22,13 +22,20 @@ def fetch_candles(
     limit: int = 5000,
     indicators: list[str] | None = None,
     adjusted: bool = False,
+    connection: duckdb.DuckDBPyConnection | None = None,
 ) -> list[dict]:
     patterns = parquet_globs(data_root, symbol)
     if not patterns:
         return []
 
     sym = symbol.strip().upper()
-    conn = duckdb.connect()
+    own_conn = False
+    if connection is not None:
+        conn = connection.cursor()
+    else:
+        conn = duckdb.connect()
+        own_conn = True
+
     try:
         placeholders = ", ".join(f"'{p}'" for p in patterns)
         sql = f"""
@@ -62,4 +69,6 @@ def fetch_candles(
             records = apply_indicators(records, indicators)
         return records
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
+

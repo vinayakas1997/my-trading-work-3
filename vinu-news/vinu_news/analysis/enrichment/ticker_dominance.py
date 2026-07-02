@@ -1,6 +1,7 @@
 """Per-ticker dominance scoring for multi-ticker articles."""
 
 import re
+from vinu_news.analysis.enrichment.ticker_db import get_mappings_for_tickers
 
 HEADLINE_WEIGHT = 3
 SUMMARY_WEIGHT = 1
@@ -8,10 +9,16 @@ POSITION_BONUS = 2
 POSITION_WINDOW = 40
 
 
-def _count_ticker(text: str, ticker: str) -> int:
+def _count_ticker(text: str, ticker: str, ticker_to_aliases: dict[str, list[str]]) -> int:
     if not text:
         return 0
-    return len(re.findall(rf"\b{re.escape(ticker)}\b", text))
+    text_upper = text.upper()
+    ticker_upper = ticker.upper()
+    count = len(re.findall(rf"\b{re.escape(ticker_upper)}\b", text_upper))
+    # Count aliases
+    for alias in ticker_to_aliases.get(ticker_upper, []):
+        count += len(re.findall(rf"\b{re.escape(alias)}\b", text_upper))
+    return count
 
 
 def compute_dominance(
@@ -26,15 +33,20 @@ def compute_dominance(
     if not tickers:
         return {}
 
+    _, ticker_to_aliases = get_mappings_for_tickers(set(tickers))
     raw_scores: dict[str, float] = {}
     headline_prefix = headline[:POSITION_WINDOW]
+    prefix_upper = headline_prefix.upper()
 
     for ticker in tickers:
         score = (
-            _count_ticker(headline, ticker) * HEADLINE_WEIGHT
-            + _count_ticker(summary, ticker) * SUMMARY_WEIGHT
+            _count_ticker(headline, ticker, ticker_to_aliases) * HEADLINE_WEIGHT
+            + _count_ticker(summary, ticker, ticker_to_aliases) * SUMMARY_WEIGHT
         )
-        if ticker in headline_prefix:
+        ticker_upper = ticker.upper()
+        if ticker_upper in prefix_upper or any(
+            alias in prefix_upper for alias in ticker_to_aliases.get(ticker_upper, [])
+        ):
             score += POSITION_BONUS
         raw_scores[ticker] = max(score, 0.0)
 

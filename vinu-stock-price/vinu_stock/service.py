@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import duckdb
 from vinu_stock.backfill.orchestrator import BackfillSummary, run_backfill
 from vinu_stock.config import VinuStockConfig, load_config
 from vinu_stock.live.ingest_cycle import LiveIngestSummary, run_live_cycle
@@ -44,6 +45,7 @@ class StockService:
         self._backend = backend or MetaBackend(self._config.meta_db_path)
         self._owns_backend = backend is None
         self._registry = ProviderRegistry(self._config)
+        self._duckdb_conn = duckdb.connect()
 
     @property
     def data_root(self) -> Path:
@@ -51,6 +53,11 @@ class StockService:
         return Path(settings.data_root)
 
     def close(self) -> None:
+        if hasattr(self, "_duckdb_conn") and self._duckdb_conn:
+            try:
+                self._duckdb_conn.close()
+            except Exception:
+                pass
         if self._owns_backend:
             self._backend.close()
 
@@ -158,6 +165,7 @@ class StockService:
             limit=limit,
             indicators=indicators,
             adjusted=adjusted,
+            connection=self._duckdb_conn,
         )
 
     def health(self) -> dict[str, Any]:

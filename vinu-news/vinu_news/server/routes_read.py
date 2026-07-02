@@ -8,6 +8,7 @@ from vinu_news.server.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
     DataResponse,
+    PollStatusResponse,
     ThreadDetailResponse,
 )
 from vinu_news.service import NewsService
@@ -23,6 +24,13 @@ def get_service() -> NewsService:
 def health() -> dict:
     service = get_service()
     return service.health()
+
+
+@router.get("/poll/status", response_model=PollStatusResponse)
+def poll_status() -> PollStatusResponse:
+    service = get_service()
+    status = service.get_poll_status()
+    return PollStatusResponse(**status.to_dict())
 
 
 @router.get("/latest", response_model=DataResponse)

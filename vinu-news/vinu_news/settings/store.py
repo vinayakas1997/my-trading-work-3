@@ -43,6 +43,31 @@ def format_active_tiers(tiers: list[int]) -> str:
     return ",".join(str(t) for t in normalized)
 
 
+POLL_STATUS_FIELDS = (
+    "last_poll_started_at",
+    "last_poll_finished_at",
+    "next_poll_at",
+    "last_raw_count",
+    "last_leads_before_filter",
+    "last_leads_after_filter",
+    "last_inserted",
+)
+
+
+@dataclass
+class PollStatusView:
+    last_poll_started_at: int | None
+    last_poll_finished_at: int | None
+    next_poll_at: int | None
+    last_raw_count: int | None
+    last_leads_before_filter: int | None
+    last_leads_after_filter: int | None
+    last_inserted: int | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {field: getattr(self, field) for field in POLL_STATUS_FIELDS}
+
+
 @dataclass
 class SettingsView:
     mode: str
@@ -137,6 +162,27 @@ class SettingsStore:
             self._set("active_tiers", format_active_tiers(active_tiers))
         self._conn.commit()
         return self.get_all()
+
+    def get_poll_status(self) -> PollStatusView:
+        placeholders = ",".join("?" for _ in POLL_STATUS_FIELDS)
+        rows = self._conn.execute(
+            f"SELECT key, value FROM vinu_settings WHERE key IN ({placeholders})",
+            POLL_STATUS_FIELDS,
+        ).fetchall()
+        data = {row["key"]: row["value"] for row in rows}
+
+        def _int(key: str) -> int | None:
+            value = data.get(key)
+            return int(value) if value not in (None, "") else None
+
+        return PollStatusView(**{field: _int(field) for field in POLL_STATUS_FIELDS})
+
+    def set_poll_status(self, **fields: int | None) -> None:
+        for key, value in fields.items():
+            if key not in POLL_STATUS_FIELDS:
+                raise ValueError(f"unknown poll status field: {key}")
+            self._set(key, "" if value is None else str(value))
+        self._conn.commit()
 
     def _set(self, key: str, value: str) -> None:
         self._conn.execute(

@@ -18,7 +18,7 @@ from vinu_news.analysis.pipeline import process_batch
 from vinu_news.config import VinuConfig, load_config
 from vinu_news.collection.filter import filter_leads_for_mode
 from vinu_news.providers.registry import TickerNewsRegistry
-from vinu_news.settings.store import SettingsView
+from vinu_news.settings.store import PollStatusView, SettingsView
 from vinu_news.storage.base import StorageBackend
 from vinu_news.storage.factory import create_storage
 from vinu_news.net import request as http_request
@@ -174,6 +174,12 @@ class NewsService:
             active_tiers=active_tiers,
         )
 
+    def get_poll_status(self) -> PollStatusView:
+        return self._storage.get_poll_status()
+
+    def set_poll_status(self, **fields: int | None) -> None:
+        self._storage.set_poll_status(**fields)
+
     def get_watchlist(self) -> list[str]:
         return self._storage.get_watchlist()
 
@@ -238,7 +244,11 @@ class NewsService:
 
         update_feed_health(self._storage.repo, feed_results)
 
-        result = process_batch(raw_articles, skip_post_process=skip_post_process)
+        result = process_batch(
+            raw_articles,
+            skip_post_process=skip_post_process,
+            watchlist=watchlist,
+        )
         leads = result.articles
         leads_before = len(leads)
 
@@ -343,7 +353,7 @@ class NewsService:
                 feed_results=[],
             )
 
-        result = process_batch(raw_articles)
+        result = process_batch(raw_articles, watchlist=set(watchlist))
         leads = filter_leads_for_mode(result.articles, settings.mode, set(watchlist))
         inserted = 0
         url_skipped = 0

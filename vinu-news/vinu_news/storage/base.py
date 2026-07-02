@@ -9,7 +9,7 @@ from vinu_news.analysis.storage.models import EnrichedArticle
 from vinu_news.analysis.storage.persist import PersistResult
 from vinu_news.analysis.storage.repository import NewsRepository
 
-from vinu_news.settings.store import SettingsView
+from vinu_news.settings.store import PollStatusView, SettingsView
 
 
 @runtime_checkable
@@ -36,6 +36,10 @@ class StorageBackend(Protocol):
         llm_analysis_concurrency: int | None = None,
         active_tiers: list[int] | None = None,
     ) -> SettingsView: ...
+
+    def get_poll_status(self) -> PollStatusView: ...
+
+    def set_poll_status(self, **fields: int | None) -> None: ...
 
     def get_watchlist(self) -> list[str]: ...
 

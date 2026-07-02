@@ -107,3 +107,9 @@ CREATE TABLE IF NOT EXISTS article_price_reaction (
     price_change_1d   REAL,
     computed_at       INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ticker_reference (
+    ticker  TEXT PRIMARY KEY,
+    name    TEXT NOT NULL,
+    aliases TEXT NOT NULL
+);

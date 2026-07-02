@@ -3,8 +3,12 @@ pyproject.toml
 tests/test_aggregate.py
 tests/test_api.py
 tests/test_catalog.py
+tests/test_gap_validation.py
+tests/test_indicators.py
 tests/test_parquet_io.py
+tests/test_provider_retry.py
 tests/test_providers_mock.py
+tests/test_watchlist_sync.py
 vinu_stock/__init__.py
 vinu_stock/cli.py
 vinu_stock/config.py
@@ -13,6 +17,7 @@ vinu_stock/backfill/__init__.py
 vinu_stock/backfill/orchestrator.py
 vinu_stock/backfill/year_job.py
 vinu_stock/catalog/__init__.py
+vinu_stock/catalog/gap_validation.py
 vinu_stock/catalog/schema.sql
 vinu_stock/catalog/store.py
 vinu_stock/live/__init__.py
@@ -22,6 +27,7 @@ vinu_stock/providers/alpaca.py
 vinu_stock/providers/base.py
 vinu_stock/providers/polygon.py
 vinu_stock/providers/registry.py
+vinu_stock/providers/retry.py
 vinu_stock/providers/yahoo.py
 vinu_stock/providers/config/__init__.py
 vinu_stock/providers/config/providers.yaml
@@ -29,11 +35,13 @@ vinu_stock/providers/config/settings.py
 vinu_stock/query/__init__.py
 vinu_stock/query/aggregate.py
 vinu_stock/query/engine.py
+vinu_stock/query/indicators.py
 vinu_stock/server/__init__.py
 vinu_stock/server/app.py
 vinu_stock/server/routes_config.py
 vinu_stock/server/routes_read.py
 vinu_stock/server/schemas.py
+vinu_stock/server/static/index.html
 vinu_stock/settings/__init__.py
 vinu_stock/settings/schema.sql
 vinu_stock/settings/store.py
@@ -44,6 +52,7 @@ vinu_stock/storage/parquet.py
 vinu_stock/storage/paths.py
 vinu_stock/watchlist/__init__.py
 vinu_stock/watchlist/schema.sql
+vinu_stock/watchlist/shared.py
 vinu_stock/watchlist/store.py
 vinu_stock_price.egg-info/PKG-INFO
 vinu_stock_price.egg-info/SOURCES.txt

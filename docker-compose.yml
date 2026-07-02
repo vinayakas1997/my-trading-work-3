@@ -1,0 +1,79 @@
+services:
+  # =========================================================================
+  # vinu-news Services (Ports: 8080)
+  # =========================================================================
+  news-ingest:
+    build:
+      context: ./vinu-news
+      dockerfile: Dockerfile
+    command: ["vinu-news-ingest", "--continuous"]
+    env_file: ./vinu-news/.env
+    environment:
+      VINU_NEWS_DB_PATH: /data/news.db
+      VINU_NEWS_STORAGE: sqlite
+      VINU_SHARED_WATCHLIST_PATH: /shared/watchlist.json
+    volumes:
+      - vinu_news_data:/data
+      - vinu_shared_exchange:/shared
+    restart: unless-stopped
+
+  news-api:
+    build:
+      context: ./vinu-news
+      dockerfile: Dockerfile
+    command: ["vinu-news-serve", "--host", "0.0.0.0", "--port", "8080"]
+    env_file: ./vinu-news/.env
+    environment:
+      VINU_NEWS_DB_PATH: /data/news.db
+      VINU_NEWS_STORAGE: sqlite
+      VINU_SHARED_WATCHLIST_PATH: /shared/watchlist.json
+    ports:
+      - "8080:8080"
+    volumes:
+      - vinu_news_data:/data
+      - vinu_shared_exchange:/shared
+    restart: unless-stopped
+    depends_on:
+      - news-ingest
+
+  # =========================================================================
+  # vinu-stock-price Services (Ports: 8081)
+  # =========================================================================
+  stock-ingest:
+    build:
+      context: ./vinu-stock-price
+      dockerfile: Dockerfile
+    command: ["vinu-stock-ingest", "--interval", "60"]
+    env_file: ./vinu-stock-price/.env
+    environment:
+      VINU_STOCK_DATA_ROOT: /data
+      VINU_STOCK_META_DB_PATH: /data/meta.db
+      VINU_SHARED_WATCHLIST_PATH: /shared/watchlist.json
+    volumes:
+      - vinu_stock_data:/data
+      - vinu_shared_exchange:/shared
+    restart: unless-stopped
+
+  stock-api:
+    build:
+      context: ./vinu-stock-price
+      dockerfile: Dockerfile
+    command: ["vinu-stock-serve", "--host", "0.0.0.0", "--port", "8081"]
+    env_file: ./vinu-stock-price/.env
+    environment:
+      VINU_STOCK_DATA_ROOT: /data
+      VINU_STOCK_META_DB_PATH: /data/meta.db
+      VINU_SHARED_WATCHLIST_PATH: /shared/watchlist.json
+    ports:
+      - "8081:8081"
+    volumes:
+      - vinu_stock_data:/data
+      - vinu_shared_exchange:/shared
+    restart: unless-stopped
+    depends_on:
+      - stock-ingest
+
+volumes:
+  vinu_news_data:
+  vinu_stock_data:
+  vinu_shared_exchange:

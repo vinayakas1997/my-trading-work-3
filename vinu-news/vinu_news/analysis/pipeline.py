@@ -27,12 +27,13 @@ def process_batch(
     raw_articles: list[dict[str, Any]],
     *,
     skip_post_process: bool = False,
+    watchlist: set[str] | None = None,
 ) -> ProcessResult:
     """Validate, URL dedup, enrich, optionally post-process (NER, dedup, lead pick)."""
     validated = validate_raw_batch(raw_articles)
     url_deduped = dedup_urls_batch(validated)
     url_dedup_dropped = len(validated) - len(url_deduped)
-    enriched = enrich_batch(url_deduped)
+    enriched = enrich_batch(url_deduped, watchlist=watchlist)
 
     if skip_post_process:
         return ProcessResult(

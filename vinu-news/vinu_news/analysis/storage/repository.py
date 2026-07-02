@@ -56,6 +56,9 @@ class NewsRepository:
         init_fts(self._conn)
         self._conn.commit()
 
+        from vinu_news.analysis.enrichment.ticker_db import sync_ticker_db_if_needed
+        sync_ticker_db_if_needed(self._conn)
+
     def _migrate_schema(self) -> None:
         """Add columns to existing databases."""
         existing = {

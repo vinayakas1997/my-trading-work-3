@@ -106,6 +106,15 @@ class TestTickerDominance:
         assert abs(sum(dominance.values()) - 1.0) < 0.001
         assert dominance["AAPL"] > dominance["TSLA"]
 
+    def test_dominance_with_company_alias(self):
+        headline = "Apple surges while Tesla lags"
+        summary = "Apple reported strong results."
+        tickers = extract_tickers(headline, summary)
+        assert "AAPL" in tickers
+        assert "TSLA" in tickers
+        dominance = compute_dominance(tickers, headline, summary)
+        assert dominance["AAPL"] > dominance["TSLA"]
+
 
 class TestPipeline:
     def test_full_enrichment(self):
@@ -123,6 +132,54 @@ class TestPipeline:
         assert len(enriched.article.summary) <= 300
         assert "<p>" not in enriched.article.summary
         assert len(enriched.mentions) >= 1
+
+    def test_company_alias_extraction(self):
+        raw = {
+            "headline": "Apple warns of Russian app store blocks",
+            "summary": "Google's coding push also faces drain.",
+            "link": "https://example.com/company-aliases",
+            "pubDate": "Sun, 14 Jun 2026 12:00:00 GMT",
+            "source": "REUTERS",
+            "region": "US",
+            "tier": 1,
+        }
+        enriched = enrich_article(raw)
+        tickers = enriched.article.tickers_list()
+        assert "AAPL" in tickers
+        assert "GOOGL" in tickers or "GOOG" in tickers
+
+    def test_provider_ticker_propagation(self):
+        raw = {
+            "headline": "A generic headline about AI development",
+            "summary": "Some general summary without company names.",
+            "link": "https://example.com/no-mentions",
+            "pubDate": "Sun, 14 Jun 2026 12:00:00 GMT",
+            "source": "YAHOO AAPL",
+            "region": "US",
+            "tier": 2,
+            "ticker": "AAPL",
+        }
+        enriched = enrich_article(raw)
+        tickers = enriched.article.tickers_list()
+        assert "AAPL" in tickers
+
+    def test_custom_db_ticker_matching_with_watchlist(self):
+        raw = {
+            "headline": "Ping An Bank Co Ltd reports quarterly profit growth",
+            "summary": "A Chinese bank reported strong numbers.",
+            "link": "https://example.com/ping-an-bank-1",
+            "pubDate": "Sun, 14 Jun 2026 12:00:00 GMT",
+            "source": "REUTERS",
+            "region": "US",
+            "tier": 1,
+        }
+        # Without watchlist, 000001 is not a default major ticker, so it won't be matched
+        enriched_no = enrich_article(raw)
+        assert "000001" not in enriched_no.article.tickers_list()
+
+        # With watchlist containing 000001, it should match!
+        enriched_yes = enrich_article(raw, watchlist={"000001"})
+        assert "000001" in enriched_yes.article.tickers_list()
 
     def test_process_batch_with_post_enrichment(self):
         raw = {

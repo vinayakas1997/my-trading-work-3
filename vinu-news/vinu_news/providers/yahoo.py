@@ -59,6 +59,7 @@ class YahooTickerNewsProvider:
                     "region": "US",
                     "tier": 2,
                     "category": "MARKETS",
+                    "ticker": sym,
                 }
             )
         return articles

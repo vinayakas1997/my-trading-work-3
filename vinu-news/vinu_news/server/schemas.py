@@ -28,6 +28,16 @@ class SettingsPatchRequest(BaseModel):
     active_tiers: list[int] | None = None
 
 
+class PollStatusResponse(BaseModel):
+    last_poll_started_at: int | None = None
+    last_poll_finished_at: int | None = None
+    next_poll_at: int | None = None
+    last_raw_count: int | None = None
+    last_leads_before_filter: int | None = None
+    last_leads_after_filter: int | None = None
+    last_inserted: int | None = None
+
+
 class WatchlistResponse(BaseModel):
     tickers: list[str]
 

@@ -65,9 +65,17 @@ def ingest_main(argv: list[str] | None = None) -> None:
 
     def run_rss_cycle() -> None:
         with NewsService() as service:
+            service.set_poll_status(last_poll_started_at=int(time.time()))
             summary = service.run_ingestion_cycle(
                 feed_ids=feed_ids,
                 dry_run=args.dry_run,
+            )
+            service.set_poll_status(
+                last_poll_finished_at=int(time.time()),
+                last_raw_count=summary.raw_count,
+                last_leads_before_filter=summary.leads_before_filter,
+                last_leads_after_filter=summary.leads_after_filter,
+                last_inserted=summary.inserted,
             )
             print(summary.format_report())
 
@@ -93,6 +101,11 @@ def ingest_main(argv: list[str] | None = None) -> None:
             with NewsService() as service:
                 current_interval = service.get_settings().poll_interval_sec
                 pending = service.pop_pending_ticker_fetch()
+                status = service.get_poll_status()
+                if status.last_poll_finished_at is not None:
+                    service.set_poll_status(
+                        next_poll_at=status.last_poll_finished_at + current_interval
+                    )
             if pending:
                 logging.info(
                     "New ticker(s) added (%s); fetching news immediately",

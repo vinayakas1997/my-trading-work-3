@@ -15,7 +15,24 @@ TICKER_STOP_WORDS = frozenset({
 })
 
 
-def extract_tickers(headline: str, summary: str) -> list[str]:
+DEFAULT_MAJOR_TICKERS = {
+    "AAPL",
+    "GOOGL",
+    "GOOG",
+    "MSFT",
+    "AMZN",
+    "NVDA",
+    "TSLA",
+    "META",
+    "NFLX",
+}
+
+
+def extract_tickers(
+    headline: str,
+    summary: str,
+    watchlist: set[str] | None = None,
+) -> list[str]:
     """Extract up to 5 unique ticker symbols from headline + summary."""
     text = f"{headline} {summary}"
     seen: set[str] = set()
@@ -30,5 +47,24 @@ def extract_tickers(headline: str, summary: str) -> list[str]:
             tickers.append(candidate)
             if len(tickers) >= MAX_TICKERS:
                 break
+
+    if len(tickers) < MAX_TICKERS:
+        active_tickers = (
+            {t.upper() for t in watchlist} if watchlist else DEFAULT_MAJOR_TICKERS
+        )
+        from vinu_news.analysis.enrichment.ticker_db import get_mappings_for_tickers
+        alias_to_ticker, _ = get_mappings_for_tickers(active_tickers)
+        if alias_to_ticker:
+            text_upper = text.upper()
+            sorted_aliases = sorted(alias_to_ticker.keys(), key=len, reverse=True)
+            for alias in sorted_aliases:
+                ticker = alias_to_ticker[alias]
+                if ticker in seen:
+                    continue
+                if re.search(rf"\b{re.escape(alias.upper())}\b", text_upper):
+                    seen.add(ticker)
+                    tickers.append(ticker)
+                    if len(tickers) >= MAX_TICKERS:
+                        break
 
     return tickers
