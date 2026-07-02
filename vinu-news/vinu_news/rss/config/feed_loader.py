@@ -39,8 +39,9 @@ def load_feeds(
     path: Path | None = None,
     feed_ids: list[str] | None = None,
     only_enabled: bool = True,
+    tiers: list[int] | None = None,
 ) -> list[FeedConfig]:
-    """Load feeds; optionally filter by feed id list and enabled state."""
+    """Load feeds; optionally filter by feed id list, enabled state, and tier."""
     feeds_path = path or FEEDS_PATH
     with feeds_path.open(encoding="utf-8") as f:
         data = yaml.safe_load(f)
@@ -48,6 +49,10 @@ def load_feeds(
     feeds = [FeedConfig.from_dict(item) for item in data.get("feeds", [])]
     if only_enabled:
         feeds = [f for f in feeds if f.enabled]
+
+    if tiers is not None:
+        allowed_tiers = set(tiers)
+        feeds = [f for f in feeds if f.tier in allowed_tiers]
 
     if feed_ids:
         allowed = {fid.strip() for fid in feed_ids}

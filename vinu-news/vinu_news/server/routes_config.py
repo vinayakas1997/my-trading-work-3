@@ -29,6 +29,7 @@ def read_settings() -> SettingsResponse:
         poll_interval_sec=view.poll_interval_sec,
         llm_analysis_mode=view.llm_analysis_mode,
         llm_analysis_concurrency=view.llm_analysis_concurrency,
+        active_tiers=view.active_tiers,
     )
 
 
@@ -41,6 +42,7 @@ def patch_settings(body: SettingsPatchRequest) -> SettingsResponse:
             poll_interval_sec=body.poll_interval_sec,
             llm_analysis_mode=body.llm_analysis_mode,
             llm_analysis_concurrency=body.llm_analysis_concurrency,
+            active_tiers=body.active_tiers,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -49,6 +51,7 @@ def patch_settings(body: SettingsPatchRequest) -> SettingsResponse:
         poll_interval_sec=view.poll_interval_sec,
         llm_analysis_mode=view.llm_analysis_mode,
         llm_analysis_concurrency=view.llm_analysis_concurrency,
+        active_tiers=view.active_tiers,
     )
 
 

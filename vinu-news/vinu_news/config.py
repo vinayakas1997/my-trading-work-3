@@ -19,6 +19,7 @@ DEFAULT_LLM_MODEL = "llama3.2"
 DEFAULT_LLM_TTL_SEC = 86400
 DEFAULT_LLM_ANALYSIS_MODE = "auto"
 DEFAULT_LLM_ANALYSIS_CONCURRENCY = 3
+DEFAULT_ACTIVE_TIERS = "1,2,3,4"
 
 _ENV_LOADED = False
 
@@ -96,4 +97,5 @@ def settings_env_defaults() -> dict[str, str]:
         "poll_interval_sec": str(cfg.default_poll_interval_sec),
         "llm_analysis_mode": cfg.llm_analysis_mode,
         "llm_analysis_concurrency": str(cfg.llm_analysis_concurrency),
+        "active_tiers": os.environ.get("VINU_NEWS_ACTIVE_TIERS", DEFAULT_ACTIVE_TIERS),
     }

@@ -2,7 +2,7 @@
 
 Historical and live **1m OHLCV** storage in **Parquet** (archive + live), with a small **meta.db** catalog, pluggable providers (Polygon, Alpaca, Yahoo), and HTTP/CLI query API.
 
-Sibling to [vinu-news](../vinu-news/).
+Sibling to [vinu-news](../vinu-news/) and [vinu-features](../vinu-features/) (consumes `GET /candles/{symbol}` for batch feature runs).
 
 ## Documentation
 

@@ -30,9 +30,16 @@ def latest(
     limit: int = Query(default=20, ge=1, le=500),
     date: str | None = Query(default=None),
     provider: str | None = Query(default=None),
+    tiers: str | None = Query(
+        default=None,
+        description="Comma-separated tier numbers (1-4), e.g. 1,2",
+    ),
 ) -> DataResponse:
+    from vinu_news.settings.store import parse_active_tiers
+
     service = get_service()
-    rows = service.get_latest(limit, date=date, provider=provider)
+    tier_list = parse_active_tiers(tiers) if tiers else None
+    rows = service.get_latest(limit, date=date, provider=provider, tiers=tier_list)
     return DataResponse(count=len(rows), data=rows)
 
 

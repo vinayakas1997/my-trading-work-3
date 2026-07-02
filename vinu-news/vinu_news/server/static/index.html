@@ -242,6 +242,8 @@
 
       <div class="card">
         <label>News sources</label>
+        <div id="settings-tier-checks" style="display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid #eee;"></div>
+        <p class="status-msg" style="margin-top: 0; margin-bottom: 0.75rem;">RSS tiers to poll on the next ingestion cycle. Individual feeds below must also be enabled.</p>
         <div id="provider-checks" style="display: flex; flex-wrap: wrap; gap: 0.75rem;"></div>
         <p class="status-msg">Unchecking a provider stops it from being queried on the next ticker-news fetch.</p>
         <div id="feed-checks" style="display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 0.5rem;"></div>
@@ -273,6 +275,10 @@
           <div style="display: flex; align-items: center; gap: 0.35rem;">
             <label for="filter-date" style="font-size: 0.8rem; font-weight: 600; color: #475569; margin: 0;">📅 Date:</label>
             <input type="date" id="filter-date" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid #cbd5e1; outline: none; background: #fff; cursor: pointer;">
+          </div>
+          <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+            <span style="font-size: 0.8rem; font-weight: 600; color: #475569;">📊 Tier:</span>
+            <div id="search-tier-checks" style="display: flex; flex-wrap: wrap; gap: 0.5rem;"></div>
           </div>
           <div style="display: flex; align-items: center; gap: 0.35rem;">
             <label for="filter-provider" style="font-size: 0.8rem; font-weight: 600; color: #475569; margin: 0;">🔌 Provider:</label>
@@ -714,6 +720,47 @@ flowchart TD
       return d.innerHTML;
     }
 
+    const TIER_LABELS = {
+      1: "Tier 1 — Wire & regulators",
+      2: "Tier 2 — Financial media",
+      3: "Tier 3 — Blogs & alt",
+      4: "Tier 4 — Forums & tech",
+    };
+
+    function getCheckedTiers(containerSelector) {
+      const checked = [];
+      $$(`${containerSelector} [data-tier]:checked`).forEach((cb) => {
+        checked.push(parseInt(cb.dataset.tier, 10));
+      });
+      return checked.sort((a, b) => a - b);
+    }
+
+    function renderTierCheckboxes(containerId, activeTiers, onChange) {
+      const el = $(containerId);
+      el.innerHTML = [1, 2, 3, 4].map((tier) => `
+        <label style="display: flex; align-items: center; gap: 0.35rem; font-weight: 400; font-size: 0.85rem;">
+          <input type="checkbox" data-tier="${tier}" ${activeTiers.includes(tier) ? "checked" : ""}>
+          ${escapeHtml(TIER_LABELS[tier])}
+        </label>
+      `).join("");
+      el.querySelectorAll("[data-tier]").forEach((cb) => {
+        cb.addEventListener("change", async () => {
+          const selected = getCheckedTiers(`#${el.id}`);
+          if (!selected.length) {
+            cb.checked = true;
+            showError("At least one tier must remain selected.");
+            return;
+          }
+          try {
+            await onChange(selected);
+          } catch (e) {
+            cb.checked = !cb.checked;
+            showError(e.message);
+          }
+        });
+      });
+    }
+
     async function loadHealth() {
       const h = $("#health");
       const llm = $("#llm-status");
@@ -744,6 +791,10 @@ flowchart TD
       $("#poll-interval").value = data.poll_interval_sec;
       $$(`input[name="llm-analysis-mode"][value="${data.llm_analysis_mode}"]`).forEach((r) => { r.checked = true; });
       $("#llm-analysis-concurrency").value = data.llm_analysis_concurrency;
+      renderTierCheckboxes("settings-tier-checks", data.active_tiers || [1, 2, 3, 4], async (tiers) => {
+        await api("/settings", { method: "PATCH", body: JSON.stringify({ active_tiers: tiers }) });
+        loadFeedChecks();
+      });
     }
 
     async function saveMode(mode) {
@@ -821,18 +872,26 @@ flowchart TD
     }
 
     async function loadFeedChecks() {
-      const data = await api("/feeds?all=true");
+      const [feedData, settingsData] = await Promise.all([
+        api("/feeds?all=true"),
+        api("/settings"),
+      ]);
+      const activeTiers = new Set(settingsData.active_tiers || [1, 2, 3, 4]);
       const el = $("#feed-checks");
-      if (!data.feeds.length) {
+      if (!feedData.feeds.length) {
         el.innerHTML = '<span class="empty">No feeds configured.</span>';
         return;
       }
-      el.innerHTML = data.feeds.map((f) => `
-        <label style="display: flex; align-items: center; gap: 0.4rem; font-weight: 400;">
-          <input type="checkbox" data-feed="${escapeHtml(f.id)}" ${f.enabled ? "checked" : ""}>
-          ${escapeHtml(f.source)} (${escapeHtml(f.category)})
+      el.innerHTML = feedData.feeds.map((f) => {
+        const inactiveTier = !activeTiers.has(f.tier);
+        const style = inactiveTier ? "opacity: 0.45;" : "";
+        return `
+        <label style="display: flex; align-items: center; gap: 0.4rem; font-weight: 400; ${style}">
+          <input type="checkbox" data-feed="${escapeHtml(f.id)}" ${f.enabled ? "checked" : ""} ${inactiveTier ? "disabled" : ""}>
+          ${escapeHtml(f.source)} (${escapeHtml(f.category)}, T${f.tier})
         </label>
-      `).join("");
+      `;
+      }).join("");
       el.querySelectorAll("[data-feed]").forEach((cb) => {
         cb.addEventListener("change", async () => {
           try {
@@ -898,12 +957,16 @@ flowchart TD
     async function loadFilteredLatest() {
       const dateVal = $("#filter-date").value;
       const providerVal = $("#filter-provider").value;
+      const tierVals = getCheckedTiers("#search-tier-checks");
       let url = "/latest?limit=200";
       if (dateVal) {
         url += `&date=${encodeURIComponent(dateVal)}`;
       }
       if (providerVal && providerVal !== "all") {
         url += `&provider=${encodeURIComponent(providerVal)}`;
+      }
+      if (tierVals.length && tierVals.length < 4) {
+        url += `&tiers=${encodeURIComponent(tierVals.join(","))}`;
       }
       try {
         const rows = await api(url);
@@ -1086,9 +1149,18 @@ flowchart TD
       loadFilteredLatest();
     });
 
+    renderTierCheckboxes("search-tier-checks", [1, 2, 3, 4], async () => {
+      $$(".view-toggle button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.view === "latest");
+      });
+      $$(".chip").forEach((c) => c.classList.remove("active"));
+      loadFilteredLatest();
+    });
+
     $("#btn-clear-filters").addEventListener("click", () => {
       $("#filter-date").value = "";
       $("#filter-provider").value = "all";
+      $$("#search-tier-checks [data-tier]").forEach((cb) => { cb.checked = true; });
       loadFilteredLatest();
     });
 

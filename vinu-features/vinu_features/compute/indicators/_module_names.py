@@ -1,0 +1,27 @@
+"""Indicator module names — shared import list."""
+
+INDICATOR_MODULE_NAMES: tuple[str, ...] = (
+    "sma",
+    "rsi",
+    "ema",
+    "macd",
+    "macd_signal",
+    "daily_return",
+    "volatility_20d",
+    "atr",
+    "bollinger",
+    "stochastic",
+    "obv",
+    "vwap",
+    "volume_ratio",
+    "high_low_spread",
+    "open_close_return",
+    "momentum_n",
+    "roc",
+    "cci",
+    "williams_r",
+    "adx",
+    "supertrend",
+    "chaikin_money_flow",
+    "aroon",
+)

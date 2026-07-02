@@ -34,6 +34,7 @@ class StorageBackend(Protocol):
         poll_interval_sec: int | None = None,
         llm_analysis_mode: str | None = None,
         llm_analysis_concurrency: int | None = None,
+        active_tiers: list[int] | None = None,
     ) -> SettingsView: ...
 
     def get_watchlist(self) -> list[str]: ...
@@ -50,7 +51,13 @@ class StorageBackend(Protocol):
 
     def persist_leads(self, leads: list[EnrichedArticle]) -> PersistResult: ...
 
-    def get_latest(self, limit: int = 20) -> list[dict[str, Any]]: ...
+    def get_latest(
+        self,
+        limit: int = 20,
+        date: str | None = None,
+        provider: str | None = None,
+        tiers: list[int] | None = None,
+    ) -> list[dict[str, Any]]: ...
 
     def get_articles_since(self, since_ts: int, limit: int = 100) -> list[dict[str, Any]]: ...
 

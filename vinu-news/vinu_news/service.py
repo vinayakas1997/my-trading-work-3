@@ -164,12 +164,14 @@ class NewsService:
         poll_interval_sec: int | None = None,
         llm_analysis_mode: str | None = None,
         llm_analysis_concurrency: int | None = None,
+        active_tiers: list[int] | None = None,
     ) -> SettingsView:
         return self._storage.patch_settings(
             mode=mode,
             poll_interval_sec=poll_interval_sec,
             llm_analysis_mode=llm_analysis_mode,
             llm_analysis_concurrency=llm_analysis_concurrency,
+            active_tiers=active_tiers,
         )
 
     def get_watchlist(self) -> list[str]:
@@ -209,7 +211,7 @@ class NewsService:
         settings = self._storage.get_settings()
         watchlist = set(self._storage.get_watchlist())
 
-        feeds = load_feeds(feed_ids=feed_ids)
+        feeds = load_feeds(feed_ids=feed_ids, tiers=settings.active_tiers)
         raw_articles, feed_results = poll_all_feeds(feeds)
         feeds_failed = sum(1 for r in feed_results if r.article_count == 0)
 
@@ -411,8 +413,9 @@ class NewsService:
         limit: int = 20,
         date: str | None = None,
         provider: str | None = None,
+        tiers: list[int] | None = None,
     ) -> list[dict[str, Any]]:
-        return self._storage.get_latest(limit, date=date, provider=provider)
+        return self._storage.get_latest(limit, date=date, provider=provider, tiers=tiers)
 
     def get_articles_since(self, since_ts: int, limit: int = 100) -> list[dict[str, Any]]:
         return self._storage.get_articles_since(since_ts, limit)

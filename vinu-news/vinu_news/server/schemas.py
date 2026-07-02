@@ -17,6 +17,7 @@ class SettingsResponse(BaseModel):
     poll_interval_sec: int
     llm_analysis_mode: str
     llm_analysis_concurrency: int
+    active_tiers: list[int]
 
 
 class SettingsPatchRequest(BaseModel):
@@ -24,6 +25,7 @@ class SettingsPatchRequest(BaseModel):
     poll_interval_sec: int | None = Field(default=None, ge=60)
     llm_analysis_mode: str | None = None
     llm_analysis_concurrency: int | None = Field(default=None, ge=1, le=20)
+    active_tiers: list[int] | None = None
 
 
 class WatchlistResponse(BaseModel):

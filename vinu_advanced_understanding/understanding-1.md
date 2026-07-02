@@ -7,6 +7,7 @@ High-level analysis of what to build next, mapped from four reference repositori
 - [`new_level_of_research/new_repos_and_some_understanding.md`](../new_level_of_research/new_repos_and_some_understanding.md) — original AI4Finance blueprint
 - [`vinu-news/README.md`](../vinu-news/README.md) — news ingestion + rule-based enrichment
 - [`vinu-stock-price/README.md`](../vinu-stock-price/README.md) — OHLCV archive, live ingest, query API
+- [`vinu-features/README.md`](../vinu-features/README.md) — preset blueprints, job registry, feature run artifacts (v1)
 - [`personal_understanding/stock_analysis_lifecycle.md`](../personal_understanding/stock_analysis_lifecycle.md) — Fincept Steps 1–5 lifecycle
 - [`understanding-3-data-enhancements.md`](understanding-3-data-enhancements.md) — **Next:** HIGH-priority data layer tasks for vinu-news + vinu-stock-price
 
@@ -322,7 +323,7 @@ Local copies in this workspace (when cloned):
 |-----------|--------|-------------|------------|
 | vinu-news | ✓ Built | FinRobot / Fincept | — |
 | vinu-stock-price | ✓ Built | qlib / FinRL data | — |
-| vinu-features | Not built | qlib | vinu-stock-price |
+| vinu-features | ✓ v1 built | qlib | vinu-stock-price — see [vinu-features/README.md](../vinu-features/README.md) |
 | vinu-agents | Not built | FinRobot | vinu-news |
 | vinu-correlation | Not built | Cross-cutting | vinu-news, vinu-stock-price |
 | vinu-strategy | Not built | FinRL-Trading | vinu-features, vinu-agents |

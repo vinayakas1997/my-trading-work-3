@@ -63,12 +63,14 @@ class SqliteBackend:
         poll_interval_sec: int | None = None,
         llm_analysis_mode: str | None = None,
         llm_analysis_concurrency: int | None = None,
+        active_tiers: list[int] | None = None,
     ) -> SettingsView:
         return self._settings.patch(
             mode=mode,
             poll_interval_sec=poll_interval_sec,
             llm_analysis_mode=llm_analysis_mode,
             llm_analysis_concurrency=llm_analysis_concurrency,
+            active_tiers=active_tiers,
         )
 
     def get_watchlist(self) -> list[str]:
@@ -102,6 +104,7 @@ class SqliteBackend:
         limit: int = 20,
         date: str | None = None,
         provider: str | None = None,
+        tiers: list[int] | None = None,
     ) -> list[dict[str, Any]]:
         query = """
             SELECT a.*, n.analysis_json AS llm_analysis
@@ -116,6 +119,10 @@ class SqliteBackend:
         if provider and provider.lower() != "all":
             query += " AND UPPER(a.source) = ?"
             params.append(provider.upper())
+        if tiers is not None:
+            placeholders = ",".join("?" for _ in tiers)
+            query += f" AND a.tier IN ({placeholders})"
+            params.extend(tiers)
 
         query += " ORDER BY a.sort_ts DESC LIMIT ?"
         params.append(limit)
