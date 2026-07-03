@@ -13,7 +13,6 @@ from typing import Any
 class SymbolCatalogEntry:
     symbol: str
     provider: str
-    interval: str
     first_bar_ts: int | None
     last_bar_ts: int | None
     archive_through: str | None
@@ -28,7 +27,6 @@ class SymbolCatalogEntry:
         return {
             "symbol": self.symbol,
             "provider": self.provider,
-            "interval": self.interval,
             "first_bar_ts": self.first_bar_ts,
             "last_bar_ts": self.last_bar_ts,
             "archive_through": self.archive_through,
@@ -59,7 +57,10 @@ class CatalogStore:
         ]
         for name, typedef in migrations:
             if name not in cols:
-                self._conn.execute(f"ALTER TABLE symbol_catalog ADD COLUMN {name} {typedef}")
+                try:
+                    self._conn.execute(f"ALTER TABLE symbol_catalog ADD COLUMN {name} {typedef}")
+                except sqlite3.OperationalError:
+                    pass
         self._conn.commit()
 
     def get_symbol(self, symbol: str) -> SymbolCatalogEntry | None:
@@ -91,60 +92,35 @@ class CatalogStore:
     ) -> SymbolCatalogEntry:
         sym = symbol.strip().upper()
         now = int(time.time())
-        existing = self.get_symbol(sym)
-        if existing is None:
-            self._conn.execute(
-                """
-                INSERT INTO symbol_catalog (
-                    symbol, provider, first_bar_ts, last_bar_ts,
-                    archive_through, live_file, backfill_status, updated_at,
-                    has_adj_data, gap_count, last_validation_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    sym,
-                    provider or "",
-                    first_bar_ts,
-                    last_bar_ts,
-                    archive_through,
-                    live_file,
-                    backfill_status or "pending",
-                    now,
-                    has_adj_data or 0,
-                    gap_count or 0,
-                    last_validation_at,
-                ),
-            )
-        else:
-            self._conn.execute(
-                """
-                UPDATE symbol_catalog SET
-                    provider = COALESCE(?, provider),
-                    first_bar_ts = COALESCE(?, first_bar_ts),
-                    last_bar_ts = COALESCE(?, last_bar_ts),
-                    archive_through = COALESCE(?, archive_through),
-                    live_file = COALESCE(?, live_file),
-                    backfill_status = COALESCE(?, backfill_status),
-                    has_adj_data = COALESCE(?, has_adj_data),
-                    gap_count = COALESCE(?, gap_count),
-                    last_validation_at = COALESCE(?, last_validation_at),
-                    updated_at = ?
-                WHERE symbol = ?
-                """,
-                (
-                    provider,
-                    first_bar_ts,
-                    last_bar_ts,
-                    archive_through,
-                    live_file,
-                    backfill_status,
-                    has_adj_data,
-                    gap_count,
-                    last_validation_at,
-                    now,
-                    sym,
-                ),
-            )
+        self._conn.execute(
+            """
+            INSERT INTO symbol_catalog (
+                symbol, provider, first_bar_ts, last_bar_ts,
+                archive_through, live_file, backfill_status, updated_at,
+                has_adj_data, gap_count, last_validation_at
+            ) VALUES (?, COALESCE(?, ''), ?, ?, ?, ?, COALESCE(?, 'pending'), ?, COALESCE(?, 0), COALESCE(?, 0), ?)
+            ON CONFLICT(symbol) DO UPDATE SET
+                provider = COALESCE(?, provider),
+                first_bar_ts = COALESCE(?, first_bar_ts),
+                last_bar_ts = COALESCE(?, last_bar_ts),
+                archive_through = COALESCE(?, archive_through),
+                live_file = COALESCE(?, live_file),
+                backfill_status = COALESCE(?, backfill_status),
+                has_adj_data = COALESCE(?, has_adj_data),
+                gap_count = COALESCE(?, gap_count),
+                last_validation_at = COALESCE(?, last_validation_at),
+                updated_at = ?
+            """,
+            (
+                sym, provider, first_bar_ts, last_bar_ts,
+                archive_through, live_file, backfill_status,
+                now, has_adj_data, gap_count, last_validation_at,
+                provider, first_bar_ts, last_bar_ts,
+                archive_through, live_file, backfill_status,
+                has_adj_data, gap_count, last_validation_at,
+                now,
+            ),
+        )
         self._conn.commit()
         return self.get_symbol(sym)  # type: ignore[return-value]
 
@@ -257,7 +233,6 @@ class CatalogStore:
         return SymbolCatalogEntry(
             symbol=row["symbol"],
             provider=row["provider"] or "",
-            interval=row["interval"] or "1m",
             first_bar_ts=row["first_bar_ts"],
             last_bar_ts=row["last_bar_ts"],
             archive_through=row["archive_through"],

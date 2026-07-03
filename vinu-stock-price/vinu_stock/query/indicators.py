@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections import deque
 from typing import Sequence
 
 SUPPORTED_INDICATORS = frozenset(
@@ -145,13 +146,28 @@ def _daily_return(values: list[float]) -> list[float | None]:
 
 def _rolling_std(values: list[float | None], period: int) -> list[float | None]:
     result: list[float | None] = [None] * len(values)
-    for i in range(period, len(values)):
-        window = [v for v in values[i - period + 1 : i + 1] if v is not None]
-        if len(window) < period:
-            continue
-        mean = sum(window) / period
-        var = sum((x - mean) ** 2 for x in window) / period
-        result[i] = math.sqrt(var)
+    if len(values) < period:
+        return result
+    cnt = 0
+    total = 0.0
+    total_sq = 0.0
+    window: deque[float | None] = deque()
+    for i, v in enumerate(values):
+        if i >= period:
+            old = window.popleft()
+            if old is not None:
+                cnt -= 1
+                total -= old
+                total_sq -= old * old
+        window.append(v)
+        if v is not None:
+            cnt += 1
+            total += v
+            total_sq += v * v
+        if i >= period - 1 and cnt == period:
+            mean = total / period
+            var = total_sq / period - mean * mean
+            result[i] = math.sqrt(max(var, 0.0))
     return result
 
 

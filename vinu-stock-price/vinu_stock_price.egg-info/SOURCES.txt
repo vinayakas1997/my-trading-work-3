@@ -42,6 +42,8 @@ vinu_stock/server/routes_config.py
 vinu_stock/server/routes_read.py
 vinu_stock/server/schemas.py
 vinu_stock/server/static/index.html
+vinu_stock/server/static/assets/index-BM4hP_ta.css
+vinu_stock/server/static/assets/index-CGs8OYR_.js
 vinu_stock/settings/__init__.py
 vinu_stock/settings/schema.sql
 vinu_stock/settings/store.py

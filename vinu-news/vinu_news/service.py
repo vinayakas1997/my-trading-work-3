@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
+import queue
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,6 +24,85 @@ from vinu_news.storage.factory import create_storage
 from vinu_news.net import request as http_request
 
 LOG = logging.getLogger(__name__)
+
+
+class AutoAnalysisWorker:
+    """Thread-safe background worker for LLM analysis with rate limiting.
+    
+    Uses a fixed pool of worker threads that pull from a shared queue,
+    preventing LLM overload and providing predictable resource usage.
+    """
+    
+    def __init__(
+        self,
+        db_path: Path,
+        config: VinuConfig,
+        concurrency: int,
+        queue_maxsize: int = 1000,
+    ):
+        self.db_path = db_path
+        self.config = config
+        self.concurrency = max(1, concurrency)
+        self.queue: queue.Queue[str] = queue.Queue(maxsize=queue_maxsize)
+        self.running = False
+        self.workers: list[threading.Thread] = []
+        
+        # Start worker threads
+        self._start_workers()
+    
+    def _start_workers(self) -> None:
+        """Start fixed pool of worker threads."""
+        self.running = True
+        for _ in range(self.concurrency):
+            worker = threading.Thread(
+                target=self._worker_loop,
+                daemon=True,
+                name=f"llm-analysis-worker",
+            )
+            worker.start()
+            self.workers.append(worker)
+    
+    def _worker_loop(self) -> None:
+        """Worker loop: pull links from queue and analyze."""
+        from vinu_news.analysis.llm.analyze import analyze_article
+        from vinu_news.analysis.storage.repository import NewsRepository
+        
+        while self.running:
+            try:
+                # Wait for work with timeout to allow graceful shutdown
+                link = self.queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            
+            try:
+                repo = NewsRepository(self.db_path)
+                try:
+                    analyze_article(repo, link, config=self.config)
+                finally:
+                    repo.close()
+            except Exception:
+                LOG.warning("Auto LLM analysis failed for %s", link, exc_info=True)
+            finally:
+                self.queue.task_done()
+    
+    def submit(self, link: str) -> bool:
+        """Submit a link for analysis. Returns False if queue is full."""
+        try:
+            self.queue.put_nowait(link)
+            return True
+        except queue.Full:
+            LOG.warning("Analysis queue full, skipping analysis for %s", link)
+            return False
+    
+    def shutdown(self) -> None:
+        """Gracefully shutdown workers."""
+        self.running = False
+        # Wait for queue to drain
+        self.queue.join()
+        # Wait for workers to finish
+        for worker in self.workers:
+            worker.join(timeout=5.0)
+        self.workers.clear()
 
 
 def _run_auto_analysis_batch(
@@ -113,11 +192,31 @@ class NewsService:
             database_url=self._config.database_url,
         )
         self._owns_storage = storage is None
+        self._stock_client_instance: Any | None = None
+        self._auto_analysis_worker: AutoAnalysisWorker | None = None
+
+        # Initialize auto-analysis worker from DB settings (with env fallback)
+        try:
+            db_settings = self._storage.get_settings()
+            llm_analysis_mode = db_settings.llm_analysis_mode
+            llm_analysis_concurrency = db_settings.llm_analysis_concurrency
+        except Exception:
+            llm_analysis_mode = self._config.llm_analysis_mode
+            llm_analysis_concurrency = self._config.llm_analysis_concurrency
+
+        if llm_analysis_mode == "auto":
+            self._auto_analysis_worker = AutoAnalysisWorker(
+                db_path=self._config.db_path,
+                config=self._config,
+                concurrency=llm_analysis_concurrency,
+            )
 
     def _stock_client(self):
-        from vinu_news.integrations.stock_price import StockPriceClient
+        if self._stock_client_instance is None:
+            from vinu_news.integrations.stock_price import StockPriceClient
 
-        return StockPriceClient(self._config.stock_api_url)
+            self._stock_client_instance = StockPriceClient(self._config.stock_api_url)
+        return self._stock_client_instance
 
     def _maybe_auto_analyze(self, links: list[str], settings: SettingsView) -> None:
         if not links or settings.llm_analysis_mode != "auto":
@@ -126,12 +225,14 @@ class NewsService:
 
         if not LlmClient(self._config).is_configured():
             return
-        thread = threading.Thread(
-            target=_run_auto_analysis_batch,
-            args=(self._config.db_path, self._config, links, settings.llm_analysis_concurrency),
-            daemon=True,
-        )
-        thread.start()
+        if self._auto_analysis_worker is None:
+            return
+
+        # Submit links to the shared analysis queue
+        for link in links:
+            if not self._auto_analysis_worker.submit(link):
+                LOG.warning("Analysis queue full, skipping analysis for remaining links")
+                break
 
     def _enrich_with_price_reaction(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         from vinu_news.analysis.post_enrichment.price_reaction import enrich_article_with_reaction
@@ -147,6 +248,11 @@ class NewsService:
     def close(self) -> None:
         if self._owns_storage:
             self._storage.close()
+        if self._stock_client_instance is not None:
+            self._stock_client_instance.close()
+        if self._auto_analysis_worker is not None:
+            self._auto_analysis_worker.shutdown()
+            self._auto_analysis_worker = None
 
     def __enter__(self) -> NewsService:
         return self
@@ -166,13 +272,28 @@ class NewsService:
         llm_analysis_concurrency: int | None = None,
         active_tiers: list[int] | None = None,
     ) -> SettingsView:
-        return self._storage.patch_settings(
+        result = self._storage.patch_settings(
             mode=mode,
             poll_interval_sec=poll_interval_sec,
             llm_analysis_mode=llm_analysis_mode,
             llm_analysis_concurrency=llm_analysis_concurrency,
             active_tiers=active_tiers,
         )
+
+        # If auto-analysis was enabled at runtime, start the worker
+        if llm_analysis_mode == "auto" and self._auto_analysis_worker is None:
+            self._auto_analysis_worker = AutoAnalysisWorker(
+                db_path=self._config.db_path,
+                config=self._config,
+                concurrency=result.llm_analysis_concurrency,
+            )
+
+        # If auto-analysis was disabled at runtime, shut down the worker
+        if llm_analysis_mode == "manual" and self._auto_analysis_worker is not None:
+            self._auto_analysis_worker.shutdown()
+            self._auto_analysis_worker = None
+
+        return result
 
     def get_poll_status(self) -> PollStatusView:
         return self._storage.get_poll_status()
@@ -209,51 +330,77 @@ class NewsService:
     def run_ingestion_cycle(
         self,
         *,
+        source: str = "rss",
         feed_ids: list[str] | None = None,
+        tickers: list[str] | None = None,
+        days: int = 7,
         dry_run: bool = False,
-        skip_post_process: bool = False,
     ) -> IngestionCycleResult:
-        """Fetch RSS, enrich, filter by mode, persist leads."""
+        """Unified ingestion from RSS feeds or ticker-news providers.
+
+        Args:
+            source: "rss" (default) for RSS feeds, "ticker_news" for Yahoo ticker news.
+            feed_ids: RSS feed IDs to poll (None = all active tiers).
+            tickers: Tickers for ticker_news source (None = use watchlist).
+            days: Lookback days for ticker_news source.
+            dry_run: Report counts without persisting.
+        """
         settings = self._storage.get_settings()
         watchlist = set(self._storage.get_watchlist())
 
-        feeds = load_feeds(feed_ids=feed_ids, tiers=settings.active_tiers)
-        raw_articles, feed_results = poll_all_feeds(feeds)
-        feeds_failed = sum(1 for r in feed_results if r.article_count == 0)
+        # --- Fetch phase (source-specific) ---
+        if source == "rss":
+            feeds = load_feeds(feed_ids=feed_ids, tiers=settings.active_tiers)
+            raw_articles, feed_results = poll_all_feeds(feeds)
+            feeds_polled = len(feeds)
+            feeds_failed = sum(1 for r in feed_results if r.article_count == 0)
+        elif source == "ticker_news":
+            active_tickers = tickers or self._storage.get_watchlist()
+            if not active_tickers:
+                return IngestionCycleResult(
+                    feeds_polled=0, feeds_failed=0, raw_count=0,
+                    enriched_count=0, leads_before_filter=0, leads_after_filter=0,
+                    inserted=0, clusters_found=0, duplicates_dropped=0,
+                    url_dedup_dropped=0, url_skipped=0, thread_matched_skipped=0,
+                    threads_created=0, threads_updated=0,
+                    mode=settings.mode, watchlist_size=0, feed_results=[],
+                )
+            from_ts = self.ts_days_ago(days)
+            to_ts = int(datetime.now(timezone.utc).timestamp())
+            registry = TickerNewsRegistry(self._config)
+            raw_articles: list[dict] = []
+            for symbol in active_tickers:
+                raw_articles.extend(registry.fetch_for_ticker(symbol, from_ts, to_ts))
+            feed_results: list[FeedPollResult] = []
+            feeds_polled = len(active_tickers)
+            feeds_failed = 0
+        else:
+            raise ValueError(f"Unknown source: {source}. Use 'rss' or 'ticker_news'.")
 
         if dry_run:
             return IngestionCycleResult(
-                feeds_polled=len(feeds),
-                feeds_failed=feeds_failed,
-                raw_count=len(raw_articles),
-                enriched_count=0,
-                leads_before_filter=0,
-                leads_after_filter=0,
-                inserted=0,
-                clusters_found=0,
-                duplicates_dropped=0,
-                url_dedup_dropped=0,
-                url_skipped=0,
-                thread_matched_skipped=0,
-                threads_created=0,
-                threads_updated=0,
-                mode=settings.mode,
-                watchlist_size=len(watchlist),
-                feed_results=feed_results,
+                feeds_polled=feeds_polled, feeds_failed=feeds_failed,
+                raw_count=len(raw_articles), enriched_count=0,
+                leads_before_filter=0, leads_after_filter=0, inserted=0,
+                clusters_found=0, duplicates_dropped=0, url_dedup_dropped=0,
+                url_skipped=0, thread_matched_skipped=0, threads_created=0,
+                threads_updated=0, mode=settings.mode,
+                watchlist_size=len(watchlist), feed_results=feed_results,
             )
 
-        update_feed_health(self._storage.repo, feed_results)
+        # RSS-specific post-fetch
+        if source == "rss":
+            update_feed_health(self._storage.repo, feed_results)
 
+        # --- Enrichment, filter, persist (shared) ---
         result = process_batch(
             raw_articles,
-            skip_post_process=skip_post_process,
             watchlist=watchlist,
         )
         leads = result.articles
         leads_before = len(leads)
 
-        if not skip_post_process:
-            leads = filter_leads_for_mode(leads, settings.mode, watchlist)
+        leads = filter_leads_for_mode(leads, settings.mode, watchlist)
 
         leads_after = len(leads)
         inserted = 0
@@ -262,104 +409,6 @@ class NewsService:
         threads_created = 0
         threads_updated = 0
 
-        if leads:
-            if skip_post_process:
-                inserted = self._storage.repo.upsert_batch(leads)
-            else:
-                persist_result = self._storage.persist_leads(leads)
-                inserted = persist_result.inserted
-                url_skipped = persist_result.url_skipped
-                thread_matched_skipped = persist_result.thread_matched_skipped
-                threads_created = persist_result.threads_created
-                threads_updated = persist_result.threads_updated
-                self._maybe_auto_analyze(persist_result.inserted_links, settings)
-
-        return IngestionCycleResult(
-            feeds_polled=len(feeds),
-            feeds_failed=feeds_failed,
-            raw_count=len(raw_articles),
-            enriched_count=result.enriched_count,
-            leads_before_filter=leads_before,
-            leads_after_filter=leads_after,
-            inserted=inserted,
-            clusters_found=result.clusters_found,
-            duplicates_dropped=result.duplicates_dropped,
-            url_dedup_dropped=result.url_dedup_dropped,
-            url_skipped=url_skipped,
-            thread_matched_skipped=thread_matched_skipped,
-            threads_created=threads_created,
-            threads_updated=threads_updated,
-            mode=settings.mode,
-            watchlist_size=len(watchlist),
-            feed_results=feed_results,
-        )
-
-    def run_ticker_news_ingest(
-        self,
-        *,
-        tickers: list[str] | None = None,
-        days: int = 7,
-        dry_run: bool = False,
-    ) -> IngestionCycleResult:
-        """Fetch ticker-specific headlines and persist through enrichment pipeline."""
-        settings = self._storage.get_settings()
-        watchlist = tickers or self._storage.get_watchlist()
-        if not watchlist:
-            return IngestionCycleResult(
-                feeds_polled=0,
-                feeds_failed=0,
-                raw_count=0,
-                enriched_count=0,
-                leads_before_filter=0,
-                leads_after_filter=0,
-                inserted=0,
-                clusters_found=0,
-                duplicates_dropped=0,
-                url_dedup_dropped=0,
-                url_skipped=0,
-                thread_matched_skipped=0,
-                threads_created=0,
-                threads_updated=0,
-                mode=settings.mode,
-                watchlist_size=0,
-                feed_results=[],
-            )
-
-        from_ts = self.ts_days_ago(days)
-        to_ts = int(datetime.now(timezone.utc).timestamp())
-        registry = TickerNewsRegistry(self._config)
-        raw_articles: list[dict] = []
-        for symbol in watchlist:
-            raw_articles.extend(registry.fetch_for_ticker(symbol, from_ts, to_ts))
-
-        if dry_run:
-            return IngestionCycleResult(
-                feeds_polled=len(watchlist),
-                feeds_failed=0,
-                raw_count=len(raw_articles),
-                enriched_count=0,
-                leads_before_filter=0,
-                leads_after_filter=0,
-                inserted=0,
-                clusters_found=0,
-                duplicates_dropped=0,
-                url_dedup_dropped=0,
-                url_skipped=0,
-                thread_matched_skipped=0,
-                threads_created=0,
-                threads_updated=0,
-                mode=settings.mode,
-                watchlist_size=len(watchlist),
-                feed_results=[],
-            )
-
-        result = process_batch(raw_articles, watchlist=set(watchlist))
-        leads = filter_leads_for_mode(result.articles, settings.mode, set(watchlist))
-        inserted = 0
-        url_skipped = 0
-        thread_matched_skipped = 0
-        threads_created = 0
-        threads_updated = 0
         if leads:
             persist_result = self._storage.persist_leads(leads)
             inserted = persist_result.inserted
@@ -370,23 +419,30 @@ class NewsService:
             self._maybe_auto_analyze(persist_result.inserted_links, settings)
 
         return IngestionCycleResult(
-            feeds_polled=len(watchlist),
-            feeds_failed=0,
-            raw_count=len(raw_articles),
-            enriched_count=result.enriched_count,
-            leads_before_filter=len(result.articles),
-            leads_after_filter=len(leads),
-            inserted=inserted,
-            clusters_found=result.clusters_found,
+            feeds_polled=feeds_polled, feeds_failed=feeds_failed,
+            raw_count=len(raw_articles), enriched_count=result.enriched_count,
+            leads_before_filter=leads_before, leads_after_filter=leads_after,
+            inserted=inserted, clusters_found=result.clusters_found,
             duplicates_dropped=result.duplicates_dropped,
             url_dedup_dropped=result.url_dedup_dropped,
             url_skipped=url_skipped,
             thread_matched_skipped=thread_matched_skipped,
-            threads_created=threads_created,
-            threads_updated=threads_updated,
-            mode=settings.mode,
-            watchlist_size=len(watchlist),
-            feed_results=[],
+            threads_created=threads_created, threads_updated=threads_updated,
+            mode=settings.mode, watchlist_size=len(watchlist),
+            feed_results=feed_results,
+        )
+
+    # Backward-compatible wrapper for ticker_news source
+    def run_ticker_news_ingest(
+        self,
+        *,
+        tickers: list[str] | None = None,
+        days: int = 7,
+        dry_run: bool = False,
+    ) -> IngestionCycleResult:
+        """Fetch ticker-specific headlines. Delegates to run_ingestion_cycle."""
+        return self.run_ingestion_cycle(
+            source="ticker_news", tickers=tickers, days=days, dry_run=dry_run,
         )
 
     def health(self) -> dict[str, Any]:

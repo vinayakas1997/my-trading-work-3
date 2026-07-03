@@ -40,13 +40,10 @@ class FeatureWorker:
 
     def process_pending(self, *, limit: int = 1) -> list[FeatureRequest]:
         results: list[FeatureRequest] = []
-        for _ in range(max(1, limit)):
-            pending = self.storage.claim_next_pending()
-            if pending is None or pending.id is None:
-                break
-            running = self.storage.mark_running(pending.id)
+        for _ in range(limit):
+            running = self.storage.claim_next_pending()
             if running is None:
-                continue
+                break
             results.append(self._execute(running))
         return results
 

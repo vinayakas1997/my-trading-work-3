@@ -33,13 +33,21 @@ def ema(values: list[float], span: int) -> list[float]:
 
 def rolling_std(values: list[float | None], period: int) -> list[float | None]:
     result: list[float | None] = [None] * len(values)
-    for i in range(period, len(values)):
-        window = [v for v in values[i - period + 1 : i + 1] if v is not None]
-        if len(window) < period:
+    if period <= 0:
+        return result
+    window: list[float] = []
+    for i, v in enumerate(values):
+        if v is not None:
+            window.append(v)
+        else:
+            window.clear()
             continue
-        mean = sum(window) / period
-        var = sum((x - mean) ** 2 for x in window) / period
-        result[i] = math.sqrt(var)
+        if len(window) > period:
+            window.pop(0)
+        if len(window) == period:
+            mean = sum(window) / period
+            var = sum((x - mean) ** 2 for x in window) / period
+            result[i] = math.sqrt(var)
     return result
 
 

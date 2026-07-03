@@ -6,6 +6,7 @@ import hashlib
 import json
 from typing import Any
 
+from vinu_news.analysis.config.settings_loader import get_settings
 from vinu_news.analysis.enrichment.article_splitter import build_ticker_mentions
 from vinu_news.analysis.enrichment.category import refine_category
 from vinu_news.analysis.enrichment.impact import classify_impact
@@ -21,9 +22,12 @@ from vinu_news.analysis.storage.models import ArticleRecord, EnrichedArticle
 from vinu_news.analysis.storage.repository import parse_pub_date
 
 
-def article_id_from_link(link: str) -> str:
-    """Generate stable article id from URL."""
-    return hashlib.sha256(link.encode("utf-8")).hexdigest()
+def article_id_from_link(link: str, headline: str = "", ts: int = 0) -> str:
+    """Generate stable article id from URL with headline+ts as collision salt."""
+    raw = link
+    if headline:
+        raw = f"{link}:{headline}:{ts}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def enrich_article(
@@ -43,17 +47,41 @@ def enrich_article(
     region = raw.get("region", "GLOBAL")
     tier = int(raw.get("tier", 4))
     feed_category = raw.get("category", "MARKETS")
+    settings = get_settings().enrichment
 
-    cleaned_summary = clean_summary(summary_raw)
+    if settings.summary_clean:
+        cleaned_summary = clean_summary(summary_raw)
+    else:
+        cleaned_summary = summary_raw
     combined = f"{headline} {cleaned_summary}"
 
-    priority = classify_priority(combined)
-    sentiment_result = score_sentiment(combined)
-    sentiment = sentiment_result["sentiment"]
-    sentiment_score = sentiment_result["sentiment_score"]
-    impact = classify_impact(priority, sentiment_score)
-    category = refine_category(combined, default=feed_category)
-    tickers = extract_tickers(headline, cleaned_summary, watchlist=watchlist)
+    if settings.priority:
+        priority = classify_priority(combined)
+    else:
+        priority = "NORMAL"
+
+    if settings.sentiment:
+        sentiment_result = score_sentiment(combined)
+        sentiment = sentiment_result["sentiment"]
+        sentiment_score = sentiment_result["sentiment_score"]
+    else:
+        sentiment = "NEUTRAL"
+        sentiment_score = 0
+
+    if settings.impact:
+        impact = classify_impact(priority, sentiment_score)
+    else:
+        impact = "LOW"
+
+    if settings.category:
+        category = refine_category(combined, default=feed_category)
+    else:
+        category = feed_category
+
+    if settings.tickers:
+        tickers = extract_tickers(headline, cleaned_summary, watchlist=watchlist)
+    else:
+        tickers = []
 
     # Propagate provider ticker if present
     provider_ticker = raw.get("ticker")
@@ -62,12 +90,24 @@ def enrich_article(
         if provider_ticker_upper not in tickers:
             tickers.append(provider_ticker_upper)
 
-    lang = detect_language(headline)
-    threat = classify_threat(combined, sentiment)
-    source_flag = check_source_flag(source)
+    if settings.language:
+        lang = detect_language(headline)
+    else:
+        lang = "en"
+
+    if settings.threat:
+        threat = classify_threat(combined, sentiment)
+    else:
+        threat = {"threat_level": "NONE", "threat_cat": "", "threat_conf": 0.0}
+
+    if settings.source_flag:
+        source_flag = check_source_flag(source)
+    else:
+        source_flag = 0
+
     sort_ts = parse_pub_date(raw.get("pubDate", ""))
 
-    article_id = article_id_from_link(link) if link else hashlib.sha256(
+    article_id = article_id_from_link(link, headline=headline, ts=sort_ts) if link else hashlib.sha256(
         f"{headline}:{sort_ts}".encode()
     ).hexdigest()
 
@@ -96,7 +136,11 @@ def enrich_article(
         is_lead=1,
     )
 
-    dominance = compute_dominance(tickers, headline, cleaned_summary)
+    if settings.ticker_dominance:
+        dominance = compute_dominance(tickers, headline, cleaned_summary)
+    else:
+        dominance = {}
+
     mentions = build_ticker_mentions(article_id, dominance)
 
     return EnrichedArticle(article=record, mentions=mentions)

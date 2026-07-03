@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from vinu_features.compute.feature_catalog import format_help, indicator_meta_to_dict, list_indicators
+from vinu_features.compute.feature_catalog import format_help, get_indicator, indicator_meta_to_dict, list_indicators
 from vinu_features.server.schemas import FeatureCatalogResponse, IndicatorMetaOut
 
 router = APIRouter(tags=["catalog"])
@@ -18,8 +18,6 @@ def list_features() -> FeatureCatalogResponse:
 
 @router.get("/features/{kind}", response_model=IndicatorMetaOut)
 def get_feature(kind: str) -> IndicatorMetaOut:
-    from vinu_features.compute.feature_catalog import get_indicator
-
     try:
         meta = get_indicator(kind)
     except ValueError as exc:

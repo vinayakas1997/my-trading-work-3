@@ -10,6 +10,7 @@ import requests
 from vinu_stock.config import VinuStockConfig, load_config
 from vinu_stock.providers.base import EarliestResult, FetchBarsResult
 from vinu_stock.providers.config.settings import REQUEST_TIMEOUT_SEC
+from vinu_stock.providers.retry import http_get_with_retry
 from vinu_stock.storage.models import BarRecord
 
 LOG = logging.getLogger(__name__)
@@ -57,10 +58,9 @@ class AlpacaProvider:
             while True:
                 if page_token:
                     params["page_token"] = page_token
-                resp = requests.get(
+                resp = http_get_with_retry(
                     url, params=params, headers=self._headers(), timeout=REQUEST_TIMEOUT_SEC
                 )
-                resp.raise_for_status()
                 data = resp.json()
                 for row in (data.get("bars") or {}).get(sym) or []:
                     ts = row.get("t", "")

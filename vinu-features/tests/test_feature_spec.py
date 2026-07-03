@@ -8,6 +8,7 @@ from vinu_features.compute.feature_spec import validate_and_resolve
 from vinu_features.compute.registry import apply_indicators
 from vinu_features.server.app import create_app
 from vinu_features.service import FeatureService
+from tests.conftest import MockCandleClient
 
 
 def test_feature_catalog_lists_all_indicators():
@@ -77,29 +78,8 @@ def test_error_suggests_help_for_typo():
         validate_and_resolve(["rsii:period=14"])
 
 
-class _MockCandles:
-    def fetch_candles(self, symbol, *, interval, from_ts, to_ts, limit=50000):
-        ts = from_ts or 1_700_000_000
-        end = to_ts or ts + 86400 * 30
-        rows = []
-        while ts <= end:
-            price = 100.0
-            rows.append(
-                {
-                    "ts": ts,
-                    "open": price,
-                    "high": price,
-                    "low": price,
-                    "close": price,
-                    "volume": 1,
-                }
-            )
-            ts += 86400
-        return rows
-
-
 def test_http_invalid_spec_returns_400_with_message(config, backend):
-    service = FeatureService(config=config, storage=backend, candle_client=_MockCandles())
+    service = FeatureService(config=config, storage=backend, candle_client=MockCandleClient())
     client = TestClient(create_app(service))
     resp = client.post(
         "/requests",
@@ -117,7 +97,7 @@ def test_http_invalid_spec_returns_400_with_message(config, backend):
 
 
 def test_http_features_catalog(config, backend):
-    service = FeatureService(config=config, storage=backend, candle_client=_MockCandles())
+    service = FeatureService(config=config, storage=backend, candle_client=MockCandleClient())
     client = TestClient(create_app(service))
     resp = client.get("/features")
     assert resp.status_code == 200

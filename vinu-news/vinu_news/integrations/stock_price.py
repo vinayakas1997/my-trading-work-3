@@ -16,6 +16,16 @@ class StockPriceClient:
     def __init__(self, base_url: str, *, timeout: float = 10.0) -> None:
         self._base = base_url.rstrip("/")
         self._timeout = timeout
+        self._session = requests.Session()
+
+    def __enter__(self) -> "StockPriceClient":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self._session.close()
+
+    def close(self) -> None:
+        self._session.close()
 
     def get_candles(
         self,
@@ -38,4 +48,4 @@ class StockPriceClient:
             return list(body.get("data") or [])
         except requests.RequestException as exc:
             LOG.warning("Stock price API unavailable: %s", exc)
-            return []
+            raise

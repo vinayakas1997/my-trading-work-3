@@ -75,7 +75,14 @@ def run_backfill(
 
     for sym in summary.symbols:
         catalog.upsert_symbol(sym, backfill_status="partial")
-        start_year = from_year if from_year is not None else _discover_first_year(sym, registry)
+        if from_year is not None:
+            start_year = from_year
+        else:
+            entry = catalog.get_symbol(sym)
+            if entry and entry.first_bar_ts is not None:
+                start_year = datetime.fromtimestamp(entry.first_bar_ts, tz=timezone.utc).year
+            else:
+                start_year = _discover_first_year(sym, registry)
         if start_year > end_year:
             catalog.upsert_symbol(sym, backfill_status="complete")
             continue

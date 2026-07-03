@@ -41,7 +41,7 @@ def run_year_job(
     out_path = archive_year_path(data_root, sym, year)
     row_count = parquet.write_bars(out_path, result.bars, merge=True)
     catalog.update_bar_range(sym, result.bars, provider=provider_id)
-    has_adj = 1 if provider_id == "yahoo" and any(b.adj_factor != 1.0 for b in result.bars) else 0
+    has_adj = 1 if any(b.adj_factor != 1.0 for b in result.bars) else 0
     gap_count = count_session_gaps([b.bar_ts for b in result.bars])
     now = int(datetime.now(timezone.utc).timestamp())
     catalog.upsert_symbol(

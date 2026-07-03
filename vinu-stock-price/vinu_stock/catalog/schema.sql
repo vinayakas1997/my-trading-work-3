@@ -1,7 +1,6 @@
 CREATE TABLE IF NOT EXISTS symbol_catalog (
     symbol            TEXT PRIMARY KEY,
     provider          TEXT NOT NULL DEFAULT '',
-    interval          TEXT NOT NULL DEFAULT '1m',
     first_bar_ts      INTEGER,
     last_bar_ts       INTEGER,
     archive_through   TEXT,

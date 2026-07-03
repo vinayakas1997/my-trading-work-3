@@ -305,7 +305,5 @@ def get_mappings_for_tickers(
 
 
 def load_ticker_mappings() -> tuple[dict[str, str], dict[str, list[str]]]:
-    """For backwards compatibility, load mappings for default major tickers."""
-    from vinu_news.analysis.enrichment.ticker_extractor import DEFAULT_MAJOR_TICKERS
-
-    return get_mappings_for_tickers(DEFAULT_MAJOR_TICKERS)
+    """For backwards compatibility, load mappings for common tickers."""
+    return get_mappings_for_tickers({"AAPL", "GOOGL", "GOOG", "MSFT", "AMZN", "NVDA", "TSLA", "META", "NFLX"})

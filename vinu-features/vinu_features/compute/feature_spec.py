@@ -25,6 +25,11 @@ class FeatureSpec:
     params: dict[str, int | float]
 
 
+@dataclass(frozen=True)
+class RecipeRef:
+    name: str
+
+
 def _parse_spec_string(raw: str) -> FeatureSpec | str:
     text = raw.strip()
     if not text:
@@ -52,7 +57,7 @@ def _parse_spec_string(raw: str) -> FeatureSpec | str:
     return FeatureSpec(kind=kind, params=params)
 
 
-def parse_feature_input(raw: str | dict[str, Any]) -> FeatureSpec | str:
+def parse_feature_input(raw: str | dict[str, Any]) -> FeatureSpec | RecipeRef | str:
     if isinstance(raw, dict):
         kind = str(raw.get("kind", "")).strip().lower()
         if not kind:
@@ -62,8 +67,9 @@ def parse_feature_input(raw: str | dict[str, Any]) -> FeatureSpec | str:
             raise ValueError("Feature spec 'params' must be an object")
         return FeatureSpec(kind=kind, params=dict(params))
     if isinstance(raw, str):
-        if recipe_catalog.is_recipe(raw.strip().lower()):
-            return raw.strip().lower()
+        stripped = raw.strip().lower()
+        if recipe_catalog.is_recipe(stripped):
+            return RecipeRef(name=stripped)
         return _parse_spec_string(raw)
     raise ValueError(f"Invalid feature input type: {type(raw).__name__}")
 
@@ -123,11 +129,11 @@ def _indicator_meta_modules() -> list[Any]:
 
 def resolve_one(raw: str | dict[str, Any]) -> list[str]:
     parsed = parse_feature_input(raw)
-    if isinstance(parsed, str):
-        if recipe_catalog.is_recipe(parsed):
-            return list(recipe_catalog.resolve(parsed))
-        return [_resolve_legacy_string(parsed)]
-    return _resolve_spec(parsed)
+    if isinstance(parsed, RecipeRef):
+        return list(recipe_catalog.resolve(parsed.name))
+    if isinstance(parsed, FeatureSpec):
+        return _resolve_spec(parsed)
+    return [_resolve_legacy_string(parsed)]
 
 
 def validate_and_resolve(inputs: list[str | dict[str, Any]]) -> list[str]:

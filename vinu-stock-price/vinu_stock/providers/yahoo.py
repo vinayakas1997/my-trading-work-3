@@ -15,13 +15,6 @@ from vinu_stock.storage.models import BarRecord
 LOG = logging.getLogger(__name__)
 
 
-def _symbol_to_yahoo(symbol: str) -> str:
-    s = symbol.strip().upper()
-    if "." in s or "/" in s or "-" in s:
-        return s
-    return f"{s}"
-
-
 class YahooProvider:
     provider_id = "yahoo"
 
@@ -36,7 +29,7 @@ class YahooProvider:
         *,
         interval: str = "1m",
     ) -> FetchBarsResult:
-        yahoo_sym = _symbol_to_yahoo(symbol)
+        yahoo_sym = symbol.strip().upper()
         yahoo_interval = "1m" if interval == "1m" else "1d"
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_sym}"
         params = {

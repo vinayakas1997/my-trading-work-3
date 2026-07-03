@@ -28,11 +28,11 @@ def test_duplicate_cluster_drops_one():
     assert result.clusters_found == 2
 
 
-def test_skip_post_process_keeps_all():
+def test_post_process_deduplicates_similar():
     raw_list = [
         _raw("Fed raises interest rates", "https://ex.com/x"),
         _raw("Fed raises interest rates again", "https://ex.com/y"),
     ]
-    result = process_batch(raw_list, skip_post_process=True)
-    assert len(result.articles) == 2
-    assert result.post_process_applied is False
+    result = process_batch(raw_list)
+    assert len(result.articles) == 1
+    assert result.post_process_applied is True

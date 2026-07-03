@@ -46,11 +46,11 @@ class StockService:
         self._owns_backend = backend is None
         self._registry = ProviderRegistry(self._config)
         self._duckdb_conn = duckdb.connect()
+        self._data_root: Path = Path(self._backend.get_settings().data_root)
 
     @property
     def data_root(self) -> Path:
-        settings = self._backend.get_settings()
-        return Path(settings.data_root)
+        return self._data_root
 
     def close(self) -> None:
         if hasattr(self, "_duckdb_conn") and self._duckdb_conn:
@@ -77,11 +77,14 @@ class StockService:
         default_provider: str | None = None,
         data_root: str | None = None,
     ) -> SettingsView:
-        return self._backend.patch_settings(
+        result = self._backend.patch_settings(
             poll_interval_sec=poll_interval_sec,
             default_provider=default_provider,
             data_root=data_root,
         )
+        if data_root is not None:
+            self._data_root = Path(data_root)
+        return result
 
     def get_watchlist(self) -> list[str]:
         return self._backend.get_watchlist()

@@ -4,27 +4,7 @@ from fastapi.testclient import TestClient
 
 from vinu_features.server.app import create_app
 from vinu_features.service import FeatureService
-
-
-class MockCandleClient:
-    def fetch_candles(self, symbol, *, interval, from_ts, to_ts, limit=50000):
-        ts = from_ts or 1_700_000_000
-        end = to_ts or ts + 86400 * 30
-        rows = []
-        while ts <= end:
-            price = 100.0
-            rows.append(
-                {
-                    "ts": ts,
-                    "open": price,
-                    "high": price,
-                    "low": price,
-                    "close": price,
-                    "volume": 1,
-                }
-            )
-            ts += 86400
-        return rows
+from tests.conftest import MockCandleClient
 
 
 def test_api_submit_and_run(config, backend):

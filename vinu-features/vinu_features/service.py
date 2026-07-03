@@ -12,10 +12,10 @@ from typing import Any
 from vinu_features.client.stock_price import CandleClient
 from vinu_features.config import VinuFeaturesConfig, load_config
 from vinu_features.compute.feature_spec import validate_and_resolve
-from vinu_features.compute.registry import parse_feature_names
+from vinu_features.constants import SECONDS_PER_DAY
 from vinu_features.engine.engine import FeatureEngine
 from vinu_features.presets.registry import resolve_features
-from vinu_features.storage.factory import create_storage
+from vinu_features.storage import create_storage
 from vinu_features.storage.models import FeatureRequest, STATUS_DONE, SubmitRequest
 from vinu_features.storage.sqlite_backend import SqliteBackend
 from vinu_features.worker.runner import FeatureWorker
@@ -28,8 +28,13 @@ class FeatureService:
         config: VinuFeaturesConfig | None = None,
         storage: SqliteBackend | None = None,
         candle_client: CandleClient | None = None,
+        data_dir: str | None = None,
+        meta_db_path: str | None = None,
     ) -> None:
-        self.config = config or load_config()
+        if config is not None:
+            self.config = config
+        else:
+            self.config = load_config(data_dir=data_dir, meta_db_path=meta_db_path)
         self.storage = storage or create_storage(self.config.meta_db_path)
         self._owns_storage = storage is None
         engine = FeatureEngine(client=candle_client) if candle_client else FeatureEngine()
@@ -73,13 +78,16 @@ class FeatureService:
         if from_ts is None:
             if days is None:
                 days = 365
-            from_ts = to_ts - days * 86400
+            from_ts = to_ts - days * SECONDS_PER_DAY
 
         if preset and features:
             raise ValueError("Provide either preset or features, not both")
         if preset:
+            from vinu_features.compute.bigger_recipe import catalog as recipe_catalog
+
+            if not recipe_catalog.is_recipe(preset):
+                raise ValueError(f"Unknown preset: {preset}")
             resolved = resolve_features(preset=preset, features=[])
-            parse_feature_names([preset])
         else:
             if not features:
                 raise ValueError("Either preset or features is required")

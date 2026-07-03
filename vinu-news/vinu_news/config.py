@@ -20,6 +20,7 @@ DEFAULT_LLM_TTL_SEC = 86400
 DEFAULT_LLM_ANALYSIS_MODE = "auto"
 DEFAULT_LLM_ANALYSIS_CONCURRENCY = 3
 DEFAULT_ACTIVE_TIERS = "1,2,3,4"
+DEFAULT_MAX_WORKERS = 8
 
 _ENV_LOADED = False
 
@@ -52,6 +53,7 @@ class VinuConfig:
     llm_analysis_mode: str
     llm_analysis_concurrency: int
     fmp_api_key: str
+    max_workers: int
 
 
 def load_config() -> VinuConfig:
@@ -86,6 +88,9 @@ def load_config() -> VinuConfig:
             )
         ),
         fmp_api_key=os.environ.get("FMP_API_KEY", ""),
+        max_workers=int(
+            os.environ.get("VINU_NEWS_MAX_WORKERS", str(DEFAULT_MAX_WORKERS))
+        ),
     )
 
 

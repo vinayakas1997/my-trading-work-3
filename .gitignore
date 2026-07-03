@@ -1,0 +1,50 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg
+
+# --- Node / Vite ---
+node_modules/
+.vite/
+dist/
+*.tsbuildinfo
+
+# --- C++ / CMake ---
+build/
+cmake-build-*/
+*.o
+*.obj
+*.exe
+*.out
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Secrets ---
+.env
+!.env.example
+
+# --- Data (regenerable) ---
+*.db
+*.sqlite
+*.sqlite3
+*.parquet

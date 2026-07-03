@@ -3,11 +3,41 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from vinu_features.config import VinuFeaturesConfig
 from vinu_features.storage.sqlite_backend import SqliteBackend
+
+
+class MockCandleClient:
+    def fetch_candles(
+        self,
+        symbol: str,
+        *,
+        interval: str,
+        from_ts: int | None = None,
+        to_ts: int | None = None,
+        limit: int = 50000,
+    ) -> list[dict[str, Any]]:
+        ts = from_ts or 1_700_000_000
+        end = to_ts or ts + 86400 * 120
+        rows: list[dict[str, Any]] = []
+        while ts <= end:
+            price = 100.0 + (ts % 86400) / 86400.0
+            rows.append(
+                {
+                    "ts": ts,
+                    "open": price,
+                    "high": price + 1,
+                    "low": price - 1,
+                    "close": price,
+                    "volume": 1000,
+                }
+            )
+            ts += 86400
+        return rows
 
 
 @pytest.fixture

@@ -57,7 +57,6 @@ def run_ingestion(
     db_path: str | Path | None = None,
     feed_ids: list[str] | None = None,
     dry_run: bool = False,
-    skip_post_process: bool = False,
 ) -> IngestionSummary:
     """Fetch all feeds, enrich, post-process, and optionally persist to SQLite."""
     feeds = load_feeds(feed_ids=feed_ids)
@@ -86,7 +85,7 @@ def run_ingestion(
             feed_results=feed_results,
         )
 
-    result = process_batch(raw_articles, skip_post_process=skip_post_process)
+    result = process_batch(raw_articles)
 
     inserted = 0
     url_skipped = 0
@@ -96,15 +95,12 @@ def run_ingestion(
 
     if result.articles:
         with NewsRepository(db_path) as repo:
-            if skip_post_process:
-                inserted = repo.upsert_batch(result.articles)
-            else:
-                persist_result = persist_leads(repo, result.articles)
-                inserted = persist_result.inserted
-                url_skipped = persist_result.url_skipped
-                thread_matched_skipped = persist_result.thread_matched_skipped
-                threads_created = persist_result.threads_created
-                threads_updated = persist_result.threads_updated
+            persist_result = persist_leads(repo, result.articles)
+            inserted = persist_result.inserted
+            url_skipped = persist_result.url_skipped
+            thread_matched_skipped = persist_result.thread_matched_skipped
+            threads_created = persist_result.threads_created
+            threads_updated = persist_result.threads_updated
 
     return IngestionSummary(
         feeds_polled=len(feeds),

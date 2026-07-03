@@ -53,12 +53,13 @@ def run_live_cycle(
     now_ts = int(time.time())
     current_year = datetime.now(timezone.utc).year
 
+    all_entries = {e.symbol: e for e in catalog.list_symbols()}
     for raw in symbols:
         sym = raw.strip().upper()
         if not sym:
             continue
         summary.symbols_polled += 1
-        entry = catalog.get_symbol(sym)
+        entry = all_entries.get(sym)
         last_ts = entry.last_bar_ts if entry and entry.last_bar_ts else None
         start_ts = (last_ts - OVERLAP_SEC) if last_ts else now_ts - 24 * 3600
 

@@ -8,15 +8,20 @@ from typing import Any, Sequence
 from vinu_features.compute.bigger_recipe import catalog as recipe_catalog
 from vinu_features.compute.indicators._module_names import INDICATOR_MODULE_NAMES
 
-_INDICATOR_MODULES: list[Any] = []
-for _mod_name in INDICATOR_MODULE_NAMES:
-    _INDICATOR_MODULES.append(
-        importlib.import_module(f"vinu_features.compute.indicators.{_mod_name}.{_mod_name}")
-    )
-
+_INDICATOR_MODULES: list[Any] | None = None
 _ALPHA158_NAMES: set[str] | None = None
 _ALPHA360_NAMES: set[str] | None = None
 _ALPHA101_NAMES: set[str] | None = None
+
+
+def _get_indicator_modules() -> list[Any]:
+    global _INDICATOR_MODULES
+    if _INDICATOR_MODULES is None:
+        _INDICATOR_MODULES = [
+            importlib.import_module(f"vinu_features.compute.indicators.{name}.{name}")
+            for name in INDICATOR_MODULE_NAMES
+        ]
+    return _INDICATOR_MODULES
 
 
 def _alpha_name_sets() -> tuple[set[str], set[str], set[str]]:
@@ -69,33 +74,33 @@ def validate_feature_name(name: str) -> None:
 
 
 def list_known_features() -> list[str]:
-    a158, a360, a101 = _alpha_name_sets()
-    base = [
-        "rsi_14", "macd", "macd_signal", "daily_return", "volatility_20d",
-        "atr_14", "bb_upper", "bb_mid", "bb_lower", "stoch_k", "stoch_d",
-        "obv", "vwap", "volume_ratio_20", "high_low_spread", "open_close_return",
-        "momentum_10", "roc_12", "cci_20", "williams_r_14", "adx_14",
-        "supertrend", "cmf_20", "aroon_up", "aroon_down",
-    ]
-    base += [f"sma_{p}" for p in (5, 10, 20, 50, 100)]
-    base += [f"ema_{p}" for p in (12, 26, 50)]
+    from vinu_features.compute.feature_catalog import list_indicators
+
+    base: list[str] = []
+    for meta in list_indicators():
+        params = {k: v.default for k, v in meta.params.items()}
+        for col in meta.output_columns:
+            base.append(col.format(**params))
+    for p in (5, 10, 20, 50, 100):
+        base.append(f"sma_{p}")
+    for p in (12, 26, 50):
+        base.append(f"ema_{p}")
     return base + recipe_catalog.list_recipe_names()
 
 
 def warmup_bars_for_features(features: Sequence[str]) -> int:
     expanded = expand_features(features)
     need = 1
+    a158, a360, a101 = _alpha_name_sets()
     for name in expanded:
         if recipe_catalog.is_recipe(name):
             need = max(need, recipe_catalog.warmup_for(name))
-            continue
-        a158, a360, a101 = _alpha_name_sets()
-        if name in a158 or name in a360 or name in a101:
+        elif name in a158 or name in a360 or name in a101:
             need = max(need, 60)
-            continue
-        mod = _find_indicator_module(name)
-        if mod is not None:
-            need = max(need, mod.warmup_for(name))
+        else:
+            mod = _find_indicator_module(name)
+            if mod is not None:
+                need = max(need, mod.warmup_for(name))
     return need
 
 
@@ -142,7 +147,7 @@ def apply_indicators(rows: list[dict], names: Sequence[str]) -> list[dict]:
 
 
 def _find_indicator_module(name: str) -> Any | None:
-    for mod in _INDICATOR_MODULES:
+    for mod in _get_indicator_modules():
         if mod.matches(name):
             return mod
     return None

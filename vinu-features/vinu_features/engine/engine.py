@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,7 @@ import pyarrow.parquet as pq
 
 from vinu_features.client.stock_price import CandleClient, StockPriceClient
 from vinu_features.compute.registry import apply_indicators, expand_features, warmup_bars_for_features
+from vinu_features.constants import SECONDS_PER_DAY
 from vinu_features.engine.manifest import write_manifest
 from vinu_features.storage.models import FeatureRequest
 
@@ -19,7 +21,18 @@ _OUTPUT_COLUMNS = ("ts", "symbol", "open", "high", "low", "close", "volume")
 
 class FeatureEngine:
     def __init__(self, client: CandleClient | None = None) -> None:
+        self._owns_client = client is None
         self.client = client or StockPriceClient()
+
+    def close(self) -> None:
+        if self._owns_client and hasattr(self.client, "close"):
+            self.client.close()
+
+    def __enter__(self) -> "FeatureEngine":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
 
     def run_dir_for(self, data_root: Path, request: FeatureRequest) -> Path:
         assert request.id is not None
@@ -43,25 +56,33 @@ class FeatureEngine:
         writer: pq.ParquetWriter | None = None
         schema: pa.Schema | None = None
 
+        tables: list[pa.Table] = []
         try:
-            for symbol in request.symbols:
-                rows = self.client.fetch_candles(
-                    symbol,
-                    interval=request.interval,
-                    from_ts=warmup_from,
-                    to_ts=request.to_ts,
-                )
-                rows = _normalize_rows(rows, symbol)
-                rows = [r for r in rows if request.from_ts <= int(r["ts"]) <= request.to_ts]
-                if not rows:
-                    continue
-                enriched = apply_indicators(rows, feature_cols)
-                table = _rows_to_table(enriched, feature_cols)
-                if writer is None:
-                    schema = table.schema
-                    writer = pq.ParquetWriter(parquet_path, schema)
-                writer.write_table(table)
-                total_rows += table.num_rows
+            with ThreadPoolExecutor(max_workers=min(len(request.symbols), 8)) as pool:
+                def _process_symbol(symbol: str) -> pa.Table | None:
+                    rows = self.client.fetch_candles(
+                        symbol,
+                        interval=request.interval,
+                        from_ts=warmup_from,
+                        to_ts=request.to_ts,
+                    )
+                    rows = _normalize_rows(rows, symbol)
+                    rows = [r for r in rows if request.from_ts <= int(r["ts"]) <= request.to_ts]
+                    if not rows:
+                        return None
+                    enriched = apply_indicators(rows, feature_cols)
+                    return _rows_to_table(enriched, feature_cols)
+
+                futures = {pool.submit(_process_symbol, s): s for s in request.symbols}
+                for future in as_completed(futures):
+                    table = future.result()
+                    if table is None:
+                        continue
+                    if writer is None:
+                        schema = table.schema
+                        writer = pq.ParquetWriter(parquet_path, schema)
+                    writer.write_table(table)
+                    total_rows += table.num_rows
 
             if writer is None:
                 empty = _empty_table(feature_cols)
@@ -70,6 +91,8 @@ class FeatureEngine:
         finally:
             if writer is not None:
                 writer.close()
+            if total_rows == 0 and parquet_path.exists():
+                parquet_path.unlink(missing_ok=True)
 
         write_manifest(
             run_dir / "manifest.md",
@@ -86,7 +109,7 @@ def _interval_seconds(interval: str) -> int:
         "5m": 300,
         "15m": 900,
         "1h": 3600,
-        "1d": 86400,
+        "1d": SECONDS_PER_DAY,
     }
     if interval not in mapping:
         raise ValueError(f"Unsupported interval: {interval}")
@@ -94,9 +117,13 @@ def _interval_seconds(interval: str) -> int:
 
 
 def _normalize_rows(rows: list[dict[str, Any]], symbol: str) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+    first = rows[0]
+    ts_key: str = "ts" if "ts" in first else ("timestamp" if "timestamp" in first else "sort_ts")
     out: list[dict[str, Any]] = []
     for row in rows:
-        ts = row.get("ts") or row.get("timestamp") or row.get("sort_ts")
+        ts = row.get(ts_key)
         if ts is None:
             continue
         out.append(
@@ -110,14 +137,12 @@ def _normalize_rows(rows: list[dict[str, Any]], symbol: str) -> list[dict[str, A
                 "volume": float(row.get("volume") or 0),
             }
         )
-    out.sort(key=lambda r: r["ts"])
     return out
 
 
 def _rows_to_table(rows: list[dict[str, Any]], features: list[str]) -> pa.Table:
-    columns: dict[str, list[Any]] = {c: [] for c in _OUTPUT_COLUMNS}
-    for feat in features:
-        columns[feat] = []
+    all_cols = list(_OUTPUT_COLUMNS) + features
+    columns: dict[str, list[Any]] = {c: [] for c in all_cols}
     for row in rows:
         for col in _OUTPUT_COLUMNS:
             columns[col].append(row[col])

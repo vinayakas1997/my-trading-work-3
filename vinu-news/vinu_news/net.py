@@ -9,11 +9,13 @@ loopback host refuses the connection.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
+LOG = logging.getLogger(__name__)
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1"}
 
 
@@ -32,8 +34,11 @@ def request(method: str, url: str, **kwargs: Any) -> requests.Response:
     points at a loopback host that refuses the connection."""
     try:
         return requests.request(method, url, **kwargs)
-    except requests.ConnectionError:
+    except requests.ConnectionError as e:
+        if "Connection refused" not in str(e):
+            raise
         fallback_url = _docker_fallback_url(url)
         if fallback_url is None:
             raise
+        LOG.debug("Retrying against host.docker.internal: %s -> %s", url, fallback_url)
         return requests.request(method, fallback_url, **kwargs)

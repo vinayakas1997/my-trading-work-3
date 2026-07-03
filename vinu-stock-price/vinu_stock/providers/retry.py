@@ -14,6 +14,10 @@ LOG = logging.getLogger(__name__)
 F = TypeVar("F", bound=Callable)
 
 
+class TransientProviderError(requests.RequestException):
+    """Transient provider error (rate limit, server error) that can be retried."""
+
+
 def retry_on_transient(
     n: int = 3,
     backoff: float = 1.5,
@@ -21,6 +25,7 @@ def retry_on_transient(
     exceptions: tuple[type[BaseException], ...] = (
         requests.Timeout,
         requests.ConnectionError,
+        TransientProviderError,
     ),
 ) -> Callable[[F], F]:
     def decorator(func: F) -> F:
@@ -65,7 +70,7 @@ def http_get_with_retry(
     def _get() -> requests.Response:
         resp = requests.get(url, params=params, headers=headers, timeout=timeout)
         if resp.status_code in (429, 500, 502, 503, 504):
-            raise requests.ConnectionError(f"HTTP {resp.status_code}")
+            raise TransientProviderError(f"HTTP {resp.status_code}")
         resp.raise_for_status()
         return resp
 

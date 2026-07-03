@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pyarrow.parquet as pq
 
@@ -11,35 +10,7 @@ from vinu_features.engine.engine import FeatureEngine
 from vinu_features.service import FeatureService
 from vinu_features.storage.models import STATUS_DONE, STATUS_PENDING
 from vinu_features.worker.runner import FeatureWorker
-
-
-class MockCandleClient:
-    def fetch_candles(
-        self,
-        symbol: str,
-        *,
-        interval: str,
-        from_ts: int | None,
-        to_ts: int | None,
-        limit: int = 50000,
-    ) -> list[dict[str, Any]]:
-        rows = []
-        ts = from_ts or 1_700_000_000
-        end = to_ts or ts + 86400 * 120
-        while ts <= end:
-            price = 100.0 + (ts % 86400) / 86400.0
-            rows.append(
-                {
-                    "ts": ts,
-                    "open": price,
-                    "high": price + 1,
-                    "low": price - 1,
-                    "close": price,
-                    "volume": 1000,
-                }
-            )
-            ts += 86400
-        return rows
+from tests.conftest import MockCandleClient
 
 
 def test_engine_writes_parquet_and_manifest(config, backend):

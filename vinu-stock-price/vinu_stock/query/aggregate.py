@@ -27,10 +27,10 @@ def bucket_ts(bar_ts: int, interval_sec: int) -> int:
 def aggregate_bars(rows: list[dict], interval: str) -> list[dict]:
     """Aggregate 1m bar dicts to higher timeframe."""
     if interval.lower() == "1m":
-        return sorted(rows, key=lambda r: r["bar_ts"])
+        return rows
     interval_sec = interval_to_seconds(interval)
     buckets: dict[int, dict] = {}
-    for row in sorted(rows, key=lambda r: r["bar_ts"]):
+    for row in rows:
         b = bucket_ts(int(row["bar_ts"]), interval_sec)
         if b not in buckets:
             buckets[b] = {

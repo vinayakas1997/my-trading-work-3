@@ -1,6 +1,6 @@
 """Tests for SQLite registry."""
 
-from vinu_features.storage.models import STATUS_DONE, STATUS_PENDING, SubmitRequest
+from vinu_features.storage.models import STATUS_DONE, STATUS_PENDING, STATUS_RUNNING, SubmitRequest
 from vinu_features.storage.sqlite_backend import SqliteBackend
 
 
@@ -46,6 +46,9 @@ def test_get_latest_by_title(backend: SqliteBackend):
 
 def test_claim_next_pending(backend: SqliteBackend):
     _submit(backend)
-    pending = backend.claim_next_pending()
-    assert pending is not None
-    assert pending.status == STATUS_PENDING
+    running = backend.claim_next_pending()
+    assert running is not None
+    assert running.status == STATUS_RUNNING
+
+    # second call should return None (no more pending)
+    assert backend.claim_next_pending() is None

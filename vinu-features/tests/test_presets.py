@@ -1,5 +1,7 @@
 """Tests for preset registry."""
 
+import pytest
+
 from vinu_features.presets.registry import get_preset, list_presets, resolve_features
 
 
@@ -19,8 +21,5 @@ def test_resolve_explicit_features():
 
 
 def test_get_preset_unknown():
-    try:
+    with pytest.raises(ValueError, match="nope"):
         get_preset("nope")
-        assert False, "expected ValueError"
-    except ValueError as exc:
-        assert "nope" in str(exc)

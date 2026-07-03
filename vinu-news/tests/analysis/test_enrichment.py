@@ -109,7 +109,7 @@ class TestTickerDominance:
     def test_dominance_with_company_alias(self):
         headline = "Apple surges while Tesla lags"
         summary = "Apple reported strong results."
-        tickers = extract_tickers(headline, summary)
+        tickers = extract_tickers(headline, summary, watchlist={"AAPL", "TSLA"})
         assert "AAPL" in tickers
         assert "TSLA" in tickers
         dominance = compute_dominance(tickers, headline, summary)
@@ -143,7 +143,7 @@ class TestPipeline:
             "region": "US",
             "tier": 1,
         }
-        enriched = enrich_article(raw)
+        enriched = enrich_article(raw, watchlist={"AAPL", "GOOGL"})
         tickers = enriched.article.tickers_list()
         assert "AAPL" in tickers
         assert "GOOGL" in tickers or "GOOG" in tickers

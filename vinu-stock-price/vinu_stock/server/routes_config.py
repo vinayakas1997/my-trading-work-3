@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import threading
+import uuid
+from typing import Any
+
 from fastapi import APIRouter, HTTPException
 
 from vinu_stock.server.schemas import (
@@ -14,6 +18,10 @@ from vinu_stock.server.schemas import (
 from vinu_stock.service import StockService
 
 router = APIRouter(tags=["config"])
+
+_background_jobs: dict[str, dict[str, Any]] = {}
+_backfill_lock = threading.Lock()
+_ingest_lock = threading.Lock()
 
 
 def get_service() -> StockService:
@@ -71,25 +79,73 @@ def sync_watchlist() -> dict:
 
 @router.post("/backfill/trigger", response_model=TriggerResponse)
 def trigger_backfill() -> TriggerResponse:
-    result = get_service().run_backfill()
-    return TriggerResponse(
-        ok=True,
-        summary={
-            "years_ok": result.summary.years_ok,
-            "years_failed": result.summary.years_failed,
-            "total_rows": result.summary.total_rows,
-        },
-    )
+    if not _backfill_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Backfill already running")
+    job_id = uuid.uuid4().hex[:12]
+    _background_jobs[job_id] = {"type": "backfill", "status": "running", "summary": {}}
+
+    def _run() -> None:
+        try:
+            result = get_service().run_backfill()
+            _background_jobs[job_id] = {
+                "type": "backfill",
+                "status": "done",
+                "summary": {
+                    "years_ok": result.summary.years_ok,
+                    "years_failed": result.summary.years_failed,
+                    "total_rows": result.summary.total_rows,
+                },
+            }
+        except Exception as exc:
+            _background_jobs[job_id] = {
+                "type": "backfill",
+                "status": "failed",
+                "summary": {},
+                "error": str(exc),
+            }
+        finally:
+            _backfill_lock.release()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return TriggerResponse(ok=True, summary={"job_id": job_id, "status": "running"})
+
+
+@router.get("/backfill/status/{job_id}")
+def backfill_status(job_id: str) -> dict:
+    job = _background_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 @router.post("/ingest/trigger", response_model=TriggerResponse)
 def trigger_ingest() -> TriggerResponse:
-    result = get_service().run_live_cycle()
-    return TriggerResponse(
-        ok=True,
-        summary={
-            "bars_added": result.summary.bars_added,
-            "symbols_polled": result.summary.symbols_polled,
-            "watchlist_size": result.watchlist_size,
-        },
-    )
+    if not _ingest_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Ingest already running")
+    job_id = uuid.uuid4().hex[:12]
+    _background_jobs[job_id] = {"type": "ingest", "status": "running", "summary": {}}
+
+    def _run() -> None:
+        try:
+            result = get_service().run_live_cycle()
+            _background_jobs[job_id] = {
+                "type": "ingest",
+                "status": "done",
+                "summary": {
+                    "bars_added": result.summary.bars_added,
+                    "symbols_polled": result.summary.symbols_polled,
+                    "watchlist_size": result.watchlist_size,
+                },
+            }
+        except Exception as exc:
+            _background_jobs[job_id] = {
+                "type": "ingest",
+                "status": "failed",
+                "summary": {},
+                "error": str(exc),
+            }
+        finally:
+            _ingest_lock.release()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return TriggerResponse(ok=True, summary={"job_id": job_id, "status": "running"})

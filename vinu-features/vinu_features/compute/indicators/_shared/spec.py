@@ -64,27 +64,10 @@ def format_columns(meta: IndicatorMeta, params: dict[str, int | float]) -> tuple
 def warmup_from_params(meta: IndicatorMeta, params: dict[str, int | float]) -> int:
     merged = {**default_params(meta), **params}
     period = int(merged.get("period", 1))
-    smooth = int(merged.get("smooth", 0))
     if meta.kind == "adx":
         return period * 2
     if meta.kind in ("macd", "macd_signal"):
-        return 34
-    if meta.kind == "aroon":
-        return period + 1
-    if meta.kind == "stochastic":
-        return period + smooth
-    if meta.kind == "supertrend":
-        return period + 1
-    if meta.kind in ("rsi", "atr", "williams_r"):
-        return period + 1
-    if meta.kind in ("sma", "ema"):
-        return period
-    if meta.kind in ("cci", "cmf", "bollinger", "volatility", "volume_ratio"):
-        return period + 1
-    if meta.kind in ("roc", "momentum"):
-        return period + 1
-    if meta.kind == "volatility_20d":
-        return period + 1
+        return max(period + 1, 34)
     return period + 1
 
 
@@ -101,6 +84,10 @@ def validate_params(meta: IndicatorMeta, params: dict[str, Any]) -> dict[str, in
             continue
         raw = params[name]
         if pdef.type == "int":
+            if isinstance(raw, float) and not raw.is_integer():
+                raise ValueError(
+                    f"{meta.kind}.{name} must be int, got {raw!r} (use an integer value)"
+                )
             try:
                 val = int(raw)
             except (TypeError, ValueError) as exc:

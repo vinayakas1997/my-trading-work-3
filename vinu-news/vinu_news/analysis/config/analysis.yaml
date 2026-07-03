@@ -9,3 +9,15 @@ lead_pick:
 
 threads:
   headline_cleanup: true
+
+enrichment:
+  priority: true
+  sentiment: true
+  impact: true
+  category: true
+  tickers: true
+  language: true
+  threat: true
+  source_flag: true
+  summary_clean: true
+  ticker_dominance: true

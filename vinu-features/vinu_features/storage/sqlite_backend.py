@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -52,18 +53,40 @@ class SqliteBackend:
     def __init__(self, db_path: Path) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.executescript(_SCHEMA)
-        for col in ("ml_model", "ml_label"):
-            try:
-                self._conn.execute(f"ALTER TABLE feature_requests ADD COLUMN {col} TEXT")
-            except sqlite3.OperationalError:
-                pass
-        self._conn.commit()
+        self._local = threading.local()
+        self._init_connection()
+
+    def _get_conn(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(str(self.db_path))
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.executescript(_SCHEMA)
+            self._migrate(conn)
+            self._local.conn = conn
+        return conn
+
+    _SCHEMA_VERSION = 1
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version < 1:
+            for col in ("ml_model", "ml_label"):
+                try:
+                    conn.execute(f"ALTER TABLE feature_requests ADD COLUMN {col} TEXT")
+                except sqlite3.OperationalError:
+                    pass
+            conn.execute("PRAGMA user_version=1")
+        conn.commit()
+
+    def _init_connection(self) -> None:
+        _ = self._get_conn()
 
     def close(self) -> None:
-        self._conn.close()
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
 
     def __enter__(self) -> SqliteBackend:
         return self
@@ -78,9 +101,10 @@ class SqliteBackend:
         request_hash: str,
         features: list[str],
     ) -> FeatureRequest:
+        conn = self._get_conn()
         now = utc_now_iso()
         slug = slugify_title(req.title)
-        cur = self._conn.execute(
+        cur = conn.execute(
             """
             INSERT INTO feature_requests (
                 title, slug, symbols, from_ts, to_ts, interval, preset, features,
@@ -105,14 +129,15 @@ class SqliteBackend:
                 now,
             ),
         )
-        self._conn.commit()
+        conn.commit()
         row_id = int(cur.lastrowid)
         result = self.get_request(row_id)
         assert result is not None
         return result
 
     def get_request(self, request_id: int) -> FeatureRequest | None:
-        row = self._conn.execute(
+        conn = self._get_conn()
+        row = conn.execute(
             "SELECT * FROM feature_requests WHERE id = ?",
             (request_id,),
         ).fetchone()
@@ -121,7 +146,8 @@ class SqliteBackend:
         return FeatureRequest.from_row(dict(row))
 
     def get_latest_by_title(self, title: str) -> FeatureRequest | None:
-        row = self._conn.execute(
+        conn = self._get_conn()
+        row = conn.execute(
             """
             SELECT * FROM feature_requests
             WHERE title = ? AND status != ?
@@ -135,8 +161,9 @@ class SqliteBackend:
         return FeatureRequest.from_row(dict(row))
 
     def get_by_hash(self, request_hash: str, *, status: str | None = None) -> FeatureRequest | None:
+        conn = self._get_conn()
         if status:
-            row = self._conn.execute(
+            row = conn.execute(
                 """
                 SELECT * FROM feature_requests
                 WHERE request_hash = ? AND status = ?
@@ -146,7 +173,7 @@ class SqliteBackend:
                 (request_hash, status),
             ).fetchone()
         else:
-            row = self._conn.execute(
+            row = conn.execute(
                 """
                 SELECT * FROM feature_requests
                 WHERE request_hash = ?
@@ -159,6 +186,8 @@ class SqliteBackend:
             return None
         return FeatureRequest.from_row(dict(row))
 
+    _ALLOWED_FILTERS = frozenset({"status", "title"})
+
     def list_requests(
         self,
         *,
@@ -166,20 +195,20 @@ class SqliteBackend:
         title: str | None = None,
         limit: int = 100,
     ) -> list[FeatureRequest]:
-        clauses: list[str] = ["status != ?"]
+        conn = self._get_conn()
         params: list[Any] = [STATUS_DELETED]
-        if status:
-            clauses.append("status = ?")
+        conditions: list[str] = ["status != ?"]
+        if status is not None:
+            conditions.append("status = ?")
             params.append(status)
-        if title:
-            clauses.append("title = ?")
+        if title is not None:
+            conditions.append("title = ?")
             params.append(title)
-        where = " AND ".join(clauses)
         params.append(limit)
-        rows = self._conn.execute(
+        rows = conn.execute(
             f"""
             SELECT * FROM feature_requests
-            WHERE {where}
+            WHERE {' AND '.join(conditions)}
             ORDER BY created_at DESC
             LIMIT ?
             """,
@@ -188,22 +217,31 @@ class SqliteBackend:
         return [FeatureRequest.from_row(dict(r)) for r in rows]
 
     def claim_next_pending(self) -> FeatureRequest | None:
-        row = self._conn.execute(
+        conn = self._get_conn()
+        now = utc_now_iso()
+        row = conn.execute(
             """
-            SELECT * FROM feature_requests
-            WHERE status = ?
-            ORDER BY created_at ASC
-            LIMIT 1
+            UPDATE feature_requests
+            SET status = ?, updated_at = ?, error_message = NULL
+            WHERE id = (
+                SELECT id FROM feature_requests
+                WHERE status = ?
+                ORDER BY created_at ASC
+                LIMIT 1
+            )
+            RETURNING *
             """,
-            (STATUS_PENDING,),
+            (STATUS_RUNNING, now, STATUS_PENDING),
         ).fetchone()
+        conn.commit()
         if row is None:
             return None
         return FeatureRequest.from_row(dict(row))
 
     def mark_running(self, request_id: int) -> FeatureRequest | None:
+        conn = self._get_conn()
         now = utc_now_iso()
-        self._conn.execute(
+        conn.execute(
             """
             UPDATE feature_requests
             SET status = ?, updated_at = ?, error_message = NULL
@@ -211,7 +249,7 @@ class SqliteBackend:
             """,
             (STATUS_RUNNING, now, request_id, STATUS_PENDING),
         )
-        self._conn.commit()
+        conn.commit()
         req = self.get_request(request_id)
         return req if req and req.status == STATUS_RUNNING else None
 
@@ -222,8 +260,9 @@ class SqliteBackend:
         file_path: str,
         row_count: int,
     ) -> FeatureRequest | None:
+        conn = self._get_conn()
         now = utc_now_iso()
-        self._conn.execute(
+        conn.execute(
             """
             UPDATE feature_requests
             SET status = ?, file_path = ?, row_count = ?, updated_at = ?, error_message = NULL
@@ -231,12 +270,13 @@ class SqliteBackend:
             """,
             (STATUS_DONE, file_path, row_count, now, request_id),
         )
-        self._conn.commit()
+        conn.commit()
         return self.get_request(request_id)
 
     def mark_failed(self, request_id: int, *, error_message: str) -> FeatureRequest | None:
+        conn = self._get_conn()
         now = utc_now_iso()
-        self._conn.execute(
+        conn.execute(
             """
             UPDATE feature_requests
             SET status = ?, error_message = ?, updated_at = ?
@@ -244,12 +284,13 @@ class SqliteBackend:
             """,
             (STATUS_FAILED, error_message, now, request_id),
         )
-        self._conn.commit()
+        conn.commit()
         return self.get_request(request_id)
 
     def mark_deleted(self, request_id: int) -> FeatureRequest | None:
+        conn = self._get_conn()
         now = utc_now_iso()
-        self._conn.execute(
+        conn.execute(
             """
             UPDATE feature_requests
             SET status = ?, file_path = NULL, updated_at = ?
@@ -257,11 +298,12 @@ class SqliteBackend:
             """,
             (STATUS_DELETED, now, request_id),
         )
-        self._conn.commit()
+        conn.commit()
         return self.get_request(request_id)
 
     def health_info(self) -> dict[str, Any]:
-        counts = self._conn.execute(
+        conn = self._get_conn()
+        counts = conn.execute(
             """
             SELECT status, COUNT(*) AS cnt
             FROM feature_requests

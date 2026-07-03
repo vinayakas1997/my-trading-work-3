@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pyarrow.parquet as pq
-
 
 def forward_return(rows: list[dict], *, periods: int = 1) -> list[float | None]:
     closes = [float(r["close"]) for r in rows]

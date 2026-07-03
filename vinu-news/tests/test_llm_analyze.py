@@ -53,6 +53,7 @@ def test_analyze_article_cached(repo: NewsRepository, monkeypatch):
         llm_analysis_mode="manual",
         llm_analysis_concurrency=3,
         fmp_api_key="",
+        max_workers=8,
     )
 
     analysis = {

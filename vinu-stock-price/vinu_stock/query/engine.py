@@ -8,7 +8,7 @@ import duckdb
 
 from vinu_stock.query.aggregate import aggregate_bars
 from vinu_stock.query.indicators import apply_adjusted_prices, apply_indicators
-from vinu_stock.storage.paths import parquet_globs
+from vinu_stock.storage.paths import parquet_globs_by_range
 
 
 def fetch_candles(
@@ -24,7 +24,7 @@ def fetch_candles(
     adjusted: bool = False,
     connection: duckdb.DuckDBPyConnection | None = None,
 ) -> list[dict]:
-    patterns = parquet_globs(data_root, symbol)
+    patterns = parquet_globs_by_range(data_root, symbol, from_ts=from_ts, to_ts=to_ts)
     if not patterns:
         return []
 
@@ -54,6 +54,10 @@ def fetch_candles(
         if provider:
             sql += " AND provider = ?"
             params.append(provider.strip().lower())
+
+        sql += """
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY symbol, provider, bar_ts ORDER BY bar_ts DESC) = 1
+"""
         sql += " ORDER BY bar_ts ASC LIMIT ?"
         params.append(limit)
 
@@ -69,6 +73,5 @@ def fetch_candles(
             records = apply_indicators(records, indicators)
         return records
     finally:
-        if own_conn:
-            conn.close()
+        conn.close()
 

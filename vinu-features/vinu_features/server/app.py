@@ -28,10 +28,7 @@ def create_app(service: FeatureService | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    def _get_service() -> FeatureService:
-        return app_service
-
-    routes_requests.get_service = _get_service  # type: ignore[method-assign]
+    routes_requests.set_service(app_service)
     app.include_router(routes_requests.router)
     app.include_router(routes_features.router)
     return app

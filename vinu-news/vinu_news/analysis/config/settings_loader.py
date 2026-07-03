@@ -30,16 +30,32 @@ class ThreadSettings:
 
 
 @dataclass(frozen=True)
+class EnrichmentSettings:
+    priority: bool = True
+    sentiment: bool = True
+    impact: bool = True
+    category: bool = True
+    tickers: bool = True
+    language: bool = True
+    threat: bool = True
+    source_flag: bool = True
+    summary_clean: bool = True
+    ticker_dominance: bool = True
+
+
+@dataclass(frozen=True)
 class AnalysisSettings:
     dedup: DedupSettings
     lead_pick: LeadPickSettings
     threads: ThreadSettings
+    enrichment: EnrichmentSettings
 
 
 def _build_settings(data: dict) -> AnalysisSettings:
     dedup_raw = data.get("dedup", {})
     lead_raw = data.get("lead_pick", {})
     threads_raw = data.get("threads", {})
+    enrich_raw = data.get("enrichment", {})
     return AnalysisSettings(
         dedup=DedupSettings(
             similarity_threshold=float(dedup_raw.get("similarity_threshold", 0.25)),
@@ -54,6 +70,18 @@ def _build_settings(data: dict) -> AnalysisSettings:
         ),
         threads=ThreadSettings(
             headline_cleanup=bool(threads_raw.get("headline_cleanup", True)),
+        ),
+        enrichment=EnrichmentSettings(
+            priority=bool(enrich_raw.get("priority", True)),
+            sentiment=bool(enrich_raw.get("sentiment", True)),
+            impact=bool(enrich_raw.get("impact", True)),
+            category=bool(enrich_raw.get("category", True)),
+            tickers=bool(enrich_raw.get("tickers", True)),
+            language=bool(enrich_raw.get("language", True)),
+            threat=bool(enrich_raw.get("threat", True)),
+            source_flag=bool(enrich_raw.get("source_flag", True)),
+            summary_clean=bool(enrich_raw.get("summary_clean", True)),
+            ticker_dominance=bool(enrich_raw.get("ticker_dominance", True)),
         ),
     )
 

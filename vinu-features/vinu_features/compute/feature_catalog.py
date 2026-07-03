@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib
-from typing import Any
+from typing import Any, TypedDict
 
 from vinu_features.compute.indicators._module_names import INDICATOR_MODULE_NAMES
 from vinu_features.compute.indicators._shared.spec import IndicatorMeta, meta_from_module
@@ -105,7 +105,10 @@ def format_help(kind: str | None = None) -> str:
                 params = {}
                 for part in parts:
                     k, v = part.split("=", 1)
-                    params[k.strip()] = int(v) if v.isdigit() else float(v)
+                    try:
+                        params[k.strip()] = int(v)
+                    except ValueError:
+                        params[k.strip()] = float(v)
                 lines.append(f'  {{"kind": "{meta.kind}", "params": {params}}}')
             else:
                 lines.append(f'  "{ex}"')
@@ -122,7 +125,16 @@ def format_help(kind: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def indicator_meta_to_dict(meta: IndicatorMeta) -> dict:
+class IndicatorMetaDict(TypedDict):
+    kind: str
+    description: str
+    params: dict[str, dict[str, int | float | str | None]]
+    output_columns: list[str]
+    examples: list[str]
+    legacy_aliases: dict[str, dict[str, int | float]]
+
+
+def indicator_meta_to_dict(meta: IndicatorMeta) -> IndicatorMetaDict:
     return {
         "kind": meta.kind,
         "description": meta.description,

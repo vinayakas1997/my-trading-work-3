@@ -6,10 +6,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from vinu_features.storage.models import FeatureRequest
+
 
 class FeatureSpecIn(BaseModel):
     kind: str
-    params: dict[str, int | float | str] = Field(default_factory=dict)
+    params: dict[str, int | float] = Field(default_factory=dict)
 
 
 class FeatureRequestIn(BaseModel):
@@ -49,7 +51,7 @@ class FeatureRequestOut(BaseModel):
     ml_label: str | None = None
 
     @classmethod
-    def from_model(cls, req: Any) -> FeatureRequestOut:
+    def from_model(cls, req: FeatureRequest) -> FeatureRequestOut:
         return cls(**req.to_dict())
 
 

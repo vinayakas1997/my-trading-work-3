@@ -15,19 +15,6 @@ TICKER_STOP_WORDS = frozenset({
 })
 
 
-DEFAULT_MAJOR_TICKERS = {
-    "AAPL",
-    "GOOGL",
-    "GOOG",
-    "MSFT",
-    "AMZN",
-    "NVDA",
-    "TSLA",
-    "META",
-    "NFLX",
-}
-
-
 def extract_tickers(
     headline: str,
     summary: str,
@@ -49,22 +36,26 @@ def extract_tickers(
                 break
 
     if len(tickers) < MAX_TICKERS:
-        active_tickers = (
-            {t.upper() for t in watchlist} if watchlist else DEFAULT_MAJOR_TICKERS
-        )
-        from vinu_news.analysis.enrichment.ticker_db import get_mappings_for_tickers
-        alias_to_ticker, _ = get_mappings_for_tickers(active_tickers)
-        if alias_to_ticker:
-            text_upper = text.upper()
-            sorted_aliases = sorted(alias_to_ticker.keys(), key=len, reverse=True)
-            for alias in sorted_aliases:
-                ticker = alias_to_ticker[alias]
-                if ticker in seen:
-                    continue
-                if re.search(rf"\b{re.escape(alias.upper())}\b", text_upper):
-                    seen.add(ticker)
-                    tickers.append(ticker)
-                    if len(tickers) >= MAX_TICKERS:
-                        break
+        # Resolve company names to tickers via alias database.
+        # Look up both: already-extracted tickers and watchlist tickers.
+        lookup_tickers = set(tickers)
+        if watchlist:
+            lookup_tickers.update(t.upper() for t in watchlist)
+
+        if lookup_tickers:
+            from vinu_news.analysis.enrichment.ticker_db import get_mappings_for_tickers
+            alias_to_ticker, _ = get_mappings_for_tickers(lookup_tickers)
+            if alias_to_ticker:
+                text_upper = text.upper()
+                sorted_aliases = sorted(alias_to_ticker.keys(), key=len, reverse=True)
+                for alias in sorted_aliases:
+                    ticker = alias_to_ticker[alias]
+                    if ticker in seen:
+                        continue
+                    if re.search(rf"\b{re.escape(alias.upper())}\b", text_upper):
+                        seen.add(ticker)
+                        tickers.append(ticker)
+                        if len(tickers) >= MAX_TICKERS:
+                            break
 
     return tickers
