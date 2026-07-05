@@ -5,7 +5,7 @@
 | **Package** | vinu-stock-price |
 | **Module** | `vinu_stock/server/` |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | Chapter 17, Chapter 14 |
 
 ## Learning objectives
@@ -13,6 +13,7 @@
 - List all v1 HTTP routes and their request/response shapes.
 - Start the API and use OpenAPI docs and the static Web UI.
 - Trigger backfill and live ingest over HTTP.
+- Understand background job execution and rate limiting on trigger endpoints.
 
 ## 1. Problem this module solves
 
@@ -85,7 +86,9 @@ flowchart LR
    - `GET/PATCH /settings`.
    - `GET/POST /watchlist/tickers`, `DELETE /watchlist/tickers/{symbol}`.
    - `POST /watchlist/sync` → shared file with vinu-news.
-   - `POST /backfill/trigger`, `POST /ingest/trigger`.
+   - `POST /backfill/trigger` — runs backfill in a **background thread**; returns job ID immediately. Previously blocked the entire server. Rate-limited: returns 409 Conflict if already running.
+- `POST /backfill/status/{job_id}` — polls background job completion.
+- `POST /ingest/trigger` — rate-limited with in-process lock; returns 409 Conflict if already running.
 6. **Static UI** mounted at `/ui` when `server/static/` exists.
 
 ## 6. Configuration
@@ -152,8 +155,9 @@ OpenAPI: http://127.0.0.1:8081/docs — Web UI: http://127.0.0.1:8081/ui
 | POST | `/watchlist/tickers` | `{tickers: [...]}` | `WatchlistResponse` |
 | DELETE | `/watchlist/tickers/{symbol}` | symbol | `WatchlistResponse` |
 | POST | `/watchlist/sync` | — | `{ok, added, tickers}` or 400 |
-| POST | `/backfill/trigger` | — | `TriggerResponse` |
-| POST | `/ingest/trigger` | — | `TriggerResponse` |
+| POST | `/backfill/trigger` | — | `TriggerResponse` with `job_id` (background thread) |
+| GET | `/backfill/status/{job_id}` | job_id | `{status, summary}` or 404 |
+| POST | `/ingest/trigger` | — | `TriggerResponse` (rate-limited, 409 if running) |
 
 ### CLI
 

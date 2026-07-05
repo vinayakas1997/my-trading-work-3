@@ -5,7 +5,7 @@
 | **Package** | vinu-stock-price |
 | **Module** | — |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | None |
 
 ## Learning objectives
@@ -75,7 +75,8 @@ flowchart LR
 2. **Providers**: Polygon and Alpaca for backfill/live; Yahoo as keyless **fallback** (see [ch07](../part-1-providers/ch07-yahoo-fmp-fallback.md)). FMP is **not** in this package (vinu-news / future TASK-S06 only).
 3. **Catalog**: `meta.db` tracks per-symbol range, backfill jobs, ingest log (see [ch10](../part-2-storage/ch10-catalog-schema.md)).
 4. **Enhancements**: TASK-S01–S04 and TASK-X01 are implemented or partially implemented; see [apx-d](../part-6-appendices/apx-d-roadmap.md).
-5. **Reading order**: Part 0 → pick path from [INDEX.md](../../INDEX.md) → deep-dive parts 1–5 as needed.
+5. **Code quality audit (2026-07-03)**: 25 issues identified across all modules; 20 fixed, 2 already resolved, 2 deferred. See [Appendix F](../part-6-appendices/apx-f-issues-index.md) for full index of all changes.
+6. **Reading order**: Part 0 → pick path from [INDEX.md](../../INDEX.md) → deep-dive parts 1–5 as needed.
 
 ## 6. Configuration
 

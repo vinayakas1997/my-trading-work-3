@@ -5,7 +5,7 @@
 | **Package** | vinu-stock-price |
 | **Module** | `vinu_stock/providers/alpaca.py` |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | Chapter 03, Chapter 04 |
 
 ## Learning objectives
@@ -13,6 +13,7 @@
 - Explain Alpaca authentication headers and the `/v2/stocks/bars` request shape.
 - Handle `next_page_token` pagination and ISO timestamp parsing.
 - Understand Alpaca's role as priority-2 backfill/live provider with shorter history probe.
+- Understand standardized HTTP retry applied to Alpaca provider.
 
 ## 1. Problem this module solves
 
@@ -73,8 +74,9 @@ flowchart LR
 4. Params: `symbols`, `timeframe=1Min`, `start`, `end`, `limit=10000`.
 5. Parse `data["bars"][sym][]`; handle `Z` suffix in timestamp via `fromisoformat`.
 6. Loop while `next_page_token` is set; pass token on subsequent requests.
-7. Return `FetchBarsResult(True, all_bars)` or catch `RequestException`.
-8. **`earliest_available`** — fetch last 365 days only; return min `bar_ts` or error (Alpaca 1m history is plan-limited).
+7. **HTTP** uses `http_get_with_retry` with standardised retry (3 attempts, exponential backoff, `TransientProviderError` on HTTP 429/5xx) — consistent with Polygon and Yahoo. Raw `requests.get` not used.
+8. Return `FetchBarsResult(True, all_bars)` or catch `RequestException`.
+9. **`earliest_available`** — fetch last 365 days only; return min `bar_ts` or error (Alpaca 1m history is plan-limited).
 
 ## 6. Configuration
 

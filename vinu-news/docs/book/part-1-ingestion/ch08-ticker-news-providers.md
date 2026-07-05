@@ -84,7 +84,7 @@ Raw dict (same 7+ fields as RSS parser):
 4. Provider failures are swallowed (`continue`) — fail-soft like RSS.
 5. **Yahoo:** fetches `https://feeds.finance.yahoo.com/rss/2.0/headline?s={SYMBOL}&region=US&lang=en-US`; filters entries outside time window.
 6. **FMP:** returns `[]` until stock_news endpoint is implemented; requires non-empty `FMP_API_KEY`.
-7. `NewsService.run_ticker_news_ingest()` fetches for each watchlist symbol → `process_batch()` → `filter_leads_for_mode()` → `persist_leads()`.
+7. `NewsService.run_ingestion_cycle(source="ticker_news")` fetches for each watchlist symbol → `process_batch()` → `filter_leads_for_mode()` → `persist_leads()`. `run_ticker_news_ingest()` remains as a thin backward-compatible wrapper.
 
 ## 6. Configuration
 
@@ -145,7 +145,7 @@ If both providers return the same URL, `fetch_for_ticker` keeps the first occurr
 | Method | Path / Command | Params | Response |
 |--------|----------------|--------|----------|
 | POST | `/ingest/ticker-news` | `days` (default 7) | `ok`, `raw_count`, `inserted`, `watchlist_size` |
-| — | `service.run_ticker_news_ingest(tickers=[...])` | optional ticker override | `IngestionCycleResult` |
+| — | `service.run_ingestion_cycle(source="ticker_news", tickers=[...])` | optional ticker override | `IngestionCycleResult` |
 
 ## 9. SQL / queries (if applicable)
 

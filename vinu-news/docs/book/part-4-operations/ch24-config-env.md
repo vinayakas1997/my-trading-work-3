@@ -56,8 +56,9 @@ flowchart TD
 |----------|---------|-------------|
 | `VINU_NEWS_DB_PATH` | `./data/news.db` | SQLite file path |
 | `VINU_NEWS_STORAGE` | `sqlite` | `sqlite` or `postgres` (stub v1.1) |
-| `VINU_NEWS_MODE` | `ticker` | Initial mode when DB first created |
-| `VINU_NEWS_POLL_INTERVAL_SEC` | `600` | Initial poll interval (10 min) |
+| `VINU_NEWS_MODE` | `ticker` | Initial mode when DB first created (DB is authoritative after first run) |
+| `VINU_NEWS_POLL_INTERVAL_SEC` | `600` | Initial poll interval seed (DB is authoritative after first run) |
+| `VINU_NEWS_MAX_WORKERS` | `8` | RSS parallel fetch pool size (1 for low-memory) |
 | `VINU_NEWS_HOST` | `0.0.0.0` in example | API bind host |
 | `VINU_NEWS_PORT` | `8080` | API port |
 | `VINU_STOCK_API_URL` | `http://127.0.0.1:8081` | vinu-stock-price integration |
@@ -66,6 +67,7 @@ flowchart TD
 | `VINU_LLM_MODEL` | `llama3.2` | Model name |
 | `VINU_LLM_API_KEY` | empty | Optional API key |
 | `VINU_LLM_TTL_SEC` | `86400` | Analysis cache TTL |
+| `llm_analysis_concurrency` | DB (seeded by env) | `4` | Auto-analysis worker pool size |
 | `FMP_API_KEY` | empty | Future FMP ticker news |
 | `VINU_NEWS_DATABASE_URL` | — | Postgres URL (v1.1, README) |
 
@@ -80,6 +82,7 @@ flowchart TD
 
 | Key | Default | Effect |
 |-----|---------|--------|
+| `enrichment.*` booleans | all `true` | Per-stage toggle (priority, sentiment, impact, category, tickers, language, threat, source_flag, summary_clean, ticker_dominance) |
 | `dedup.similarity_threshold` | `0.25` | In-batch cosine |
 | `dedup.thread_match_threshold` | `0.30` | Cross-batch match |
 | `dedup.lookback_hours` | `48` | Thread window |
@@ -91,12 +94,13 @@ flowchart TD
 
 1. `load_dotenv()` loads package `.env` then cwd `.env`.
 2. `load_config()` builds immutable `VinuConfig`.
-3. First DB init: `settings_env_defaults()` seeds `mode` and `poll_interval_sec`.
-4. **Existing Docker volumes keep saved mode** — env change alone does not reset.
+3. First DB init: `settings_env_defaults()` seeds `mode`, `poll_interval_sec`, and `llm_analysis_concurrency` from env.
+4. **After first init, DB is authoritative** — `.env` changes alone do not override stored values.
 5. Ingest reads mode at **start of each cycle** — no restart needed after PATCH.
 6. Poll interval change applies on **next sleep** after current cycle completes.
 7. `analysis.yaml` loaded once and cached by `get_settings()` in analysis package.
 8. `--db` CLI flag sets `os.environ["VINU_NEWS_DB_PATH"]` before service start.
+9. Runtime mode switch (auto ↔ manual) is handled via `patch_settings()` — no restart required.
 
 ### Collection modes
 
@@ -139,13 +143,13 @@ vinu-news-query settings set mode all
 vinu-news-query settings show
 ```
 
-### Example B — edge case (env ignored on existing volume)
+### Example B — edge case (env ignored on existing volume — single source of truth)
 
 ```bash
 # .env says VINU_NEWS_MODE=ticker but volume was previously mode=all
 docker compose up
 curl http://localhost:8080/settings
-# mode may still be "all" from DB
+# mode may still be "all" from DB (DB is authoritative after first run)
 
 # Reset options:
 curl -X PATCH http://localhost:8080/settings -H "Content-Type: application/json" -d '{"mode":"ticker"}'

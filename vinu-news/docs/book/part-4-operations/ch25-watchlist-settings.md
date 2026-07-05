@@ -84,7 +84,9 @@ flowchart LR
 ### SettingsStore
 
 - `init_schema()` seeds defaults from env via `settings_env_defaults()`.
-- `patch()` validates mode ∈ `{all, ticker}`; enforces `poll_interval_sec >= 60`.
+- After first init, DB is authoritative — env changes alone do not override stored values.
+- `patch()` validates mode ∈ `{all, ticker, auto}`; enforces `poll_interval_sec >= 60`.
+- Runtime mode switch (auto ↔ manual) handled via `patch_settings()` — no restart required.
 - Invalid mode raises `ValueError` → HTTP 400.
 
 ### Shared sync (TASK-X01)

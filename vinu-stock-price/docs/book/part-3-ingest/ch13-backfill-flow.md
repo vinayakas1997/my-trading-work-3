@@ -5,13 +5,13 @@
 | **Package** | vinu-stock-price |
 | **Module** | `vinu_stock/backfill/` |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | Chapter 03, Chapter 04, Chapter 10, Chapter 11 |
 
 ## Learning objectives
 
 - Trace the backfill orchestrator from symbol list through year jobs to catalog updates.
-- Explain automatic first-year discovery via `earliest_available()`.
+- Explain automatic first-year discovery via `earliest_available()` (with catalog-first optimization).
 - Run backfill via CLI and HTTP trigger with year overrides.
 
 ## 1. Problem this module solves
@@ -77,7 +77,7 @@ flowchart TB
 2. `end_year = to_year or (current_utc_year - 1)`; cap at current year.
 3. Per symbol:
    - `catalog.upsert_symbol(sym, backfill_status="partial")`.
-   - `start_year = from_year or _discover_first_year(sym, registry)` — tries `for_role("backfill")` providers' `earliest_available()`, then Yahoo.
+   - `start_year = from_year or _discover_first_year(sym, registry)` — **checks catalog `first_bar_ts` first**; only probes provider APIs if not found in catalog (avoids unnecessary API calls for known symbols).
    - If `start_year > end_year`, mark `complete` and skip.
    - For each `year` in `range(start_year, end_year + 1)`:
      - `queue_backfill_job`, `set_job_status(..., "running")`.
@@ -91,7 +91,7 @@ flowchart TB
 1. UTC window: `[Jan 1 year, Jan 1 year+1 - 1s]`, clipped to now.
 2. `registry.fetch_bars_with_fallback(sym, start_ts, end_ts, role="backfill")`.
 3. `parquet.write_bars(archive_year_path(...), bars, merge=True)`.
-4. `catalog.update_bar_range`, set `archive_through`, `has_adj_data` (Yahoo adj), `gap_count` via `count_session_gaps`.
+4. `catalog.update_bar_range`, set `archive_through`, `has_adj_data` (checks all providers for `adj_factor != 1.0`, not just Yahoo), `gap_count` via `count_session_gaps`.
 5. If gaps > 0, log warning to `ingest_log`.
 
 ## 6. Configuration

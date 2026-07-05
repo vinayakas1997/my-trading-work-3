@@ -74,7 +74,7 @@ flowchart LR
 ## 5. Logic (step by step)
 
 1. `load_feeds(feed_ids)` reads `feeds.yaml`, skips `enabled: false`.
-2. `poll_all_feeds(feeds)` submits each feed to a thread pool (`MAX_WORKERS=8`).
+2. `poll_all_feeds(feeds)` submits each feed to a thread pool (`VINU_NEWS_MAX_WORKERS`, default `8`).
 3. Per feed, `poll_feed()`: `fetch_url` → validate → `parse_feed`.
 4. **Fail-soft:** one feed timeout or parse error does not stop others.
 5. Aggregated raw articles passed to analysis; `update_feed_health()` records streaks and latency.
@@ -85,7 +85,7 @@ flowchart LR
 | Key | YAML/env | Default | Effect |
 |-----|----------|---------|--------|
 | `REQUEST_TIMEOUT_SEC` | `settings.py` | `4` | HTTP timeout per feed |
-| `MAX_WORKERS` | `settings.py` | `8` | Parallel fetch pool size |
+| `VINU_NEWS_MAX_WORKERS` | env / `get_max_workers()` | `8` | Parallel fetch pool size (set to 1 for low-memory) |
 | `HTML_CLOAK_PREFIX_LEN` | `settings.py` | `20` | Bytes checked for `<html` cloaking |
 | `MIN_BODY_BYTES` | `settings.py` | `50` | Minimum valid body size |
 | `DEFAULT_POLL_INTERVAL_SEC` | `settings.py` | `900` | Legacy CLI default (15 min) |

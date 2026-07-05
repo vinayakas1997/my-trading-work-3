@@ -5,7 +5,7 @@
 | **Package** | vinu-stock-price |
 | **Module** | — |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | — |
 
 **Quick dashboard:** open this chapter when you need **only what is not built yet**. For done + todo together, see [Appendix D — Roadmap](apx-d-roadmap.md). Full specs: [`enhancement-doc1.md`](../../../../vinu-news-stock-price-enhancement/enhancement-doc1.md).
@@ -57,8 +57,21 @@ See [Appendix A — Out of Scope](apx-a-out-of-scope.md) for explicit v1 exclusi
 |----|---------|
 | TASK-S01 | [ch19](../part-4-query/ch19-indicators.md) — indicators on read |
 | TASK-S02 | [ch12](../part-2-storage/ch12-adjusted-close.md) — `adj_factor` + adjusted query |
-| TASK-S03 | [ch16](../part-3-ingest/ch16-retry-gap-validation.md) — retry + gap validation |
+| TASK-S03 | [ch16](../part-3-ingest/ch16-retry-gap-validation.md) — retry + gap validation (expanded to all providers) |
 | TASK-X01 | [ch25](../part-5-operations/ch25-watchlist-shared.md) — shared watchlist |
+
+## Code quality audit fixes (2026-07-03)
+
+See [Appendix F](apx-f-issues-index.md) for full index. Key fixes across 6 phases:
+
+| Phase | Key changes |
+|-------|-------------|
+| P1 — Performance | Parquet pruning, `data_root` cache, double sort removed, `_rolling_std` O(1) sliding window, catalog-first discovery |
+| P2 — Storage & I/O | Daily-file append, Polygon daily probe fallback |
+| P3 — Code Quality | UPSERT race fix, thread-safe migration, batch symbol load |
+| P4 — Provider Security | Polygon `Authorization` header, standardized retry across all providers, `TransientProviderError` |
+| P5 — Server & API | Background backfill, rate limiting with 409 Conflict |
+| P6 — Minor | Dead code removed, cross-provider `has_adj_data`, `interval` column removed |
 
 ---
 

@@ -5,7 +5,7 @@
 | **Package** | vinu-stock-price |
 | **Module** | `vinu_stock/storage/parquet.py` |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | Chapter 08, Chapter 09 |
 
 ## Learning objectives
@@ -13,6 +13,7 @@
 - Use `write_bars`, `append_bars`, and `read_bars` correctly.
 - Explain merge-and-dedupe behavior on repeated writes.
 - Map PyArrow schema columns to `BarRecord` fields.
+- Understand the daily-file append strategy vs full-file rewrite trade-off.
 
 ## 1. Problem this module solves
 
@@ -85,9 +86,10 @@ flowchart LR
    - `_dedupe_bars(combined)` — dict key `(symbol, provider, bar_ts)`, last wins, sort by `bar_ts`.
    - `pq.write_table(..., compression="zstd")`.
    - Return `len(combined)` after dedupe.
-3. **`append_bars`** — `write_bars(path, bars, merge=True)` (live ingest entry point).
-4. **`read_bars`** — `pq.read_table` → `to_pylist()` → `BarRecord.from_dict` per row.
-5. **Query path** — `engine.py` uses DuckDB directly on globs for filtering/limits (does not call `read_bars`).
+3. **`append_bars`** — writes to day-split files (`{stem}_{YYYYMMDD}.parquet`) instead of a single file, avoiding full-file rewrite on every live cycle. Each append merges only with the current day's increment. Full-file merge via `write_bars` is used only during backfill (once per year per symbol — acceptable O(1) cost).
+4. **`read_bars`** — reads both the main file and daily increment files, then merges and dedupes.
+5. **`read_bars`** (alternative) — `pq.read_table` → `to_pylist()` → `BarRecord.from_dict` per row.
+6. **Query path** — `engine.py` uses DuckDB directly on globs for filtering/limits (does not call `read_bars`).
 
 ## 6. Configuration
 

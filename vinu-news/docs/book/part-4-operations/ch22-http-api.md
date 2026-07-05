@@ -140,7 +140,7 @@ curl -X POST http://localhost:8080/news/analyze \
 | POST | `/watchlist/tickers` | body: `{"tickers":[...]}` | `WatchlistResponse` |
 | DELETE | `/watchlist/tickers/{symbol}` | — | `WatchlistResponse` |
 | POST | `/watchlist/sync` | — | sync result dict |
-| POST | `/ingest/ticker-news` | `days=7` | Yahoo ticker news summary |
+| POST | `/ingest/ticker-news` | `days=7` | Yahoo ticker news summary (delegates to `run_ingestion_cycle(source="ticker_news")`) |
 
 ### App route (`app.py`)
 

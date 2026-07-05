@@ -86,6 +86,7 @@ First matching group wins; else feed default (usually `MARKETS`):
 - Regex: `\b[A-Z]{2,5}\b` on headline + summary.
 - Skip `TICKER_STOP_WORDS` (`THE`, `SEC`, `GDP`, `CEO`, …).
 - **Max 5** unique symbols, first-seen order.
+- Alias resolution uses watchlist + already-extracted tickers; no hardcoded fallback defaults.
 
 ### Threat classification
 

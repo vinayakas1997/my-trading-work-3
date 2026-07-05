@@ -10,13 +10,14 @@
 
 ## Learning objectives
 
-- List the nine enrichment stages and their execution order in `enrich.py`.
+- List the configurable enrichment stages and their execution order in `enrich.py`.
 - Predict priority, sentiment, impact, and category for sample headlines.
 - Understand ticker extraction limits and dominance scoring.
+- Enable/disable individual stages via `analysis.yaml`.
 
 ## 1. Problem this module solves
 
-Raw RSS fields lack trading-relevant labels: urgency, sentiment, impact tier, tickers, threat, and source credibility. Enrichment applies **deterministic keyword rules** (no ML/LLM on ingest) to populate every column on `articles` before post-process and persist.
+Raw RSS fields lack trading-relevant labels: urgency, sentiment, impact tier, tickers, threat, and source credibility. Enrichment applies **deterministic keyword rules** (no ML/LLM on ingest) to populate columns on `articles` before post-process and persist. Each stage can be enabled or disabled independently in `analysis.yaml`.
 
 ## 2. Position in pipeline
 
@@ -24,7 +25,7 @@ Raw RSS fields lack trading-relevant labels: urgency, sentiment, impact tier, ti
 flowchart LR
   Raw[validated raw dict] --> E[enrich_article]
   E --> A[ArticleRecord + TickerMentions]
-  subgraph stages [9 stages in order]
+  subgraph stages [Configurable stages — each toggled via analysis.yaml]
     S1[clean_summary] --> S2[priority]
     S2 --> S3[sentiment]
     S3 --> S4[impact]
@@ -100,7 +101,9 @@ clean_summary → priority → sentiment → impact → category → tickers →
 language → threat → source_flag → dominance → mentions
 ```
 
-**Article ID:** `SHA256(link)` or `SHA256(headline:sort_ts)` if no link.
+Each stage checks its `enrichment.<stage>` flag in `analysis.yaml`. Disabled stages return sensible defaults (e.g. `sentiment="NEUTRAL"`, `sentiment_score=0`). The `EnrichmentSettings` dataclass manages stage toggles.
+
+**Article ID:** `SHA256(link:headline:sort_ts)` — includes headline and timestamp to guard against hash collisions across different articles sharing the same URL.
 
 ### Priority (first match wins)
 
@@ -147,12 +150,26 @@ EARNINGS, CRYPTO, DEFENSE, GEOPOLITICS, ECONOMIC, REGULATORY, TECH, MARKETS (def
 
 | Key | YAML/env | Default | Effect |
 |-----|----------|---------|--------|
+| `enrichment.*` booleans | `analysis.yaml` | all `true` | Per-stage toggle |
 | Keyword lists | Python modules | baked in | Priority, sentiment, category |
 | Max tickers | `ticker_extractor.py` | `5` | Cap per article |
 | Summary length | `summary_cleaner.py` | `300` | Truncation |
 | Feed default category | `feeds.yaml` | per feed | Fallback category |
 
-Enrichment thresholds are code-defined, not in `analysis.yaml` (dedup settings are separate).
+Example `analysis.yaml` enrichment section:
+```yaml
+enrichment:
+  priority: true
+  sentiment: true
+  impact: true
+  category: true
+  tickers: true
+  language: true      # disable if not needed
+  threat: true        # disable if not needed
+  source_flag: true
+  summary_clean: true
+  ticker_dominance: true
+```
 
 ## 7. Worked examples
 
@@ -223,7 +240,7 @@ GROUP BY sentiment;
 
 | Test file | Asserts |
 |-----------|---------|
-| `analysis/tests/test_enrichment.py` | All 9 stages + edge cases |
+| `analysis/tests/test_enrichment.py` | All configurable stages + edge cases |
 | `analysis/tests/test_enrichment.py` | Pipeline integration |
 
 ## 11. Troubleshooting
@@ -240,7 +257,7 @@ GROUP BY sentiment;
 
 | Fincept reference | Module |
 |-------------------|--------|
-| `step_1_1_news.md` rule enrichment | All 9 stages in `enrichment/` |
+| `step_1_1_news.md` rule enrichment | All configurable stages in `enrichment/` |
 | Ticker extraction | `ticker_extractor.py` |
 | Source credibility | `source_credibility.py` |
 | Extensions | `ticker_dominance`, `article_ticker_mentions` |

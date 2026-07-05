@@ -5,7 +5,7 @@
 | **Package** | vinu-stock-price |
 | **Module** | — |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | Chapter 00, Appendix A |
 
 ## Learning objectives
@@ -50,7 +50,7 @@ flowchart LR
 |------|----------|--------|---------|---------------|---------|
 | TASK-S01 | HIGH | **Implemented** | [ch19](../part-4-query/ch19-indicators.md) | `query/indicators.py` | RSI, MACD, SMA, return, volatility on read |
 | TASK-S02 | HIGH | **Implemented** | [ch12](../part-2-storage/ch12-adjusted-close.md) | `models.py`, `indicators.py`, Yahoo parse | `adj_factor` + `apply_adjusted_prices` |
-| TASK-S03 | HIGH | **Implemented** | [ch16](../part-3-ingest/ch16-retry-gap-validation.md) | `retry.py`, `gap_validation.py` | Yahoo HTTP retry; backfill `gap_count` |
+| TASK-S03 | HIGH | **Implemented** | [ch16](../part-3-ingest/ch16-retry-gap-validation.md) | `retry.py`, `gap_validation.py` | Standardized HTTP retry across **all** providers (Polygon, Alpaca, Yahoo); `TransientProviderError`; backfill `gap_count` |
 | TASK-S04 | MEDIUM | **Partial** | [ch15](../part-3-ingest/ch15-market-calendar.md) | `gap_validation.py` only | RTH gap logic yes; live session skip **no** |
 | TASK-X01 | HIGH | **Implemented** | [ch25](../part-5-operations/ch25-watchlist-shared.md) | `watchlist/shared.py` | Shared JSON watchlist union sync |
 
@@ -67,11 +67,24 @@ flowchart LR
 
 ## 5. Logic (step by step)
 
-1. **S01** — `parse_indicator_names` + `apply_indicators` wired in `fetch_candles` and `/candles?indicators=`.
-2. **S02** — Yahoo sets `adj_factor`; query `adjusted=true` scales OHLC; `has_adj_data` in catalog.
-3. **S03** — `http_get_with_retry` for Yahoo; `count_session_gaps` after each backfill year; warnings in `ingest_log`.
+1. **S01** — `parse_indicator_names` + `apply_indicators` wired in `fetch_candles` and `/candles?indicators=`. `_rolling_std` optimized to O(1) sliding window.
+2. **S02** — Yahoo sets `adj_factor`; query `adjusted=true` scales OHLC; `has_adj_data` in catalog (checks all providers now, not just Yahoo).
+3. **S03** — `http_get_with_retry` standardized across **all** providers (Polygon, Alpaca, Yahoo); `TransientProviderError` replaces `ConnectionError` abuse; `count_session_gaps` after each backfill year; warnings in `ingest_log`.
 4. **S04 partial** — Session helpers exist; `live/ingest_cycle.py` does **not** check market open; no `is_market_open` column; no holiday calendar.
 5. **X01** — `VINU_SHARED_WATCHLIST_PATH` + `POST /watchlist/sync`.
+
+### Code quality audit (2026-07-03)
+
+A comprehensive audit identified **25 issues** (10 performance, 15 code quality). **20 were fixed**, 2 were already resolved, 2 deferred. See [Appendix F](apx-f-issues-index.md) for full index.
+
+| Phase | Focus | Items | Key changes |
+|-------|-------|-------|-------------|
+| P1 | Performance | 5/5 | Parquet pruning, `data_root` cache, double sort removed, `_rolling_std` sliding window, catalog-first discovery |
+| P2 | Storage & I/O | 2/2 | Daily-file append, Polygon daily probe |
+| P3 | Code Quality | 4/4 | UPSERT race fix, thread-safe migration, batch symbol load |
+| P4 | Provider Security | 3/3 | Polygon `Authorization` header, standardized retry, `TransientProviderError` |
+| P5 | Server & API | 2/2 | Background backfill, rate limiting + 409 |
+| P6 | Minor | 4/4 | Dead code removed, `has_adj_data` cross-provider, `interval` column removed |
 
 ## 6. Configuration
 

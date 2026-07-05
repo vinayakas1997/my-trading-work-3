@@ -5,7 +5,7 @@
 | **Package** | vinu-stock-price |
 | **Module** | `vinu_stock/service.py` |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | Chapter 13, Chapter 14, Chapter 17, Chapter 21 |
 
 ## Learning objectives
@@ -13,6 +13,7 @@
 - Map `StockService` methods to backfill, live, query, catalog, and settings subsystems.
 - Use context manager lifecycle for tests and scripts.
 - Compare `StockService` to vinu-news `NewsService` facade pattern.
+- Understand `data_root` caching to avoid SQLite round-trips.
 
 ## 1. Problem this module solves
 
@@ -74,7 +75,7 @@ flowchart TB
 ## 5. Logic (step by step)
 
 1. **`StockService.__init__`** — load config; create or accept `MetaBackend`; set `_owns_backend`; build `ProviderRegistry`.
-2. **`data_root` property** — reads from settings DB (`get_settings().data_root`), not only env default.
+2. **`data_root` property** — cached in `__init__` from settings DB (`get_settings().data_root`), refreshed on `patch_settings`. Previously triggered a SQLite query on every access.
 3. **`close()` / context manager** — closes backend if owned.
 4. **Watchlist** — delegates to `MetaBackend` (`get_watchlist`, `add_watchlist_tickers`, `remove_watchlist_ticker`).
 5. **`sync_watchlist_from_shared`** — requires `VINU_SHARED_WATCHLIST_PATH`; calls `watchlist.shared.sync_from_shared`.

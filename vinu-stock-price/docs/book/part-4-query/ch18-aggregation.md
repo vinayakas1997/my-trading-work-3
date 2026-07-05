@@ -5,7 +5,7 @@
 | **Package** | vinu-stock-price |
 | **Module** | `vinu_stock/query/aggregate.py` |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | Chapter 17 |
 
 ## Learning objectives
@@ -13,6 +13,7 @@
 - List supported intervals and their second bucket sizes.
 - Explain OHLCV aggregation rules from 1m bars.
 - Predict `bar_ts` alignment for higher timeframes.
+- Understand that aggregation trusts DuckDB's ORDER BY (no redundant sorting).
 
 ## 1. Problem this module solves
 
@@ -81,9 +82,9 @@ Required keys per row: `bar_ts`, `open`, `high`, `low`, `close`; optional `volum
 
 ## 5. Logic (step by step)
 
-1. If `interval.lower() == "1m"`, return rows sorted by `bar_ts` (no aggregation).
+1. If `interval.lower() == "1m"`, return rows directly (no aggregation, no redundant sort — DuckDB already returns `ORDER BY bar_ts ASC`).
 2. `interval_sec = interval_to_seconds(interval)` — raises `ValueError` if unsupported.
-3. Sort input rows by `bar_ts`.
+3. Input rows are iterated in DuckDB-provided order (no `sorted()` call — redundant sort removed in v1).
 4. For each row, `b = bucket_ts(bar_ts, interval_sec)` where `b = (bar_ts // interval_sec) * interval_sec`.
 5. **New bucket**: copy `open/high/low/close/volume/adj_factor` from first row in bucket.
 6. **Existing bucket**:

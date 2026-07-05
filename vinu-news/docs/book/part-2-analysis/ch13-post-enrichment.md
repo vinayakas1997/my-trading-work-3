@@ -59,7 +59,7 @@ flowchart TD
 | Field | Type | Required | Example |
 |-------|------|----------|---------|
 | `EnrichedArticle` | dataclass | yes | From enrich_batch |
-| `analysis.yaml` dedup settings | dict | yes | Loaded via settings_loader |
+| `analysis.yaml` dedup + enrichment settings | dict | yes | Loaded via settings_loader |
 
 ### Output
 
@@ -183,7 +183,7 @@ Note: non-leads are not stored — multiple rows per `cluster_id` only if separa
 
 | Test file | Asserts |
 |-----------|---------|
-| `analysis/tests/test_post_process.py` | Full batch |
+| `analysis/tests/test_post_process.py` | Full batch (dedup, lead pick, always runs) |
 | `analysis/tests/test_cosine_dedup.py` | TF-IDF clustering |
 | `analysis/tests/test_cluster_gates.py` | Beat vs miss separation |
 | `analysis/tests/test_synonyms.py` | Normalization |

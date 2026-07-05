@@ -21,7 +21,7 @@ vinu-news spans RSS ingestion, rule-based enrichment, SQLite persistence, HTTP A
 
 ## 1a. System architecture — without LLM (default)
 
-This is the **always-on** path. No Ollama, no OpenAI key, no `VINU_LLM_*` required. Every poll uses **deterministic rule enrichment** only.
+This is the **always-on** path. No Ollama, no OpenAI key, no `VINU_LLM_*` required. Every poll uses **deterministic rule enrichment** with per-stage toggles in `analysis.yaml`.
 
 ```mermaid
 flowchart TB
@@ -36,7 +36,7 @@ flowchart TB
 
   subgraph analysis [Rule analysis - no LLM]
     Raw --> Pre[validate + url dedup]
-    Pre --> Enrich[9-stage enrichment]
+    Pre --> Enrich[configurable enrichment]
     Enrich --> Post[NER + cosine dedup + lead pick]
     Post --> Filter[collection filter]
     Filter --> Persist[persist_leads + threads]

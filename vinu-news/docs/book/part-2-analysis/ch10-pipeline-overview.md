@@ -25,9 +25,7 @@ flowchart TD
   Raw[raw article dicts] --> V[validate_raw_batch]
   V --> U[dedup_urls_batch]
   U --> E[enrich_batch]
-  E --> P{skip_post_process?}
-  P -->|no| PP[post_process_batch]
-  P -->|yes| Out[EnrichedArticle list]
+  E --> PP[post_process_batch]
   PP --> Leads[Lead articles only]
 ```
 
@@ -57,7 +55,6 @@ flowchart TD
 | Field | Type | Required | Example |
 |-------|------|----------|---------|
 | `raw_articles` | list[dict] | yes | From RSS parser |
-| `skip_post_process` | bool | no | `False` (default) |
 
 ### Output
 
@@ -65,33 +62,30 @@ flowchart TD
 
 | Field | Type | Example |
 |-------|------|---------|
-| `articles` | list[EnrichedArticle] | Leads (or all enriched if skip) |
+| `articles` | list[EnrichedArticle] | Leads only |
 | `validated_count` | int | `100` |
 | `enriched_count` | int | `95` |
 | `url_dedup_dropped` | int | `5` |
 | `clusters_found` | int | `12` |
 | `duplicates_dropped` | int | `30` |
-| `post_process_applied` | bool | `True` |
+| `post_process_applied` | bool | always `True` |
 
 ## 5. Logic (step by step)
 
 1. `validate_raw_batch()` — require non-empty `headline`, `link`, `source`; drop invalid.
 2. `dedup_urls_batch()` — normalize URL (lowercase host, strip trailing `/`); first wins.
-3. `enrich_batch()` — run 9 stages per article (Ch 12).
-4. Unless `skip_post_process=True`:
-   - NER → `entities_json`
-   - Synonym normalize → `norm_text`
-   - Cosine cluster + merge gates
-   - Lead pick per cluster
+3. `enrich_batch()` — run configurable stages per article (Ch 12).
+4. Post-process always runs: NER → `entities_json`, synonym normalize → `norm_text`, cosine cluster + merge gates, lead pick per cluster.
 5. Return leads in `ProcessResult.articles`.
 6. Caller (`run_ingestion` or tests) passes leads to `persist_leads()`.
 
-**Design principle:** Post-process is DB-free; cross-batch dedup only at persist.
+**Design principle:** Post-process is always applied (no `skip_post_process` flag). Cross-batch dedup only at persist.
 
 ## 6. Configuration
 
 | Key | YAML/env | Default | Effect |
 |-----|----------|---------|--------|
+| `enrichment.*` | `analysis.yaml` | all `true` | Per-stage toggles for enrichment |
 | `dedup.similarity_threshold` | `analysis.yaml` | `0.25` | In-batch merge |
 | `dedup.thread_match_threshold` | `analysis.yaml` | `0.30` | Cross-batch (persist) |
 | `lead_pick.prefer_recency_tiebreak` | `analysis.yaml` | `true` | Newest wins ties |
@@ -122,16 +116,19 @@ with NewsRepository() as repo:
     print(pr.inserted, pr.threads_created)
 ```
 
-### Example B — edge case (skip post-process)
+### Example B — edge case (no articles survive filtering)
 
 ```python
-result = process_batch(raw, skip_post_process=True)
-# All enriched articles returned; clusters_found=0, duplicates_dropped=0
-assert result.post_process_applied is False
-assert len(result.articles) == result.enriched_count
-```
+from vinu_news.analysis.pipeline import process_batch
 
-Useful for testing enrichment stages in isolation.
+# Batch with single duplicate entry
+raw = [
+    {"headline": "Fed holds rates", "link": "https://a.com/fed", "source": "REUTERS", "summary": "", "pubDate": "...", "region": "US", "tier": 1},
+    {"headline": "Fed rates unchanged", "link": "https://a.com/fed", "source": "AP", "summary": "", "pubDate": "...", "region": "US", "tier": 2},
+]
+result = process_batch(raw)
+# url_dedup_dropped=1, enriched_count=1 (post-process always runs)
+```
 
 ## 8. API / CLI (if applicable)
 
@@ -172,7 +169,6 @@ All stored rows have `is_lead = 1`.
 | High `url_dedup_dropped` | Same URL multiple feeds | Expected in one poll |
 | High `duplicates_dropped` | Syndicated stories | Tune similarity threshold |
 | Empty `articles` after process | All failed validation | Inspect raw dicts |
-| `skip_post_process` in prod | Debug flag left on | Always false in ingest |
 
 ## 12. Fincept / reference repo mapping
 

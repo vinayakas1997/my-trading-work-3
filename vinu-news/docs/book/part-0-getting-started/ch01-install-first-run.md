@@ -87,7 +87,7 @@ flowchart LR
 | `VINU_NEWS_HOST` | env | `127.0.0.1` | API bind host (`0.0.0.0` in Docker) |
 | `VINU_NEWS_PORT` | env | `8080` | API port |
 
-**Note:** After first run, `mode` and `poll_interval_sec` live in the DB (`vinu_settings` table). Env vars seed defaults only.
+**Note:** After first run, `mode` and `poll_interval_sec` live in the DB (`vinu_settings` table). Env vars seed defaults only — changing `.env` on an existing volume does not override the stored DB values. Use `PATCH /settings` for runtime changes.
 
 ## 7. Worked examples
 

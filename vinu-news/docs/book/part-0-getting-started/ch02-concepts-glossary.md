@@ -36,7 +36,7 @@ flowchart TD
 |------|-------|--------|
 | Poll | `feeds.yaml` configs | Raw dicts (7+ fields) |
 | Pre-enrich | Raw batch | Valid, URL-deduped batch |
-| Enrich | Raw dict | `EnrichedArticle` with 9 rule stages |
+| Enrich | Raw dict | `EnrichedArticle` with configurable rule stages |
 | Post-process | Enriched batch | Leads only (non-leads dropped in memory) |
 | Persist | Leads | SQLite rows + thread rollups |
 
@@ -87,7 +87,7 @@ flowchart TD
 
 ### Article ID
 
-`SHA256(link)` when link present; else `SHA256(headline:sort_ts)`.
+`SHA256(link:headline:sort_ts)` when link present; else `SHA256(headline:sort_ts)`. The inclusion of headline and timestamp guards against hash collisions across different articles sharing the same URL.
 
 ### Priority waterfall (first match wins)
 
@@ -196,7 +196,7 @@ LIMIT 10;
 
 | Fincept concept | vinu-news term |
 |-----------------|----------------|
-| Rule enrichment (9 stages) | `vinu_news/analysis/enrichment/` |
+| Rule enrichment (configurable stages) | `vinu_news/analysis/enrichment/` |
 | Cosine dedup §5 | `post_enrichment/cosine_dedup/` |
 | NER + synonyms §4 | `post_enrichment/ner/`, `synonyms/` |
 | FTS5 search §7 | `articles_fts` virtual table |

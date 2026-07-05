@@ -58,7 +58,7 @@ flowchart LR
 
 ## 5. Logic (step by step)
 
-1. **Core stack (done):** RSS ingest, 9-stage enrichment, post-process, threads, FTS, API, ticker mode, feed health.
+1. **Core stack (done):** RSS ingest, configurable enrichment, post-process, threads, FTS, API, ticker mode, feed health.
 2. **Enhancement wave 1 (done in code):** TASK-N01 (LLM analyze on demand), N02 (ticker news), N03 (price reaction), X01 (watchlist sync).
 3. **Still open:** LLM digest (not on-demand analyze), SEC/scraper providers, UI beyond `/ui` stub, Fincept Steps 2–5 trading hooks.
 4. FMP provider exists but returns `[]` until `stock_news` endpoint is wired.

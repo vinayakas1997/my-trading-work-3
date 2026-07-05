@@ -5,7 +5,7 @@
 | **Package** | vinu-stock-price |
 | **Module** | `vinu_stock/query/engine.py` |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | Chapter 09, Chapter 11 |
 
 ## Learning objectives
@@ -13,6 +13,7 @@
 - Explain how DuckDB reads archive and live Parquet globs in one query.
 - Apply time filters (`from`, `to`, `days`) and provider filters.
 - Use optional indicators and split-adjusted prices on read.
+- Understand parquet partition pruning for efficient time-range queries.
 
 ## 1. Problem this module solves
 
@@ -76,7 +77,7 @@ flowchart LR
 
 ## 5. Logic (step by step)
 
-1. **`parquet_globs(data_root, symbol)`** — if empty, return `[]`.
+1. **`parquet_globs_by_range(data_root, symbol, from_ts, to_ts)`** — builds year-scoped file lists so DuckDB only scans relevant year files. Falls back to full `parquet_globs` if no year-specific matches. Previously scanned all files regardless of time range.
 2. **Build SQL** with `read_parquet([patterns], union_by_name=true)`.
 3. **WHERE** `symbol = ?` (uppercased), optional `bar_ts >= ?`, `bar_ts <= ?`, `provider = ?`.
 4. **ORDER BY bar_ts ASC LIMIT ?`** — limit applied **before** aggregation (on 1m rows).

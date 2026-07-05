@@ -6,7 +6,7 @@ from typing import Any
 
 from vinu_news.analysis.llm.cache import get_cached_analysis, save_analysis
 from vinu_news.analysis.llm.client import LlmClient, LlmClientError
-from vinu_news.analysis.llm.prompts import ANALYSIS_SYSTEM, ANALYSIS_USER_TEMPLATE
+from vinu_news.analysis.llm.prompts import ANALYSIS_SYSTEM, build_analysis_prompt
 from vinu_news.analysis.storage.repository import NewsRepository, normalize_link
 from vinu_news.config import VinuConfig, load_config
 
@@ -37,9 +37,9 @@ def analyze_article(
         return {"url": url, "cached": True, "analysis": cached}
 
     llm = client or LlmClient(cfg)
-    prompt = ANALYSIS_USER_TEMPLATE.format(
+    prompt = build_analysis_prompt(
         headline=article["headline"],
-        summary=article.get("summary", ""),
+        summary=article.get("summary"),
         url=url,
     )
     raw = llm.chat_json(ANALYSIS_SYSTEM, prompt)

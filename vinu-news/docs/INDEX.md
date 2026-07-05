@@ -85,6 +85,7 @@ Start here for chapter-based documentation. Legacy monolithic guides remain with
 | [A3](book/part-5-appendices/apx-c-test-map.md) | Test file → module map | REVIEW | 10 min |
 | [A4](book/part-5-appendices/apx-d-roadmap-gaps.md) | still_missing + enhancement tasks | REVIEW | 15 min |
 | [A5](book/part-5-appendices/apx-e-yet-to-build.md) | **Yet to build** (TODO only) | REVIEW | 5 min |
+| [A6](book/part-5-appendices/apx-f-issues-index.md) | **Issues & changelog** (date-wise index) | REVIEW | 5 min |
 
 ## Enhancement task → chapter map
 

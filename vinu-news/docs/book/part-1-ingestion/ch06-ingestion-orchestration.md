@@ -59,7 +59,6 @@ flowchart TD
 | `db_path` | path | no | From `VINU_NEWS_DB_PATH` |
 | `feed_ids` | list[str] | no | `["federal_reserve"]` |
 | `dry_run` | bool | no | `false` |
-| `skip_post_process` | bool | no | `false` |
 | `mode` | string | yes (runtime) | `ticker` or `all` |
 | `watchlist` | set[str] | ticker mode | `{"AAPL","NVDA"}` |
 
@@ -89,7 +88,7 @@ flowchart TD
 2. `poll_all_feeds(feeds)` → flat raw article list + per-feed results.
 3. If not `dry_run`: `update_feed_health(repo, feed_results)`.
 4. If `dry_run`: return early with fetch counts only.
-5. `process_batch(raw_articles)` → validate, URL dedup, enrich, post-process.
+5. `process_batch(raw_articles)` → validate, URL dedup, enrich, post-process (always runs — no `skip_post_process` flag).
 6. `NewsService` applies `filter_leads_for_mode(leads, mode, watchlist)`.
 7. `persist_leads(repo, filtered_leads)` → SQLite + threads.
 8. `format_report()` prints human-readable summary.
@@ -101,10 +100,10 @@ Continuous ingest (`vinu-news-ingest --continuous`) sleeps `poll_interval_sec` f
 | Key | YAML/env | Default | Effect |
 |-----|----------|---------|--------|
 | `VINU_NEWS_POLL_INTERVAL_SEC` | env | `600` | Initial poll interval seed |
+| `VINU_NEWS_MAX_WORKERS` | env | `8` | RSS parallel fetch pool size |
 | `poll_interval_sec` | DB `vinu_settings` | from env | Sleep between continuous polls |
 | `mode` | DB `vinu_settings` | `ticker` | Persist filter |
 | `--dry-run` | CLI | off | Fetch + health only |
-| `--skip-post-process` | API internal | off | Enrich without dedup/lead pick |
 
 ## 7. Worked examples
 
@@ -159,11 +158,13 @@ Response:
 
 | Method | Path / Command | Params | Response |
 |--------|----------------|--------|----------|
-| POST | `/ingest/trigger` | — | `IngestTriggerResponse` |
-| POST | `/ingest/ticker-news` | `days=7` | Yahoo ticker news ingest |
+| POST | `/ingest/trigger` | — | RSS ingest (`source="rss"`) |
+| POST | `/ingest/ticker-news` | `days=7` | Yahoo ticker news (`source="ticker_news"`) |
 | CLI | `vinu-news-ingest --once` | `--feeds`, `--db` | Terminal report |
 | CLI | `vinu-news-ingest --continuous` | — | Loop until stopped |
 | CLI | `vinu-news-ingest --interval 900` | seconds | Fixed sleep override |
+
+Both HTTP endpoints delegate to the same internal method `run_ingestion_cycle()` differentiated by the `source` parameter.
 
 ## 9. SQL / queries (if applicable)
 

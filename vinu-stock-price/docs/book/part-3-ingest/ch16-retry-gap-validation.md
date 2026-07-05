@@ -5,7 +5,7 @@
 | **Package** | vinu-stock-price |
 | **Module** | `vinu_stock/providers/retry.py`, `vinu_stock/catalog/gap_validation.py` |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | Chapter 03, Chapter 10, Chapter 15 |
 
 ## Learning objectives
@@ -16,7 +16,7 @@
 
 ## 1. Problem this module solves
 
-HTTP providers fail transiently (timeouts, 503, 429). **TASK-S03** adds exponential backoff retries for Yahoo's chart API. Separately, backfill must **detect missing RTH minutes** without treating nights and weekends as gaps — `gap_validation.py` implements that count and persists `gap_count` on `symbol_catalog`.
+HTTP providers fail transiently (timeouts, 503, 429). **TASK-S03** adds exponential backoff retries for **all** providers (Polygon, Alpaca, Yahoo) via a shared `http_get_with_retry` utility. A custom `TransientProviderError` replaces the previous `ConnectionError` abuse for HTTP 429/5xx. Separately, backfill must **detect missing RTH minutes** without treating nights and weekends as gaps — `gap_validation.py` implements that count and persists `gap_count` on `symbol_catalog`.
 
 ## 2. Position in pipeline
 
@@ -39,8 +39,10 @@ flowchart LR
 
 | File | Responsibility |
 |------|----------------|
-| `providers/retry.py` | `retry_on_transient`, `http_get_with_retry` |
+| `providers/retry.py` | `retry_on_transient`, `http_get_with_retry`, `TransientProviderError` |
 | `providers/yahoo.py` | Uses `http_get_with_retry` |
+| `providers/polygon.py` | Uses `http_get_with_retry` (standardised) |
+| `providers/alpaca.py` | Uses `http_get_with_retry` (standardised) |
 | `catalog/gap_validation.py` | `count_session_gaps`, session helpers |
 | `backfill/year_job.py` | Invokes gap count after archive write |
 | `catalog/store.py` | `gap_count`, `last_validation_at` columns |
@@ -83,7 +85,7 @@ flowchart LR
 1. `retry_on_transient` decorator loops `attempt` 1..`n`.
 2. On configured exceptions, log warning, `sleep(delay)`, `delay *= backoff`.
 3. Re-raise last exception if all attempts fail.
-4. `http_get_with_retry` wraps `requests.get`; treats 429/5xx as `ConnectionError` for retry; calls `raise_for_status()` on success path.
+4. `http_get_with_retry` wraps `requests.get`; raises `TransientProviderError` on HTTP 429/5xx for retry (previously abused `ConnectionError`); calls `raise_for_status()` on success path.
 
 **Gap validation (`gap_validation.py`):**
 
@@ -104,7 +106,7 @@ flowchart LR
 | `n` (retry) | code arg | `3` | Max attempts |
 | `backoff` | code arg | `1.5` | Delay multiplier |
 | `timeout` | `http_get_with_retry` | `30.0` | Per-request timeout |
-| Polygon/Alpaca | — | no retry wrapper | Direct `requests.get` in v1 |
+| Polygon, Alpaca, Yahoo | — | `http_get_with_retry` | Standardised retry across all providers |
 
 ## 7. Worked examples
 
@@ -174,7 +176,7 @@ WHERE error LIKE 'gap_warning:%';
 |---------|--------------|-----|
 | Yahoo still fails after 3 tries | Persistent outage or block | Wait; check User-Agent; use Polygon |
 | `gap_count` huge | Thin provider data in RTH | Re-backfill; verify provider |
-| Polygon errors no retry | No retry on polygon.py | Expected v1; add retry in future |
+| Polygon errors no retry | Retry not triggering | All providers use `http_get_with_retry`; check `TransientProviderError` in logs |
 | Job `failed` vs `gap_warning` | Different paths | `failed` = no bars; warning = bars with holes |
 
 ## 12. Fincept / reference repo mapping

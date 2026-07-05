@@ -84,7 +84,7 @@ flowchart LR
 
 | Fincept reference | Section | Implementation | Chapter | Status |
 |-------------------|---------|----------------|---------|--------|
-| `step_1_1_news.md` | Rule enrichment (9 stages) | `analysis/enrichment/` | Ch 12, 12a–c | Done |
+| `step_1_1_news.md` | Rule enrichment (configurable stages) | `analysis/enrichment/` | Ch 12, 12a–c | Done |
 | `step_1_1_news.md` | SQLite schema | `storage/schema.sql` | Ch 17 | Done |
 | `step_1_1_news.md` | FTS5 | `storage/fts.py` | Ch 19 | Done |
 | `news_intelligence_pipeline.md` | §4 NER + synonyms | `post_enrichment/ner/`, `synonyms/` | Ch 13 | Done |

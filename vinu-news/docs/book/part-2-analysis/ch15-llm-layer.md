@@ -18,6 +18,8 @@
 
 Rule-based enrichment is fast and deterministic but shallow. TASK-N01 adds **optional deep analysis** — sentiment score on a continuous scale, confidence, risk flags, and a narrative summary — triggered by API request and cached in SQLite. Ingest never calls the LLM; this keeps polling reliable and costs predictable.
 
+Auto-analysis mode (`mode=auto`) uses a **rate-limited worker pool** with a thread-safe queue to prevent overwhelming the LLM when many articles arrive in a single poll cycle.
+
 ## 2. Position in pipeline
 
 ```mermaid
@@ -83,12 +85,21 @@ API response adds `cached: bool` and `url`.
 
 ## 5. Logic (step by step)
 
+### On-demand analysis
 1. `analyze_article(repo, url_or_id)` loads article by `id` or `link` (with `normalize_link` fallback).
 2. `get_cached_analysis(conn, url, ttl_sec)` returns parsed JSON if row exists and age ≤ `VINU_LLM_TTL_SEC`.
 3. On miss: build prompt from `ANALYSIS_USER_TEMPLATE`; call `LlmClient.chat_json()`.
 4. `_normalize_analysis()` coerces types; `save_analysis()` upserts `news_analysis`.
 5. Returns `{"url", "cached", "analysis"}`.
 6. **Not called** from `enrich_article()`, `process_batch()`, or `run_ingestion_cycle()`.
+
+### Auto-analysis (rate-limited worker pool)
+When `mode=auto`, articles are submitted to a fixed pool of daemon worker threads:
+1. A single `ThreadPoolExecutor` (size controlled by `llm_analysis_concurrency`) is created at service start.
+2. Articles are enqueued via a `queue.Queue(maxsize=1000)` which provides backpressure — submissions block or are gracefully rejected when the queue is full.
+3. Worker threads pull links from the queue in a loop, calling `analyze_article()` for each.
+4. On service `close()`, the queue and executor are shut down gracefully.
+5. Runtime mode switching (auto ↔ manual) is handled via `PATCH /settings` without restart.
 
 ## 6. Configuration
 
@@ -98,6 +109,8 @@ API response adds `cached: bool` and `url`.
 | `VINU_LLM_MODEL` | env | `llama3.2` | Model name |
 | `VINU_LLM_API_KEY` | env | none | Bearer token if needed |
 | `VINU_LLM_TTL_SEC` | env | `86400` | Cache TTL (0 = always miss) |
+| `llm_analysis_concurrency` | DB settings (seeded by env) | `4` | Auto-analysis worker pool size |
+| `mode` | DB settings | `manual` | `manual` (on-demand) or `auto` (queue worker) |
 
 ## 7. Worked examples
 

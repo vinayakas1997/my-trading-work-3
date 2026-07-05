@@ -171,7 +171,7 @@ WHERE link = 'https://example.com/path';
 |-------------------|----------------|
 | Raw validation | Required field gate |
 | URL dedup before enrich | `url_dedup.py` |
-| Stable article id from link | SHA256(link) in enrichment |
+| Stable article id from link | SHA256(link:headline:ts) with collision guard |
 
 ## 13. Related chapters
 

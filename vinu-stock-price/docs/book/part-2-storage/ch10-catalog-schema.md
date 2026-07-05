@@ -5,7 +5,7 @@
 | **Package** | vinu-stock-price |
 | **Module** | `vinu_stock/catalog/` |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | Chapter 08, Chapter 09 |
 
 ## Learning objectives
@@ -67,7 +67,6 @@ flowchart LR
 |--------|------|---------|-------------|
 | `symbol` | TEXT PK | — | Ticker |
 | `provider` | TEXT | `''` | Last writer provider id |
-| `interval` | TEXT | `'1m'` | Stored granularity |
 | `first_bar_ts` | INTEGER | null | Earliest bar UTC epoch |
 | `last_bar_ts` | INTEGER | null | Latest bar UTC epoch |
 | `archive_through` | TEXT | null | Last frozen archive year |
@@ -108,13 +107,14 @@ flowchart LR
 ## 5. Logic (step by step)
 
 1. **`MetaBackend._init_schema`** executes `schema.sql` via `CatalogStore.init_schema`.
-2. **`_migrate_schema`** adds columns `has_adj_data`, `gap_count`, `last_validation_at` if missing (older DBs).
-3. **Backfill start** — `upsert_symbol(sym, backfill_status="partial")`.
-4. **Per year** — `queue_backfill_job`, `set_job_status(..., "running")`, on success `done` with `rows_written`, on failure `failed` with `error`.
-5. **After all years** — `upsert_symbol(sym, backfill_status="complete")`.
-6. **`update_bar_range`** — merges min/max `bar_ts` with existing `first_bar_ts`/`last_bar_ts`.
-7. **Live ingest** — updates `live_file`, logs to `ingest_log` every symbol per cycle.
-8. **`get_catalog()`** — `list_symbols()` or `get_symbol()` → `to_dict()` for API.
+2. **`_migrate_schema`** adds columns `has_adj_data`, `gap_count`, `last_validation_at` if missing (older DBs). Uses `ALTER TABLE ADD COLUMN` wrapped in try/except `OperationalError` for thread safety.
+3. **`upsert_symbol`** uses atomic `INSERT INTO ... ON CONFLICT DO UPDATE` (SQLite UPSERT) — no SELECT-then-INSERT race condition.
+4. **Backfill start** — `upsert_symbol(sym, backfill_status="partial")`.
+5. **Per year** — `queue_backfill_job`, `set_job_status(..., "running")`, on success `done` with `rows_written`, on failure `failed` with `error`.
+6. **After all years** — `upsert_symbol(sym, backfill_status="complete")`.
+7. **`update_bar_range`** — merges min/max `bar_ts` with existing `first_bar_ts`/`last_bar_ts`. No longer double-queries SQLite thanks to UPSERT.
+8. **Live ingest** — updates `live_file`, logs to `ingest_log` every symbol per cycle (batch-loads all symbols via `list_symbols()` once per cycle).
+9. **`get_catalog()`** — `list_symbols()` or `get_symbol()` → `to_dict()` for API.
 
 ## 6. Configuration
 
@@ -137,7 +137,6 @@ curl http://127.0.0.1:8081/catalog/AAPL
   "data": [{
     "symbol": "AAPL",
     "provider": "polygon",
-    "interval": "1m",
     "first_bar_ts": 1704067200,
     "last_bar_ts": 1735689600,
     "archive_through": "2024",

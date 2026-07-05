@@ -5,7 +5,7 @@
 | **Package** | vinu-stock-price |
 | **Module** | `vinu_stock/providers/polygon.py` |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | Chapter 03, Chapter 04 |
 
 ## Learning objectives
@@ -13,6 +13,7 @@
 - Describe how `PolygonProvider` calls the Polygon aggregates API and paginates results.
 - Map Polygon JSON fields to `BarRecord` columns.
 - Use `earliest_available()` for backfill start-year discovery.
+- Understand API key security via `Authorization: Bearer` header and standardized HTTP retry.
 
 ## 1. Problem this module solves
 
@@ -74,12 +75,12 @@ flowchart LR
 1. **`is_configured()`** — true when `config.polygon_api_key` is non-empty.
 2. **`fetch_bars`** — if not configured, return `FetchBarsResult(False, [], "POLYGON_API_KEY not set")`.
 3. Build URL: `https://api.polygon.io/v2/aggs/ticker/{SYM}/range/1/minute/{start_ms}/{end_ms}`.
-4. Query params: `adjusted=true`, `sort=asc`, `limit=50000`, `apiKey=...`.
-5. **GET** with `requests.get` and `REQUEST_TIMEOUT_SEC`.
+4. Query params: `adjusted=true`, `sort=asc`, `limit=50000`. API key passed via **`Authorization: Bearer`** header (not URL query string) to avoid key leakage in logs.
+5. **GET** with `http_get_with_retry` and `REQUEST_TIMEOUT_SEC` — standardised retry with `TransientProviderError` on HTTP 429/5xx.
 6. Accept `status` in `OK`, `DELAYED`, or `None`; else return API error message.
 7. For each `results[]` row, append `BarRecord` with `bar_ts = t // 1000`.
 8. If `next_url` present, follow with params `{apiKey}` only until exhausted.
-9. **`earliest_available`** — GET `v3/reference/tickers/{sym}` for `list_date`; on failure, probe wide 1m `fetch_bars` from 1990 and return min `bar_ts`.
+9. **`earliest_available`** — GET `v3/reference/tickers/{sym}` for `list_date`; on failure, probe with daily interval (`interval="1d"`) from 1990 (~13k rows vs ~10M for 1m).
 
 ## 6. Configuration
 
@@ -164,7 +165,7 @@ Polygon HTTP is not hit in CI; use manual backfill with a real key for integrati
 | `POLYGON_API_KEY not set` | Missing env | Add to `.env`, restart process |
 | `DELAYED` status | Free-tier delay | Bars still returned; expect 15m delay on some plans |
 | Empty results | Symbol delisted or bad range | Verify ticker on Polygon dashboard |
-| Rate limit / 429 | Too many requests | Backfill serializes per year; add delay or upgrade plan |
+| Rate limit / 429 | Too many requests | Retry with exponential backoff via `http_get_with_retry` |
 
 ## 12. Fincept / reference repo mapping
 

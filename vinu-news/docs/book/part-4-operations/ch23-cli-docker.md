@@ -103,6 +103,7 @@ Subcommands: `latest`, `ticker`, `search`, `settings`, `watchlist`.
 | Key | YAML/env | Default | Effect |
 |-----|----------|---------|--------|
 | `VINU_NEWS_DB_PATH` | env | `./data/news.db` | Local CLI path |
+| `VINU_NEWS_MAX_WORKERS` | env | `8` | RSS parallel fetch pool (set `1` for low-memory) |
 | Docker override | compose | `/data/news.db` | Container DB |
 | `VINU_NEWS_POLL_INTERVAL_SEC` | env | `600` | Initial poll seed |
 | `poll_interval_sec` | DB | from env | Continuous ingest sleep |

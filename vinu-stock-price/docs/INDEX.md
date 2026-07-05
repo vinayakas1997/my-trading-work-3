@@ -2,7 +2,7 @@
 
 **Sister volume:** [vinu-news Textbook (Volume 1)](../../vinu-news/docs/INDEX.md)
 
-**Yet to build (quick view):** [**Appendix E — Yet to build**](book/part-6-appendices/apx-e-yet-to-build.md) · [News yet to build](../../vinu-news/docs/book/part-5-appendices/apx-e-yet-to-build.md)
+**Yet to build (quick view):** [**Appendix E — Yet to build**](book/part-6-appendices/apx-e-yet-to-build.md) · [**Appendix F — Issues index**](book/part-6-appendices/apx-f-issues-index.md) · [News yet to build](../../vinu-news/docs/book/part-5-appendices/apx-e-yet-to-build.md)
 
 Start here for chapter-based documentation. Legacy monolithic guides remain with redirect banners.
 
@@ -82,6 +82,7 @@ Start here for chapter-based documentation. Legacy monolithic guides remain with
 | [A3](book/part-6-appendices/apx-c-test-map.md) | tests/ → module | REVIEW | 10 min |
 | [A4](book/part-6-appendices/apx-d-roadmap.md) | enhancement TASK-S* | REVIEW | 15 min |
 | [A5](book/part-6-appendices/apx-e-yet-to-build.md) | **Yet to build** (TODO only) | REVIEW | 5 min |
+| [A6](book/part-6-appendices/apx-f-issues-index.md) | **Issues & changelog index** | NEW | 5 min |
 
 ## Enhancement task → chapter map
 
@@ -89,9 +90,10 @@ Start here for chapter-based documentation. Legacy monolithic guides remain with
 |------|---------|-------|
 | TASK-S01 | ch19 | Technical indicators |
 | TASK-S02 | ch12 | Adjusted close |
-| TASK-S03 | ch16 | Retry + gap validation |
+| TASK-S03 | ch16 | Retry + gap validation — expanded to all providers (2026-07-03) |
 | TASK-S04 | ch15 | Market calendar |
 | TASK-X01 | ch25 | Shared watchlist sync |
+| — | [apx-f](book/part-6-appendices/apx-f-issues-index.md) | Code quality audit: 20 fixes across 6 phases (2026-07-03) |
 
 ## Legacy guides
 

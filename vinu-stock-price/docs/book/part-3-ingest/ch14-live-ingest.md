@@ -5,7 +5,7 @@
 | **Package** | vinu-stock-price |
 | **Module** | `vinu_stock/live/` |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | Chapter 03, Chapter 10, Chapter 11, Chapter 13 |
 
 ## Learning objectives
@@ -13,6 +13,7 @@
 - Describe one live ingest cycle: overlap window, closed-bar filter, append path.
 - Run ingest once, continuously, or via HTTP/Docker.
 - Diagnose zero-bar cycles using `ingest_log`.
+- Understand batch-load optimization for large watchlists.
 
 ## 1. Problem this module solves
 
@@ -191,6 +192,7 @@ SELECT symbol, last_bar_ts, live_file FROM symbol_catalog;
 | `symbols_failed` > 0 | Provider error | Check `ingest_log.error`; verify API keys |
 | Stale prices | Ingest not running | `--continuous` or Docker `live-ingest` |
 | Duplicate minutes | Overlap refetch | Deduped on write by `(symbol, provider, bar_ts)` |
+| Slow cycle with many symbols | N SQLite queries per symbol | v1 now batch-loads all symbols via `list_symbols()` once per cycle |
 
 ## 12. Fincept / reference repo mapping
 

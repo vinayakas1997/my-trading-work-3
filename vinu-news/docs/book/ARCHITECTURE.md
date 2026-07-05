@@ -23,7 +23,7 @@
 
 | Capability | LLM required? | Stock API required? | Detail chapter |
 |------------|---------------|---------------------|----------------|
-| RSS ingest + rule enrichment | No | No | [ch10](part-2-analysis/ch10-pipeline-overview.md) |
+| RSS ingest + configurable enrichment | No | No | [ch10](part-2-analysis/ch10-pipeline-overview.md) |
 | FTS search, threads | No | No | [ch19](part-3-data/ch19-table-analytics-fts.md) |
 | `POST /news/analyze` | **Yes** | No | [ch15](part-2-analysis/ch15-llm-layer.md) |
 | Price reaction on `/ticker/{sym}` | No | **Yes** | [ch16](part-2-analysis/ch16-price-reaction.md) |
@@ -35,7 +35,7 @@
 
 ## 1. Without LLM (default — always on)
 
-No Ollama, no OpenAI key, no `VINU_LLM_*` required. Every poll uses **deterministic rule enrichment**.
+No Ollama, no OpenAI key, no `VINU_LLM_*` required. Every poll uses **deterministic rule enrichment** with per-stage toggles in `analysis.yaml`.
 
 ```mermaid
 flowchart TB
@@ -50,7 +50,7 @@ flowchart TB
 
   subgraph analysis [Rule analysis - no LLM]
     Raw --> Pre[validate + url dedup]
-    Pre --> Enrich[9-stage enrichment]
+    Pre --> Enrich[configurable enrichment]
     Enrich --> Post[NER + cosine dedup + lead pick]
     Post --> Filter[collection filter]
     Filter --> Persist[persist_leads + threads]
@@ -169,8 +169,8 @@ flowchart TB
 
 | Layer | Variables |
 |-------|-----------|
-| Base | `VINU_NEWS_DB_PATH`, `VINU_NEWS_MODE`, watchlist settings |
-| LLM | `VINU_LLM_BASE_URL`, `VINU_LLM_MODEL`, `VINU_LLM_API_KEY`, `VINU_LLM_TTL_SEC` |
+| Base | `VINU_NEWS_DB_PATH`, `VINU_NEWS_MODE`, `VINU_NEWS_MAX_WORKERS` (default 8), watchlist settings |
+| LLM | `VINU_LLM_BASE_URL`, `VINU_LLM_MODEL`, `VINU_LLM_API_KEY`, `VINU_LLM_TTL_SEC`, `VINU_LLM_CONCURRENCY` |
 | Stock | `VINU_STOCK_API_URL` |
 | Shared watchlist | `VINU_SHARED_WATCHLIST_PATH` |
 

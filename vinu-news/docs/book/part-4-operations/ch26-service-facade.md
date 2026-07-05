@@ -34,8 +34,8 @@ flowchart TB
 
 | Step | Input | Output |
 |------|-------|--------|
-| `run_ingestion_cycle` | feed_ids, dry_run | `IngestionCycleResult` |
-| `run_ticker_news_ingest` | tickers, days | `IngestionCycleResult` |
+| `run_ingestion_cycle` | source="rss", feed_ids, dry_run | `IngestionCycleResult` |
+| `run_ticker_news_ingest` | tickers, days | `IngestionCycleResult` (thin wrapper for backward compat) |
 | Read methods | query params | JSON-serializable dicts |
 
 ## 3. File map
@@ -80,7 +80,7 @@ flowchart TB
 | Lifecycle | `close()`, context manager |
 | Settings | `get_settings()`, `patch_settings()` |
 | Watchlist | `get_watchlist()`, `add_watchlist_tickers()`, `remove_watchlist_ticker()`, `sync_watchlist_from_shared()` |
-| Ingest | `run_ingestion_cycle()`, `run_ticker_news_ingest()` |
+| Ingest | `run_ingestion_cycle(source="rss")`, `run_ticker_news_ingest()` (thin wrapper) |
 | Query | `get_latest()`, `get_articles_since()`, `get_ticker_news()`, `get_watchlist_news()`, `search()`, `get_high_impact()` |
 | Threads | `get_active_threads()`, `get_thread_detail()`, `get_thread_timeline()` |
 | Analytics | `get_ticker_stats()` |
@@ -93,17 +93,20 @@ flowchart TB
 ### `run_ingestion_cycle`
 
 1. Load settings + watchlist from storage.
-2. `load_feeds()` → `poll_all_feeds()`.
+2. Based on `source` parameter:
+   - `source="rss"` → `load_feeds()` → `poll_all_feeds()`.
+   - `source="ticker_news"` → `TickerNewsRegistry.fetch_for_ticker()` per symbol.
 3. If `dry_run` → return counts only (no health, no persist).
-4. `update_feed_health()` → `process_batch()` → optional `filter_leads_for_mode()`.
-5. `persist_leads()` or `upsert_batch()` if `skip_post_process`.
+4. `update_feed_health()` (RSS only) → `process_batch()` → `filter_leads_for_mode()`.
+5. `persist_leads()` (post-process always runs — no `skip_post_process` flag).
 6. Assemble `IngestionCycleResult`.
 
 ### `run_ticker_news_ingest`
 
+Thin backward-compatible wrapper around `run_ingestion_cycle(source="ticker_news")`.
+
 1. Resolve tickers (arg or watchlist); empty → zero result.
-2. `TickerNewsRegistry.fetch_for_ticker()` per symbol.
-3. `process_batch()` → filter → `persist_leads()`.
+2. Delegates to `run_ingestion_cycle(source="ticker_news", tickers=..., days=...)`.
 
 ### Read paths with price reaction
 

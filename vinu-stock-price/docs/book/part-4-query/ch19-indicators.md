@@ -5,7 +5,7 @@
 | **Package** | vinu-stock-price |
 | **Module** | `vinu_stock/query/indicators.py` |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | Chapter 17, Chapter 18 |
 
 ## Learning objectives
@@ -13,6 +13,7 @@
 - List all names in `SUPPORTED_INDICATORS` and request them via API/CLI.
 - Understand compute-at-read semantics and warm-up `None` values.
 - Order indicators after aggregation and optional adjustment in `fetch_candles`.
+- Understand O(1) sliding window optimisation for `_rolling_std`.
 
 ## 1. Problem this module solves
 
@@ -88,7 +89,7 @@ flowchart LR
    - `rsi_14` — `_rsi(closes, 14)` with smoothed avg gain/loss.
    - `macd` / `macd_signal` — `_macd`: EMA12, EMA26, signal EMA9; null padding before warm-up indices.
    - `daily_return` — `_daily_return` on closes.
-   - `volatility_20d` — `_rolling_std` of daily returns, period 20.
+    - `volatility_20d` — `_rolling_std` of daily returns, period 20 (uses sliding window with running sum/sum_sq for O(1) per step, not per-window list allocation).
 4. **`fetch_candles`** order: DuckDB → `aggregate_bars` → `apply_adjusted_prices` (if `adjusted`) → `apply_indicators`.
 5. Requesting both `macd` and `macd_signal` in one call computes MACD once internally when each name is processed (duplicate EMA work — acceptable for v1).
 

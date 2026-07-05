@@ -133,7 +133,7 @@ Tests use temporary SQLite files — no production DB queries required.
 
 | Test file | Module under test | Asserts |
 |-----------|-------------------|---------|
-| `test_enrichment.py` | `enrichment/*` | All 9 stages, Fincept examples |
+| `test_enrichment.py` | `enrichment/*` | All configurable stages, Fincept examples |
 | `test_url_dedup.py` | `pre_enrichment/url_dedup.py` | First link wins |
 | `test_post_process.py` | `post_enrichment/post_process.py` | Dedup clusters, skip flag |
 | `test_headline_cleanup.py` | `headline_cleanup.py` | Prefix stripping |

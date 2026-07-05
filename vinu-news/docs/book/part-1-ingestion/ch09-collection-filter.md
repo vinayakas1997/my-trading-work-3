@@ -39,7 +39,7 @@ flowchart LR
 
 | File | Responsibility |
 |------|----------------|
-| `collection/filter.py` | `filter_leads_for_mode()`, `article_matches_watchlist()` |
+| `collection/filter.py` | `filter_leads_for_mode()` |
 | `settings/store.py` | `mode` in `vinu_settings` |
 | `watchlist/store.py` | `watchlist_tickers` table |
 | `service.py` | Applies filter in both ingest methods |
@@ -72,7 +72,7 @@ flowchart LR
    - **Mentions:** `{m.ticker}` from `article_ticker_mentions` junction rows.
    - **Article JSON:** parsed from `article.tickers` JSON column.
 5. Keep lead if **either set** intersects watchlist (union match).
-6. `article_matches_watchlist()` exposes the same predicate for single-article checks.
+6. The same predicate is available for single-article checks.
 
 **Important:** Filter runs **after** enrichment/post-process but **before** `persist_leads()`. Analysis still runs on the full batch in memory; only DB writes are gated.
 

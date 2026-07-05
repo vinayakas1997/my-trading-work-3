@@ -5,7 +5,7 @@
 | **Package** | vinu-stock-price |
 | **Module** | `tests/` |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-07-03 |
 | **Prerequisites** | Chapter 01 |
 
 ## Learning objectives
@@ -16,7 +16,7 @@
 
 ## 1. Problem this module solves
 
-Contributors need a **single index** from `tests/test_*.py` to production modules. CI runs pytest with mocks and temp directories — no Polygon/Alpaca keys required. This appendix lists all **9 test files** and **20 test functions** in `vinu-stock-price/tests/`.
+Contributors need a **single index** from `tests/test_*.py` to production modules. CI runs pytest with mocks and temp directories — no Polygon/Alpaca keys required. This appendix lists all **10 test files** and **21 test functions** in `vinu-stock-price/tests/`.
 
 ## 2. Position in pipeline
 
