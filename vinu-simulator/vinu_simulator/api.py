@@ -51,6 +51,7 @@ class SimulatorAPI:
     def __exit__(self, *args):
         if self._service is not None:
             self._service.close()
+            self._service = None
 
     def list_runs(self, strategy_name: str | None = None) -> list[dict[str, Any]]:
         return [r.model_dump() for r in self._get_service().list_runs(strategy_name)]

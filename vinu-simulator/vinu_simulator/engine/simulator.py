@@ -125,8 +125,6 @@ class WeightSimulator:
                 if not np.isfinite(deviation):
                     continue
                 if deviation > config.deviation_threshold:
-                    target_values = nav_before * rebalance_weights
-
                     sell_order = np.argsort(current_weights - rebalance_weights)[::-1]
                     for idx in sell_order:
                         delta = rebalance_weights[idx] - current_weights[idx]
@@ -301,10 +299,8 @@ class SimulatorEnv:
 
         deviation = np.abs(rebalance_weights - current_weights).sum()
         if not np.isfinite(deviation):
-            pass
-        elif deviation > self.config.deviation_threshold:
-            target_values = nav_before * rebalance_weights
-
+            raise ValueError(f"Non-finite deviation {deviation} on {date}")
+        if deviation > self.config.deviation_threshold:
             sell_order = np.argsort(current_weights - rebalance_weights)[::-1]
             for idx in sell_order:
                 delta = rebalance_weights[idx] - current_weights[idx]
