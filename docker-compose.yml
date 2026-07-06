@@ -109,8 +109,48 @@ services:
       - features-worker
       - stock-api
 
+  # =========================================================================
+  # vinu-correlation Services (Ports: 8083)
+  # =========================================================================
+  correlation-compute:
+    build:
+      context: ./vinu-correlation
+      dockerfile: Dockerfile
+    command: ["vinu-correlation-compute", "--continuous", "--incremental"]
+    env_file: ./vinu-correlation/.env
+    environment:
+      VINU_CORRELATION_DATA_ROOT: /data
+      VINU_NEWS_API_URL: http://news-api:8080
+      VINU_STOCK_API_URL: http://stock-api:8081
+      VINU_CORRELATION_MARKET_HOURS_ONLY: "true"
+    volumes:
+      - vinu_correlation_data:/data
+    restart: unless-stopped
+    depends_on:
+      - news-api
+      - stock-api
+
+  correlation-api:
+    build:
+      context: ./vinu-correlation
+      dockerfile: Dockerfile
+    command: ["vinu-correlation-serve", "--host", "0.0.0.0", "--port", "8083"]
+    env_file: ./vinu-correlation/.env
+    environment:
+      VINU_CORRELATION_DATA_ROOT: /data
+      VINU_NEWS_API_URL: http://news-api:8080
+      VINU_STOCK_API_URL: http://stock-api:8081
+    ports:
+      - "8083:8083"
+    volumes:
+      - vinu_correlation_data:/data
+    restart: unless-stopped
+    depends_on:
+      - correlation-compute
+
 volumes:
   vinu_news_data:
   vinu_stock_data:
   vinu_features_data:
+  vinu_correlation_data:
   vinu_shared_exchange:
