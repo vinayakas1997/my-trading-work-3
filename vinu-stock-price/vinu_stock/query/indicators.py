@@ -25,7 +25,16 @@ def parse_indicator_names(raw: str | None) -> list[str]:
     if not raw or not raw.strip():
         return []
     names = [n.strip().lower() for n in raw.split(",") if n.strip()]
-    unknown = [n for n in names if n not in SUPPORTED_INDICATORS]
+    unknown = []
+    for n in names:
+        if n.startswith("sma_"):
+            try:
+                int(n.split("_", 1)[1])
+                continue
+            except (ValueError, IndexError):
+                pass
+        if n not in SUPPORTED_INDICATORS:
+            unknown.append(n)
     if unknown:
         raise ValueError(f"Unknown indicators: {', '.join(unknown)}")
     return names

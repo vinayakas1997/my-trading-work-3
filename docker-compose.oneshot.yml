@@ -1,0 +1,131 @@
+services:
+  # =========================================================================
+  # vinu-news API (Port 8080)
+  # =========================================================================
+  news-api:
+    build:
+      context: ./vinu-news
+      dockerfile: Dockerfile
+    command: ["vinu-news-serve", "--host", "0.0.0.0", "--port", "8080"]
+    env_file: ./vinu-news/.env
+    environment:
+      VINU_NEWS_DB_PATH: /data/news.db
+      VINU_NEWS_STORAGE: sqlite
+      VINU_SHARED_WATCHLIST_PATH: /shared/watchlist.json
+      VINU_LLM_ANALYSIS_MODE: manual
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./oneshot_data/news:/data
+      - ./oneshot_data/shared:/shared
+    restart: unless-stopped
+
+  # =========================================================================
+  # vinu-stock-price API (Port 8081)
+  # =========================================================================
+  stock-api:
+    build:
+      context: ./vinu-stock-price
+      dockerfile: Dockerfile
+    command: ["vinu-stock-serve", "--host", "0.0.0.0", "--port", "8081"]
+    env_file: ./vinu-stock-price/.env
+    environment:
+      VINU_STOCK_DATA_ROOT: /data
+      VINU_STOCK_META_DB_PATH: /data/meta.db
+      VINU_SHARED_WATCHLIST_PATH: /shared/watchlist.json
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./oneshot_data/stock:/data
+      - ./oneshot_data/shared:/shared
+    restart: unless-stopped
+
+  # =========================================================================
+  # vinu-features API (Port 8082)
+  # =========================================================================
+  features-api:
+    build:
+      context: ./vinu-features
+      dockerfile: Dockerfile
+    command: ["vinu-features", "serve", "--host", "0.0.0.0", "--port", "8082"]
+    env_file: ./vinu-features/.env
+    environment:
+      VINU_FEATURES_DATA_DIR: /data
+      VINU_FEATURES_META_DB_PATH: /data/meta.db
+      VINU_STOCK_API_URL: http://stock-api:8081
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./oneshot_data/features:/data
+    restart: unless-stopped
+    depends_on:
+      - stock-api
+
+  # =========================================================================
+  # vinu-correlation API (Port 8083)
+  # =========================================================================
+  correlation-api:
+    build:
+      context: ./vinu-correlation
+      dockerfile: Dockerfile
+    command: ["vinu-correlation-serve", "--host", "0.0.0.0", "--port", "8083"]
+    env_file: ./vinu-correlation/.env
+    environment:
+      VINU_CORRELATION_DATA_ROOT: /data
+      VINU_NEWS_API_URL: http://news-api:8080
+      VINU_STOCK_API_URL: http://stock-api:8081
+    ports:
+      - "8083:8083"
+    volumes:
+      - ./oneshot_data/correlation:/data
+    restart: unless-stopped
+    depends_on:
+      - news-api
+      - stock-api
+
+  # =========================================================================
+  # vinu-strategy API (Port 8084)
+  # =========================================================================
+  strategy-api:
+    build:
+      context: ./vinu-strategy
+      dockerfile: Dockerfile
+    command: ["vinu-strategy", "serve", "--host", "0.0.0.0", "--port", "8084"]
+    env_file: ./vinu-strategy/.env
+    environment:
+      VINU_STRATEGY_DATA_ROOT: /data
+      VINU_STRATEGY_STRATEGIES_DIR: /app/vinu-strategy/strategies
+      VINU_FEATURES_API_URL: http://features-api:8082
+      VINU_CORRELATION_API_URL: http://correlation-api:8083
+      VINU_SHARED_WATCHLIST_PATH: /shared/watchlist.json
+    ports:
+      - "8084:8084"
+    volumes:
+      - ./oneshot_data/strategy:/data
+      - ./oneshot_data/shared:/shared
+    restart: unless-stopped
+    depends_on:
+      - features-api
+      - correlation-api
+
+  # =========================================================================
+  # vinu-simulator API (Port 8085)
+  # =========================================================================
+  simulator-api:
+    build:
+      context: ./vinu-simulator
+      dockerfile: Dockerfile
+    command: ["vinu-simulator", "serve", "--host", "0.0.0.0", "--port", "8085"]
+    env_file: ./vinu-simulator/.env
+    environment:
+      VINU_SIMULATOR_DATA_ROOT: /data
+      VINU_STRATEGY_API_URL: http://strategy-api:8084
+      VINU_STOCK_API_URL: http://stock-api:8081
+    ports:
+      - "8085:8085"
+    volumes:
+      - ./oneshot_data/simulator:/data
+    restart: unless-stopped
+    depends_on:
+      - strategy-api
+      - stock-api

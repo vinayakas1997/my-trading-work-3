@@ -76,6 +76,7 @@ class WeightSimulator:
             )
         price_data = price_data[common_tickers]
         if volume_data is not None:
+            volume_data = volume_data.reindex(total_calendar).ffill().fillna(0.0)
             volume_data = volume_data[common_tickers]
 
         ws_aligned = weight_signals.reindex(total_calendar).ffill().fillna(0.0)

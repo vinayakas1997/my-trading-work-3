@@ -15,6 +15,12 @@ from vinu_stock.providers.registry import ProviderRegistry
 
 LOG = logging.getLogger(__name__)
 
+# Start backfilling from this year onward. Data before this date is skipped
+# because market structure stabilised around this point — earlier data may
+# have different trading hours, tick sizes, or settlement rules that can
+# skew strategy backtests.
+MIN_BACKFILL_YEAR = 2023
+
 
 @dataclass
 class BackfillSummary:
@@ -47,13 +53,15 @@ def _discover_first_year(
             continue
         earliest = provider.earliest_available(symbol)
         if earliest.success and earliest.earliest_ts:
-            return datetime.fromtimestamp(earliest.earliest_ts, tz=timezone.utc).year
+            year = datetime.fromtimestamp(earliest.earliest_ts, tz=timezone.utc).year
+            return max(year, MIN_BACKFILL_YEAR)
     yahoo = registry.get("yahoo")
     if yahoo:
         earliest = yahoo.earliest_available(symbol)
         if earliest.success and earliest.earliest_ts:
-            return datetime.fromtimestamp(earliest.earliest_ts, tz=timezone.utc).year
-    return datetime.now(timezone.utc).year
+            year = datetime.fromtimestamp(earliest.earliest_ts, tz=timezone.utc).year
+            return max(year, MIN_BACKFILL_YEAR)
+    return max(datetime.now(timezone.utc).year, MIN_BACKFILL_YEAR)
 
 
 def _backfill_symbol(

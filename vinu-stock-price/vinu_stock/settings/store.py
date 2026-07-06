@@ -8,7 +8,7 @@ from typing import Any
 
 DEFAULTS: dict[str, str] = {
     "poll_interval_sec": "60",
-    "default_provider": "polygon",
+    "default_provider": "alpaca",
     "data_root": "./data",
 }
 

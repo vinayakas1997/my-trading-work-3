@@ -8,7 +8,7 @@ function App() {
   const [healthStatus, setHealthStatus] = useState('loading…')
   const [healthClass, setHealthClass] = useState('health')
   const [pollInterval, setPollInterval] = useState(60)
-  const [defaultProvider, setDefaultProvider] = useState('polygon')
+  const [defaultProvider, setDefaultProvider] = useState('alpaca')
   const [dataRoot, setDataRoot] = useState('—')
   const [watchlist, setWatchlist] = useState([])
   const [addTickersInput, setAddTickersInput] = useState('')
@@ -76,7 +76,7 @@ function App() {
     try {
       const data = await api('/settings')
       setPollInterval(data.poll_interval_sec)
-      setDefaultProvider(data.default_provider || 'polygon')
+      setDefaultProvider(data.default_provider || 'alpaca')
       setDataRoot(data.data_root || '—')
     } catch (e) {
       showToast(e.message)
