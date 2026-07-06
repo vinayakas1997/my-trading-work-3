@@ -1,0 +1,17 @@
+name: rsi_mean_reversion
+description: "RSI mean reversion — long when oversold (RSI < 30), short when overbought (RSI > 70)"
+schedule: daily
+features_required:
+  - RSI_14
+pipeline:
+  selection:
+    method: all
+  allocation:
+    method: signal_scaled
+    signal: "max(0, (30 - RSI_14) / 30) - max(0, (RSI_14 - 70) / 30)"
+  timing:
+    method: none
+  risk:
+    max_weight: 0.25
+    cash_floor: 0.10
+    method: normalize

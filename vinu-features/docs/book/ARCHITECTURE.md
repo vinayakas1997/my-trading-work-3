@@ -34,4 +34,4 @@ flowchart LR
 ## Related packages
 
 - [vinu-stock-price](../../vinu-stock-price/README.md) — OHLCV source
-- [understanding-1](../../personal-important/understanding-1.md) — architecture map
+- [understanding-1](../../../personal-important/understanding/understanding-1.md) — architecture map

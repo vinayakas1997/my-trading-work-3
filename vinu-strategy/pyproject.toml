@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vinu-strategy"
+version = "0.1.0"
+description = "Decision fusion layer — combines vinu-features + vinu-correlation signals into target portfolio weights"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "pydantic>=2.0",
+  "python-dotenv>=1.0",
+  "httpx>=0.27",
+  "pyarrow>=15.0",
+  "pyyaml>=6.0",
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[project.scripts]
+vinu-strategy = "vinu_strategy.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vinu_strategy*"]
+
+[tool.setuptools.package-data]
+vinu_strategy = ["**/*.yaml", "server/static/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
