@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+import threading
 from pathlib import Path
 
 from vinu_stock.catalog.store import CatalogStore, open_catalog_db
@@ -15,27 +17,55 @@ _SCHEMA_DIR = Path(__file__).resolve().parent.parent
 class MetaBackend:
     def __init__(self, meta_db_path: Path) -> None:
         self.meta_db_path = meta_db_path
-        self._conn = open_catalog_db(meta_db_path)
-        self.catalog = CatalogStore(self._conn)
-        self.settings = SettingsStore(self._conn)
-        self.watchlist = WatchlistStore(self._conn)
-        self._init_schema()
+        self._local = threading.local()
+        conn = open_catalog_db(meta_db_path)
+        try:
+            self._init_schema(conn)
+        finally:
+            conn.close()
 
-    def _init_schema(self) -> None:
-        self.catalog.init_schema(
+    def _init_schema(self, conn: sqlite3.Connection) -> None:
+        CatalogStore(conn).init_schema(
             (_SCHEMA_DIR / "catalog" / "schema.sql").read_text(encoding="utf-8")
         )
-        self.settings.init_schema(
+        SettingsStore(conn).init_schema(
             (_SCHEMA_DIR / "settings" / "schema.sql").read_text(encoding="utf-8"),
             env_defaults=settings_env_defaults(),
         )
-        self.watchlist.init_schema(
+        WatchlistStore(conn).init_schema(
             (_SCHEMA_DIR / "watchlist" / "schema.sql").read_text(encoding="utf-8")
         )
-        self._conn.commit()
+        conn.commit()
+
+    def _get_conn(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = open_catalog_db(self.meta_db_path)
+            self._local.conn = conn
+        return conn
+
+    @property
+    def catalog(self) -> CatalogStore:
+        if not hasattr(self._local, "_catalog"):
+            self._local._catalog = CatalogStore(self._get_conn())
+        return self._local._catalog
+
+    @property
+    def settings(self) -> SettingsStore:
+        if not hasattr(self._local, "_settings"):
+            self._local._settings = SettingsStore(self._get_conn())
+        return self._local._settings
+
+    @property
+    def watchlist(self) -> WatchlistStore:
+        if not hasattr(self._local, "_watchlist"):
+            self._local._watchlist = WatchlistStore(self._get_conn())
+        return self._local._watchlist
 
     def close(self) -> None:
-        self._conn.close()
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
 
     def __enter__(self) -> MetaBackend:
         return self

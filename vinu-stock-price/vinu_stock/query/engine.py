@@ -7,6 +7,7 @@ from pathlib import Path
 import duckdb
 
 from vinu_stock.query.aggregate import aggregate_bars
+from vinu_stock.query.cache import get_cache
 from vinu_stock.query.indicators import apply_adjusted_prices, apply_indicators
 from vinu_stock.storage.paths import parquet_globs_by_range
 
@@ -70,7 +71,14 @@ def fetch_candles(
         if adjusted:
             records = apply_adjusted_prices(records)
         if indicators:
-            records = apply_indicators(records, indicators)
+            indicator_set = frozenset(indicators)
+            cache = get_cache()
+            cached = cache.get(sym, interval, from_ts, to_ts, indicator_set, adjusted)
+            if cached is not None:
+                records = cached
+            else:
+                records = apply_indicators(records, indicators)
+                cache.set(sym, interval, from_ts, to_ts, indicator_set, adjusted, records)
         return records
     finally:
         conn.close()

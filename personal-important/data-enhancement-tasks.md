@@ -1,12 +1,10 @@
-# Understanding 3 — Data Layer Enhancement Tasks (vinu-news + vinu-stock-price)
+# Data Layer Enhancement Tasks (vinu-news + vinu-stock-price)
 
-**Audience:** AI coding agents and human implementers  
-**Scope:** Enhance only `vinu-news` and `vinu-stock-price` using patterns from the 4 reference repos.  
-**Do not:** Clone full qlib / FinRobot / FinRL-Meta / FinRL-Trading repos into Vinu.
+**Scope:** Enhance only `vinu-news` and `vinu-stock-price` using patterns from the 4 reference repos.
 
 **Prerequisites:**
 - [`understanding-1.md`](understanding-1.md) — overall architecture
-- [`gaps-understaing2.md`](gaps-understaing2.md) — Phase 2 gaps
+- [`phase2-roadmap.md`](phase2-roadmap.md) — Phase 2 gaps
 - [`vinu-news/docs/news_componete_still_missing.md`](../vinu-news/docs/news_componete_still_missing.md)
 - [`vinu-stock-price/docs/complete_guide_stock_price.md`](../vinu-stock-price/docs/complete_guide_stock_price.md)
 

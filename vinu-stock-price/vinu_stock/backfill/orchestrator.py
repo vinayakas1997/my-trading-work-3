@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,13 +48,64 @@ def _discover_first_year(
         earliest = provider.earliest_available(symbol)
         if earliest.success and earliest.earliest_ts:
             return datetime.fromtimestamp(earliest.earliest_ts, tz=timezone.utc).year
-    # Yahoo fallback
     yahoo = registry.get("yahoo")
     if yahoo:
         earliest = yahoo.earliest_available(symbol)
         if earliest.success and earliest.earliest_ts:
             return datetime.fromtimestamp(earliest.earliest_ts, tz=timezone.utc).year
     return datetime.now(timezone.utc).year
+
+
+def _backfill_symbol(
+    sym: str,
+    *,
+    data_root: Path,
+    catalog: CatalogStore,
+    registry: ProviderRegistry,
+    from_year: int | None,
+    end_year: int,
+    summary_lock: threading.Lock,
+    summary: BackfillSummary,
+) -> None:
+    catalog.upsert_symbol(sym, backfill_status="partial")
+    if from_year is not None:
+        start_year = from_year
+    else:
+        entry = catalog.get_symbol(sym)
+        if entry and entry.first_bar_ts is not None:
+            start_year = datetime.fromtimestamp(entry.first_bar_ts, tz=timezone.utc).year
+        else:
+            start_year = _discover_first_year(sym, registry)
+    if start_year > end_year:
+        catalog.upsert_symbol(sym, backfill_status="complete")
+        return
+
+    for year in range(start_year, end_year + 1):
+        catalog.queue_backfill_job(sym, year)
+        catalog.set_job_status(sym, year, "running")
+        with summary_lock:
+            summary.years_attempted += 1
+        ok, rows, provider_id, err = run_year_job(
+            sym,
+            year,
+            data_root=data_root,
+            catalog=catalog,
+            registry=registry,
+        )
+        if ok:
+            with summary_lock:
+                summary.years_ok += 1
+                summary.total_rows += rows
+            catalog.set_job_status(
+                sym, year, "done", provider=provider_id, rows_written=rows
+            )
+        else:
+            with summary_lock:
+                summary.years_failed += 1
+                summary.errors.append(f"{sym}/{year}: {err}")
+            catalog.set_job_status(sym, year, "failed", error=err)
+
+    catalog.upsert_symbol(sym, backfill_status="complete")
 
 
 def run_backfill(
@@ -73,42 +126,24 @@ def run_backfill(
     if end_year > current_year:
         end_year = current_year
 
-    for sym in summary.symbols:
-        catalog.upsert_symbol(sym, backfill_status="partial")
-        if from_year is not None:
-            start_year = from_year
-        else:
-            entry = catalog.get_symbol(sym)
-            if entry and entry.first_bar_ts is not None:
-                start_year = datetime.fromtimestamp(entry.first_bar_ts, tz=timezone.utc).year
-            else:
-                start_year = _discover_first_year(sym, registry)
-        if start_year > end_year:
-            catalog.upsert_symbol(sym, backfill_status="complete")
-            continue
+    summary_lock = threading.Lock()
+    max_workers = min(len(summary.symbols), 4) if summary.symbols else 1
 
-        for year in range(start_year, end_year + 1):
-            catalog.queue_backfill_job(sym, year)
-            catalog.set_job_status(sym, year, "running")
-            summary.years_attempted += 1
-            ok, rows, provider_id, err = run_year_job(
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(
+                _backfill_symbol,
                 sym,
-                year,
                 data_root=data_root,
                 catalog=catalog,
                 registry=registry,
-            )
-            if ok:
-                summary.years_ok += 1
-                summary.total_rows += rows
-                catalog.set_job_status(
-                    sym, year, "done", provider=provider_id, rows_written=rows
-                )
-            else:
-                summary.years_failed += 1
-                summary.errors.append(f"{sym}/{year}: {err}")
-                catalog.set_job_status(sym, year, "failed", error=err)
-
-        catalog.upsert_symbol(sym, backfill_status="complete")
+                from_year=from_year,
+                end_year=end_year,
+                summary_lock=summary_lock,
+                summary=summary,
+            ): sym
+            for sym in summary.symbols
+        }
+        concurrent.futures.wait(futures.keys())
 
     return summary

@@ -73,7 +73,44 @@ services:
     depends_on:
       - stock-ingest
 
+  # =========================================================================
+  # vinu-features Services (Ports: 8082)
+  # =========================================================================
+  features-worker:
+    build:
+      context: ./vinu-features
+      dockerfile: Dockerfile
+    command: ["vinu-features", "worker", "--loop"]
+    env_file: ./vinu-features/.env
+    environment:
+      VINU_FEATURES_DATA_DIR: /data
+      VINU_FEATURES_META_DB_PATH: /data/meta.db
+      VINU_STOCK_API_URL: http://stock-api:8081
+    volumes:
+      - vinu_features_data:/data
+    restart: unless-stopped
+
+  features-api:
+    build:
+      context: ./vinu-features
+      dockerfile: Dockerfile
+    command: ["vinu-features", "serve", "--host", "0.0.0.0", "--port", "8082"]
+    env_file: ./vinu-features/.env
+    environment:
+      VINU_FEATURES_DATA_DIR: /data
+      VINU_FEATURES_META_DB_PATH: /data/meta.db
+      VINU_STOCK_API_URL: http://stock-api:8081
+    ports:
+      - "8082:8082"
+    volumes:
+      - vinu_features_data:/data
+    restart: unless-stopped
+    depends_on:
+      - features-worker
+      - stock-api
+
 volumes:
   vinu_news_data:
   vinu_stock_data:
+  vinu_features_data:
   vinu_shared_exchange:

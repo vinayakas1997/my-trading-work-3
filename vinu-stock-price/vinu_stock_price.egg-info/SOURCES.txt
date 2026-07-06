@@ -34,6 +34,7 @@ vinu_stock/providers/config/providers.yaml
 vinu_stock/providers/config/settings.py
 vinu_stock/query/__init__.py
 vinu_stock/query/aggregate.py
+vinu_stock/query/cache.py
 vinu_stock/query/engine.py
 vinu_stock/query/indicators.py
 vinu_stock/server/__init__.py

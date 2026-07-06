@@ -39,9 +39,9 @@ For the Fincept lifecycle + AI4Finance blueprint, the map in understanding-1 is 
 
 ## Partially covered gaps
 
-These are mentioned lightly or as “optional” in understanding-1, but matter for *advanced* AI trading.
+These are mentioned lightly or as "optional" in understanding-1, but matter for *advanced* AI trading.
 
-### 1. “AI” beyond LLM + optional LightGBM
+### 1. "AI" beyond LLM + optional LightGBM
 
 **In plan:**
 
@@ -55,7 +55,7 @@ These are mentioned lightly or as “optional” in understanding-1, but matter 
 - Model registry, scheduled retraining, drift detection
 - Walk-forward validation and ensemble governance at scale
 
-**Implication:** “AI advanced” in Phase 1 means **LLM + quant features**, not a full self-learning agent farm.
+**Implication:** "AI advanced" in Phase 1 means **LLM + quant features**, not a full self-learning agent farm.
 
 ---
 
@@ -119,7 +119,7 @@ These are mentioned lightly or as “optional” in understanding-1, but matter 
 
 - Two watchlists, two storage backends (SQLite vs Parquet + meta.db)
 - No shared symbol master or global audit log
-- No single orchestrator (“run full pipeline daily”)
+- No single orchestrator ("run full pipeline daily")
 
 **Implication:** Works for modular development; needs **`vinu-core`** before production ops.
 
@@ -164,7 +164,7 @@ Proposed packages to close the gaps above. Build these **after** Phase 1 core co
 | Component | Closes gap | What to build |
 |-----------|------------|---------------|
 | **`vinu-observability`** | Ops / audit | Structured logs, alert hooks (email/Slack), trade audit DB, health endpoints per service |
-| **`vinu-experiments`** | Model lifecycle | Strategy/model versioning, walk-forward result store, “which config is live” registry |
+| **`vinu-experiments`** | Model lifecycle | Strategy/model versioning, walk-forward result store, "which config is live" registry |
 | **`vinu-risk`** | Portfolio risk | Sector caps, correlation limits, daily loss kill switch, max leverage; sits between strategy and execution |
 | **`vinu-llm-ops`** | LLM reliability | Rate limits, cost budgets, cache TTL policy, fallback to rule-based sentiment when LLM down |
 

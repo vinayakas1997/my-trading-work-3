@@ -171,6 +171,10 @@ class FeatureService:
         info = self.storage.health_info()
         info["data_dir"] = str(self.config.data_dir)
         info["stock_api_url"] = self.config.stock_api_url
+        from vinu_features.compute.feature_catalog import list_indicators
+        from vinu_features.presets.registry import list_presets
+        info["catalog_count"] = len(list_indicators())
+        info["presets_count"] = len(list_presets())
         return info
 
     @staticmethod

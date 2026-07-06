@@ -1,5 +1,7 @@
 # Complete Guide — vinu-features
 
+> **Legacy guide.** Prefer the chapter-based textbook: **[INDEX.md](book/INDEX.md)**. This file is kept for reference; content is being split into `docs/book/`.
+
 ## Overview
 
 `vinu-features` accepts feature run requests, tracks them in SQLite, computes indicators from `vinu-stock-price` OHLCV, and writes run artifacts:
@@ -103,4 +105,4 @@ ML extras: `pip install -e ".[ml]"` — optional `ml_model` + `ml_label` on subm
 
 ## Book
 
-See [docs/book/ARCHITECTURE.md](book/ARCHITECTURE.md) for chapter index.
+See [docs/book/INDEX.md](book/INDEX.md) for chapter index.

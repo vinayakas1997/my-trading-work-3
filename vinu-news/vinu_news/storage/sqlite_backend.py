@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -22,18 +23,33 @@ _WATCHLIST_SCHEMA = (
 
 
 class SqliteBackend:
-    """SQLite implementation with vinu settings and watchlist tables."""
+    """SQLite implementation with vinu settings and watchlist tables.
+
+    Each thread gets its own connection via NewsRepository's thread-local
+    pattern, and SettingsStore/WatchlistStore are lazily created per thread.
+    """
 
     def __init__(self, db_path: str | Path | None = None) -> None:
         self._repo = NewsRepository(db_path)
         self.db_path = self._repo.db_path
-        self._settings = SettingsStore(self._repo.conn)
-        self._watchlist = WatchlistStore(self._repo.conn)
+        self._local = threading.local()
         self._init_vinu_schema()
 
     @property
     def repo(self) -> NewsRepository:
         return self._repo
+
+    @property
+    def _settings(self) -> SettingsStore:
+        if not hasattr(self._local, "_settings"):
+            self._local._settings = SettingsStore(self._repo.conn)
+        return self._local._settings
+
+    @property
+    def _watchlist(self) -> WatchlistStore:
+        if not hasattr(self._local, "_watchlist"):
+            self._local._watchlist = WatchlistStore(self._repo.conn)
+        return self._local._watchlist
 
     def _init_vinu_schema(self) -> None:
         env_defaults = settings_env_defaults()

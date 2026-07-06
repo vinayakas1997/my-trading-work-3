@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import shutil
 from pathlib import Path
@@ -40,11 +41,24 @@ class FeatureWorker:
 
     def process_pending(self, *, limit: int = 1) -> list[FeatureRequest]:
         results: list[FeatureRequest] = []
+        pending_jobs: list[FeatureRequest] = []
         for _ in range(limit):
             running = self.storage.claim_next_pending()
             if running is None:
                 break
-            results.append(self._execute(running))
+            pending_jobs.append(running)
+
+        if not pending_jobs:
+            return results
+
+        if len(pending_jobs) == 1:
+            return [self._execute(pending_jobs[0])]
+
+        max_workers = min(len(pending_jobs), 4)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = [pool.submit(self._execute, job) for job in pending_jobs]
+            for future in concurrent.futures.as_completed(futures):
+                results.append(future.result())
         return results
 
     def _execute(self, request: FeatureRequest) -> FeatureRequest:

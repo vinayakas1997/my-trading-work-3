@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -42,6 +44,54 @@ def _filter_closed_bars(bars: list[BarRecord], now_ts: int) -> list[BarRecord]:
     return [b for b in bars if b.bar_ts + 60 <= now_ts]
 
 
+def _ingest_symbol(
+    sym: str,
+    *,
+    data_root: Path,
+    catalog: CatalogStore,
+    registry: ProviderRegistry,
+    all_entries: dict,
+    now_ts: int,
+    current_year: int,
+    summary_lock: threading.Lock,
+    summary: LiveIngestSummary,
+) -> None:
+    entry = all_entries.get(sym)
+    last_ts = entry.last_bar_ts if entry and entry.last_bar_ts else None
+    start_ts = (last_ts - OVERLAP_SEC) if last_ts else now_ts - 24 * 3600
+
+    result = registry.fetch_bars_with_fallback(sym, start_ts, now_ts, role="live")
+    if not result.success:
+        with summary_lock:
+            summary.symbols_failed += 1
+            summary.errors.append(f"{sym}: {result.error}")
+        catalog.log_ingest(sym, bars_added=0, from_ts=start_ts, to_ts=now_ts, ok=False, error=result.error)
+        return
+
+    new_bars = result.bars
+    if last_ts is not None:
+        new_bars = [b for b in new_bars if b.bar_ts > last_ts - OVERLAP_SEC]
+    new_bars = _filter_closed_bars(new_bars, now_ts)
+
+    if not new_bars:
+        catalog.log_ingest(sym, bars_added=0, from_ts=start_ts, to_ts=now_ts, ok=True)
+        return
+
+    provider_id = new_bars[0].provider
+    live_path = live_year_path(data_root, sym, current_year)
+    parquet.append_bars(live_path, new_bars)
+    catalog.update_bar_range(sym, new_bars, provider=provider_id, live_file=str(live_path))
+    with summary_lock:
+        summary.bars_added += len(new_bars)
+    catalog.log_ingest(
+        sym,
+        bars_added=len(new_bars),
+        from_ts=min(b.bar_ts for b in new_bars),
+        to_ts=max(b.bar_ts for b in new_bars),
+        ok=True,
+    )
+
+
 def run_live_cycle(
     symbols: list[str],
     *,
@@ -52,44 +102,33 @@ def run_live_cycle(
     summary = LiveIngestSummary()
     now_ts = int(time.time())
     current_year = datetime.now(timezone.utc).year
-
     all_entries = {e.symbol: e for e in catalog.list_symbols()}
-    for raw in symbols:
-        sym = raw.strip().upper()
-        if not sym:
-            continue
-        summary.symbols_polled += 1
-        entry = all_entries.get(sym)
-        last_ts = entry.last_bar_ts if entry and entry.last_bar_ts else None
-        start_ts = (last_ts - OVERLAP_SEC) if last_ts else now_ts - 24 * 3600
 
-        result = registry.fetch_bars_with_fallback(sym, start_ts, now_ts, role="live")
-        if not result.success:
-            summary.symbols_failed += 1
-            summary.errors.append(f"{sym}: {result.error}")
-            catalog.log_ingest(sym, bars_added=0, from_ts=start_ts, to_ts=now_ts, ok=False, error=result.error)
-            continue
+    clean_symbols = [raw.strip().upper() for raw in symbols if raw.strip()]
+    summary.symbols_polled = len(clean_symbols)
 
-        new_bars = result.bars
-        if last_ts is not None:
-            new_bars = [b for b in new_bars if b.bar_ts > last_ts - OVERLAP_SEC]
-        new_bars = _filter_closed_bars(new_bars, now_ts)
+    if not clean_symbols:
+        return summary
 
-        if not new_bars:
-            catalog.log_ingest(sym, bars_added=0, from_ts=start_ts, to_ts=now_ts, ok=True)
-            continue
+    max_workers = min(len(clean_symbols), 4)
+    summary_lock = threading.Lock()
 
-        provider_id = new_bars[0].provider
-        live_path = live_year_path(data_root, sym, current_year)
-        parquet.append_bars(live_path, new_bars)
-        catalog.update_bar_range(sym, new_bars, provider=provider_id, live_file=str(live_path))
-        summary.bars_added += len(new_bars)
-        catalog.log_ingest(
-            sym,
-            bars_added=len(new_bars),
-            from_ts=min(b.bar_ts for b in new_bars),
-            to_ts=max(b.bar_ts for b in new_bars),
-            ok=True,
-        )
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(
+                _ingest_symbol,
+                sym,
+                data_root=data_root,
+                catalog=catalog,
+                registry=registry,
+                all_entries=all_entries,
+                now_ts=now_ts,
+                current_year=current_year,
+                summary_lock=summary_lock,
+                summary=summary,
+            ): sym
+            for sym in clean_symbols
+        }
+        concurrent.futures.wait(futures.keys())
 
     return summary

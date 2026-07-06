@@ -312,7 +312,12 @@ class SqliteBackend:
             """,
             (STATUS_DELETED,),
         ).fetchall()
+        total = conn.execute(
+            "SELECT COUNT(*) FROM feature_requests"
+        ).fetchone()[0]
         return {
             "db_path": str(self.db_path),
+            "db_size_bytes": self.db_path.stat().st_size if self.db_path.exists() else 0,
+            "total_request_count": total,
             "status_counts": {r["status"]: r["cnt"] for r in counts},
         }

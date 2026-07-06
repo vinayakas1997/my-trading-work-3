@@ -11,17 +11,19 @@
 | Part | Chapters | Topic |
 |------|----------|-------|
 | 0 | ch00–ch02 | Getting started, concepts |
-| 1 | ch03–ch04 | Preset blueprints, indicator catalog |
-| 2 | ch05–ch07 | Request lifecycle, worker, artifacts |
-| 3 | ch08–ch09 | SQLite registry, run folders |
-| 4 | ch10–ch12 | HTTP API, CLI, config |
-| 5 | apx-a–apx-b | Fincept mapping, test map |
+| 1 | ch03–ch07 | Preset blueprints, indicators, alpha factors, ML models |
+| 2 | ch05–ch07 | Request lifecycle, worker, parallel processing, artifacts |
+| 3 | ch08–ch09 | Thread-safe SQLite, run folders |
+| 4 | ch10–ch13 | HTTP API, CLI, config, web UI |
+| 5 | apx-a–apx-f | Fincept mapping, test map, out-of-scope, roadmap, yet-to-build, issues |
 
 ## Pipeline
 
 ```mermaid
 flowchart LR
-  Submit[POST_or_CLI_submit] --> Registry[(SQLite)]
+  WebUI[Web UI] --> Registry[(SQLite)]
+  CLI[CLI_submit] --> Registry
+  API[HTTP_API] --> Registry
   Worker[worker_once] --> Registry
   Worker --> Stock[vinu-stock-price]
   Worker --> Parquet[manifest_and_parquet]
@@ -32,4 +34,4 @@ flowchart LR
 ## Related packages
 
 - [vinu-stock-price](../../vinu-stock-price/README.md) — OHLCV source
-- [understanding-1](../../vinu_advanced_understanding/understanding-1.md) — architecture map
+- [understanding-1](../../personal-important/understanding-1.md) — architecture map

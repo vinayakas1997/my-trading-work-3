@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -45,38 +46,47 @@ class NewsRepository:
     def __init__(self, db_path: str | Path | None = None) -> None:
         self.db_path = Path(db_path) if db_path else DEFAULT_DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self.init_schema()
+        self._local = threading.local()
+        conn = self._get_conn()
+        self._init_schema(conn)
 
-    def init_schema(self) -> None:
+    def _get_conn(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(str(self.db_path))
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            self._local.conn = conn
+        return conn
+
+    def _init_schema(self, conn: sqlite3.Connection) -> None:
         schema = SCHEMA_PATH.read_text(encoding="utf-8")
-        self._conn.executescript(schema)
-        self._migrate_schema()
-        init_fts(self._conn)
-        self._conn.commit()
-
+        conn.executescript(schema)
+        self._migrate(conn)
+        init_fts(conn)
+        conn.commit()
         from vinu_news.analysis.enrichment.ticker_db import sync_ticker_db_if_needed
-        sync_ticker_db_if_needed(self._conn)
+        sync_ticker_db_if_needed(conn)
 
-    def _migrate_schema(self) -> None:
-        """Add columns to existing databases."""
+    def _migrate(self, conn: sqlite3.Connection) -> None:
         existing = {
             row[1]
-            for row in self._conn.execute("PRAGMA table_info(articles)").fetchall()
+            for row in conn.execute("PRAGMA table_info(articles)").fetchall()
         }
         for col_name, col_def in _MIGRATION_COLUMNS:
             if col_name not in existing:
-                self._conn.execute(
+                conn.execute(
                     f"ALTER TABLE articles ADD COLUMN {col_name} {col_def}"
                 )
 
     @property
     def conn(self) -> sqlite3.Connection:
-        return self._conn
+        return self._get_conn()
 
     def close(self) -> None:
-        self._conn.close()
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
 
     def __enter__(self) -> NewsRepository:
         return self
@@ -86,7 +96,7 @@ class NewsRepository:
 
     def link_exists(self, link: str) -> bool:
         normalized = normalize_link(link)
-        row = self._conn.execute(
+        row = self.conn.execute(
             "SELECT 1 FROM articles WHERE link = ? OR link = ? LIMIT 1",
             (link, normalized),
         ).fetchone()
@@ -94,7 +104,7 @@ class NewsRepository:
 
     def get_thread_id_for_link(self, link: str) -> str | None:
         normalized = normalize_link(link)
-        row = self._conn.execute(
+        row = self.conn.execute(
             "SELECT thread_id FROM articles WHERE link = ? OR link = ? LIMIT 1",
             (link, normalized),
         ).fetchone()
@@ -108,15 +118,15 @@ class NewsRepository:
         placeholders = ", ".join("?" for _ in ARTICLE_COLUMNS)
         columns = ", ".join(ARTICLE_COLUMNS)
 
-        with self._conn:
-            cursor = self._conn.execute(
+        with self.conn:
+            cursor = self.conn.execute(
                 f"INSERT OR IGNORE INTO articles ({columns}) VALUES ({placeholders})",
                 tuple(getattr(article, col) for col in ARTICLE_COLUMNS),
             )
             inserted = cursor.rowcount > 0
 
             if enriched.mentions:
-                self._conn.executemany(
+                self.conn.executemany(
                     """
                     INSERT OR IGNORE INTO article_ticker_mentions
                         (id, article_id, ticker, dominance, is_primary)
@@ -139,7 +149,7 @@ class NewsRepository:
         return count
 
     def get_active_threads(self, since_ts: int, limit: int = 200) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
+        rows = self.conn.execute(
             """
             SELECT * FROM story_threads
             WHERE last_seen_at >= ?
@@ -151,7 +161,7 @@ class NewsRepository:
         return [dict(row) for row in rows]
 
     def get_thread(self, thread_id: str) -> dict[str, Any] | None:
-        row = self._conn.execute(
+        row = self.conn.execute(
             "SELECT * FROM story_threads WHERE thread_id = ?",
             (thread_id,),
         ).fetchone()
@@ -160,7 +170,7 @@ class NewsRepository:
     def get_thread_articles(
         self, thread_id: str, limit: int = 50
     ) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
+        rows = self.conn.execute(
             """
             SELECT * FROM articles
             WHERE thread_id = ?
@@ -172,7 +182,7 @@ class NewsRepository:
         return [dict(row) for row in rows]
 
     def get_thread_timeline(self, thread_id: str) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
+        rows = self.conn.execute(
             """
             SELECT * FROM thread_daily_snapshots
             WHERE thread_id = ?
@@ -188,7 +198,7 @@ class NewsRepository:
         start_date: str,
         end_date: str,
     ) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
+        rows = self.conn.execute(
             """
             SELECT * FROM ticker_daily_stats
             WHERE ticker = ? AND date >= ? AND date <= ?
@@ -199,7 +209,7 @@ class NewsRepository:
         return [dict(row) for row in rows]
 
     def search_articles(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
+        rows = self.conn.execute(
             """
             SELECT a.*, n.analysis_json AS llm_analysis
             FROM articles a
@@ -239,7 +249,7 @@ class NewsRepository:
         query += " ORDER BY a.sort_ts DESC LIMIT ?"
         params.append(limit)
 
-        rows = self._conn.execute(query, params).fetchall()
+        rows = self.conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
     def get_news_for_date(self, date_str: str, limit: int = 500) -> list[dict[str, Any]]:
@@ -249,7 +259,7 @@ class NewsRepository:
         start_ts = int(start.timestamp())
         end_ts_int = int(end_ts.timestamp())
 
-        rows = self._conn.execute(
+        rows = self.conn.execute(
             """
             SELECT * FROM articles
             WHERE sort_ts >= ? AND sort_ts <= ?
@@ -279,7 +289,7 @@ class NewsRepository:
         query += " ORDER BY sort_ts DESC LIMIT ?"
         params.append(limit)
 
-        rows = self._conn.execute(query, params).fetchall()
+        rows = self.conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
 

@@ -8,10 +8,12 @@ tests/test_llm_analyze.py
 tests/test_price_reaction.py
 tests/test_settings_watchlist.py
 tests/test_ticker_news_provider.py
+tests/test_tier_filter.py
 tests/test_watchlist_sync.py
 vinu_news/__init__.py
 vinu_news/cli.py
 vinu_news/config.py
+vinu_news/net.py
 vinu_news/service.py
 vinu_news.egg-info/PKG-INFO
 vinu_news.egg-info/SOURCES.txt
@@ -35,6 +37,7 @@ vinu_news/analysis/enrichment/sentiment.py
 vinu_news/analysis/enrichment/source_credibility.py
 vinu_news/analysis/enrichment/summary_cleaner.py
 vinu_news/analysis/enrichment/threat.py
+vinu_news/analysis/enrichment/ticker_db.py
 vinu_news/analysis/enrichment/ticker_dominance.py
 vinu_news/analysis/enrichment/ticker_extractor.py
 vinu_news/analysis/llm/__init__.py
@@ -104,7 +107,11 @@ vinu_news/server/app.py
 vinu_news/server/routes_config.py
 vinu_news/server/routes_read.py
 vinu_news/server/schemas.py
+vinu_news/server/static/favicon.svg
+vinu_news/server/static/icons.svg
 vinu_news/server/static/index.html
+vinu_news/server/static/assets/index-B7CgD4jB.js
+vinu_news/server/static/assets/index-CQeYx54l.css
 vinu_news/settings/__init__.py
 vinu_news/settings/schema.sql
 vinu_news/settings/store.py
