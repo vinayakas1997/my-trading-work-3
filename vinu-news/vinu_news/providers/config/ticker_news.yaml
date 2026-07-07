@@ -2,6 +2,9 @@ providers:
   - id: yahoo
     enabled: true
     priority: 1
-  - id: fmp
+  - id: alpaca
     enabled: true
     priority: 2
+  - id: fmp
+    enabled: true
+    priority: 3

@@ -39,6 +39,16 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [pollingBtnText, setPollingBtnText] = useState('Poll now');
 
+  // Backfill tab state
+  const [backfillStatus, setBackfillStatus] = useState([]);
+  const [selectedBkTicker, setSelectedBkTicker] = useState(null);
+  const [bkTickerNews, setBkTickerNews] = useState([]);
+  const [bkNewsDateFrom, setBkNewsDateFrom] = useState('');
+  const [bkNewsDateTo, setBkNewsDateTo] = useState('');
+  const [bkNewsSearch, setBkNewsSearch] = useState('');
+  const [loadingBkNews, setLoadingBkNews] = useState(false);
+  const [backfillingTickers, setBackfillingTickers] = useState({});
+
   const showToast = (message) => {
     setToast(message);
     setTimeout(() => setToast(null), 4000);
@@ -276,6 +286,109 @@ export default function App() {
     } finally {
       setLoadingArticles(false);
     }
+  };
+
+  // Backfill: load status
+  const loadBackfillStatus = async () => {
+    try {
+      const data = await api('/backfill/status');
+      setBackfillStatus(data.backfill_status || []);
+    } catch (e) {
+      showToast('Failed to load backfill status: ' + e.message);
+    }
+  };
+
+  // Backfill: toggle ticker
+  const toggleBackfillTicker = async (ticker, enabled) => {
+    try {
+      await api(`/backfill/${encodeURIComponent(ticker)}/toggle`, {
+        method: 'POST',
+        body: JSON.stringify({ enabled }),
+      });
+      loadBackfillStatus();
+    } catch (e) {
+      showToast('Failed to toggle backfill: ' + e.message);
+    }
+  };
+
+  // Backfill: trigger single ticker
+  const triggerBackfillSingle = async (ticker) => {
+    setBackfillingTickers(prev => ({ ...prev, [ticker]: true }));
+    try {
+      const data = await api(`/backfill/trigger?ticker=${encodeURIComponent(ticker)}`, {
+        method: 'POST',
+      });
+      const result = data.results && data.results[0];
+      showToast(`${ticker}: ${result.status} (${result.articles_fetched || 0} articles)`);
+      loadBackfillStatus();
+    } catch (e) {
+      showToast('Backfill failed: ' + e.message);
+    } finally {
+      setBackfillingTickers(prev => ({ ...prev, [ticker]: false }));
+    }
+  };
+
+  // Backfill: trigger all enabled
+  const triggerBackfillAll = async () => {
+    setBackfillingTickers(prev => {
+      const all = {};
+      backfillStatus.forEach(s => { all[s.ticker] = true; });
+      return all;
+    });
+    try {
+      const data = await api('/backfill/trigger', { method: 'POST' });
+      const results = data.results || [];
+      const done = results.filter(r => r.status === 'completed').length;
+      const total = results.length;
+      showToast(`Backfill complete: ${done}/${total} tickers done`);
+      loadBackfillStatus();
+    } catch (e) {
+      showToast('Backfill all failed: ' + e.message);
+    } finally {
+      setBackfillingTickers({});
+    }
+  };
+
+  // Backfill: fetch ticker news
+  const fetchBkTickerNews = async (ticker, fromDate, toDate) => {
+    setLoadingBkNews(true);
+    try {
+      let url = `/ticker/${encodeURIComponent(ticker)}?limit=500`;
+      if (fromDate && toDate) {
+        const fromTs = Math.floor(new Date(fromDate).getTime() / 1000);
+        const toTs = Math.floor(new Date(toDate + 'T23:59:59').getTime() / 1000);
+        url += `&from=${fromTs}&to=${toTs}`;
+      } else if (fromDate) {
+        url += `&from=${Math.floor(new Date(fromDate).getTime() / 1000)}`;
+      } else if (toDate) {
+        url += `&to=${Math.floor(new Date(toDate + 'T23:59:59').getTime() / 1000)}`;
+      } else {
+        url += '&days=3650';
+      }
+      const data = await api(url);
+      let articles = data.data || [];
+      if (bkNewsSearch.trim()) {
+        const q = bkNewsSearch.toLowerCase();
+        articles = articles.filter(a =>
+          (a.headline || '').toLowerCase().includes(q) ||
+          (a.summary || '').toLowerCase().includes(q)
+        );
+      }
+      setBkTickerNews(articles);
+    } catch (e) {
+      showToast('Failed to load ticker news: ' + e.message);
+    } finally {
+      setLoadingBkNews(false);
+    }
+  };
+
+  // Backfill: select ticker, load its news
+  const selectBkTicker = (ticker) => {
+    setSelectedBkTicker(ticker);
+    setBkNewsDateFrom('');
+    setBkNewsDateTo('');
+    setBkNewsSearch('');
+    fetchBkTickerNews(ticker, '', '');
   };
 
   // Trigger search query
@@ -547,6 +660,14 @@ export default function App() {
           style={{ padding: '0.75rem 1.25rem', border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.95rem', fontWeight: activeTab === 'info' ? 700 : 500, color: activeTab === 'info' ? 'var(--primary)' : 'var(--text-muted)', borderBottom: `2px solid ${activeTab === 'info' ? 'var(--primary)' : 'transparent'}`, transition: 'all 0.2s ease', outline: 'none' }}
         >
           📂 Information
+        </button>
+        <button
+          type="button"
+          className={`info-menu-btn ${activeTab === 'backfill' ? 'active' : ''}`}
+          onClick={() => { setActiveTab('backfill'); loadBackfillStatus(); }}
+          style={{ padding: '0.75rem 1.25rem', border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.95rem', fontWeight: activeTab === 'backfill' ? 700 : 500, color: activeTab === 'backfill' ? 'var(--primary)' : 'var(--text-muted)', borderBottom: `2px solid ${activeTab === 'backfill' ? 'var(--primary)' : 'transparent'}`, transition: 'all 0.2s ease', outline: 'none' }}
+        >
+          📥 Backfill
         </button>
       </nav>
 
@@ -1152,6 +1273,187 @@ export default function App() {
               >
                 Next
               </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* PANEL: BACKFILL */}
+      {activeTab === 'backfill' && (
+        <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          {/* Global settings + actions */}
+          <div className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+            <div>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: '0 0 0.25rem 0' }}>📥 Alpaca Historical Backfill</h3>
+              <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+                Backfill period: <strong>{settings.backfill_start_date || '2023-01-01'}</strong> onward &middot; Pause on error: <strong>{settings.backfill_pause_on_error !== false ? 'ON' : 'OFF'}</strong>
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button type="button" className="btn-primary" onClick={() => { triggerBackfillAll(); }}>
+                Backfill All Now
+              </button>
+              <button type="button" className="btn-secondary" onClick={loadBackfillStatus}>
+                🔄 Refresh
+              </button>
+            </div>
+          </div>
+
+          {/* Status table */}
+          <div className="glass-card" style={{ overflowX: 'auto', padding: 0 }}>
+            {backfillStatus.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-dim)' }}>
+                No backfill entries yet. Add tickers to the watchlist to start.
+              </div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', minWidth: '650px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid var(--border-color)', color: 'var(--text-muted)', fontWeight: 600, fontSize: '0.78rem' }}>
+                    <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center', width: '40px' }}>On</th>
+                    <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>Ticker</th>
+                    <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>Status</th>
+                    <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>Articles</th>
+                    <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>Up To</th>
+                    <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>Oldest</th>
+                    <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center', width: '100px' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {backfillStatus.map(bs => {
+                    const isBusy = backfillingTickers[bs.ticker];
+                    const statusStyles = {
+                      pending: { bg: 'rgba(255,255,255,0.03)', color: 'var(--text-dim)' },
+                      in_progress: { bg: 'rgba(59,130,246,0.1)', color: '#60a5fa' },
+                      completed: { bg: 'rgba(16,185,129,0.1)', color: '#34d399' },
+                      paused: { bg: 'rgba(234,179,8,0.1)', color: '#facc15' },
+                      error: { bg: 'rgba(239,68,68,0.1)', color: '#f87171' },
+                    }[bs.status] || { bg: 'rgba(255,255,255,0.02)', color: 'var(--text-dim)' };
+                    return (
+                      <tr key={bs.ticker} style={{ borderBottom: '1px solid var(--border-color)', cursor: 'pointer', transition: 'background 0.15s', background: selectedBkTicker === bs.ticker ? 'rgba(59,130,246,0.05)' : 'transparent' }}
+                        onClick={() => selectBkTicker(bs.ticker)}
+                      >
+                        <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                          <input type="checkbox" checked={bs.enabled} onChange={e => toggleBackfillTicker(bs.ticker, e.target.checked)} style={{ accentColor: 'var(--primary)', cursor: 'pointer' }} />
+                        </td>
+                        <td style={{ padding: '0.6rem 0.5rem', fontWeight: 700, color: 'var(--primary)' }}>{bs.ticker}</td>
+                        <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
+                          <span style={{ display: 'inline-block', padding: '0.15rem 0.6rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 600, background: statusStyles.bg, color: statusStyles.color }}>
+                            {bs.status === 'in_progress' ? '⏳' : bs.status === 'completed' ? '✅' : bs.status === 'error' ? '❌' : bs.status === 'paused' ? '⏸' : '🟡'} {bs.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.6rem 0.5rem', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>{bs.article_count?.toLocaleString() || 0}</td>
+                        <td style={{ padding: '0.6rem 0.5rem', textAlign: 'right', color: 'var(--text-dim)', fontSize: '0.78rem' }}>
+                          {bs.backfilled_up_to_ts ? new Date(bs.backfilled_up_to_ts * 1000).toLocaleDateString() : '—'}
+                        </td>
+                        <td style={{ padding: '0.6rem 0.5rem', textAlign: 'right', color: 'var(--text-dim)', fontSize: '0.78rem' }}>
+                          {bs.oldest_ts ? new Date(bs.oldest_ts * 1000).toLocaleDateString() : '—'}
+                        </td>
+                        <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                          <button type="button" className="btn-secondary" style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem' }}
+                            disabled={isBusy}
+                            onClick={() => triggerBackfillSingle(bs.ticker)}
+                          >
+                            {isBusy ? '⏳' : '▶'} Backfill
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Ticker news viewer (shown when ticker selected) */}
+          {selectedBkTicker && (
+            <div className="glass-card animate-fade-in">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
+                  📰 {selectedBkTicker} News
+                  <span style={{ fontSize: '0.85rem', fontWeight: 400, color: 'var(--text-dim)', marginLeft: '0.5rem' }}>
+                    ({bkTickerNews.length} articles)
+                  </span>
+                </h3>
+                <button type="button" className="btn-secondary" style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem' }}
+                  onClick={() => { setSelectedBkTicker(null); setBkTickerNews([]); }}
+                >
+                  ✕ Close
+                </button>
+              </div>
+
+              {/* Filter bar */}
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1rem', padding: '0.75rem', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)' }}>From:</label>
+                <input type="date" value={bkNewsDateFrom} onChange={e => setBkNewsDateFrom(e.target.value)}
+                  style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', background: '#111827', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '4px', colorScheme: 'dark' }} />
+                <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)' }}>To:</label>
+                <input type="date" value={bkNewsDateTo} onChange={e => setBkNewsDateTo(e.target.value)}
+                  style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', background: '#111827', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '4px', colorScheme: 'dark' }} />
+                <input type="text" placeholder="Search in headline/summary..." value={bkNewsSearch}
+                  onChange={e => setBkNewsSearch(e.target.value)}
+                  style={{ flex: 1, minWidth: '150px', fontSize: '0.8rem', padding: '0.25rem 0.5rem' }} />
+                <button type="button" className="btn-primary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem' }}
+                  onClick={() => fetchBkTickerNews(selectedBkTicker, bkNewsDateFrom, bkNewsDateTo)}
+                >
+                  Apply
+                </button>
+                <button type="button" className="btn-secondary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem' }}
+                  onClick={() => { setBkNewsDateFrom(''); setBkNewsDateTo(''); setBkNewsSearch(''); fetchBkTickerNews(selectedBkTicker, '', ''); }}
+                >
+                  Reset
+                </button>
+              </div>
+
+              {/* News results */}
+              {loadingBkNews ? (
+                <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-dim)' }}>Loading...</div>
+              ) : bkTickerNews.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-dim)' }}>No articles found for this ticker.</div>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', minWidth: '500px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '2px solid var(--border-color)', color: 'var(--text-muted)', fontWeight: 600, fontSize: '0.75rem' }}>
+                        <th style={{ padding: '0.5rem 0.4rem', textAlign: 'left' }}>#</th>
+                        <th style={{ padding: '0.5rem 0.4rem', textAlign: 'left' }}>Headline</th>
+                        <th style={{ padding: '0.5rem 0.4rem', textAlign: 'left' }}>Source</th>
+                        <th style={{ padding: '0.5rem 0.4rem', textAlign: 'center' }}>Date</th>
+                        <th style={{ padding: '0.5rem 0.4rem', textAlign: 'center' }}>Sentiment</th>
+                        <th style={{ padding: '0.5rem 0.4rem', textAlign: 'center' }}>Link</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bkTickerNews.slice(0, 200).map((art, idx) => (
+                        <tr key={art.id || idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <td style={{ padding: '0.4rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>{idx + 1}</td>
+                          <td style={{ padding: '0.4rem', fontWeight: 500, maxWidth: '350px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <span title={art.headline}>{art.headline}</span>
+                          </td>
+                          <td style={{ padding: '0.4rem', color: 'var(--text-dim)', fontSize: '0.75rem' }}>{art.source}</td>
+                          <td style={{ padding: '0.4rem', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+                            {art.sort_ts ? new Date(art.sort_ts * 1000).toLocaleDateString() : '—'}
+                          </td>
+                          <td style={{ padding: '0.4rem', textAlign: 'center' }}>
+                            <span style={{ color: art.sentiment === 'BULLISH' ? '#34d399' : art.sentiment === 'BEARISH' ? '#f87171' : 'var(--text-dim)', fontWeight: 600 }}>
+                              {art.sentiment === 'BULLISH' ? '🟢' : art.sentiment === 'BEARISH' ? '🔴' : '⚪'} {art.sentiment || '—'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '0.4rem', textAlign: 'center' }}>
+                            {art.link ? (
+                              <a href={art.link} target="_blank" rel="noopener" style={{ color: 'var(--primary)', fontSize: '0.75rem', textDecoration: 'none' }}>Open</a>
+                            ) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {bkTickerNews.length > 200 && (
+                    <div style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+                      Showing first 200 of {bkTickerNews.length} articles. Use date filters to narrow.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

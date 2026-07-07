@@ -53,6 +53,8 @@ class VinuConfig:
     llm_analysis_mode: str
     llm_analysis_concurrency: int
     fmp_api_key: str
+    alpaca_api_key: str
+    alpaca_api_secret: str
     max_workers: int
 
 
@@ -88,6 +90,8 @@ def load_config() -> VinuConfig:
             )
         ),
         fmp_api_key=os.environ.get("FMP_API_KEY", ""),
+        alpaca_api_key=os.environ.get("ALPACA_API_KEY", ""),
+        alpaca_api_secret=os.environ.get("ALPACA_API_SECRET", ""),
         max_workers=int(
             os.environ.get("VINU_NEWS_MAX_WORKERS", str(DEFAULT_MAX_WORKERS))
         ),

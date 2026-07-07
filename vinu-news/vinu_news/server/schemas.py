@@ -18,6 +18,8 @@ class SettingsResponse(BaseModel):
     llm_analysis_mode: str
     llm_analysis_concurrency: int
     active_tiers: list[int]
+    backfill_start_date: str = "2023-01-01"
+    backfill_pause_on_error: bool = True
 
 
 class SettingsPatchRequest(BaseModel):
@@ -26,6 +28,8 @@ class SettingsPatchRequest(BaseModel):
     llm_analysis_mode: str | None = None
     llm_analysis_concurrency: int | None = Field(default=None, ge=1, le=20)
     active_tiers: list[int] | None = None
+    backfill_start_date: str | None = None
+    backfill_pause_on_error: bool | None = None
 
 
 class PollStatusResponse(BaseModel):
@@ -67,4 +71,8 @@ class IngestTriggerResponse(BaseModel):
 
 
 class ToggleEnabledRequest(BaseModel):
+    enabled: bool
+
+
+class BackfillToggleRequest(BaseModel):
     enabled: bool

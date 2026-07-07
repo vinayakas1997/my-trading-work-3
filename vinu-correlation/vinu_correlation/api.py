@@ -45,7 +45,10 @@ class CorrelationAPI:
         if cached is not None:
             return cached
 
-        articles = self._news_client.get_ticker_news(symbol, days=30)
+        if from_ts is not None and to_ts is not None:
+            articles = self._news_client.get_ticker_news(symbol, from_ts=from_ts, to_ts=to_ts)
+        else:
+            articles = self._news_client.get_ticker_news(symbol, days=30)
         if not articles:
             result = {
                 "symbol": symbol,
@@ -103,7 +106,10 @@ class CorrelationAPI:
         if cached is not None:
             return cached
 
-        articles = self._news_client.get_ticker_news(symbol, days=30)
+        if from_ts is not None and to_ts is not None:
+            articles = self._news_client.get_ticker_news(symbol, from_ts=from_ts, to_ts=to_ts)
+        else:
+            articles = self._news_client.get_ticker_news(symbol, days=30)
         candles = self._price_client.get_candles(symbol, from_ts=from_ts, to_ts=to_ts)
 
         news_hourly = resample_news_to_hourly(articles)
@@ -145,7 +151,10 @@ class CorrelationAPI:
             return cached
 
         candles = self._price_client.get_candles(symbol, from_ts=from_ts, to_ts=to_ts)
-        articles = self._news_client.get_ticker_news(symbol, days=30)
+        if from_ts is not None and to_ts is not None:
+            articles = self._news_client.get_ticker_news(symbol, from_ts=from_ts, to_ts=to_ts)
+        else:
+            articles = self._news_client.get_ticker_news(symbol, days=30)
 
         events = []
         for article in articles:
@@ -174,8 +183,8 @@ class CorrelationAPI:
         self._cache.set_drawdown(symbol, from_ts, to_ts, result)
         return result
 
-    def get_baseline(self, symbol: str) -> dict[str, Any]:
-        articles = self._news_client.get_ticker_news(symbol, days=30)
+    def get_baseline(self, symbol: str, *, days: int = 30) -> dict[str, Any]:
+        articles = self._news_client.get_ticker_news(symbol, days=days)
         baselines = compute_baseline(
             articles,
             window_days=self._config.baseline_window_days,
@@ -226,13 +235,22 @@ class CorrelationAPI:
         }
         return result
 
-    def compute_and_store(self, symbol: str, incremental: bool = True):
+    def compute_and_store(
+        self,
+        symbol: str,
+        incremental: bool = True,
+        from_ts: int | None = None,
+        to_ts: int | None = None,
+    ):
         if incremental:
             last_ts = self._storage.get_last_computed_ts(symbol)
         else:
             last_ts = None
 
-        articles = self._news_client.get_ticker_news(symbol, days=30)
+        if from_ts is not None and to_ts is not None:
+            articles = self._news_client.get_ticker_news(symbol, from_ts=from_ts, to_ts=to_ts)
+        else:
+            articles = self._news_client.get_ticker_news(symbol, days=30)
         if not articles:
             return
 

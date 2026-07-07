@@ -25,6 +25,7 @@ postgres = ["psycopg[binary]>=3.1"]
 vinu-news-ingest = "vinu_news.cli:ingest_main"
 vinu-news-serve = "vinu_news.cli:serve_main"
 vinu-news-query = "vinu_news.cli:query_main"
+vinu-news-backfill = "vinu_news.cli:backfill_main"
 
 [tool.setuptools.packages.find]
 where = ["."]

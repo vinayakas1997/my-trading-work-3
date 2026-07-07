@@ -22,6 +22,7 @@ export default defineConfig({
       '/providers': 'http://localhost:8080',
       '/poll': 'http://localhost:8080',
       '/ingest': 'http://localhost:8080',
+      '/backfill': 'http://localhost:8080',
     }
   },
   build: {

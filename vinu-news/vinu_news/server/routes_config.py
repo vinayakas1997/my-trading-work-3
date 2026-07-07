@@ -11,6 +11,7 @@ from vinu_news.server.schemas import (
     WatchlistAddRequest,
     WatchlistResponse,
 )
+from vinu_news.server.schemas import BackfillToggleRequest
 from vinu_news.service import NewsService
 
 router = APIRouter(tags=["config"])
@@ -30,6 +31,8 @@ def read_settings() -> SettingsResponse:
         llm_analysis_mode=view.llm_analysis_mode,
         llm_analysis_concurrency=view.llm_analysis_concurrency,
         active_tiers=view.active_tiers,
+        backfill_start_date=view.backfill_start_date,
+        backfill_pause_on_error=view.backfill_pause_on_error,
     )
 
 
@@ -43,6 +46,8 @@ def patch_settings(body: SettingsPatchRequest) -> SettingsResponse:
             llm_analysis_mode=body.llm_analysis_mode,
             llm_analysis_concurrency=body.llm_analysis_concurrency,
             active_tiers=body.active_tiers,
+            backfill_start_date=body.backfill_start_date,
+            backfill_pause_on_error=body.backfill_pause_on_error,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -52,6 +57,8 @@ def patch_settings(body: SettingsPatchRequest) -> SettingsResponse:
         llm_analysis_mode=view.llm_analysis_mode,
         llm_analysis_concurrency=view.llm_analysis_concurrency,
         active_tiers=view.active_tiers,
+        backfill_start_date=view.backfill_start_date,
+        backfill_pause_on_error=view.backfill_pause_on_error,
     )
 
 
@@ -154,3 +161,26 @@ def toggle_provider(provider_id: str, body: ToggleEnabledRequest) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"id": provider.id, "enabled": provider.enabled, "priority": provider.priority}
+
+
+@router.get("/backfill/status")
+def backfill_status() -> dict:
+    service = get_service()
+    return {"backfill_status": service.get_backfill_status()}
+
+
+@router.post("/backfill/{ticker}/toggle")
+def toggle_backfill(ticker: str, body: BackfillToggleRequest) -> dict:
+    service = get_service()
+    service.toggle_backfill(ticker, body.enabled)
+    return {"ticker": ticker.upper(), "enabled": body.enabled}
+
+
+@router.post("/backfill/trigger")
+def trigger_backfill(ticker: str | None = None) -> dict:
+    service = get_service()
+    if ticker:
+        result = service.run_backfill_single(ticker)
+    else:
+        result = service.run_backfill_all()
+    return {"results": result if isinstance(result, list) else [result]}

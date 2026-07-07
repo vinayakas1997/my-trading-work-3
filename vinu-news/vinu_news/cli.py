@@ -142,6 +142,46 @@ def serve_main(argv: list[str] | None = None) -> None:
     uvicorn.run(app, host=host, port=port)
 
 
+def backfill_main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Alpaca historical news backfill")
+    parser.add_argument("tickers", nargs="*", help="Ticker symbols to backfill")
+    parser.add_argument("--all", action="store_true", help="Backfill all enabled tickers")
+    parser.add_argument("--once", action="store_true", help="Run a single backfill pass")
+    parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Run in continuous loop polling for new enabled tickers",
+    )
+    parser.add_argument("--interval", type=int, default=300, help="Poll interval seconds")
+    _parse_common_db_args(parser)
+    args = parser.parse_args(argv)
+
+    if args.db:
+        import os
+        os.environ["VINU_NEWS_DB_PATH"] = args.db
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    def run() -> None:
+        with NewsService() as service:
+            if args.all:
+                results = service.run_backfill_all()
+            elif args.tickers:
+                results = [service.run_backfill_single(t) for t in args.tickers]
+            else:
+                results = service.run_backfill_all()
+            for r in results:
+                print(json.dumps(r))
+
+    if args.once or not args.continuous:
+        run()
+        return
+
+    while True:
+        run()
+        time.sleep(args.interval)
+
+
 def query_main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Query vinu-news database from CLI")
     sub = parser.add_subparsers(dest="command", required=True)

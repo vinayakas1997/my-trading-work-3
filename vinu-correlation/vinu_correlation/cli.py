@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from vinu_correlation.api import CorrelationAPI
@@ -39,6 +40,7 @@ def compute_main(argv: list[str] | None = None) -> None:
     parser.add_argument("--to-year", type=int, default=None)
     parser.add_argument("--incremental", action="store_true", help="Only process new data since last compute")
     parser.add_argument("--force", action="store_true", help="Full recompute from scratch")
+    parser.add_argument("--backfill", action="store_true", help="Backfill year-by-year from 2023")
     parser.add_argument("--continuous", action="store_true", help="Run in continuous loop with --interval")
     parser.add_argument("--interval", type=int, default=3600, help="Poll interval in seconds (default: 3600)")
     parser.add_argument("--pipeline", action="store_true", help="Pipeline status output")
@@ -56,20 +58,28 @@ def compute_main(argv: list[str] | None = None) -> None:
         parser.print_help()
         return
 
-    def _compute_batch(tickers: list[str], incremental: bool):
+    def _compute_batch(tickers: list[str], incremental: bool, backfill: bool = False):
         for symbol in tickers:
-            LOG.info("Computing %s (incremental=%s)...", symbol, incremental)
-            api.compute_and_store(symbol, incremental=incremental)
+            if backfill:
+                LOG.info("Backfill computing %s year-by-year...", symbol)
+                for year in range(2023, 2027):
+                    from_ts = int(datetime(year, 1, 1, tzinfo=timezone.utc).timestamp())
+                    to_ts = int(datetime(year, 12, 31, 23, 59, 59, tzinfo=timezone.utc).timestamp())
+                    LOG.info("  %s -> %s", datetime.fromtimestamp(from_ts), datetime.fromtimestamp(to_ts))
+                    api.compute_and_store(symbol, incremental=False, from_ts=from_ts, to_ts=to_ts)
+            else:
+                LOG.info("Computing %s (incremental=%s)...", symbol, incremental)
+                api.compute_and_store(symbol, incremental=incremental)
             LOG.info("Done %s", symbol)
 
     if args.continuous:
         LOG.info("Starting continuous compute loop (interval=%ss)", args.interval)
         while True:
-            _compute_batch(tickers, incremental=args.incremental or not args.force)
+            _compute_batch(tickers, incremental=args.incremental or not args.force, backfill=args.backfill)
             LOG.info("Sleeping %ss...", args.interval)
             time.sleep(args.interval)
     else:
-        _compute_batch(tickers, incremental=args.incremental or not args.force)
+        _compute_batch(tickers, incremental=args.incremental or not args.force, backfill=args.backfill)
 
 
 def compact_main(argv: list[str] | None = None) -> None:

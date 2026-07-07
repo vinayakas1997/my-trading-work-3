@@ -21,8 +21,21 @@ class NewsClient:
         body = resp.json()
         return body.get("data", body) if isinstance(body, dict) else body
 
-    def get_ticker_news(self, symbol: str, days: int = 7, limit: int = 500) -> list[dict[str, Any]]:
-        params = {"days": days, "limit": limit}
+    def get_ticker_news(
+        self,
+        symbol: str,
+        days: int = 7,
+        *,
+        from_ts: int | None = None,
+        to_ts: int | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"limit": limit}
+        if from_ts is not None and to_ts is not None:
+            params["from"] = from_ts
+            params["to"] = to_ts
+        else:
+            params["days"] = days
         resp = request("GET", f"{self._base}/ticker/{symbol.upper()}", params=params)
         resp.raise_for_status()
         body = resp.json()

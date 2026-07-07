@@ -54,11 +54,16 @@ def latest(
 @router.get("/ticker/{symbol}", response_model=DataResponse)
 def ticker_news(
     symbol: str,
-    days: int = Query(default=7, ge=1, le=365),
+    days: int = Query(default=7, ge=1, le=3650),
     limit: int = Query(default=50, ge=1, le=500),
+    from_: int | None = Query(None, alias="from", description="Unix timestamp start"),
+    to: int | None = Query(None, alias="to", description="Unix timestamp end"),
 ) -> DataResponse:
     service = get_service()
-    rows = service.get_ticker_news(symbol, days=days, limit=limit)
+    if from_ is not None or to is not None:
+        rows = service.get_ticker_news(symbol, from_ts=from_, to_ts=to, limit=limit)
+    else:
+        rows = service.get_ticker_news(symbol, days=days, limit=limit)
     return DataResponse(count=len(rows), data=rows)
 
 

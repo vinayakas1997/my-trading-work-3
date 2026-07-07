@@ -6,6 +6,7 @@ from vinu_news.config import VinuConfig, load_config
 from vinu_news.providers.base import TickerNewsProvider
 from vinu_news.providers.config.loader import load_ticker_news_providers
 from vinu_news.providers.fmp import FmpTickerNewsProvider
+from vinu_news.providers.alpaca import AlpacaTickerNewsProvider
 from vinu_news.providers.yahoo import YahooTickerNewsProvider
 
 
@@ -18,6 +19,10 @@ class TickerNewsRegistry:
         built: dict[str, TickerNewsProvider] = {
             "yahoo": YahooTickerNewsProvider(),
             "fmp": FmpTickerNewsProvider(self._config.fmp_api_key),
+            "alpaca": AlpacaTickerNewsProvider(
+                self._config.alpaca_api_key,
+                self._config.alpaca_api_secret,
+            ),
         }
         return built
 

@@ -12,6 +12,8 @@ services:
       VINU_NEWS_DB_PATH: /data/news.db
       VINU_NEWS_STORAGE: sqlite
       VINU_SHARED_WATCHLIST_PATH: /shared/watchlist.json
+      ALPACA_API_KEY: ${ALPACA_API_KEY}
+      ALPACA_API_SECRET: ${ALPACA_API_SECRET}
     volumes:
       - vinu_news_data:/data
       - vinu_shared_exchange:/shared

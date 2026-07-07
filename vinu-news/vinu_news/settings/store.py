@@ -17,6 +17,8 @@ DEFAULTS: dict[str, str] = {
     "llm_analysis_mode": "auto",
     "llm_analysis_concurrency": "3",
     "active_tiers": DEFAULT_ACTIVE_TIERS,
+    "backfill_start_date": "2023-01-01",
+    "backfill_pause_on_error": "true",
 }
 
 
@@ -75,6 +77,8 @@ class SettingsView:
     llm_analysis_mode: str
     llm_analysis_concurrency: int
     active_tiers: list[int]
+    backfill_start_date: str
+    backfill_pause_on_error: bool
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -83,6 +87,8 @@ class SettingsView:
             "llm_analysis_mode": self.llm_analysis_mode,
             "llm_analysis_concurrency": self.llm_analysis_concurrency,
             "active_tiers": self.active_tiers,
+            "backfill_start_date": self.backfill_start_date,
+            "backfill_pause_on_error": self.backfill_pause_on_error,
         }
 
 
@@ -125,12 +131,16 @@ class SettingsStore:
         except (TypeError, ValueError):
             concurrency = int(DEFAULTS["llm_analysis_concurrency"])
         active_tiers = parse_active_tiers(data.get("active_tiers", DEFAULT_ACTIVE_TIERS))
+        backfill_start_date = data.get("backfill_start_date", "2023-01-01")
+        backfill_pause_on_error = data.get("backfill_pause_on_error", "true").lower() == "true"
         return SettingsView(
             mode=mode,
             poll_interval_sec=max(60, interval),
             llm_analysis_mode=llm_analysis_mode,
             llm_analysis_concurrency=max(1, min(20, concurrency)),
             active_tiers=active_tiers,
+            backfill_start_date=backfill_start_date,
+            backfill_pause_on_error=backfill_pause_on_error,
         )
 
     def patch(
@@ -141,6 +151,8 @@ class SettingsStore:
         llm_analysis_mode: str | None = None,
         llm_analysis_concurrency: int | None = None,
         active_tiers: list[int] | None = None,
+        backfill_start_date: str | None = None,
+        backfill_pause_on_error: bool | None = None,
     ) -> SettingsView:
         if mode is not None:
             normalized = mode.lower()
@@ -160,6 +172,10 @@ class SettingsStore:
             self._set("llm_analysis_concurrency", str(max(1, min(20, llm_analysis_concurrency))))
         if active_tiers is not None:
             self._set("active_tiers", format_active_tiers(active_tiers))
+        if backfill_start_date is not None:
+            self._set("backfill_start_date", backfill_start_date)
+        if backfill_pause_on_error is not None:
+            self._set("backfill_pause_on_error", "true" if backfill_pause_on_error else "false")
         self._conn.commit()
         return self.get_all()
 

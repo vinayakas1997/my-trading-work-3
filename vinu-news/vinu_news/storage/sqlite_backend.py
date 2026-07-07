@@ -10,6 +10,7 @@ from vinu_news.analysis.storage.models import EnrichedArticle
 from vinu_news.analysis.storage.persist import PersistResult, persist_leads
 from vinu_news.analysis.storage.repository import NewsRepository
 
+from vinu_news.backfill.store import BackfillStore, BackfillStatusView
 from vinu_news.config import settings_env_defaults
 from vinu_news.settings.store import PollStatusView, SettingsStore, SettingsView
 from vinu_news.watchlist.store import WatchlistStore
@@ -19,6 +20,9 @@ _SETTINGS_SCHEMA = (
 )
 _WATCHLIST_SCHEMA = (
     Path(__file__).resolve().parent.parent / "watchlist" / "schema.sql"
+)
+_BACKFILL_SCHEMA = (
+    Path(__file__).resolve().parent.parent / "backfill" / "schema.sql"
 )
 
 
@@ -51,6 +55,12 @@ class SqliteBackend:
             self._local._watchlist = WatchlistStore(self._repo.conn)
         return self._local._watchlist
 
+    @property
+    def _backfill(self) -> BackfillStore:
+        if not hasattr(self._local, "_backfill"):
+            self._local._backfill = BackfillStore(self._repo.conn)
+        return self._local._backfill
+
     def _init_vinu_schema(self) -> None:
         env_defaults = settings_env_defaults()
         self._settings.init_schema(
@@ -58,6 +68,7 @@ class SqliteBackend:
             env_defaults=env_defaults,
         )
         self._watchlist.init_schema(_WATCHLIST_SCHEMA.read_text(encoding="utf-8"))
+        self._backfill.init_schema(_BACKFILL_SCHEMA.read_text(encoding="utf-8"))
         self._repo.conn.commit()
 
     def close(self) -> None:
@@ -227,6 +238,46 @@ class SqliteBackend:
         end_date: str,
     ) -> list[dict[str, Any]]:
         return self._repo.get_ticker_daily_stats(ticker, start_date, end_date)
+
+    def get_backfill_status_all(self) -> list[BackfillStatusView]:
+        return self._backfill.get_all()
+
+    def get_backfill_status(self, ticker: str) -> BackfillStatusView | None:
+        return self._backfill.get(ticker)
+
+    def toggle_backfill(self, ticker: str, enabled: bool) -> None:
+        self._backfill.toggle(ticker, enabled)
+
+    def ensure_backfill_ticker(self, ticker: str) -> None:
+        self._backfill.ensure_ticker(ticker)
+
+    def update_backfill_progress(
+        self,
+        ticker: str,
+        backfilled_up_to_ts: int,
+        article_count: int,
+        oldest_ts: int | None = None,
+        error_message: str | None = None,
+        status: str = "in_progress",
+    ) -> None:
+        fields = {
+            "status": status,
+            "backfilled_up_to_ts": backfilled_up_to_ts,
+            "article_count": article_count,
+            "updated_at": int(__import__("time").time()),
+        }
+        if oldest_ts is not None:
+            fields["oldest_ts"] = oldest_ts
+        if error_message is not None:
+            fields["error_message"] = error_message
+        self._backfill.upsert(ticker, **fields)
+
+    def mark_backfill_completed(self, ticker: str) -> None:
+        self._backfill.upsert(
+            ticker,
+            status="completed",
+            updated_at=int(__import__("time").time()),
+        )
 
     def article_count(self) -> int:
         row = self._repo.conn.execute("SELECT COUNT(*) FROM articles").fetchone()

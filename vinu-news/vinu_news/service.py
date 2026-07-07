@@ -23,6 +23,11 @@ from vinu_news.storage.base import StorageBackend
 from vinu_news.storage.factory import create_storage
 from vinu_news.net import request as http_request
 
+_BACKFILL_CHUNK_DAYS = 30
+_BACKFILL_START_DEFAULT_TS = int(
+    datetime(2023, 1, 1, tzinfo=timezone.utc).timestamp()
+)
+
 LOG = logging.getLogger(__name__)
 
 
@@ -271,6 +276,8 @@ class NewsService:
         llm_analysis_mode: str | None = None,
         llm_analysis_concurrency: int | None = None,
         active_tiers: list[int] | None = None,
+        backfill_start_date: str | None = None,
+        backfill_pause_on_error: bool | None = None,
     ) -> SettingsView:
         result = self._storage.patch_settings(
             mode=mode,
@@ -278,6 +285,8 @@ class NewsService:
             llm_analysis_mode=llm_analysis_mode,
             llm_analysis_concurrency=llm_analysis_concurrency,
             active_tiers=active_tiers,
+            backfill_start_date=backfill_start_date,
+            backfill_pause_on_error=backfill_pause_on_error,
         )
 
         # If auto-analysis was enabled at runtime, start the worker
@@ -305,7 +314,10 @@ class NewsService:
         return self._storage.get_watchlist()
 
     def add_watchlist_tickers(self, tickers: list[str]) -> list[str]:
-        return self._storage.add_watchlist_tickers(tickers)
+        added = self._storage.add_watchlist_tickers(tickers)
+        for t in added:
+            self.ensure_ticker_backfill(t)
+        return added
 
     def remove_watchlist_ticker(self, ticker: str) -> bool:
         return self._storage.remove_watchlist_ticker(ticker)
@@ -326,6 +338,96 @@ class NewsService:
             return {"ok": False, "message": "VINU_SHARED_WATCHLIST_PATH not set", "added": []}
         added = self._storage.sync_watchlist_from_shared(path)
         return {"ok": True, "added": added, "tickers": self.get_watchlist()}
+
+    def get_backfill_status(self) -> list[dict]:
+        return [s.to_dict() for s in self._storage.get_backfill_status_all()]
+
+    def get_backfill_status_for(self, ticker: str) -> dict | None:
+        v = self._storage.get_backfill_status(ticker)
+        return v.to_dict() if v else None
+
+    def toggle_backfill(self, ticker: str, enabled: bool) -> None:
+        self._storage.toggle_backfill(ticker, enabled)
+
+    def ensure_ticker_backfill(self, ticker: str) -> None:
+        self._storage.ensure_backfill_ticker(ticker)
+
+    def run_backfill_single(self, ticker: str) -> dict:
+        ticker = ticker.upper()
+        registry = TickerNewsRegistry(self._config)
+        watchlist = set(self._storage.get_watchlist())
+        settings = self._storage.get_settings()
+
+        status = self._storage.get_backfill_status(ticker)
+        if status is None:
+            self._storage.ensure_backfill_ticker(ticker)
+            status = self._storage.get_backfill_status(ticker)
+
+        if status and not status.enabled:
+            return {"ticker": ticker, "status": "skipped", "reason": "disabled"}
+
+        if status and status.backfilled_up_to_ts:
+            start_ts = status.backfilled_up_to_ts
+        else:
+            try:
+                dt = datetime.strptime(settings.backfill_start_date, "%Y-%m-%d")
+                start_ts = int(dt.replace(tzinfo=timezone.utc).timestamp())
+            except (ValueError, TypeError):
+                start_ts = _BACKFILL_START_DEFAULT_TS
+
+        end_ts = int(datetime.now(timezone.utc).timestamp())
+        if start_ts >= end_ts:
+            self._storage.mark_backfill_completed(ticker)
+            return {"ticker": ticker, "status": "completed", "articles_fetched": 0}
+
+        total_fetched = 0
+        oldest_seen: int | None = None
+        chunk_start = start_ts
+
+        while chunk_start < end_ts:
+            if status and not self._storage.get_backfill_status(ticker).enabled:
+                return {"ticker": ticker, "status": "paused", "articles_fetched": total_fetched}
+
+            chunk_end = min(chunk_start + _BACKFILL_CHUNK_DAYS * 86400, end_ts)
+            raw_articles = registry.fetch_for_ticker(ticker, chunk_start, chunk_end)
+
+            if not raw_articles:
+                chunk_start = chunk_end
+                continue
+
+            result = process_batch(raw_articles, watchlist=watchlist)
+            leads = filter_leads_for_mode(result.articles, "all", watchlist)
+
+            if leads:
+                persist_result = self._storage.persist_leads(leads)
+                total_fetched += persist_result.inserted
+                if oldest_seen is None:
+                    for a in leads:
+                        ts = a.article.sort_ts
+                        if oldest_seen is None or ts < oldest_seen:
+                            oldest_seen = ts
+
+            chunk_start = chunk_end
+            self._storage.update_backfill_progress(
+                ticker,
+                backfilled_up_to_ts=chunk_end,
+                article_count=total_fetched,
+                oldest_ts=oldest_seen,
+            )
+
+        self._storage.mark_backfill_completed(ticker)
+        return {
+            "ticker": ticker,
+            "status": "completed",
+            "articles_fetched": total_fetched,
+        }
+
+    def run_backfill_all(self) -> list[dict]:
+        results = []
+        for entry in self._storage.get_backfill_status_all():
+            if entry.enabled and entry.status != "completed":
+                results.append(self.run_backfill_single(entry.ticker))
+        return results
 
     def run_ingestion_cycle(
         self,
@@ -491,10 +593,15 @@ class NewsService:
         symbol: str,
         *,
         days: int = 7,
+        from_ts: int | None = None,
+        to_ts: int | None = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
-        start_ts = self.ts_days_ago(days)
-        rows = self._storage.get_news_for_ticker(symbol, start_ts, None, limit)
+        if from_ts is None:
+            start_ts = self.ts_days_ago(days)
+        else:
+            start_ts = from_ts
+        rows = self._storage.get_news_for_ticker(symbol, start_ts, to_ts, limit)
         return self._enrich_with_price_reaction(rows)
 
     def analyze_article(self, url_or_id: str) -> dict[str, Any]:

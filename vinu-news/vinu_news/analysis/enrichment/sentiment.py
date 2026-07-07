@@ -1,4 +1,4 @@
-"""Weighted sentiment scoring (Fincept Section 6D)."""
+"""Weighted sentiment scoring with financial domain lexicon (Fincept Section 6D)."""
 
 POSITIVE_WORDS = {
     # Weight +3
@@ -123,14 +123,144 @@ NEGATIVE_WORDS = {
     "shrink": -1,
 }
 
+# Financial domain lexicon — multi-word phrases that carry strong sentiment
+# in a market context but may be missed or mis-scored by general VADER rules.
+FINANCIAL_LEXICON: dict[str, int] = {
+    # Earnings / Results — weight +3
+    "beat estimates": 3,
+    "beat expectations": 3,
+    "record profit": 3,
+    "record revenue": 3,
+    "strong earnings": 3,
+    "raised guidance": 3,
+    "upgraded to buy": 3,
+    "outperform rating": 2,
+    "above consensus": 2,
+    "strong quarter": 2,
+    "gross margin expansion": 2,
+    "earnings surprise": 2,
+    "revenue growth": 2,
+    "profit beat": 3,
+    # Earnings / Results — weight -3
+    "miss estimates": -3,
+    "miss expectations": -3,
+    "missed estimates": -3,
+    "missed expectations": -3,
+    "lowered guidance": -3,
+    "weak earnings": -3,
+    "profit warning": -3,
+    "revenue miss": -3,
+    "earnings miss": -3,
+    "below consensus": -2,
+    "guidance cut": -3,
+    "downgraded to sell": -3,
+    "sell rating": -1,
+    "underperform rating": -2,
+    # Regulatory / Legal — weight -3
+    "sec investigation": -3,
+    "sec probe": -3,
+    "doj investigation": -3,
+    "antitrust lawsuit": -3,
+    "class action": -3,
+    "regulatory probe": -3,
+    "consent decree": -2,
+    "subpoena": -2,
+    "whistleblower": -2,
+    "penalty": -2,
+    "fine": -2,
+    "sanctions": -2,
+    # M&A / Corporate actions
+    "merger": 1,
+    "acquisition": 1,
+    "buyback": 2,
+    "share buyback": 2,
+    "stock split": 1,
+    "dividend increase": 2,
+    "dividend cut": -2,
+    "ipo": 1,
+    "spin off": 1,
+    # Market sentiment
+    "overweight": 1,
+    "equal weight": 0,
+    "underweight": -1,
+    "price target raised": 2,
+    "price target lowered": -2,
+    "bull case": 2,
+    "bear case": -2,
+    "bull run": 2,
+    "bear market": -2,
+    "dead cat bounce": -2,
+    "short squeeze": 2,
+    "flight to safety": -1,
+    "risk on": 1,
+    "risk off": -1,
+    # Macro / Economy
+    "rate hike": -1,
+    "rate cut": 2,
+    "hawkish": -1,
+    "dovish": 1,
+    "quantitative easing": 1,
+    "quantitative tightening": -1,
+    "soft landing": 1,
+    "hard landing": -2,
+    "inflation cools": 1,
+    "inflation spikes": -2,
+    "jobs report": 1,
+    # Analyst actions
+    "double downgrade": -3,
+    "triple downgrade": -3,
+    "upgraded to overweight": 2,
+    "downgraded to underweight": -2,
+    "conviction buy": 3,
+    "top pick": 2,
+    "added to conviction list": 2,
+    "removed from conviction list": -1,
+    # Supply chain / Operations
+    "supply chain disruption": -2,
+    "factory shutdown": -2,
+    "production halt": -2,
+    "recall": -2,
+    "inventory glut": -1,
+    "shortage": -1,
+    "surplus": 0,
+    # Technology / Industry specific
+    "fda approval": 3,
+    "fda rejection": -3,
+    "clinical trial success": 3,
+    "clinical trial failure": -3,
+    "patent approval": 2,
+    "patent infringement": -2,
+    "regulatory approval": 2,
+    "regulatory delay": -1,
+    # Credit / Debt
+    "credit rating upgrade": 2,
+    "credit rating downgrade": -2,
+    "junk bond": -1,
+    "investment grade": 1,
+    "default risk": -2,
+    "solvency": 1,
+    "liquidity crisis": -3,
+    "debt restructuring": -1,
+    "bank run": -3,
+}
+
 
 def score_sentiment(combined_text: str) -> dict:
-    """Cumulative weighted tally; returns sentiment label and net score."""
+    """Cumulative weighted tally with financial domain lexicon; returns sentiment label and net score."""
     lower = combined_text.lower()
     pos = 0
     neg = 0
 
-    # Longer phrases first to avoid partial double-counting on multi-word entries
+    # Phase 1: Multi-word financial phrases (longest first to avoid partial matches)
+    fin_items = sorted(FINANCIAL_LEXICON.items(), key=lambda x: len(x[0]), reverse=True)
+    for phrase, weight in fin_items:
+        if phrase in lower:
+            if weight > 0:
+                pos += weight
+            elif weight < 0:
+                neg += abs(weight)
+
+    # Phase 2: Individual sentiment words (longest first)
     all_words = sorted(
         {**POSITIVE_WORDS, **NEGATIVE_WORDS}.items(),
         key=lambda x: len(x[0]),
