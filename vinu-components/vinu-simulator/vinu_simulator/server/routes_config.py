@@ -21,5 +21,6 @@ async def get_settings() -> SettingsResponse:
         allow_short=s.get("allow_short", True),
         strategy_api_url=s.get("strategy_api_url", ""),
         stock_api_url=s.get("stock_api_url", ""),
+        features_api_url=s.get("features_api_url", ""),
         deviation_threshold=s.get("deviation_threshold", 0.05),
     )

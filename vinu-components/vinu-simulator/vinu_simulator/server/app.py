@@ -46,5 +46,6 @@ def _settings_from_config() -> dict:
         "allow_short": cfg.allow_short,
         "strategy_api_url": cfg.strategy_api_url,
         "stock_api_url": cfg.stock_api_url,
+        "features_api_url": cfg.features_api_url,
         "deviation_threshold": cfg.deviation_threshold,
     }

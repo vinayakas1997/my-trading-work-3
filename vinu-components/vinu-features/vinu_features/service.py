@@ -16,7 +16,7 @@ from vinu_features.constants import SECONDS_PER_DAY
 from vinu_features.engine.engine import FeatureEngine
 from vinu_features.presets.registry import resolve_features
 from vinu_features.storage import create_storage
-from vinu_features.storage.models import FeatureRequest, STATUS_DONE, SubmitRequest
+from vinu_features.storage.models import FeatureRequest, STATUS_DONE, STATUS_PENDING, SubmitRequest
 from vinu_features.storage.sqlite_backend import SqliteBackend
 from vinu_features.worker.runner import FeatureWorker
 
@@ -65,6 +65,7 @@ class FeatureService:
         ml_model: str | None = None,
         ml_label: str | None = None,
         run_immediately: bool = False,
+        dry_run: bool = False,
     ) -> FeatureRequest:
         if not title.strip():
             raise ValueError("title is required")
@@ -92,6 +93,21 @@ class FeatureService:
             if not features:
                 raise ValueError("Either preset or features is required")
             resolved = validate_and_resolve(features)
+
+        if dry_run:
+            return FeatureRequest(
+                id=-1,
+                title=title.strip(),
+                symbols=syms,
+                status=STATUS_PENDING,
+                from_ts=from_ts,
+                to_ts=to_ts,
+                interval=interval,
+                preset=preset,
+                hash="",
+                created_at="",
+                updated_at="",
+            )
 
         req = SubmitRequest(
             title=title.strip(),
@@ -171,6 +187,12 @@ class FeatureService:
         info = self.storage.health_info()
         info["data_dir"] = str(self.config.data_dir)
         info["stock_api_url"] = self.config.stock_api_url
+        import httpx
+        try:
+            res = httpx.get(f"{self.config.stock_api_url}/health", timeout=2.0)
+            info["stock_api_healthy"] = res.status_code == 200
+        except Exception:
+            info["stock_api_healthy"] = False
         from vinu_features.compute.feature_catalog import list_indicators
         from vinu_features.presets.registry import list_presets
         info["catalog_count"] = len(list_indicators())

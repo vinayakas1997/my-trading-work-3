@@ -2,53 +2,70 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from vinu_lib.db import migrate_schema
+
 LOG = logging.getLogger(__name__)
+
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS strategy_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    strategy_name TEXT NOT NULL,
+    run_id      TEXT NOT NULL UNIQUE,
+    symbol      TEXT,
+    timestamp   TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending',
+    metadata    TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS strategy_registry (
+    name        TEXT PRIMARY KEY,
+    description TEXT,
+    schedule    TEXT DEFAULT 'daily',
+    enabled     INTEGER DEFAULT 1,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
 
 
 class MetaStorage:
     def __init__(self, db_path: Path):
         self._db_path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(db_path))
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._init_schema()
+        self._local = threading.local()
 
-    def _init_schema(self) -> None:
-        self._conn.executescript("""
-            CREATE TABLE IF NOT EXISTS strategy_runs (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                strategy_name TEXT NOT NULL,
-                run_id      TEXT NOT NULL UNIQUE,
-                symbol      TEXT,
-                timestamp   TEXT NOT NULL,
-                status      TEXT NOT NULL DEFAULT 'pending',
-                metadata    TEXT,
-                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-            CREATE TABLE IF NOT EXISTS strategy_registry (
-                name        TEXT PRIMARY KEY,
-                description TEXT,
-                schedule    TEXT DEFAULT 'daily',
-                enabled     INTEGER DEFAULT 1,
-                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-        """)
-        self._conn.commit()
+    def _get_conn(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(str(self._db_path))
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.row_factory = sqlite3.Row
+            conn.executescript(_SCHEMA)
+            self._migrate(conn)
+            self._local.conn = conn
+        return conn
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        migrate_schema(conn, "vinu_strategy_meta", current_version=1)
 
     def register_strategy(self, name: str, description: str = "", schedule: str = "daily") -> None:
-        self._conn.execute(
+        conn = self._get_conn()
+        conn.execute(
             """INSERT OR REPLACE INTO strategy_registry (name, description, schedule, updated_at)
                VALUES (?, ?, ?, datetime('now'))""",
             (name, description, schedule),
         )
-        self._conn.commit()
+        conn.commit()
 
     def get_registered_strategies(self) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
+        conn = self._get_conn()
+        rows = conn.execute(
             "SELECT name, description, schedule, enabled FROM strategy_registry ORDER BY name"
         ).fetchall()
         return [
@@ -57,21 +74,23 @@ class MetaStorage:
         ]
 
     def log_run(self, strategy_name: str, run_id: str, symbol: str | None = None, status: str = "completed", metadata: dict[str, Any] | None = None) -> None:
-        self._conn.execute(
+        conn = self._get_conn()
+        conn.execute(
             """INSERT INTO strategy_runs (strategy_name, run_id, symbol, timestamp, status, metadata)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (strategy_name, run_id, symbol, datetime.utcnow().isoformat(), status, str(metadata or {})),
         )
-        self._conn.commit()
+        conn.commit()
 
     def get_runs(self, strategy_name: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        conn = self._get_conn()
         if strategy_name:
-            rows = self._conn.execute(
+            rows = conn.execute(
                 "SELECT strategy_name, run_id, symbol, timestamp, status FROM strategy_runs WHERE strategy_name=? ORDER BY id DESC LIMIT ?",
                 (strategy_name, limit),
             ).fetchall()
         else:
-            rows = self._conn.execute(
+            rows = conn.execute(
                 "SELECT strategy_name, run_id, symbol, timestamp, status FROM strategy_runs ORDER BY id DESC LIMIT ?",
                 (limit,),
             ).fetchall()
@@ -81,23 +100,36 @@ class MetaStorage:
         ]
 
     def delete_runs(self, strategy_name: str | None = None) -> int:
+        conn = self._get_conn()
         if strategy_name:
-            cursor = self._conn.execute("DELETE FROM strategy_runs WHERE strategy_name=?", (strategy_name,))
+            cursor = conn.execute("DELETE FROM strategy_runs WHERE strategy_name=?", (strategy_name,))
         else:
-            cursor = self._conn.execute("DELETE FROM strategy_runs")
-        self._conn.commit()
+            cursor = conn.execute("DELETE FROM strategy_runs")
+        conn.commit()
         return cursor.rowcount
 
     def delete_run_by_id(self, run_id: str) -> bool:
-        cursor = self._conn.execute("DELETE FROM strategy_runs WHERE run_id=?", (run_id,))
-        self._conn.commit()
+        conn = self._get_conn()
+        cursor = conn.execute("DELETE FROM strategy_runs WHERE run_id=?", (run_id,))
+        conn.commit()
         return cursor.rowcount > 0
 
     def delete_strategy(self, name: str) -> bool:
-        self._conn.execute("DELETE FROM strategy_runs WHERE strategy_name=?", (name,))
-        cursor = self._conn.execute("DELETE FROM strategy_registry WHERE name=?", (name,))
-        self._conn.commit()
+        conn = self._get_conn()
+        conn.execute("DELETE FROM strategy_runs WHERE strategy_name=?", (name,))
+        cursor = conn.execute("DELETE FROM strategy_registry WHERE name=?", (name,))
+        conn.commit()
         return cursor.rowcount > 0
 
+    def health_info(self) -> dict[str, Any]:
+        conn = self._get_conn()
+        total = conn.execute("SELECT COUNT(*) FROM strategy_runs").fetchone()[0]
+        return {
+            "db_path": str(self._db_path),
+            "total_runs": total,
+        }
+
     def close(self) -> None:
-        self._conn.close()
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()

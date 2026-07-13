@@ -8,6 +8,41 @@ from vinu_simulator.clients.base import BaseClient
 
 
 class PriceClient(BaseClient):
+
+    def get_ohclv(
+        self,
+        symbols: list[str],
+        from_date: str,
+        to_date: str,
+        resolution: str = "1d",
+    ) -> dict[str, pd.DataFrame]:
+        from_ts = int(pd.Timestamp(from_date).timestamp())
+        to_ts = int(pd.Timestamp(to_date).timestamp())
+
+        result: dict[str, pd.DataFrame] = {}
+        for sym in symbols:
+            params: dict[str, Any] = {
+                "interval": resolution,
+                "from": from_ts,
+                "to": to_ts,
+            }
+            try:
+                resp = self.get(f"/candles/{sym}", params)
+            except Exception:
+                continue
+            if not resp or "data" not in resp:
+                continue
+            records = resp["data"]
+            if not records:
+                continue
+            df = pd.DataFrame(records)
+            df["date"] = pd.to_datetime(df["bar_ts"], unit="s")
+            df = df.set_index("date").sort_index()
+            rename = {"open": "open", "high": "high", "low": "low",
+                       "close": "close", "volume": "volume"}
+            result[sym] = df[list(rename.keys())].rename(columns=rename)
+        return result
+
     def get_prices(
         self,
         symbols: list[str],

@@ -6,6 +6,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from vinu_simulator.server.schemas import (
+    CustomSimulateRequest,
+    CustomSimulateResponse,
     HealthResponse,
     RunSummary,
     SimulateRequest,
@@ -32,6 +34,21 @@ async def simulate(req: SimulateRequest) -> SimulateResponse:
     svc: SimulatorService = _get_service()
     result = await _run_sync(svc.simulate, req)
     return SimulateResponse(
+        run_id=result.run_id,
+        strategy_name=result.strategy_name,
+        timestamp=result.timestamp,
+        metrics=result.metrics,
+        benchmark_metrics=result.benchmark_metrics,
+        trade_count=len(result.trades),
+        equity_points=len(result.portfolio_values),
+    )
+
+
+@router.post("/simulate/custom", response_model=CustomSimulateResponse)
+async def simulate_custom(req: CustomSimulateRequest) -> CustomSimulateResponse:
+    svc: SimulatorService = _get_service()
+    result = await _run_sync(svc.simulate_custom, req)
+    return CustomSimulateResponse(
         run_id=result.run_id,
         strategy_name=result.strategy_name,
         timestamp=result.timestamp,

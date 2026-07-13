@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 STOCKS = ["AAPL", "TSLA", "NVDA"]
 STRATEGIES = ["ma_crossover", "rsi_mean_reversion", "news_aware_momentum"]
 SERVICES = ["news-api", "stock-api", "features-api", "correlation-api", "strategy-api", "simulator-api"]
-COMPOSE_FILE = "docker-compose.oneshot.yml"
+COMPOSE_FILE = "vinu-components/docker-compose.oneshot.yml"
 DATA_DIR = Path("./oneshot_data")
 SEED_SCRIPT = DATA_DIR / "stock" / "_seed.py"
 

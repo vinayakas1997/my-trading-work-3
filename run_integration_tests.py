@@ -21,7 +21,7 @@ SERVICES = [
 ]
 
 DATA_DIR = Path("./integration_test_data")
-COMPOSE_FILE = "docker-compose.integration.yml"
+COMPOSE_FILE = "vinu-components/docker-compose.integration.yml"
 
 # Colors for beautiful terminal output
 class Colors:
@@ -136,7 +136,7 @@ def main():
     log_info("Watchlist seeded with {'tickers': ['AAPL']}")
 
     # Copy env files if they are missing
-    modules = ["vinu-news", "vinu-stock-price", "vinu-features", "vinu-correlation", "vinu-strategy", "vinu-simulator"]
+    modules = ["vinu-components/vinu-news", "vinu-components/vinu-stock-price", "vinu-components/vinu-features", "vinu-components/vinu-correlation", "vinu-components/vinu-strategy", "vinu-components/vinu-simulator"]
     for mod in modules:
         env_file = Path(mod) / ".env"
         env_example = Path(mod) / ".env.example"

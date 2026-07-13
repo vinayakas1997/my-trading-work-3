@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter
 
 from vinu_correlation.server.schemas import SettingsResponse
@@ -7,6 +9,11 @@ from vinu_correlation.server.schemas import SettingsResponse
 router = APIRouter()
 
 get_service = None
+
+
+@router.get("/health")
+def health() -> dict[str, Any]:
+    return get_service().health()
 
 
 @router.get("/settings")

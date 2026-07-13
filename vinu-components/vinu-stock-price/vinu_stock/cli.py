@@ -42,6 +42,7 @@ def backfill_main(argv: list[str] | None = None) -> None:
     parser.add_argument("symbols", nargs="*", help="Symbols (default: watchlist)")
     parser.add_argument("--from-year", type=int, default=None, help="Start year (default: auto)")
     parser.add_argument("--to-year", type=int, default=None, help="End year (default: last complete year)")
+    parser.add_argument("--dry-run", action="store_true", help="Simulate without writing data")
     parser.add_argument("--verbose", action="store_true")
     _parse_data_args(parser)
     args = parser.parse_args(argv)
@@ -57,6 +58,7 @@ def backfill_main(argv: list[str] | None = None) -> None:
             args.symbols or None,
             from_year=args.from_year,
             to_year=args.to_year,
+            dry_run=args.dry_run,
         )
         print(result.format_report())
 

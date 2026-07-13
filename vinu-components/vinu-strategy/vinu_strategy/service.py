@@ -46,10 +46,23 @@ class StrategyService:
         strategy_name: str,
         symbols: list[str] | None = None,
         run_id: str | None = None,
+        dry_run: bool = False,
     ) -> StrategyResult:
         config = self._registry.get(strategy_name)
         if config is None:
             raise ValueError(f"Unknown strategy: {strategy_name}")
+
+        if dry_run:
+            import pandas as pd
+            LOG.info("DRY RUN: evaluate(%s) — skipping execution", strategy_name)
+            return StrategyResult(
+                strategy_name=strategy_name,
+                weights=pd.DataFrame(),
+                run_id=run_id or f"{strategy_name}_dry_run",
+                timestamp=datetime.utcnow(),
+                metadata={"symbol_count": 0, "dry_run": True},
+                rule_trace={},
+            )
 
         actual_run_id = run_id or f"{strategy_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
         universe = self._resolve_universe(config, symbols)

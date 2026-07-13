@@ -5,11 +5,15 @@ from datetime import datetime, timezone
 
 import requests
 
+from vinu_lib.rate_limit import TokenBucket
+
 LOG = logging.getLogger(__name__)
 
 ALPACA_DATA_BASE_URL = "https://data.alpaca.markets"
 TIMEOUT_SEC = 30
 MAX_PER_PAGE = 50
+
+_RATE_LIMITER = TokenBucket(rate=200, per=60)
 
 
 class AlpacaTickerNewsProvider:
@@ -51,10 +55,11 @@ class AlpacaTickerNewsProvider:
                 params["page_token"] = page_token
 
             try:
+                _RATE_LIMITER.wait()
                 resp = requests.get(url, headers=self._headers, params=params, timeout=TIMEOUT_SEC)
                 resp.raise_for_status()
-            except requests.RequestException as exc:
-                LOG.warning("Alpaca news fetch failed for %s: %s", ticker, exc)
+            except requests.RequestException:
+                LOG.warning("Alpaca news fetch failed for %s", ticker, exc_info=True)
                 break
 
             data = resp.json()

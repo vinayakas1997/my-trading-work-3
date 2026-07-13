@@ -16,6 +16,7 @@ DEFAULT_BENCHMARK_TICKERS = ("SPY", "QQQ")
 DEFAULT_ALLOW_SHORT = True
 DEFAULT_STRATEGY_API_URL = "http://127.0.0.1:8084"
 DEFAULT_STOCK_API_URL = "http://127.0.0.1:8081"
+DEFAULT_FEATURES_API_URL = "http://127.0.0.1:8082"
 DEFAULT_DEVIATION_THRESHOLD = 0.05
 
 _ENV_LOADED = False
@@ -43,6 +44,7 @@ class VinuSimulatorConfig:
     allow_short: bool
     strategy_api_url: str
     stock_api_url: str
+    features_api_url: str
     deviation_threshold: float
 
 
@@ -63,5 +65,6 @@ def load_config() -> VinuSimulatorConfig:
         allow_short=os.environ.get("VINU_SIMULATOR_ALLOW_SHORT", str(DEFAULT_ALLOW_SHORT)).lower() == "true",
         strategy_api_url=os.environ.get("VINU_STRATEGY_API_URL", DEFAULT_STRATEGY_API_URL),
         stock_api_url=os.environ.get("VINU_STOCK_API_URL", DEFAULT_STOCK_API_URL),
+        features_api_url=os.environ.get("VINU_FEATURES_API_URL", DEFAULT_FEATURES_API_URL),
         deviation_threshold=float(os.environ.get("VINU_SIMULATOR_DEVIATION_THRESHOLD", str(DEFAULT_DEVIATION_THRESHOLD))),
     )

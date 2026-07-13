@@ -116,7 +116,12 @@ class StockService:
         *,
         from_year: int | None = None,
         to_year: int | None = None,
+        dry_run: bool = False,
     ) -> BackfillCycleResult:
+        if dry_run:
+            LOG.info("DRY RUN: run_backfill(%s) — skipping", symbols)
+            return BackfillCycleResult(summary=BackfillSummary(years_ok=[], years_failed=[], total_rows=0))
+
         syms = symbols or self.get_watchlist()
         summary = run_backfill(
             syms,
@@ -128,7 +133,11 @@ class StockService:
         )
         return BackfillCycleResult(summary=summary)
 
-    def run_live_cycle(self, symbols: list[str] | None = None) -> LiveCycleResult:
+    def run_live_cycle(self, symbols: list[str] | None = None, dry_run: bool = False) -> LiveCycleResult:
+        if dry_run:
+            LOG.info("DRY RUN: run_live_cycle(%s) — skipping", symbols)
+            return LiveCycleResult(summary=LiveIngestSummary(bars_added=0, failures=0, symbols_polled=0), watchlist_size=0)
+
         syms = symbols or self.get_watchlist()
         summary = run_live_cycle(
             syms,

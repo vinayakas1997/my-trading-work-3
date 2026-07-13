@@ -7,13 +7,16 @@ from typing import Any
 
 import pandas as pd
 
+from vinu_simulator.clients.features_client import FeaturesClient
 from vinu_simulator.clients.price_client import PriceClient
 from vinu_simulator.clients.strategy_client import StrategyClient
 from vinu_simulator.config import load_config
+from vinu_simulator.engine.custom_sim import simulate_custom as _run_custom_sim
 from vinu_simulator.engine.metrics import compute_performance_metrics
 from vinu_simulator.engine.simulator import WeightSimulator
+from vinu_simulator.engine.strategies import BaseStrategy
 from vinu_simulator.models.simulation import SimulationConfig, SimulationInput, SimulationResult
-from vinu_simulator.server.schemas import RunSummary, SimulateRequest
+from vinu_simulator.server.schemas import CustomSimulateRequest, RunSummary, SimulateRequest
 from vinu_simulator.storage.meta import MetaStorage
 from vinu_simulator.storage.results import ResultStorage
 
@@ -29,8 +32,22 @@ class SimulatorService:
         )
         self._strategy_client = StrategyClient(self._config.strategy_api_url)
         self._price_client = PriceClient(self._config.stock_api_url)
+        self._features_client = FeaturesClient(self._config.features_api_url)
 
     def simulate(self, req: SimulateRequest) -> SimulationResult:
+        if req.dry_run:
+            LOG.info("DRY RUN: simulate(%s) — skipping execution", req.strategy_name)
+            result = SimulationResult(
+                run_id="dry_run",
+                strategy_name=req.strategy_name,
+                timestamp=datetime.now(timezone.utc),
+                metrics={"total_return": 0.0, "sharpe_ratio": 0.0, "max_drawdown": 0.0, "win_rate": 0.0, "cagr": 0.0, "total_return_pct": 0.0},
+                portfolio_values=[],
+                trades=[],
+                benchmark_metrics={},
+            )
+            return result
+
         start_date = req.start_date or "2020-01-01"
         end_date = req.end_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -79,6 +96,102 @@ class SimulatorService:
         benchmark_metrics = self._compute_benchmark_metrics(
             price_data, sim_config
         )
+        result.benchmark_metrics = benchmark_metrics
+
+        self._result_storage.save(result)
+        self._meta_storage.insert_run(
+            run_id=result.run_id,
+            strategy_name=result.strategy_name,
+            timestamp=result.timestamp,
+            config={
+                "strategy_name": sim_config.strategy_name,
+                "start_date": sim_config.start_date,
+                "end_date": sim_config.end_date,
+                "initial_capital": sim_config.initial_capital,
+                "transaction_cost_pct": sim_config.transaction_cost_pct,
+                "slippage_pct": sim_config.slippage_pct,
+                "slippage_model": sim_config.slippage_model,
+                "allow_short": sim_config.allow_short,
+                "deviation_threshold": sim_config.deviation_threshold,
+            },
+            metrics=result.metrics,
+            benchmark_metrics=benchmark_metrics,
+            equity_points=len(result.portfolio_values),
+            trade_count=len(result.trades),
+        )
+
+        return result
+
+    def simulate_custom(self, req: CustomSimulateRequest) -> SimulationResult:
+        start_date = req.start_date
+        end_date = req.end_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        namespace: dict[str, Any] = {}
+        try:
+            exec(req.strategy_code, namespace)
+        except Exception as e:
+            raise ValueError(f"Failed to compile strategy code: {e}") from e
+
+        strategy_class = namespace.get(req.class_name)
+        if strategy_class is None:
+            raise ValueError(
+                f"Class '{req.class_name}' not found in provided strategy code"
+            )
+        if not (isinstance(strategy_class, type) and issubclass(strategy_class, BaseStrategy)):
+            raise ValueError(
+                f"'{req.class_name}' must be a subclass of BaseStrategy"
+            )
+
+        ohclv_data = self._price_client.get_ohclv(
+            req.symbols, start_date, end_date
+        )
+        missing = [s for s in req.symbols if s not in ohclv_data or ohclv_data[s].empty]
+        if missing:
+            LOG.warning("No OHLCV data for symbols: %s — proceeding with available data", missing)
+
+        indicator_data: dict[str, pd.DataFrame] = {}
+        from_ts = int(pd.Timestamp(start_date).timestamp())
+        to_ts = int(pd.Timestamp(end_date).timestamp())
+        for sym in req.symbols:
+            ind = self._features_client.get_indicators(
+                sym, ["sma_20", "sma_50", "rsi_14"],
+                from_ts=from_ts, to_ts=to_ts,
+            )
+            if ind is not None and not ind.empty:
+                indicator_data[sym] = ind
+
+        sim_config = SimulationConfig(
+            strategy_name=req.class_name,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=req.initial_capital if req.initial_capital is not None else self._config.initial_capital,
+            transaction_cost_pct=req.transaction_cost_pct if req.transaction_cost_pct is not None else self._config.transaction_cost_pct,
+            slippage_pct=req.slippage_pct if req.slippage_pct is not None else self._config.slippage_pct,
+            slippage_model=req.slippage_model,
+            benchmark_tickers=tuple(req.benchmark_tickers) if req.benchmark_tickers else self._config.benchmark_tickers,
+            allow_short=req.allow_short,
+            deviation_threshold=req.deviation_threshold if req.deviation_threshold is not None else self._config.deviation_threshold,
+        )
+
+        result = _run_custom_sim(
+            strategy_class=strategy_class,
+            symbols=req.symbols,
+            ohclv_data=ohclv_data,
+            sim_config=sim_config,
+            indicator_data=indicator_data,
+        )
+
+        all_prices = []
+        for sym in req.symbols:
+            if sym in ohclv_data and not ohclv_data[sym].empty:
+                all_prices.append(ohclv_data[sym]["close"])
+        if all_prices:
+            price_df = pd.concat(all_prices, axis=1)
+            price_df.columns = [s for s in req.symbols
+                                if s in ohclv_data and not ohclv_data[s].empty]
+            benchmark_metrics = self._compute_benchmark_metrics(price_df, sim_config)
+        else:
+            benchmark_metrics = {}
         result.benchmark_metrics = benchmark_metrics
 
         self._result_storage.save(result)
