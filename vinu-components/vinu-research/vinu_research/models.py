@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from vinu_research.portfolio import PortfolioAnalysisResult
+
 
 @dataclass
 class StoryBlock:
@@ -169,3 +171,4 @@ class ResearchResult:
     report_md: str
     walk_forward: WalkForwardResult | None = None
     holdout: HoldoutResult | None = None
+    portfolio: PortfolioAnalysisResult | None = None

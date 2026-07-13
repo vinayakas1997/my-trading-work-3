@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from vinu_simulator.engine.simulator import WeightSimulator, SimulatorEnv
 from vinu_simulator.models.simulation import SimulationConfig, SimulationInput
@@ -44,6 +45,70 @@ class TestNoLookAheadExecution:
         assert first_trade.price == 105.0
         # No position exists on day 0 — the engine had nothing to act on yet.
         assert result.weights_history.iloc[0]["X"] == 0.0
+
+
+class TestPositionSizingIntegration:
+    """
+    Proves position sizing is actually wired into the live engine, not just unit
+    tested in isolation: the same target-weight signal, run through the same price
+    data, must produce a smaller realized position during a high-volatility period
+    under vol_target sizing than under the default fixed sizing.
+    """
+
+    def _build_input(self, position_sizing_model: str) -> tuple[SimulationInput, SimulationConfig]:
+        rng = np.random.default_rng(7)
+        n = 40
+        dates = pd.date_range("2023-01-02", periods=n, freq="D")
+
+        # Calm for the first 25 days, then a volatility spike for the rest — enough
+        # history accumulates (vol_lookback_days=20) partway through the spike for
+        # the sizer to react to it within this same backtest.
+        calm = rng.normal(0, 0.002, 20)
+        volatile = rng.normal(0, 0.06, n - 20)
+        daily_returns = np.concatenate([calm, volatile])
+        prices = 100.0 * np.cumprod(1 + daily_returns)
+
+        price_df = pd.DataFrame({"X": prices}, index=dates)
+        # Constant full-long target every day so any change in realized weight is
+        # attributable to sizing, not to the signal itself changing.
+        weights_df = pd.DataFrame({"X": np.ones(n)}, index=dates)
+
+        config = SimulationConfig(
+            strategy_name="sizing_test",
+            start_date=str(dates[0].date()),
+            end_date=str(dates[-1].date()),
+            initial_capital=1_000_000.0,
+            transaction_cost_pct=0.0,
+            slippage_pct=0.0,
+            slippage_model="flat",
+            deviation_threshold=0.0,
+            position_sizing_model=position_sizing_model,
+            target_annual_vol=0.15,
+            vol_lookback_days=20,
+            max_leverage=1.0,
+        )
+        inp = SimulationInput(
+            strategy_name="sizing_test",
+            weight_signals=weights_df,
+            price_data=price_df,
+            config=config,
+        )
+        return inp, config
+
+    def test_vol_target_shrinks_exposure_during_volatility_spike(self):
+        fixed_inp, _ = self._build_input("fixed")
+        vol_target_inp, _ = self._build_input("vol_target")
+
+        fixed_result = WeightSimulator(fixed_inp.config).run(fixed_inp)
+        vol_target_result = WeightSimulator(vol_target_inp.config).run(vol_target_inp)
+
+        # Look at the tail, well after the vol spike has populated the lookback
+        # window (spike starts at day 20, lookback is 20 days).
+        fixed_tail_weight = fixed_result.weights_history["X"].iloc[-10:].abs().mean()
+        vol_target_tail_weight = vol_target_result.weights_history["X"].iloc[-10:].abs().mean()
+
+        assert fixed_tail_weight == pytest.approx(1.0, abs=0.05)
+        assert vol_target_tail_weight < fixed_tail_weight
 
 
 class TestWeightSimulator:

@@ -82,6 +82,12 @@ class ResearchConfig:
     # a handful of trades isn't enough to trust any ratio computed from them.
     min_trades_for_pass: int = 30
 
+    # Portfolio-level analysis (only runs when a multi-symbol universe is passed to
+    # StrategyResearchLoop.run()): correlation matrix + a beta-neutral hedge overlay
+    # computed analytically from realized returns using a causal rolling beta.
+    portfolio_beta_hedge_lookback_days: int = 60
+    portfolio_beta_hedge_max_ratio: float = 1.5
+
 
 def load_config(*, force_reload: bool = False) -> ResearchConfig:
     _ensure_dotenv_loaded(force=force_reload)
@@ -122,4 +128,10 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
             os.environ.get("VINU_RESEARCH_MAX_HOLDOUT_SHARPE_DEGRADATION", "0.5")
         ),
         min_trades_for_pass=int(os.environ.get("VINU_RESEARCH_MIN_TRADES_FOR_PASS", "30")),
+        portfolio_beta_hedge_lookback_days=int(
+            os.environ.get("VINU_RESEARCH_PORTFOLIO_BETA_LOOKBACK_DAYS", "60")
+        ),
+        portfolio_beta_hedge_max_ratio=float(
+            os.environ.get("VINU_RESEARCH_PORTFOLIO_BETA_MAX_RATIO", "1.5")
+        ),
     )

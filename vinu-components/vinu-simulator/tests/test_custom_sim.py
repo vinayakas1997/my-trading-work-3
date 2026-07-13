@@ -78,3 +78,56 @@ class TestNoLookAheadOnMissingData:
             sim_config=sim_config,
         )
         assert len(result.portfolio_values) > 0
+
+
+class _CheatingPerfectForesightStrategy(BaseStrategy):
+    """
+    'Cheats' by reading tomorrow's close directly out of the in-memory DataFrame —
+    only possible because generate_weights receives the entire date range at once,
+    not a streaming/online feed. This exists purely to prove that look-ahead safety
+    comes from the ENGINE's execution delay, not from strategy discipline: a
+    strategy with literal perfect knowledge of tomorrow's direction must still be
+    unable to profit from it, because the engine only lets it act a day late.
+    """
+
+    def generate_weights(self, data: pd.DataFrame) -> pd.Series:
+        future_up = data["close"].shift(-1) > data["close"]
+        return future_up.astype(float) * 0.98
+
+
+class TestPerfectForesightCannotProfit:
+    def test_perfect_foresight_strategy_loses_money_once_execution_is_delayed(self):
+        # Hand-verified price path: up, down, up, flat. A same-bar-execution engine
+        # would let this strategy buy right before every up day and sit out every
+        # down day — a huge, obviously-impossible edge. With correct T+1 delay, the
+        # strategy instead buys the moment each up-move has already happened (at the
+        # new high) and sells the moment each down-move has already happened (at the
+        # new low) — textbook buy-high-sell-low, which loses money.
+        dates = pd.date_range("2023-01-02", periods=5, freq="B")
+        closes = np.array([100.0, 110.0, 90.0, 130.0, 130.0])
+        ohclv_data = {"X": _make_ohlcv(dates, closes)}
+        config = SimulationConfig(
+            strategy_name="cheat_test",
+            start_date=str(dates[0].date()),
+            end_date=str(dates[-1].date()),
+            initial_capital=1_000_000.0,
+            transaction_cost_pct=0.0,
+            slippage_pct=0.0,
+            slippage_model="flat",
+            allow_short=False,
+            deviation_threshold=0.0,
+        )
+
+        result = simulate_custom(
+            strategy_class=_CheatingPerfectForesightStrategy,
+            symbols=["X"],
+            ohclv_data=ohclv_data,
+            sim_config=config,
+        )
+
+        # Buy-and-hold over the same period would be +30% (100 -> 130). A strategy
+        # with genuine perfect foresight would do dramatically better than that. This
+        # one loses money — proof the "foresight" bought it nothing once T+1 delay
+        # is enforced.
+        assert result.metrics["total_return"] == pytest.approx(-2 / 11, abs=1e-6)
+        assert result.metrics["total_return"] < 0.0

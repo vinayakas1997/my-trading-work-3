@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import numpy as np
+import pandas as pd
+
+from vinu_research.config import ResearchConfig
 from vinu_research.loop import StrategyResearchLoop, _LRUCache, _split_research_and_holdout
 from vinu_research.models import BacktestMetrics, BacktestResult, CriticFeedback, IterationRecord
 
@@ -302,3 +306,164 @@ class TestGenerateFiltersDataAvailability:
             "Sharpe still low — ADX filter recommended again",
         ])
         assert filters.count("signal[adx < 20] = 0") == 1
+
+
+class TestNullCaseNeverFalselyPasses:
+    """
+    End-to-end model of the 'pure noise' null case: what should happen if a
+    strategy's apparent edge were entirely random-walk luck. Every in-sample
+    backtest looks great (as chance occasionally produces), but the holdout
+    backtest — drawn from data the loop never tuned against — always shows no real
+    edge. A properly holdout-gated system must never report this as an accepted
+    PASS; that's the whole point of carving out data the refinement loop can't see.
+    """
+
+    def _make_result(self, sharpe: float, max_dd: float, trade_count: int = 50) -> BacktestResult:
+        metrics = BacktestMetrics(sharpe_ratio=sharpe, max_drawdown=max_dd, win_rate=0.55)
+        return BacktestResult(
+            run_id="r", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=trade_count, equity_points=200,
+        )
+
+    async def test_in_sample_luck_never_survives_holdout(self):
+        config = ResearchConfig(max_iterations=3, walk_forward_enabled=False)
+        loop = StrategyResearchLoop(config=config)
+
+        split = _split_research_and_holdout(
+            "2024-01-01", "2024-12-31", config.holdout_fraction, config.holdout_gap_days,
+        )
+        assert split is not None
+        _, _, holdout_from, _ = split
+
+        research_result = self._make_result(sharpe=2.0, max_dd=-0.05)  # always clears PASS bar
+        holdout_result = self._make_result(sharpe=0.1, max_dd=-0.20)  # never does
+
+        async def fake_run_backtest(strategy_code, symbol, from_date, to_date, **kwargs):
+            if from_date == holdout_from:
+                return holdout_result
+            return research_result
+
+        async def fake_none(*args, **kwargs):
+            return None
+
+        loop._run_backtest = fake_run_backtest
+        loop._tools.get_story = fake_none
+        loop._tools.get_drawdowns = fake_none
+        loop._tools.get_benchmark_data = fake_none
+        loop._tools.fetch_equity_returns = fake_none
+
+        result = await loop.run(
+            user_idea="SMA crossover", symbol="AAPL",
+            from_date="2024-01-01", to_date="2024-12-31",
+        )
+
+        # The in-sample metrics alone would have PASSed on iteration 1 every time —
+        # if the holdout gate weren't wired in, this run would report success.
+        assert result.holdout is not None
+        assert result.holdout.passed is False
+        # No iteration's final recorded verdict may be an accepted PASS: either the
+        # PASS was downgraded back to REFINE (visible in that iteration's critique),
+        # or the loop ran out of iterations still refining.
+        assert all(rec.critique.verdict != "PASS" for rec in result.iterations)
+
+
+class TestUniverseBacktesting:
+    """
+    Phase 4B: a `universe` of tickers can be backtested as one portfolio (the
+    engine already runs one strategy per symbol and aggregates the P&L — this is
+    wiring, not new engine capability), with a correlation matrix and beta-hedge
+    overlay computed from the result.
+    """
+
+    @staticmethod
+    def _synthetic_returns(seed_key: str, n: int = 100) -> pd.Series:
+        seed = abs(hash(seed_key)) % (2**31)
+        rng = np.random.default_rng(seed)
+        dates = pd.date_range("2023-01-02", periods=n, freq="B")
+        return pd.Series(rng.normal(0.0005, 0.01, n), index=dates)
+
+    async def test_universe_backtest_produces_portfolio_analysis(self):
+        config = ResearchConfig(max_iterations=1, walk_forward_enabled=False)
+        loop = StrategyResearchLoop(config=config)
+
+        metrics = BacktestMetrics(sharpe_ratio=0.5, max_drawdown=-0.10, win_rate=0.5)
+        backtest_result = BacktestResult(
+            run_id="r1", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=50, equity_points=200,
+        )
+
+        captured_symbols_args: list[list[str] | None] = []
+
+        async def fake_run_backtest(strategy_code, symbol, from_date, to_date, **kwargs):
+            captured_symbols_args.append(kwargs.get("symbols"))
+            return backtest_result
+
+        async def fake_get_benchmark_data(sym, from_date, to_date):
+            return self._synthetic_returns(sym)
+
+        async def fake_fetch_equity_returns(run_id):
+            return self._synthetic_returns("PORTFOLIO_EQUITY")
+
+        async def fake_none(*args, **kwargs):
+            return None
+
+        loop._run_backtest = fake_run_backtest
+        loop._tools.get_story = fake_none
+        loop._tools.get_drawdowns = fake_none
+        loop._tools.get_benchmark_data = fake_get_benchmark_data
+        loop._tools.fetch_equity_returns = fake_fetch_equity_returns
+
+        result = await loop.run(
+            user_idea="SMA crossover", symbol="AAPL",
+            from_date="2024-01-01", to_date="2024-12-31",
+            universe=["AAPL", "MSFT", "GOOGL"],
+        )
+
+        # Every backtest call must have used the full universe, not just the
+        # primary symbol.
+        assert captured_symbols_args, "expected at least one backtest call"
+        assert all(
+            s is not None and set(s) == {"AAPL", "MSFT", "GOOGL"}
+            for s in captured_symbols_args
+        )
+
+        assert result.portfolio is not None
+        assert set(result.portfolio.symbols) == {"AAPL", "MSFT", "GOOGL"}
+        assert "PORTFOLIO ANALYSIS" in result.report_md
+
+    async def test_single_symbol_universe_is_unaffected(self):
+        # A universe with only one distinct symbol (or None) must behave exactly
+        # like the pre-existing single-symbol path — no portfolio analysis, no
+        # multi-symbol backtest calls.
+        config = ResearchConfig(max_iterations=1, walk_forward_enabled=False)
+        loop = StrategyResearchLoop(config=config)
+
+        metrics = BacktestMetrics(sharpe_ratio=0.5, max_drawdown=-0.10, win_rate=0.5)
+        backtest_result = BacktestResult(
+            run_id="r1", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=50, equity_points=200,
+        )
+
+        captured_symbols_args: list[list[str] | None] = []
+
+        async def fake_run_backtest(strategy_code, symbol, from_date, to_date, **kwargs):
+            captured_symbols_args.append(kwargs.get("symbols"))
+            return backtest_result
+
+        async def fake_none(*args, **kwargs):
+            return None
+
+        loop._run_backtest = fake_run_backtest
+        loop._tools.get_story = fake_none
+        loop._tools.get_drawdowns = fake_none
+        loop._tools.get_benchmark_data = fake_none
+
+        result = await loop.run(
+            user_idea="SMA crossover", symbol="AAPL",
+            from_date="2024-01-01", to_date="2024-12-31",
+            universe=["AAPL"],
+        )
+
+        assert all(s == ["AAPL"] for s in captured_symbols_args)
+        assert result.portfolio is None
+        assert "PORTFOLIO ANALYSIS" not in result.report_md

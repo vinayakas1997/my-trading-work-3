@@ -15,6 +15,7 @@ from vinu_simulator.engine.costs import (
     FlatCostModel,
 )
 from vinu_simulator.engine.metrics import compute_full_metrics, compute_performance_metrics
+from vinu_simulator.engine.sizing import PositionSizer, build_position_sizer
 from vinu_simulator.models.metrics import MetricBundle
 from vinu_simulator.models.simulation import (
     SimulationConfig,
@@ -28,6 +29,7 @@ class WeightSimulator:
     def __init__(self, config: SimulationConfig):
         self.config = config
         self._cost_model = self._build_cost_model()
+        self._position_sizer = self._build_position_sizer()
 
     def _build_cost_model(self) -> CostModel:
         if self.config.slippage_model == "almgren_chriss":
@@ -41,6 +43,16 @@ class WeightSimulator:
                 slippage_pct=self.config.slippage_pct,
             )
         raise ValueError(f"Unknown slippage_model: {self.config.slippage_model}")
+
+    def _build_position_sizer(self) -> PositionSizer:
+        return build_position_sizer(
+            self.config.position_sizing_model,
+            target_annual_vol=self.config.target_annual_vol,
+            vol_lookback_days=self.config.vol_lookback_days,
+            kelly_fraction=self.config.kelly_fraction,
+            kelly_lookback_days=self.config.kelly_lookback_days,
+            max_leverage=self.config.max_leverage,
+        )
 
     def run(self, inp: SimulationInput) -> SimulationResult:
         weight_signals = inp.weight_signals.copy()
@@ -130,7 +142,12 @@ class WeightSimulator:
                     cash -= self._cost_model.daily_borrow_cost(short_notional)
 
             nav_before = cash + np.sum(holdings * prices)
-            target_weights = weights_matrix[step_idx]
+            # Scale by realized performance strictly before today (daily_ret holds
+            # only returns already realized at this point in the loop) — direction
+            # always comes from the strategy, sizing only ever adjusts magnitude.
+            target_weights = self._position_sizer.size(
+                weights_matrix[step_idx], np.asarray(daily_ret, dtype=np.float64)
+            )
 
             is_rebalance = step_idx in rebalance_positions
             if is_rebalance:

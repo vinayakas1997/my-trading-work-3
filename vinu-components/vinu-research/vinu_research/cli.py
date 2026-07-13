@@ -78,6 +78,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     run_p = sub.add_parser("run", help="Run the strategy research loop")
     run_p.add_argument("idea", help="Strategy idea (e.g. 'test SMA20/SMA50 crossover on AAPL')")
     run_p.add_argument("--symbol", default=None, help="Ticker symbol (extracted from idea if not set)")
+    run_p.add_argument(
+        "--universe", default=None,
+        help="Comma-separated tickers to backtest as a portfolio (e.g. AAPL,MSFT,GOOGL). "
+             "The same strategy runs on each symbol and results are aggregated into one "
+             "portfolio, with a correlation matrix and beta-hedge overlay in the report.",
+    )
     run_p.add_argument("--from", dest="from_date", default=None, help="Start date (YYYY-MM-DD)")
     run_p.add_argument("--to", dest="to_date", default=None, help="End date (YYYY-MM-DD)")
     run_p.add_argument("--max-iterations", type=int, default=None, help="Max research iterations")
@@ -143,6 +149,10 @@ def run_main(args: argparse.Namespace) -> None:
     if args.indicators:
         indicators = [k.strip().lower() for k in args.indicators.split(",") if k.strip()]
 
+    universe: list[str] | None = None
+    if getattr(args, "universe", None):
+        universe = [t.strip().upper() for t in args.universe.split(",") if t.strip()]
+
     tools = ResearchTools(config)
 
     on_iteration = None if args.quiet else _on_iteration
@@ -158,6 +168,8 @@ def run_main(args: argparse.Namespace) -> None:
     print(f"[vinu-research] Max iterations: {config.max_iterations}")
     if indicators:
         print(f"[vinu-research] Indicators: {', '.join(indicators)}")
+    if universe and len(set(universe)) > 1:
+        print(f"[vinu-research] Universe: {', '.join(universe)}")
     if config.walk_forward_enabled:
         print(f"[vinu-research] Walk-forward: enabled ({config.walk_forward_method}, {config.walk_forward_windows} windows)")
     _print_separator()
@@ -171,6 +183,7 @@ def run_main(args: argparse.Namespace) -> None:
                 to_date=to_date,
                 indicators=indicators,
                 initial_capital=config.initial_capital,
+                universe=universe,
             )
         )
     except KeyboardInterrupt:

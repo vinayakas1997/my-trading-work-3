@@ -22,6 +22,7 @@ from vinu_research.models import (
 )
 from vinu_research.report import generate_report
 from vinu_research.benchmark import compute_benchmark_comparison, compute_benchmark_returns_metrics
+from vinu_research.portfolio import analyze_portfolio
 from vinu_research.tools import ResearchTools, timestamps_from_dates
 from vinu_research.walk_forward import (
     WalkForwardConfig,
@@ -125,12 +126,25 @@ class StrategyResearchLoop:
         to_date: str,
         indicators: list[str] | None = None,
         initial_capital: float | None = None,
+        universe: list[str] | None = None,
     ) -> ResearchResult:
+        """
+        `symbol` remains the primary ticker used for story/drawdown lookups (the
+        correlation service is keyed per-symbol, with no multi-symbol equivalent)
+        and for report headers. Pass `universe` (a list of 2+ tickers, `symbol`
+        need not be included) to additionally backtest the same strategy across a
+        basket of names — the underlying engine already runs one strategy per
+        symbol and aggregates into a single portfolio, so this is a wiring change
+        here, not a new engine capability. When `universe` has fewer than 2
+        distinct symbols, behavior is identical to a single-symbol run.
+        """
         best_result: BacktestResult | None = None
         best_iteration = -1
         history: list[IterationRecord] = []
         strategy_code = ""
         holdout_result: HoldoutResult | None = None
+
+        backtest_symbols = list(dict.fromkeys(universe)) if universe and len(set(universe)) > 1 else [symbol]
 
         # Reserve a trailing slice of the range the refinement loop never sees — no
         # filter is ever chosen using this data, so it's a real check on whether a
@@ -174,6 +188,7 @@ class StrategyResearchLoop:
                     strategy_code, symbol, research_from, research_to,
                     indicators=indicators,
                     initial_capital=initial_capital,
+                    symbols=backtest_symbols,
                 )
                 if result is None:
                     LOG.warning("Backtest returned no result, stopping")
@@ -227,6 +242,7 @@ class StrategyResearchLoop:
                         holdout_result = await self._check_holdout(
                             strategy_code, symbol, holdout_from, holdout_to,
                             result, indicators, initial_capital,
+                            symbols=backtest_symbols,
                         )
                     if holdout_result is None or holdout_result.passed:
                         best_result = result
@@ -296,6 +312,7 @@ class StrategyResearchLoop:
                 initial_capital=initial_capital,
             )
 
+        equity_rets = None
         if best_result and self._benchmark_returns is not None and len(self._benchmark_returns) >= 20:
             equity_rets = await self._tools.fetch_equity_returns(best_result.run_id)
             if equity_rets is not None and len(equity_rets) >= 20:
@@ -306,11 +323,31 @@ class StrategyResearchLoop:
                     bm_dict = best_result.benchmark_metrics.setdefault(benchmark_symbol, {})
                     bm_dict.update(comparison)
 
+        portfolio_result = None
+        if (
+            len(backtest_symbols) > 1
+            and equity_rets is not None
+            and self._benchmark_returns is not None
+        ):
+            returns_by_symbol: dict[str, pd.Series] = {}
+            for sym in backtest_symbols:
+                sym_returns = await self._tools.get_benchmark_data(sym, research_from, research_to)
+                if sym_returns is not None and len(sym_returns) >= 20:
+                    returns_by_symbol[sym] = sym_returns
+            portfolio_result = analyze_portfolio(
+                returns_by_symbol,
+                equity_rets,
+                self._benchmark_returns,
+                lookback_days=self._config.portfolio_beta_hedge_lookback_days,
+                max_hedge_ratio=self._config.portfolio_beta_hedge_max_ratio,
+            )
+
         report_md = generate_report(
             symbol, from_date, to_date, user_idea,
             history, best_result, best_iteration,
             walk_forward=walk_forward_result,
             holdout=holdout_result,
+            portfolio=portfolio_result,
         )
 
         return ResearchResult(
@@ -325,6 +362,7 @@ class StrategyResearchLoop:
             report_md=report_md,
             walk_forward=walk_forward_result,
             holdout=holdout_result,
+            portfolio=portfolio_result,
         )
 
     async def _run_backtest(
@@ -335,12 +373,13 @@ class StrategyResearchLoop:
         to_date: str,
         indicators: list[str] | None = None,
         initial_capital: float | None = None,
+        symbols: list[str] | None = None,
     ) -> BacktestResult | None:
         strategy_class_name = "UserStrategy"
         return await self._tools.run_backtest(
             strategy_code=strategy_code,
             strategy_class_name=strategy_class_name,
-            symbols=[symbol],
+            symbols=symbols or [symbol],
             from_date=from_date,
             to_date=to_date,
             indicators=indicators,
@@ -359,6 +398,7 @@ class StrategyResearchLoop:
         in_sample_result: BacktestResult,
         indicators: list[str] | None,
         initial_capital: float | None,
+        symbols: list[str] | None = None,
     ) -> HoldoutResult | None:
         """
         Re-test a strategy that just earned an in-sample PASS against data the
@@ -371,6 +411,7 @@ class StrategyResearchLoop:
             holdout_bt = await self._run_backtest(
                 strategy_code, symbol, holdout_from, holdout_to,
                 indicators=indicators, initial_capital=initial_capital,
+                symbols=symbols,
             )
         except Exception as e:
             LOG.warning("Holdout backtest failed: %s, accepting without holdout gating", e)

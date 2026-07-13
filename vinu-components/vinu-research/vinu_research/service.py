@@ -48,6 +48,7 @@ class ResearchService:
         indicators: list[str] | None = None,
         initial_capital: float | None = None,
         dry_run: bool = False,
+        universe: list[str] | None = None,
     ) -> dict[str, Any]:
         record = ResearchRunRecord(
             user_idea=user_idea,
@@ -89,6 +90,7 @@ class ResearchService:
                 to_date=to_date,
                 indicators=indicators,
                 initial_capital=initial_capital or self._config.initial_capital,
+                universe=universe,
             )
 
             record.status = STATUS_DONE
@@ -100,7 +102,7 @@ class ResearchService:
             record.report_md = result.report_md or ""
             await self._run_in_thread(self._storage.update_run, record)
 
-            return {
+            response = {
                 "id": record.id,
                 "user_idea": user_idea,
                 "symbol": symbol,
@@ -113,6 +115,15 @@ class ResearchService:
                 "best_max_dd": record.best_max_dd,
                 "report_md": result.report_md,
             }
+            if result.portfolio is not None:
+                response["portfolio"] = {
+                    "symbols": result.portfolio.symbols,
+                    "avg_pairwise_correlation": result.portfolio.avg_pairwise_correlation,
+                    "raw_sharpe": result.portfolio.raw_sharpe,
+                    "hedged_sharpe": result.portfolio.hedged_sharpe,
+                    "final_beta_estimate": result.portfolio.final_beta_estimate,
+                }
+            return response
         except Exception as e:
             LOG.warning("Research failed: %s", e, exc_info=True)
             record.status = STATUS_FAILED

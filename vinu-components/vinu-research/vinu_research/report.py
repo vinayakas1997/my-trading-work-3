@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from vinu_research.models import BacktestResult, HoldoutResult, IterationRecord, WalkForwardResult
+from vinu_research.portfolio import PortfolioAnalysisResult
 
 
 def generate_report(
@@ -15,6 +16,7 @@ def generate_report(
     best_iteration: int,
     walk_forward: WalkForwardResult | None = None,
     holdout: HoldoutResult | None = None,
+    portfolio: PortfolioAnalysisResult | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("=== FINAL RESEARCH REPORT ===")
@@ -221,6 +223,39 @@ def generate_report(
                 f"  {w['window_id']:<6} {ism['sharpe_ratio']:<12.2f} {osm['sharpe_ratio']:<12.2f} "
                 f"{ism['max_drawdown']:<11.1%} {osm['max_drawdown']:<11.1%}"
             )
+        lines.append("")
+
+    if portfolio is not None:
+        lines.append("=== PORTFOLIO ANALYSIS ===")
+        lines.append(f"Universe: {', '.join(portfolio.symbols)}")
+        lines.append(f"Average pairwise correlation: {portfolio.avg_pairwise_correlation:.2f}")
+        lines.append("")
+
+        lines.append("Correlation Matrix:")
+        syms = portfolio.symbols
+        header = "  " + " " * 8 + "".join(f"{s:>10}" for s in syms)
+        lines.append(header)
+        for row_sym in syms:
+            row = portfolio.correlation_matrix.get(row_sym, {})
+            row_line = f"  {row_sym:<8}" + "".join(f"{row.get(col, 0.0):>10.2f}" for col in syms)
+            lines.append(row_line)
+        lines.append("")
+
+        lines.append(
+            f"Beta-Neutral Hedge Overlay (rolling {portfolio.beta_hedge_lookback_days}-day beta, "
+            "analytically applied to realized returns — not a live traded hedge leg):"
+        )
+        lines.append(f"  {'Metric':<20} {'Raw Portfolio':<16} {'Beta-Hedged':<16}")
+        lines.append("  " + "-" * 52)
+        lines.append(f"  {'Sharpe':<20} {portfolio.raw_sharpe:<16.2f} {portfolio.hedged_sharpe:<16.2f}")
+        lines.append(f"  {'Max Drawdown':<20} {portfolio.raw_max_drawdown:<16.1%} {portfolio.hedged_max_drawdown:<16.1%}")
+        lines.append(f"  {'Annual Volatility':<20} {portfolio.raw_annual_vol:<16.1%} {portfolio.hedged_annual_vol:<16.1%}")
+        lines.append("")
+        lines.append(f"Most recent estimated beta to benchmark: {portfolio.final_beta_estimate:.2f}")
+        lines.append(
+            "A beta-neutral overlay shorts this fraction of portfolio value in the "
+            "benchmark, re-estimated on a rolling basis using only prior data."
+        )
         lines.append("")
 
     lines.append("Key Findings:")

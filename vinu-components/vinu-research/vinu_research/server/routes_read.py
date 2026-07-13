@@ -20,6 +20,13 @@ class RunResearchRequest(BaseModel):
     indicators: list[str] | None = None
     initial_capital: float | None = None
     dry_run: bool = False
+    universe: list[str] | None = Field(
+        default=None,
+        description="Optional list of tickers to backtest as a portfolio alongside "
+                    "`symbol`. When it has 2+ distinct symbols, the strategy runs "
+                    "across the whole basket and the report includes a correlation "
+                    "matrix and beta-hedge overlay.",
+    )
 
 
 def set_service(svc: ResearchService) -> None:
@@ -40,6 +47,7 @@ async def run_research(body: RunResearchRequest) -> dict[str, Any]:
             indicators=body.indicators,
             initial_capital=body.initial_capital,
             dry_run=body.dry_run,
+            universe=body.universe,
         )
         return result
     except Exception as e:

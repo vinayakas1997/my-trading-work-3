@@ -25,6 +25,16 @@ class SimulationConfig:
     allow_short: bool = True
     deviation_threshold: float = 0.05
 
+    # "fixed" = today's behavior (strategy's own weights used as-is). "vol_target"
+    # scales exposure to hold realized volatility roughly constant. "kelly" scales
+    # exposure from a trailing win-rate/payoff-ratio estimate at a fractional Kelly.
+    position_sizing_model: str = "fixed"
+    target_annual_vol: float = 0.15
+    vol_lookback_days: int = 20
+    kelly_fraction: float = 0.25
+    kelly_lookback_days: int = 60
+    max_leverage: float = 1.0
+
 
 @dataclass
 class TradeRecord:
