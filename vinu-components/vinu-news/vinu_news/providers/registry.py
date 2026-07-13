@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+
 from vinu_news.config import VinuConfig, load_config
 from vinu_news.providers.base import TickerNewsProvider
 from vinu_news.providers.config.loader import load_ticker_news_providers
 from vinu_news.providers.fmp import FmpTickerNewsProvider
 from vinu_news.providers.alpaca import AlpacaTickerNewsProvider
 from vinu_news.providers.yahoo import YahooTickerNewsProvider
+
+LOG = logging.getLogger(__name__)
 
 
 class TickerNewsRegistry:
@@ -47,6 +51,11 @@ class TickerNewsRegistry:
             try:
                 items = provider.fetch_ticker_news(ticker, from_ts, to_ts)
             except Exception:
+                LOG.warning(
+                    "Provider %s failed for %s [%d, %d)",
+                    getattr(provider, "provider_id", provider), ticker, from_ts, to_ts,
+                    exc_info=True,
+                )
                 continue
             for item in items:
                 link = item.get("link", "")

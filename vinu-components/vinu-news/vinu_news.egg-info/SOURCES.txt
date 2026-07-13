@@ -72,11 +72,15 @@ vinu_news/analysis/storage/schema.sql
 vinu_news/analysis/storage/threading/__init__.py
 vinu_news/analysis/storage/threading/assign.py
 vinu_news/analysis/storage/threading/matcher.py
+vinu_news/backfill/__init__.py
+vinu_news/backfill/schema.sql
+vinu_news/backfill/store.py
 vinu_news/collection/__init__.py
 vinu_news/collection/filter.py
 vinu_news/integrations/__init__.py
 vinu_news/integrations/stock_price.py
 vinu_news/providers/__init__.py
+vinu_news/providers/alpaca.py
 vinu_news/providers/base.py
 vinu_news/providers/fmp.py
 vinu_news/providers/registry.py
@@ -110,8 +114,8 @@ vinu_news/server/schemas.py
 vinu_news/server/static/favicon.svg
 vinu_news/server/static/icons.svg
 vinu_news/server/static/index.html
-vinu_news/server/static/assets/index-B7CgD4jB.js
-vinu_news/server/static/assets/index-CQeYx54l.css
+vinu_news/server/static/assets/index-DD1R7VD1.js
+vinu_news/server/static/assets/index-DyEUXb4j.css
 vinu_news/settings/__init__.py
 vinu_news/settings/schema.sql
 vinu_news/settings/store.py

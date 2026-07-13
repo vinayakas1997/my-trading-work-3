@@ -144,11 +144,11 @@ class ResearchLlmClient:
         self._http = ResilientClient(
             config.llm_base_url.rstrip("/"),
             "llm",
-            timeout=120.0,
+            timeout=config.llm_timeout_sec,
             max_retries=2,
             circuit_breaker_threshold=3,
         )
-        self._cache = LlmCache(cache_path, ttl=config.llm_ttl_sec)
+        self._cache = LlmCache(cache_path, ttl_sec=config.llm_ttl_sec)
         self._limiter = TokenBucket(rate=10, per=60)
 
     def is_configured(self) -> bool:
@@ -170,6 +170,7 @@ class ResearchLlmClient:
                 {"role": "user", "content": user},
             ],
             "temperature": 0.2,
+            "max_tokens": self._config.llm_max_tokens,
         }
         headers = {}
         if self._config.llm_api_key:

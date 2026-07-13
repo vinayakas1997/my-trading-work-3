@@ -604,17 +604,29 @@ class StrategyResearchLoop:
 
         if iteration > 1 and last_critique is not None:
             lines = code.split("\n")
-            insert_line = None
+            def_line = None
             for i, line in enumerate(lines):
                 if line.strip().startswith("def generate_weights"):
-                    insert_line = i
+                    def_line = i
                     break
 
+            # Filters read/modify the strategy's already-computed signal/weights
+            # variable, so they must land right before the function's return
+            # statement, not immediately after its signature — inserting there
+            # runs the filter before that variable exists, raising
+            # UnboundLocalError the moment the backtest actually executes it.
+            return_line = None
+            if def_line is not None:
+                for i in range(def_line + 1, len(lines)):
+                    if lines[i].strip().startswith("return"):
+                        return_line = i
+                        break
+
             filters = self._generate_filters(last_critique.suggestions)
-            if filters and insert_line is not None:
+            if filters and return_line is not None:
                 indent = "        "
                 for f_line in reversed(filters):
-                    lines.insert(insert_line + 1, indent + f_line)
+                    lines.insert(return_line, indent + f_line)
                 code = "\n".join(lines)
 
         return code

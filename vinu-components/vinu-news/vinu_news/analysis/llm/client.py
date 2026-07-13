@@ -39,6 +39,7 @@ class LlmClient:
                 {"role": "user", "content": user},
             ],
             "temperature": 0.2,
+            "max_tokens": self._config.llm_max_tokens,
         }
         try:
             resp = http_request("POST", url, headers=headers, json=payload, timeout=300)

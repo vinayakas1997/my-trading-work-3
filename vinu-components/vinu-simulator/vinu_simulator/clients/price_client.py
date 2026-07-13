@@ -15,6 +15,7 @@ class PriceClient(BaseClient):
         from_date: str,
         to_date: str,
         resolution: str = "1d",
+        indicators: list[str] | None = None,
     ) -> dict[str, pd.DataFrame]:
         from_ts = int(pd.Timestamp(from_date).timestamp())
         to_ts = int(pd.Timestamp(to_date).timestamp())
@@ -26,6 +27,8 @@ class PriceClient(BaseClient):
                 "from": from_ts,
                 "to": to_ts,
             }
+            if indicators:
+                params["indicators"] = ",".join(indicators)
             try:
                 resp = self.get(f"/candles/{sym}", params)
             except Exception:
@@ -38,9 +41,9 @@ class PriceClient(BaseClient):
             df = pd.DataFrame(records)
             df["date"] = pd.to_datetime(df["bar_ts"], unit="s")
             df = df.set_index("date").sort_index()
-            rename = {"open": "open", "high": "high", "low": "low",
-                       "close": "close", "volume": "volume"}
-            result[sym] = df[list(rename.keys())].rename(columns=rename)
+            keep = ["open", "high", "low", "close", "volume"] + (indicators or [])
+            keep = [c for c in keep if c in df.columns]
+            result[sym] = df[keep]
         return result
 
     def get_prices(

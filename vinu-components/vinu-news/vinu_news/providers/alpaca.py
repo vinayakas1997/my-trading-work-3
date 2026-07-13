@@ -80,7 +80,11 @@ def _ts_to_iso(ts: int) -> str:
 
 def _map_article(raw: dict, ticker: str) -> dict:
     ts = _parse_alpaca_ts(raw.get("created_at", ""))
-    symbols = [s.get("symbol", "") for s in raw.get("symbols", []) if s.get("symbol")]
+    symbols = [
+        s if isinstance(s, str) else s.get("symbol", "")
+        for s in raw.get("symbols", [])
+    ]
+    symbols = [s for s in symbols if s]
     if not symbols:
         symbols = [ticker]
 

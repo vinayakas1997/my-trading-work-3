@@ -59,8 +59,12 @@ def fetch_candles(
         sql += """
     QUALIFY ROW_NUMBER() OVER (PARTITION BY symbol, provider, bar_ts ORDER BY bar_ts DESC) = 1
 """
-        sql += " ORDER BY bar_ts ASC LIMIT ?"
-        params.append(limit)
+        sql += " ORDER BY bar_ts ASC"
+        # `limit` bounds the number of returned candles at the requested
+        # interval, not the number of raw 1m rows scanned — applying it here
+        # (pre-aggregation) would truncate e.g. a multi-year 1d/1w query down
+        # to the first `limit` *minutes* of data before it's ever aggregated.
+        # The from_ts/to_ts predicates above already bound the raw fetch.
 
         rows = conn.execute(sql, params).fetchdf()
         records = rows.to_dict(orient="records")
@@ -68,6 +72,7 @@ def fetch_candles(
             rec["bar_ts"] = int(rec["bar_ts"])
             rec["adj_factor"] = float(rec.get("adj_factor", 1.0) or 1.0)
         records = aggregate_bars(records, interval)
+        records = records[:limit]
         if adjusted:
             records = apply_adjusted_prices(records)
         if indicators:

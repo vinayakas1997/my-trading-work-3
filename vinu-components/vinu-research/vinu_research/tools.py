@@ -93,7 +93,7 @@ class ResearchTools:
     ) -> BacktestResult | None:
         body: dict[str, Any] = {
             "strategy_code": strategy_code,
-            "strategy_class_name": strategy_class_name,
+            "class_name": strategy_class_name,
             "symbols": symbols,
             "start_date": from_date,
             "end_date": to_date,
@@ -204,7 +204,7 @@ class ResearchTools:
         to_ts = int(pd.Timestamp(to_date).timestamp())
         try:
             data = await self._stock_client.get(
-                f"/query/{symbol.upper()}",
+                f"/candles/{symbol.upper()}",
                 params={"from": from_ts, "to": to_ts, "interval": "1d"},
             )
         except Exception as e:
@@ -212,11 +212,13 @@ class ResearchTools:
             return None
         if not isinstance(data, dict):
             return None
-        close_prices = data.get("close")
-        timestamps = data.get("timestamp")
-        if close_prices is None or timestamps is None:
+        records = data.get("data")
+        if not records:
             return None
-        prices = pd.Series(close_prices, index=pd.to_datetime(timestamps)).sort_index()
+        prices = pd.Series(
+            [r["close"] for r in records],
+            index=pd.to_datetime([r["bar_ts"] for r in records], unit="s"),
+        ).sort_index()
         if len(prices) < 2:
             return None
         returns = prices.pct_change().dropna()

@@ -1,0 +1,163 @@
+{
+  "symbol": "AAPL",
+  "period": "2023-01-01 to 2026-07-13",
+  "steps": [
+    {
+      "name": "1. Fetch 1-min bars",
+      "status": "PASS",
+      "total_bars": 660783,
+      "chunks": 43,
+      "chunks_with_data": 43,
+      "months_fetched": 43,
+      "errors": 0,
+      "disk_bytes": 14467567,
+      "disk_bytes_human": "13.80 MB",
+      "elapsed_sec": 33.7
+    },
+    {
+      "name": "2. Resample to daily",
+      "status": "PASS",
+      "trading_days": 940,
+      "elapsed_sec": 0.95
+    },
+    {
+      "name": "3. SMA 20/50 Signals",
+      "status": "PASS",
+      "crossovers": 23,
+      "long_pct": 58.8,
+      "short_pct": 36.0,
+      "neutral_pct": 5.2,
+      "crossover_dates": [
+        "2023-03-15",
+        "2023-08-16",
+        "2023-11-14",
+        "2024-01-09",
+        "2024-05-07",
+        "2024-08-20",
+        "2024-08-27",
+        "2024-08-28",
+        "2024-08-29",
+        "2024-11-16"
+      ],
+      "elapsed_sec": 0.0
+    },
+    {
+      "name": "4. Research Refinement",
+      "status": "PASS",
+      "iterations": [
+        {
+          "iteration": 1,
+          "params": {
+            "sma_fast": 20,
+            "sma_slow": 50,
+            "allow_short": true
+          },
+          "sharpe": -0.883,
+          "return_pct": -55.66,
+          "max_dd_pct": -56.19,
+          "win_rate_pct": 37.0,
+          "trades": 186,
+          "verdict": "REFINE",
+          "time_sec": 0.04
+        },
+        {
+          "iteration": 2,
+          "params": {
+            "sma_fast": 15,
+            "sma_slow": 50,
+            "allow_short": true
+          },
+          "sharpe": -0.853,
+          "return_pct": -54.78,
+          "max_dd_pct": -56.38,
+          "win_rate_pct": 37.3,
+          "trades": 192,
+          "verdict": "REFINE",
+          "time_sec": 0.04
+        },
+        {
+          "iteration": 3,
+          "params": {
+            "sma_fast": 20,
+            "sma_slow": 60,
+            "allow_short": true
+          },
+          "sharpe": -0.824,
+          "return_pct": -54.89,
+          "max_dd_pct": -55.95,
+          "win_rate_pct": 37.0,
+          "trades": 188,
+          "verdict": "REFINE",
+          "time_sec": 0.03
+        },
+        {
+          "iteration": 4,
+          "params": {
+            "sma_fast": 10,
+            "sma_slow": 30,
+            "allow_short": true
+          },
+          "sharpe": -1.003,
+          "return_pct": -61.54,
+          "max_dd_pct": -61.98,
+          "win_rate_pct": 44.0,
+          "trades": 190,
+          "verdict": "REFINE",
+          "time_sec": 0.03
+        },
+        {
+          "iteration": 5,
+          "params": {
+            "sma_fast": 20,
+            "sma_slow": 50,
+            "allow_short": false
+          },
+          "sharpe": 0.0,
+          "return_pct": 0.0,
+          "max_dd_pct": 0.0,
+          "win_rate_pct": 0.0,
+          "trades": 0,
+          "verdict": "STOP",
+          "time_sec": 0.03
+        }
+      ],
+      "total_iterations": 5,
+      "best_in_sample_sharpe": 0.0,
+      "best_params": {
+        "sma_fast": 20,
+        "sma_slow": 50,
+        "allow_short": false
+      },
+      "final_verdict": "STOP",
+      "data_split": {
+        "research_days": 747,
+        "holdout_days": 188,
+        "research_from": "2023-01-03",
+        "research_to": "2025-10-29",
+        "holdout_from": "2025-11-06",
+        "holdout_to": "2026-07-13"
+      },
+      "out_of_sample": {
+        "sharpe": 0.0,
+        "return_pct": 0.0,
+        "max_dd_pct": 0.0,
+        "win_rate_pct": 0.0,
+        "trades": 0,
+        "sharpe_degradation_pct": 0
+      },
+      "elapsed_sec": 0.96
+    }
+  ],
+  "rate_limit_probe": {
+    "discovered_rate_per_min": 200,
+    "raw_limit_header": 200,
+    "raw_remaining_header": 199,
+    "hit_429": false,
+    "probe_api_calls": 5
+  },
+  "data_feed_probe": {
+    "feed_type": "sip",
+    "avg_daily_trade_count": 508591.0,
+    "bars_sampled": 5
+  }
+}

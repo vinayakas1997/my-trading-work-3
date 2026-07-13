@@ -18,6 +18,7 @@ DEFAULT_DATA_ROOT = Path.cwd() / "data"
 DEFAULT_LLM_BASE_URL = "http://127.0.0.1:11434/v1"
 DEFAULT_LLM_MODEL = "llama3.2"
 DEFAULT_LLM_TTL_SEC = 86400
+DEFAULT_LLM_MAX_TOKENS = 8000
 
 _env_loaded = False
 
@@ -53,6 +54,8 @@ class ResearchConfig:
     llm_model: str = DEFAULT_LLM_MODEL
     llm_api_key: str | None = None
     llm_ttl_sec: int = DEFAULT_LLM_TTL_SEC
+    llm_max_tokens: int = DEFAULT_LLM_MAX_TOKENS
+    llm_timeout_sec: float = 120.0
     llm_cache_path: str = ""
     # Enabled by default: without walk-forward, a run's reported Sharpe/MaxDD are
     # purely in-sample, fit to the exact data they're refined against.
@@ -110,6 +113,8 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         llm_model=os.environ.get("VINU_LLM_MODEL", DEFAULT_LLM_MODEL),
         llm_api_key=os.environ.get("VINU_LLM_API_KEY") or None,
         llm_ttl_sec=int(os.environ.get("VINU_RESEARCH_LLM_TTL_SEC", str(DEFAULT_LLM_TTL_SEC))),
+        llm_max_tokens=int(os.environ.get("VINU_LLM_MAX_TOKENS", str(DEFAULT_LLM_MAX_TOKENS))),
+        llm_timeout_sec=float(os.environ.get("VINU_LLM_TIMEOUT_SEC", "120.0")),
         walk_forward_enabled=os.environ.get("VINU_RESEARCH_WALK_FORWARD", "true").lower() == "true",
         walk_forward_method=os.environ.get("VINU_RESEARCH_WF_METHOD", "expanding"),
         walk_forward_windows=int(os.environ.get("VINU_RESEARCH_WF_WINDOWS", "3")),

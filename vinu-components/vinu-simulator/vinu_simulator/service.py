@@ -142,23 +142,27 @@ class SimulatorService:
                 f"'{req.class_name}' must be a subclass of BaseStrategy"
             )
 
+        # /candles supports an `indicators` param that merges indicator columns
+        # directly into each row server-side — the separate features-api client
+        # below hits a route (/indicators/{symbol}) that only ever returns a
+        # single latest-value snapshot, not a historical series, so it can't
+        # supply what generate_weights() needs across the backtest window.
+        requested_indicators = ["sma_20", "sma_50", "rsi_14"]
         ohclv_data = self._price_client.get_ohclv(
-            req.symbols, start_date, end_date
+            req.symbols, start_date, end_date, indicators=requested_indicators
         )
         missing = [s for s in req.symbols if s not in ohclv_data or ohclv_data[s].empty]
         if missing:
             LOG.warning("No OHLCV data for symbols: %s — proceeding with available data", missing)
 
         indicator_data: dict[str, pd.DataFrame] = {}
-        from_ts = int(pd.Timestamp(start_date).timestamp())
-        to_ts = int(pd.Timestamp(end_date).timestamp())
         for sym in req.symbols:
-            ind = self._features_client.get_indicators(
-                sym, ["sma_20", "sma_50", "rsi_14"],
-                from_ts=from_ts, to_ts=to_ts,
-            )
-            if ind is not None and not ind.empty:
-                indicator_data[sym] = ind
+            df = ohclv_data.get(sym)
+            if df is None or df.empty:
+                continue
+            available = [c for c in requested_indicators if c in df.columns]
+            if available:
+                indicator_data[sym] = df[available]
 
         sim_config = SimulationConfig(
             strategy_name=req.class_name,
@@ -267,6 +271,10 @@ class SimulatorService:
         df = self._result_storage.load_equity(run_id)
         if df.empty:
             return []
+        # Match get_weights' date format (date-only string) — otherwise callers
+        # joining the two endpoints on `date` silently get zero matches, since
+        # this would default to a full ISO datetime string instead.
+        df["date"] = df["date"].dt.strftime("%Y-%m-%d") if hasattr(df["date"], "dt") else df["date"].astype(str)
         return df.to_dict(orient="records")
 
     def get_weights(self, run_id: str) -> list[dict[str, Any]] | None:

@@ -1,0 +1,76 @@
+{
+  "symbol": "AAPL",
+  "bars_period": "2023-01-01 to 2023-12-31",
+  "news_period": "2023-01-01 to 2026-07-13",
+  "steps": [
+    {
+      "name": "1. Stock Price (1-min bars, 2023)",
+      "status": "PASS",
+      "bars_count": 187088,
+      "api_calls": 19,
+      "wire_bytes": 19864995,
+      "wire_bytes_human": "18.94 MB",
+      "disk_bytes": 4086746,
+      "disk_bytes_human": "3.90 MB",
+      "avg_bar_wire_bytes": 106.2,
+      "elapsed_sec": 41.38
+    },
+    {
+      "name": "2. News Articles (Alpaca, 2023-present)",
+      "status": "PASS",
+      "articles_count": 12957,
+      "inserted_in_sqlite": 0,
+      "with_content": 10440,
+      "without_content": 2517,
+      "api_calls": 280,
+      "wire_bytes": 91816685,
+      "wire_bytes_human": "87.56 MB",
+      "disk_sqlite_bytes": 6729728,
+      "disk_sqlite_human": "6.42 MB",
+      "elapsed_sec": 95.68,
+      "monthly_chunks": 43,
+      "errors": []
+    },
+    {
+      "name": "3. TA Features Computation",
+      "status": "PASS",
+      "indicator_count": 6,
+      "disk_bytes": 15653703,
+      "disk_bytes_human": "14.93 MB",
+      "elapsed_sec": 0.33,
+      "error": ""
+    },
+    {
+      "name": "4. Backtest Simulation",
+      "status": "PASS",
+      "metrics": {
+        "trading_days": 258,
+        "total_return_pct": -12.6,
+        "sharpe_ratio": 0,
+        "max_drawdown_pct": -16.36,
+        "win_rate_pct": 16.7,
+        "total_trades": 0
+      },
+      "elapsed_sec": 1.27,
+      "error": ""
+    },
+    {
+      "name": "5. Strategy Allocation & Risk",
+      "status": "PASS",
+      "elapsed_sec": 0.04,
+      "error": ""
+    },
+    {
+      "name": "6. Correlation Analysis (modules)",
+      "status": "FAIL",
+      "elapsed_sec": 0.0,
+      "error": "No module named 'vinu_correlation.correlation'"
+    },
+    {
+      "name": "7. Research Pipeline (storage)",
+      "status": "PASS",
+      "elapsed_sec": 0.02,
+      "error": ""
+    }
+  ]
+}

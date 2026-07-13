@@ -14,9 +14,19 @@ from vinu_research.models import LlmCandidate
 LOG = logging.getLogger(__name__)
 
 LLM_GEN_SYSTEM_PROMPT = """You are a senior quantitative analyst who writes trading strategy code.
-The code must define a class `UserStrategy(BaseStrategy)` with:
+The code must start with these exact imports, then define a class
+`UserStrategy(BaseStrategy)` with:
 - `__init__(self, ...)` accepting any strategy parameters
 - `generate_weights(self, data: pd.DataFrame) -> pd.Series`
+
+Required imports at the top of every response (the execution environment does
+not pre-inject these — omitting them will fail to compile):
+```
+from __future__ import annotations
+import pandas as pd
+import numpy as np
+from vinu_simulator.engine.strategies import BaseStrategy
+```
 
 The `data` DataFrame contains columns: open, high, low, close, volume
 plus any technical indicators requested via `features_required`.

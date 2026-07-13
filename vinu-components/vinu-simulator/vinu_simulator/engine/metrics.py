@@ -115,10 +115,13 @@ def compute_extended_metrics(
     wins = daily_returns[daily_returns > 0]
     losses = daily_returns[daily_returns < 0]
 
-    profit_factor = float(wins.sum() / abs(losses.sum())) if abs(losses.sum()) > 0 else float("inf")
+    # Capped rather than literal inf when there are no losing days — inf is not
+    # valid JSON and would fail to serialize at the API boundary.
+    _NO_LOSSES_SENTINEL = 999.0
+    profit_factor = float(wins.sum() / abs(losses.sum())) if abs(losses.sum()) > 0 else _NO_LOSSES_SENTINEL
     avg_win_pct = float(wins.mean()) if len(wins) > 0 else 0.0
     avg_loss_pct = float(losses.mean()) if len(losses) > 0 else 0.0
-    win_loss_ratio = abs(avg_win_pct / avg_loss_pct) if avg_loss_pct != 0 else float("inf")
+    win_loss_ratio = abs(avg_win_pct / avg_loss_pct) if avg_loss_pct != 0 else _NO_LOSSES_SENTINEL
     hit_rate = len(wins) / len(daily_returns) if len(daily_returns) > 0 else 0.0
 
     extended["profit_factor"] = profit_factor
@@ -200,7 +203,14 @@ def compute_full_metrics(
 ) -> dict[str, float]:
     basic = compute_performance_metrics(portfolio_values, daily_returns, risk_free_rate)
     extended = compute_extended_metrics(portfolio_values, daily_returns, trades, benchmark_returns, risk_free_rate)
-    return {**basic, **extended}
+    merged = {**basic, **extended}
+    # inf/-inf/nan are not valid JSON and would break API responses (profit_factor,
+    # win_loss_ratio, and others can hit a zero denominator on a flat/no-trade run) —
+    # sanitize at this single choke point rather than auditing every formula above.
+    return {
+        k: (0.0 if isinstance(v, float) and not np.isfinite(v) else v)
+        for k, v in merged.items()
+    }
 
 
 def _get_basic_sharpe(
