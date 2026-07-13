@@ -30,7 +30,7 @@ def compute_baseline(
     baselines = []
     for hour_ts, sessions in sorted(hourly_counts.items()):
         window_start = hour_ts - window_sec
-        for session_name in set(sessions.keys()) | {"regular", "pre_market", "after_hours"}:
+        for session_name in set(sessions.keys()) | {"london", "ny_premarket", "ny_regular", "ny_afterhours"}:
             counts_in_window = [
                 sc.get(session_name, 0)
                 for ht, sc in hourly_counts.items()
@@ -55,6 +55,8 @@ def compute_baseline(
                 "article_count": current_count,
                 "mean": round(mean, 4),
                 "stddev": round(stddev, 4),
+                "z_score": round(z_score, 4),
+                "deviation_level": deviation_level,
                 "sample_size": len(counts_in_window),
             })
 

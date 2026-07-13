@@ -11,7 +11,7 @@ from vinu_news.server.schemas import (
     WatchlistAddRequest,
     WatchlistResponse,
 )
-from vinu_news.server.schemas import BackfillToggleRequest
+from vinu_news.server.schemas import BackfillToggleRequest, IngestTriggerResponse
 from vinu_news.service import NewsService
 
 router = APIRouter(tags=["config"])
@@ -174,6 +174,30 @@ def toggle_backfill(ticker: str, body: BackfillToggleRequest) -> dict:
     service = get_service()
     service.toggle_backfill(ticker, body.enabled)
     return {"ticker": ticker.upper(), "enabled": body.enabled}
+
+
+@router.post("/ingest/trigger", response_model=IngestTriggerResponse, tags=["ingest"])
+def trigger_ingest():
+    import time
+    service = get_service()
+    service.set_poll_status(last_poll_started_at=int(time.time()))
+    result = service.run_ingestion_cycle()
+    service.set_poll_status(
+        last_poll_finished_at=int(time.time()),
+        last_raw_count=result.raw_count,
+        last_leads_before_filter=result.leads_before_filter,
+        last_leads_after_filter=result.leads_after_filter,
+        last_inserted=result.inserted,
+    )
+    return IngestTriggerResponse(
+        ok=True,
+        summary={
+            "inserted": result.inserted,
+            "mode": result.mode,
+            "leads_after_filter": result.leads_after_filter,
+            "raw_count": result.raw_count,
+        },
+    )
 
 
 @router.post("/backfill/trigger")

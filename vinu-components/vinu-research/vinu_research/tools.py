@@ -7,53 +7,33 @@ from typing import Any
 import httpx
 import pandas as pd
 
+from vinu_lib.client import ResilientClient
 from vinu_research.config import ResearchConfig, load_config
 from vinu_research.models import BacktestMetrics, BacktestResult
 
 LOG = logging.getLogger(__name__)
 
-MAX_RETRIES = 3
-RETRY_BACKOFF = 1.0
-
 
 class ResearchTools:
     def __init__(self, config: ResearchConfig | None = None):
         self._config = config or load_config()
-        self._http = httpx.AsyncClient(timeout=60.0)
+        self._features_client = ResilientClient(
+            self._config.features_api_url, "vinu-features",
+            timeout=60.0, max_retries=3, circuit_breaker_threshold=3,
+        )
+        self._simulator_client = ResilientClient(
+            self._config.simulator_api_url, "vinu-simulator",
+            timeout=120.0, max_retries=2, circuit_breaker_threshold=3,
+        )
+        self._correlation_client = ResilientClient(
+            self._config.correlation_api_url, "vinu-correlation",
+            timeout=60.0, max_retries=3, circuit_breaker_threshold=3,
+        )
 
     async def close(self) -> None:
-        await self._http.aclose()
-
-    async def _request(
-        self,
-        method: str,
-        url: str,
-        **kwargs: Any,
-    ) -> httpx.Response:
-        last_exc: Exception | None = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                resp = await self._http.request(method, url, **kwargs)
-                resp.raise_for_status()
-                return resp
-            except httpx.HTTPStatusError as e:
-                LOG.warning("HTTP %d on %s %s (attempt %d/%d)",
-                            e.response.status_code, method, url,
-                            attempt + 1, MAX_RETRIES)
-                last_exc = e
-                if e.response.status_code < 500:
-                    raise
-            except httpx.TimeoutException as e:
-                LOG.warning("Timeout on %s %s (attempt %d/%d)",
-                            method, url, attempt + 1, MAX_RETRIES)
-                last_exc = e
-            except httpx.RequestError as e:
-                LOG.warning("Request failed on %s %s (attempt %d/%d): %s",
-                            method, url, attempt + 1, MAX_RETRIES, e)
-                last_exc = e
-            if attempt < MAX_RETRIES - 1:
-                await asyncio.sleep(RETRY_BACKOFF * (2 ** attempt))
-        raise RuntimeError(f"Request failed after {MAX_RETRIES} attempts: {last_exc}") from last_exc
+        await self._features_client.close()
+        await self._simulator_client.close()
+        await self._correlation_client.close()
 
     async def get_indicators(
         self,
@@ -71,10 +51,11 @@ class ResearchTools:
             params["from"] = from_ts
         if to_ts is not None:
             params["to"] = to_ts
-        url = f"{self._config.features_api_url}/indicators/{symbol.upper()}"
         try:
-            resp = await self._request("GET", url, params=params)
-            data = resp.json()
+            data = await self._features_client.get(
+                f"/indicators/{symbol.upper()}",
+                params=params,
+            )
         except Exception as e:
             LOG.warning("get_indicators(%s, %s) failed: %s", symbol, kinds, e)
             return None
@@ -119,12 +100,16 @@ class ResearchTools:
             body["slippage_pct"] = slippage_pct
         if indicators is not None:
             body["indicators"] = indicators
-        url = f"{self._config.simulator_api_url}/simulate/custom"
         try:
-            resp = await self._request("POST", url, json=body)
-            data = resp.json()
+            data = await self._simulator_client.post(
+                "/simulate/custom",
+                json=body,
+            )
         except Exception as exc:
             raise RuntimeError(f"Backtest failed: {exc}") from exc
+        if data is None:
+            LOG.warning("run_backtest returned None (simulator down)")
+            return None
         required = ["run_id", "strategy_name", "metrics", "trade_count", "equity_points"]
         missing = [k for k in required if k not in data]
         if missing:
@@ -151,10 +136,12 @@ class ResearchTools:
             params["from"] = str(from_ts)
         if to_ts is not None:
             params["to"] = str(to_ts)
-        url = f"{self._config.correlation_api_url}/story/{symbol.upper()}"
         try:
-            resp = await self._request("GET", url, params=params)
-            return resp.json()
+            resp = await self._correlation_client.get(
+                f"/story/{symbol.upper()}",
+                params=params,
+            )
+            return resp.get("data") if isinstance(resp, dict) else resp
         except Exception as e:
             LOG.warning("get_story(%s) failed: %s", symbol, e)
             return None
@@ -170,10 +157,11 @@ class ResearchTools:
             params["from"] = str(from_ts)
         if to_ts is not None:
             params["to"] = str(to_ts)
-        url = f"{self._config.correlation_api_url}/drawdown/{symbol.upper()}"
         try:
-            resp = await self._request("GET", url, params=params)
-            return resp.json()
+            return await self._correlation_client.get(
+                f"/drawdown/{symbol.upper()}",
+                params=params,
+            )
         except Exception as e:
             LOG.warning("get_drawdowns(%s) failed: %s", symbol, e)
             return None
@@ -189,10 +177,11 @@ class ResearchTools:
             params["from"] = str(from_ts)
         if to_ts is not None:
             params["to"] = str(to_ts)
-        url = f"{self._config.correlation_api_url}/correlation/{symbol.upper()}"
         try:
-            resp = await self._request("GET", url, params=params)
-            return resp.json()
+            return await self._correlation_client.get(
+                f"/correlation/{symbol.upper()}",
+                params=params,
+            )
         except Exception as e:
             LOG.warning("get_correlation(%s) failed: %s", symbol, e)
             return None

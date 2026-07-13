@@ -62,6 +62,8 @@ def test_to_dict():
     assert d["best_max_dd"] == -0.08
     assert d["report_md"] == "# Report"
     assert d["error_message"] is None
+    assert d["approved"] is False
+    assert d["approved_at"] == ""
     assert d["created_at"] == "2024-01-01T00:00:00"
     assert d["updated_at"] == "2024-01-02T00:00:00"
-    assert len(d) == 14
+    assert len(d) == 16

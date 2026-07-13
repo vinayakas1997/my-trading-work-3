@@ -16,6 +16,11 @@ class HealthResponse(BaseModel):
     ok: bool = True
 
 
+class StoryResponse(BaseModel):
+    ticker: str
+    data: dict[str, Any]
+
+
 class SettingsResponse(BaseModel):
     data_root: str
     news_api_url: str

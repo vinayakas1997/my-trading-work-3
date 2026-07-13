@@ -100,3 +100,26 @@ class TestDefaultRiskCritic:
         critique = await loop._default_risk_critic(result, story=None, drawdowns=None, iteration=1)
         assert critique.verdict == "REFINE"
         assert len(critique.suggestions) > 0
+
+
+class TestMaxDDStop:
+    def make_result(self, max_dd: float) -> BacktestResult:
+        metrics = BacktestMetrics(sharpe_ratio=1.0, max_drawdown=max_dd, win_rate=0.5)
+        return BacktestResult(
+            run_id="r1", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=10, equity_points=100,
+        )
+
+    def test_max_dd_stops_when_exceeds_threshold(self):
+        from vinu_research.config import ResearchConfig
+        config = ResearchConfig(max_drawdown_threshold=-0.15)
+        loop = StrategyResearchLoop(config=config)
+        result = self.make_result(max_dd=-0.20)
+        assert result.metrics.max_drawdown < config.max_drawdown_threshold
+
+    def test_max_dd_does_not_stop_when_within_threshold(self):
+        from vinu_research.config import ResearchConfig
+        config = ResearchConfig(max_drawdown_threshold=-0.25)
+        loop = StrategyResearchLoop(config=config)
+        result = self.make_result(max_dd=-0.20)
+        assert result.metrics.max_drawdown >= config.max_drawdown_threshold

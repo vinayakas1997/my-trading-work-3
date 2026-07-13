@@ -12,8 +12,8 @@ get_service = None
 
 
 @router.get("/health")
-def health() -> dict[str, Any]:
-    return get_service().health()
+async def health() -> dict[str, Any]:
+    return await get_service().health()
 
 
 @router.get("/settings")

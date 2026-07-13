@@ -83,6 +83,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     run_p.add_argument("--max-iterations", type=int, default=None, help="Max research iterations")
     run_p.add_argument("--indicators", default=None, help="Comma-separated indicator kinds")
     run_p.add_argument("--capital", type=float, default=None, help="Initial capital")
+    run_p.add_argument("--approve", action="store_true", help="Approve strategy automatically (non-interactive)")
+    run_p.add_argument("--llm", action="store_true", help="Enable LLM-enhanced risk analysis")
+    run_p.add_argument("--no-llm", action="store_true", help="Disable LLM-enhanced risk analysis")
     run_p.add_argument("--quiet", action="store_true", help="Suppress progress output")
     run_p.set_defaults(func=run_main)
 
@@ -114,6 +117,10 @@ def run_main(args: argparse.Namespace) -> None:
         overrides["max_iterations"] = args.max_iterations
     if args.capital is not None:
         overrides["initial_capital"] = args.capital
+    if args.llm:
+        overrides["llm_enabled"] = True
+    if args.no_llm:
+        overrides["llm_enabled"] = False
     if overrides:
         config = ResearchConfig(**{**config.__dict__, **overrides})
 
@@ -168,6 +175,7 @@ def run_main(args: argparse.Namespace) -> None:
     print()
     print(result.report_md)
 
+    saved_path = None
     if result.best_result:
         safe_sym = _sanitize_filename(symbol.lower())
         safe_name = _sanitize_filename(result.best_result.strategy_name.lower())
@@ -179,7 +187,25 @@ def run_main(args: argparse.Namespace) -> None:
         if best_rec:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(best_rec.strategy_code)
+            saved_path = output_path
             print(f"\nOptimized Strategy Code: saved to {output_path}")
+
+    _print_separator()
+    approved = bool(args.approve) if hasattr(args, "approve") else False
+    if not approved and hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
+        try:
+            resp = input("\nApprove this strategy for use? [y/N] ").strip().lower()
+            approved = resp in ("y", "yes")
+        except (EOFError, KeyboardInterrupt):
+            pass
+    if approved:
+        print("[vinu-research] \u2713 Strategy approved")
+        if saved_path:
+            approved_path = saved_path.parent / f"{saved_path.stem}_approved.py"
+            saved_path.rename(approved_path)
+            print(f"[vinu-research] Approved strategy saved to {approved_path}")
+    else:
+        print("[vinu-research] Strategy saved but not approved (run with --approve or re-run later)")
 
 
 def recipes_main(args: argparse.Namespace) -> None:

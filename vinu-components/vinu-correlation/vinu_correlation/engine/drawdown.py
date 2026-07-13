@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
-from statsmodels.regression.linear_model import OLS
-from statsmodels.tools import add_constant
+
+_SENTIMENT_WEIGHTS: dict[str, float] = {
+    "BULLISH": 1.0,
+    "BEARISH": 1.0,
+    "NEUTRAL": 0.3,
+}
 
 
 def get_drawdowns(
@@ -56,6 +59,13 @@ def get_drawdowns(
     return drawdowns
 
 
+def _compute_event_weight(event: dict) -> float:
+    score = abs(event.get("price_change_30m", 0) or 0)
+    sentiment = event.get("sentiment", "NEUTRAL").upper()
+    weight = _SENTIMENT_WEIGHTS.get(sentiment, 0.3)
+    return score * weight
+
+
 def attribute_drawdown(
     symbol: str,
     peak_ts: int,
@@ -85,34 +95,21 @@ def attribute_drawdown(
             },
         }
 
-    impact_scores = []
-    for ev in relevant_events:
-        pc = ev.get("price_change_30m") or 0
-        impact_scores.append(abs(pc))
-
-    total_impact = sum(impact_scores) or 1
-
-    y = np.array([ev.get("price_change_30m") or 0 for ev in relevant_events])
-    X = np.array(impact_scores).reshape(-1, 1)
-    X = add_constant(X)
-
-    try:
-        model = OLS(y, X).fit()
-        coeffs = model.params
-        news_coeff = abs(coeffs[1]) if len(coeffs) > 1 else 0
-    except Exception:
-        news_coeff = 0
+    total_weighted_score = sum(_compute_event_weight(ev) for ev in relevant_events)
 
     contributing = []
-    for ev, score in zip(relevant_events, impact_scores):
+    for ev in relevant_events:
+        w = _compute_event_weight(ev)
         contributing.append({
             "headline": ev.get("headline", ""),
-            "attribution_pct": round(score / total_impact, 4),
+            "attribution_pct": round(w / total_weighted_score, 4) if total_weighted_score > 0 else 0.0,
             "sentiment": ev.get("sentiment", "NEUTRAL"),
             "impact_label": ev.get("impact_label", "low"),
         })
 
-    news_pct = news_coeff / (news_coeff + 1) if news_coeff > 0 else 0.3
+    baseline_score = 0.1 * n_events  # normalize by event count
+    news_pct = total_weighted_score / (total_weighted_score + baseline_score + 1.0)
+    news_pct = min(news_pct, 0.95)
     market_pct = 0.0 if market_returns is None else 0.2
     unexplained_pct = 1.0 - news_pct - market_pct
 

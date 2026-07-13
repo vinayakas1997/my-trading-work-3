@@ -162,7 +162,7 @@ Step 5: FINAL OUTPUT
 - **Provides:** LLM-enhanced narrative on top of correlation story blocks
 - **Optional:** The system works without this (uses raw story blocks)
 
-### vinu-research (Not Built)
+### vinu-research (Built)
 **Role:** Agentic Strategy Researcher (the brain)
 - AutoGen multi-agent loop: Quant Coder + Risk Critic + GroupChatManager
 - Takes user's strategy idea → iteratively refines → outputs report

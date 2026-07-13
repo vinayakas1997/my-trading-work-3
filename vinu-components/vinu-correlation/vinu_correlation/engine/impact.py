@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from vinu_correlation.clients.news_client import NewsClient
 from vinu_correlation.clients.price_client import PriceClient
 from vinu_correlation.engine.market_hours import (
     IMPACT_WINDOWS,

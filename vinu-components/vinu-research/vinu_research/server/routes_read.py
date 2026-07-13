@@ -73,3 +73,13 @@ async def delete_run(run_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="Service not initialized")
     deleted = await _service.delete_run(run_id)
     return {"deleted": deleted, "run_id": run_id}
+
+
+@router.post("/research/runs/{run_id}/approve")
+async def approve_run(run_id: int) -> dict[str, Any]:
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    result = await _service.approve_run(run_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found or not in done status")
+    return result

@@ -14,7 +14,7 @@
 
 ## PART 1: What to Build (New Components)
 
-### 1.1 vinu-research — Agentic Strategy Researcher ❌
+### 1.1 vinu-research — Agentic Strategy Researcher ✅
 
 **Priority:** HIGH — this is the core deliverable the user interacts with
 
@@ -60,7 +60,7 @@
 
 ## PART 2: What to Enhance (Existing Components)
 
-### 2.1 vinu-correlation — Story Block Enhancements ⚠️
+### 2.1 vinu-correlation — Story Block Enhancements ✅
 
 **Priority:** HIGH — agents need structured facts to critique strategies
 
@@ -123,7 +123,7 @@
 
 ---
 
-### 2.2 vinu-features — On-Demand Indicator API ⚠️
+### 2.2 vinu-features — On-Demand Indicator API ✅
 
 **Priority:** MEDIUM — needed for agent to request indicators mid-loop
 
@@ -136,7 +136,7 @@
 
 ---
 
-### 2.3 vinu-simulator — Custom Strategy API ⚠️
+### 2.3 vinu-simulator — Custom Strategy API ✅
 
 **Priority:** HIGH — agent needs to feed custom code, not just YAML strategy names
 
@@ -150,7 +150,7 @@
 
 ## PART 3: Code Optimizations & Refactors
 
-### 3.1 Consolidate Shared Code into vinu_lib ⚠️
+### 3.1 Consolidate Shared Code into vinu_lib ✅
 
 **Problem:** HTTP clients, SQLite patterns, Parquet I/O, FastAPI boilerplate duplicated across all 6 services.
 
@@ -163,7 +163,7 @@
 | **Shared Config Pattern** | Each service has own env-to-dataclass mapping | `vinu_lib.config.from_env()` — standard pattern | 0.5 day |
 | **Total** | | | **~4 days** |
 
-### 3.2 Circuit Breaker + Fallback Pattern ⚠️
+### 3.2 Circuit Breaker + Fallback Pattern ✅
 
 **Problem:** One service failure cascades through the entire pipeline.
 
@@ -348,11 +348,11 @@ Confidence Assessment:
 | vinu-news | ✅ Built | — | Done |
 | vinu-stock-price | ✅ Built | — | Done |
 | vinu-features | ✅ Built | — | Done |
-| vinu-correlation | ⚠️ Needs story block enhancements | Phase 1 | Now |
+| vinu-correlation | ✅ Built (story blocks done) | Phase 1 | Done |
 | vinu-strategy | ✅ Built | — | Done |
-| vinu-simulator | ✅ Built | — | Done |
-| vinu-lib shared | ⚠️ Needs consolidation + circuit breaker | Phase 1+4 | Now + Ongoing |
-| vinu-research | ❌ Not built | Phase 2 | Next |
+| vinu-simulator | ✅ Built (custom strategy eval done) | — | Done |
+| vinu-lib shared | ✅ Built (6 modules + circuit breaker) | Phase 1+4 | Done |
+| vinu-research | ✅ Built | Phase 2 | Done |
 | vinu-agents | ❌ Not built (optional) | Phase 3 | Optional |
 
 **Critical path:** vinu-correlation enhancements → vinu-research → end-to-end integration

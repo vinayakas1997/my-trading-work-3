@@ -8,6 +8,7 @@ STATUS_RUNNING = "running"
 STATUS_DONE = "done"
 STATUS_FAILED = "failed"
 STATUS_DELETED = "deleted"
+STATUS_APPROVED = "approved"
 
 
 @dataclass
@@ -24,6 +25,8 @@ class ResearchRunRecord:
     best_max_dd: float = 0.0
     report_md: str = ""
     error_message: str | None = None
+    approved: bool = False
+    approved_at: str = ""
     created_at: str = ""
     updated_at: str = ""
 
@@ -41,6 +44,8 @@ class ResearchRunRecord:
             "best_max_dd": self.best_max_dd,
             "report_md": self.report_md,
             "error_message": self.error_message,
+            "approved": self.approved,
+            "approved_at": self.approved_at,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

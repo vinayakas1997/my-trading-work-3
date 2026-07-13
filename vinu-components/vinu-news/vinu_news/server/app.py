@@ -1,82 +1,51 @@
 """FastAPI application factory."""
-
 from __future__ import annotations
 
-import time
+import argparse
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
 
-from fastapi import FastAPI
-from starlette.staticfiles import StaticFiles
+import uvicorn
+from fastapi import APIRouter
 
+from vinu_lib.server import create_app as _create_app
+from vinu_news.config import load_config
 from vinu_news.server import routes_config, routes_read
-from vinu_news.server.schemas import IngestTriggerResponse
 from vinu_news.service import NewsService
 
 
-def create_app(service: NewsService | None = None) -> FastAPI:
-    """Build FastAPI app with shared NewsService."""
+def create_app(service: NewsService | None = None):
     app_service = service or NewsService()
     owns_service = service is None
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(_app):
         yield
         if owns_service:
             app_service.close()
 
-    app = FastAPI(
-        title="vinu-news",
-        description="Financial news ingestion and query API",
-        version="0.1.0",
-        lifespan=lifespan,
-    )
-
-    def _get_service() -> NewsService:
+    def _get_service():
         return app_service
 
-    routes_config.get_service = _get_service  # type: ignore[method-assign]
-    routes_read.get_service = _get_service  # type: ignore[method-assign]
+    routes_config.get_service = _get_service
+    routes_read.get_service = _get_service
 
-    app.include_router(routes_config.router)
-    app.include_router(routes_read.router)
+    merged = APIRouter()
+    merged.include_router(routes_read.router)
+    merged.include_router(routes_config.router)
 
-    @app.post("/ingest/trigger", response_model=IngestTriggerResponse, tags=["ingest"])
-    def trigger_ingest() -> IngestTriggerResponse:
-        app_service.set_poll_status(last_poll_started_at=int(time.time()))
-        result = app_service.run_ingestion_cycle()
-        app_service.set_poll_status(
-            last_poll_finished_at=int(time.time()),
-            last_raw_count=result.raw_count,
-            last_leads_before_filter=result.leads_before_filter,
-            last_leads_after_filter=result.leads_after_filter,
-            last_inserted=result.inserted,
-        )
-        return IngestTriggerResponse(
-            ok=True,
-            summary={
-                "inserted": result.inserted,
-                "mode": result.mode,
-                "leads_after_filter": result.leads_after_filter,
-                "raw_count": result.raw_count,
-            },
-        )
-
-    static_dir = Path(__file__).parent / "static"
-    if static_dir.is_dir():
-        app.mount("/ui", StaticFiles(directory=static_dir, html=True), name="ui")
-
-    return app
+    return _create_app(
+        service_name="vinu-news",
+        version="0.1.0",
+        description="Financial news ingestion and query API",
+        router=merged,
+        lifespan=lifespan,
+        static_dir=Path(__file__).parent / "static",
+        expose_health_on_root=False,
+    )
 
 
 def main() -> None:
-    import argparse
-
-    import uvicorn
-
-    from vinu_news.config import load_config
-
     parser = argparse.ArgumentParser(description="Run vinu-news HTTP API")
     parser.add_argument("--host", default=None)
     parser.add_argument("--port", type=int, default=None)
@@ -87,3 +56,7 @@ def main() -> None:
     port = args.port or cfg.port
     app = create_app()
     uvicorn.run(app, host=host, port=port)
+
+
+if __name__ == "__main__":
+    main()

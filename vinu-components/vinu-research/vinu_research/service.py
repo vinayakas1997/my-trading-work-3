@@ -133,6 +133,10 @@ class ResearchService:
         r = await self._run_in_thread(self._storage.get_run, run_id)
         return r.to_dict() if r else None
 
+    async def approve_run(self, run_id: int) -> dict[str, Any] | None:
+        result = await self._run_in_thread(self._storage.approve_run, run_id)
+        return result.to_dict() if result else None
+
     async def delete_run(self, run_id: int) -> bool:
         return await self._run_in_thread(self._storage.delete_run, run_id)
 

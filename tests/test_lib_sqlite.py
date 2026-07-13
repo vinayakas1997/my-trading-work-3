@@ -1,0 +1,64 @@
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from vinu_lib.sqlite import SQLiteBackend
+
+
+class TestBackend(SQLiteBackend):
+    SCHEMA = """
+    CREATE TABLE IF NOT EXISTS items (
+        id TEXT PRIMARY KEY,
+        value TEXT
+    );
+    """
+    SCHEMA_VERSION = 1
+
+
+def test_sqlite_backend_init():
+    with TemporaryDirectory() as tmp:
+        db = TestBackend(Path(tmp) / "test.db")
+        conn = db._get_conn()
+        assert conn is not None
+        db.close()
+
+
+def test_sqlite_backend_write_read():
+    with TemporaryDirectory() as tmp:
+        db = TestBackend(Path(tmp) / "test.db")
+        conn = db._get_conn()
+        conn.execute("INSERT INTO items (id, value) VALUES (?, ?)", ("a1", "hello"))
+        conn.commit()
+        row = conn.execute("SELECT * FROM items WHERE id=?", ("a1",)).fetchone()
+        assert row["value"] == "hello"
+        db.close()
+
+
+def test_sqlite_backend_multiple_connections():
+    with TemporaryDirectory() as tmp:
+        db1 = TestBackend(Path(tmp) / "test.db")
+        db2 = TestBackend(Path(tmp) / "test.db")
+        conn1 = db1._get_conn()
+        conn1.execute("INSERT INTO items (id, value) VALUES (?, ?)", ("shared", "val"))
+        conn1.commit()
+        conn2 = db2._get_conn()
+        row = conn2.execute("SELECT * FROM items WHERE id=?", ("shared",)).fetchone()
+        assert row["value"] == "val"
+        db1.close()
+        db2.close()
+
+
+def test_sqlite_backend_health():
+    with TemporaryDirectory() as tmp:
+        db = TestBackend(Path(tmp) / "test.db")
+        info = db.health_info()
+        assert "db_path" in info
+        assert info["tables"] >= 1
+        db.close()
+
+
+def test_sqlite_backend_context_manager():
+    with TemporaryDirectory() as tmp:
+        with TestBackend(Path(tmp) / "test.db") as db:
+            conn = db._get_conn()
+            conn.execute("INSERT INTO items (id, value) VALUES (?, ?)", ("ctx", "ok"))
+            conn.commit()

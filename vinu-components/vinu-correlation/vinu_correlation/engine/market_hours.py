@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from vinu_correlation.engine.calendar import get_market_sessions, is_nyse_holiday
+
 
 @dataclass
 class SessionInfo:
@@ -19,18 +21,23 @@ IMPACT_WINDOWS = {
     "1d": 86400,
 }
 
+_ALL_SESSION_NAMES = frozenset({
+    "closed", "london", "ny_premarket", "ny_regular", "ny_afterhours",
+})
+
 
 def classify_session(ts: int) -> SessionInfo:
     dt = datetime.fromtimestamp(ts, tz=timezone.utc)
     hour = dt.hour
-    if 8 <= hour < 13:
-        return SessionInfo("pre_market", 8, 13)
-    elif 13 <= hour < 20:
-        return SessionInfo("regular", 13, 20)
-    elif 20 <= hour < 24:
-        return SessionInfo("after_hours", 20, 24)
-    else:
-        return SessionInfo("closed", 0, 8)
+    sessions = get_market_sessions(dt)
+    for s in sessions:
+        if s["utc_start"] <= hour < s["utc_end"]:
+            return SessionInfo(s["name"], s["utc_start"], s["utc_end"])
+    return SessionInfo("closed", 0, 24)
+
+
+def iter_session_names() -> frozenset[str]:
+    return _ALL_SESSION_NAMES
 
 
 def impact_window_within_session(article_ts: int, window_sec: int) -> tuple[int, int]:
@@ -41,3 +48,11 @@ def impact_window_within_session(article_ts: int, window_sec: int) -> tuple[int,
     article_day_start = (article_ts // 86400) * 86400
     max_ts = article_day_start + session_end
     return (article_ts, min(article_ts + window_sec, max_ts))
+
+
+def get_session_boundaries(ts: int) -> list[SessionInfo]:
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    return [
+        SessionInfo(s["name"], s["utc_start"], s["utc_end"])
+        for s in get_market_sessions(dt)
+    ]

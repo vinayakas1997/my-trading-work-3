@@ -27,6 +27,24 @@ class TestListGetDelete:
         assert await service.get_run(r.id) is not None
 
 
+class TestApprove:
+    async def test_approve_run_missing(self, service):
+        assert await service.approve_run(999) is None
+
+    async def test_approve_run(self, service, storage, sample_record):
+        sample_record.status = "done"
+        r = storage.insert_run(sample_record)
+        result = await service.approve_run(r.id)
+        assert result is not None
+        assert result["approved"] is True
+        assert result["status"] == "approved"
+
+    async def test_approve_run_not_done(self, service, storage, sample_record):
+        r = storage.insert_run(sample_record)
+        result = await service.approve_run(r.id)
+        assert result is None
+
+
 class TestHealth:
     async def test_health_returns_service_info(self, service):
         info = await service.health()

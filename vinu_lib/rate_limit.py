@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 
@@ -39,7 +40,7 @@ class TokenBucket:
             return False
 
     def wait(self, tokens: float = 1.0) -> None:
-        """Block until tokens are available."""
+        """Block until tokens are available (sync, blocks thread)."""
         while True:
             with self._lock:
                 self._refill()
@@ -48,3 +49,14 @@ class TokenBucket:
                     return
             sleep_time = (tokens - self._tokens) * self._per / self._rate
             time.sleep(max(0.01, min(sleep_time, 1.0)))
+
+    async def wait_async(self, tokens: float = 1.0) -> None:
+        """Non-blocking wait using asyncio.sleep."""
+        while True:
+            with self._lock:
+                self._refill()
+                if self._tokens >= tokens:
+                    self._tokens -= tokens
+                    return
+            sleep_time = (tokens - self._tokens) * self._per / self._rate
+            await asyncio.sleep(max(0.01, min(sleep_time, 1.0)))

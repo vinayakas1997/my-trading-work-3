@@ -30,6 +30,12 @@ def test_load_config_defaults():
     assert cfg.transaction_cost_pct == 0.001
     assert cfg.slippage_pct == 0.0005
     assert cfg.allow_short is True
+    assert cfg.max_drawdown_threshold == -0.25
+    assert cfg.llm_enabled is False
+    assert cfg.llm_base_url == "http://127.0.0.1:11434/v1"
+    assert cfg.llm_model == "llama3.2"
+    assert cfg.llm_api_key is None
+    assert cfg.llm_ttl_sec == 86400
     assert isinstance(cfg.data_root, Path)
 
 

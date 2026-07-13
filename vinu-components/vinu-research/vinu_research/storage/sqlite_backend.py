@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from vinu_research.storage.models import ResearchRunRecord, STATUS_DELETED
+from vinu_research.storage.models import ResearchRunRecord, STATUS_APPROVED, STATUS_DELETED, STATUS_DONE
 
 
 _SCHEMA = """
@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS research_runs (
     best_max_dd REAL NOT NULL DEFAULT 0.0,
     report_md TEXT NOT NULL DEFAULT '',
     error_message TEXT,
+    approved INTEGER NOT NULL DEFAULT 0,
+    approved_at TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -67,13 +69,13 @@ class ResearchStorage:
             """INSERT INTO research_runs
                 (user_idea, symbol, from_date, to_date, status, total_iterations,
                  best_iteration, best_sharpe, best_max_dd, report_md, error_message,
-                 created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 approved, approved_at, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 record.user_idea, record.symbol, record.from_date, record.to_date,
                 record.status, record.total_iterations, record.best_iteration,
                 record.best_sharpe, record.best_max_dd, record.report_md,
-                record.error_message, now, now,
+                record.error_message, 0, "", now, now,
             ),
         )
         conn.commit()
@@ -130,6 +132,18 @@ class ResearchStorage:
         record.updated_at = now
         return record
 
+    def approve_run(self, run_id: int) -> ResearchRunRecord | None:
+        conn = self._get_conn()
+        now = datetime.now(timezone.utc).isoformat()
+        cur = conn.execute(
+            "UPDATE research_runs SET status = ?, approved = 1, approved_at = ?, updated_at = ? WHERE id = ? AND status = ?",
+            (STATUS_APPROVED, now, now, run_id, STATUS_DONE),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            return None
+        return self.get_run(run_id)
+
     def delete_run(self, run_id: int) -> bool:
         conn = self._get_conn()
         now = datetime.now(timezone.utc).isoformat()
@@ -170,6 +184,8 @@ class ResearchStorage:
             best_max_dd=row["best_max_dd"],
             report_md=row["report_md"],
             error_message=row["error_message"],
+            approved=bool(row["approved"]),
+            approved_at=row["approved_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

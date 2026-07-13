@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 from vinu_research.config import ResearchConfig, load_config
 from vinu_research.generator import generate_strategy
+from vinu_research.llm import LLM_SYSTEM_PROMPT, ResearchLlmClient, _build_risk_critic_prompt
 from vinu_research.models import (
     BacktestResult,
     CriticFeedback,
@@ -58,6 +59,7 @@ class StrategyResearchLoop:
         self._on_iteration = on_iteration
         self._story_cache = _LRUCache()
         self._drawdown_cache = _LRUCache()
+        self._llm = ResearchLlmClient(self._config) if self._config.llm_enabled else None
 
     async def run(
         self,
@@ -74,6 +76,10 @@ class StrategyResearchLoop:
         strategy_code = ""
 
         cache_key = f"{symbol.upper()}:{from_date}:{to_date}"
+        self._user_idea = user_idea
+        self._symbol = symbol
+        self._from_date = from_date
+        self._to_date = to_date
 
         for iteration in range(1, self._config.max_iterations + 1):
             try:
@@ -140,6 +146,17 @@ class StrategyResearchLoop:
 
                 best_result = result
                 best_iteration = iteration
+
+                if result.metrics.max_drawdown < self._config.max_drawdown_threshold:
+                    LOG.warning(
+                        "MaxDD %.1%% exceeds threshold %.1%%, stopping",
+                        result.metrics.max_drawdown * 100,
+                        self._config.max_drawdown_threshold * 100,
+                    )
+                    if best_result is None:
+                        best_result = result
+                        best_iteration = iteration
+                    break
 
                 if iteration >= 2 and not self._is_improving(history):
                     break
@@ -256,7 +273,7 @@ class StrategyResearchLoop:
                 filters.append("signal[atr / close > 0.05] = 0")
         return filters
 
-    async def _default_risk_critic(
+    def _rule_based_check(
         self,
         result: BacktestResult,
         story: dict[str, Any] | None,
@@ -307,3 +324,68 @@ class StrategyResearchLoop:
             reasoning=", ".join(reasoning_parts),
             suggestions=suggestions,
         )
+
+    async def _llm_enhanced_check(
+        self,
+        user_idea: str,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+        result: BacktestResult,
+        story: dict[str, Any] | None,
+        rules_feedback: CriticFeedback,
+    ) -> dict[str, Any] | None:
+        if not hasattr(self, "_llm") or self._llm is None:
+            return None
+        if not self._llm.is_configured():
+            return None
+        prompt = _build_risk_critic_prompt(
+            user_idea, symbol, from_date, to_date,
+            result, rules_feedback, story,
+        )
+        try:
+            return await self._llm.chat_json(LLM_SYSTEM_PROMPT, prompt)
+        except Exception as e:
+            LOG.warning("LLM enhanced check failed: %s, falling back to rules only", e)
+            return None
+
+    def _merge_feedback(
+        self,
+        rules: CriticFeedback,
+        llm: dict[str, Any] | None,
+    ) -> CriticFeedback:
+        if llm is None:
+            return rules
+        new_suggestions = list(rules.suggestions)
+        for llm_s in llm.get("additional_suggestions", []):
+            if llm_s not in new_suggestions:
+                new_suggestions.append(llm_s)
+        verdict = rules.verdict
+        llm_upgrade = llm.get("verdict_upgrade")
+        if verdict == "REFINE" and llm_upgrade in ("PASS", "STOP"):
+            verdict = llm_upgrade
+        merged_reasoning = rules.reasoning
+        if llm.get("reasoning"):
+            merged_reasoning += f" | LLM notes: {llm['reasoning']}"
+        return CriticFeedback(
+            verdict=verdict,
+            reasoning=merged_reasoning,
+            suggestions=new_suggestions,
+        )
+
+    async def _default_risk_critic(
+        self,
+        result: BacktestResult,
+        story: dict[str, Any] | None,
+        drawdowns: dict[str, Any] | None,
+        iteration: int,
+    ) -> CriticFeedback:
+        rules = self._rule_based_check(result, story, drawdowns, iteration)
+        llm = await self._llm_enhanced_check(
+            self._user_idea if hasattr(self, "_user_idea") else "",
+            self._symbol if hasattr(self, "_symbol") else "",
+            self._from_date if hasattr(self, "_from_date") else "",
+            self._to_date if hasattr(self, "_to_date") else "",
+            result, story, rules,
+        )
+        return self._merge_feedback(rules, llm)

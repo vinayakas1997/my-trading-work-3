@@ -14,11 +14,15 @@ from vinu_correlation.engine.correlation import (
     resample_returns_to_hourly,
 )
 from vinu_correlation.engine.drawdown import attribute_drawdown, get_drawdowns
-from vinu_correlation.engine.granger import run_granger_causality_test as test_granger_causality
 from vinu_correlation.engine.impact import (
     aggregate_by_thread,
     compute_impact_for_article,
     parse_tickers,
+)
+from vinu_correlation.engine.blocks import (
+    compute_correlation_by_session,
+    compute_premarket_gap,
+    compute_time_gaps,
 )
 from vinu_correlation.engine.market_hours import IMPACT_WINDOWS, classify_session
 from vinu_correlation.storage.backend import CorrelationStorage
@@ -118,9 +122,14 @@ class CorrelationAPI:
         corr = compute_correlation(news_hourly, returns_hourly)
         lag = compute_lag_analysis(news_hourly, returns_hourly)
 
-        news_series = news_hourly.set_index("hour_ts")["article_count"]
-        return_series = returns_hourly.set_index("hour_ts")["return"]
-        granger = test_granger_causality(news_series, return_series)
+        granger = {"p_value": 1.0, "granger_causes_prices": False}
+        try:
+            from vinu_correlation.engine.granger import run_granger_causality_test as test_granger_causality
+            news_series = news_hourly.set_index("hour_ts")["article_count"]
+            return_series = returns_hourly.set_index("hour_ts")["return"]
+            granger = test_granger_causality(news_series, return_series)
+        except ImportError:
+            pass
 
         result = {
             "symbol": symbol,
@@ -234,6 +243,119 @@ class CorrelationAPI:
             },
         }
         return result
+
+    def get_story(
+        self,
+        symbol: str,
+        from_ts: int | None = None,
+        to_ts: int | None = None,
+    ) -> dict[str, Any]:
+        impact = self.get_impact(symbol, from_ts, to_ts)
+        corr = self.get_correlation(symbol, from_ts, to_ts)
+        dd = self.get_drawdown(symbol, from_ts, to_ts)
+        baseline = self.get_baseline(symbol)
+
+        articles = impact.get("events", [])
+        time_gaps = compute_time_gaps(articles)
+
+        candles = []
+        if from_ts is not None and to_ts is not None:
+            candles = self._price_client.get_candles(symbol, from_ts=from_ts, to_ts=to_ts)
+        else:
+            candles = self._price_client.get_candles(symbol, days=30)
+
+        by_session_corr = compute_correlation_by_session(articles, candles)
+
+        article_sessions = {}
+        for a in articles:
+            ts = a.get("ts", 0)
+            article_sessions[ts] = a
+
+        for ev in impact.get("events", []):
+            ev_ts = ev.get("ts", 0)
+            related = [g for g in time_gaps if g.get("after_ts") == ev_ts]
+            ev["time_since_last_event_hours"] = related[0]["gap_hours"] if related else None
+            ev["abnormal_return"] = ev.get("abnormal_return_30m")
+            ev["ar_significant"] = ev.get("ar_significant", False)
+
+        baseline_anomalies = []
+        current_hour = int(__import__("time").time() / 3600) * 3600
+        for b in baseline.get("sessions", {}):
+            data = baseline["sessions"][b]
+            if abs(data.get("z_score", 0)) > 2:
+                baseline_anomalies.append({
+                    "session": b,
+                    "z_score": data.get("z_score", 0),
+                    "deviation_level": data.get("deviation_level", "normal"),
+                    "mean": data.get("mean", 0),
+                    "current_level": data.get("mean", 0),
+                })
+
+        enriched_drawdowns = []
+        for d in dd.get("drawdowns", []):
+            attr = d.get("attribution", {})
+            enriched_drawdowns.append({
+                "peak_date": d.get("peak_ts"),
+                "trough_date": d.get("trough_ts"),
+                "drop_pct": d.get("drop_pct", 0.0),
+                "news_attributed_pct": attr.get("news_driven_pct", 0),
+                "high_impact_events_in_window": len(attr.get("contributing_events", [])),
+                "sessions_involved": list(set(
+                    e.get("session", "unknown") for e in attr.get("contributing_events", [])
+                )),
+            })
+
+        return {
+            "ticker": symbol,
+            "period": {"from": from_ts, "to": to_ts},
+            "impact_events": impact.get("events", []),
+            "correlations": {
+                "overall": {
+                    "pearson": corr.get("news_return_corr"),
+                    "p_value": corr.get("corr_p_value"),
+                    "sample_hours": corr.get("sample_size"),
+                },
+                "by_session": by_session_corr,
+            },
+            "session_transitions": {},
+            "drawdown_events": enriched_drawdowns,
+            "baseline_anomalies": baseline_anomalies,
+        }
+
+    def get_batch(
+        self,
+        symbols: list[str],
+        from_ts: int | None = None,
+        to_ts: int | None = None,
+    ) -> dict[str, Any]:
+        results = {}
+        for sym in symbols:
+            try:
+                results[sym] = self.get_story(sym, from_ts, to_ts)
+            except Exception as e:
+                results[sym] = {"error": str(e)}
+        return {"symbols": symbols, "results": results, "count": len(symbols)}
+
+    def get_gap(
+        self,
+        symbol: str,
+        date: str | None = None,
+    ) -> dict[str, Any]:
+        from_ts = None
+        to_ts = None
+        if date:
+            from datetime import datetime, timezone
+            try:
+                d = datetime.fromisoformat(date).replace(tzinfo=timezone.utc)
+                from_ts = int(d.timestamp()) - 86400
+                to_ts = int(d.timestamp()) + 86400
+            except (ValueError, TypeError):
+                pass
+        articles = self._news_client.get_ticker_news(symbol, from_ts=from_ts, to_ts=to_ts)
+        events = []
+        for article in articles:
+            events.extend(compute_impact_for_article(article, self._price_client))
+        return compute_premarket_gap(events, date)
 
     def compute_and_store(
         self,

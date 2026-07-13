@@ -13,6 +13,9 @@ DEFAULT_MAX_ITERATIONS = 5
 DEFAULT_IMPROVEMENT_THRESHOLD = 0.05
 DEFAULT_INITIAL_CAPITAL = 1_000_000.0
 DEFAULT_DATA_ROOT = Path.cwd() / "data"
+DEFAULT_LLM_BASE_URL = "http://127.0.0.1:11434/v1"
+DEFAULT_LLM_MODEL = "llama3.2"
+DEFAULT_LLM_TTL_SEC = 86400
 
 _env_loaded = False
 
@@ -42,6 +45,13 @@ class ResearchConfig:
     slippage_pct: float = 0.0005
     allow_short: bool = True
     data_root: Path = DEFAULT_DATA_ROOT
+    max_drawdown_threshold: float = -0.25
+    llm_enabled: bool = False
+    llm_base_url: str = DEFAULT_LLM_BASE_URL
+    llm_model: str = DEFAULT_LLM_MODEL
+    llm_api_key: str | None = None
+    llm_ttl_sec: int = DEFAULT_LLM_TTL_SEC
+    llm_cache_path: str = ""
 
 
 def load_config(*, force_reload: bool = False) -> ResearchConfig:
@@ -59,4 +69,10 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         slippage_pct=float(os.environ.get("VINU_RESEARCH_SLIPPAGE_PCT", "0.0005")),
         allow_short=os.environ.get("VINU_RESEARCH_ALLOW_SHORT", "true").lower() == "true",
         data_root=data_root,
+        max_drawdown_threshold=float(os.environ.get("VINU_RESEARCH_MAX_DRAWDOWN_THRESHOLD", "-0.25")),
+        llm_enabled=os.environ.get("VINU_RESEARCH_LLM_ENABLED", "false").lower() == "true",
+        llm_base_url=os.environ.get("VINU_LLM_BASE_URL", DEFAULT_LLM_BASE_URL),
+        llm_model=os.environ.get("VINU_LLM_MODEL", DEFAULT_LLM_MODEL),
+        llm_api_key=os.environ.get("VINU_LLM_API_KEY") or None,
+        llm_ttl_sec=int(os.environ.get("VINU_RESEARCH_LLM_TTL_SEC", str(DEFAULT_LLM_TTL_SEC))),
     )
