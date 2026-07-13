@@ -4,7 +4,46 @@ import numpy as np
 import pandas as pd
 
 from vinu_simulator.engine.simulator import WeightSimulator, SimulatorEnv
-from vinu_simulator.models.simulation import SimulationInput
+from vinu_simulator.models.simulation import SimulationConfig, SimulationInput
+
+
+class TestNoLookAheadExecution:
+    """
+    A signal observed using data through day D can only be acted on starting day D+1 —
+    the engine must never fill a trade at the exact price that produced the signal.
+    """
+
+    def test_signal_executes_one_day_later_at_next_price(self):
+        dates = pd.date_range("2023-01-02", periods=4, freq="D")
+        prices = pd.DataFrame({"X": [100.0, 105.0, 110.0, 120.0]}, index=dates)
+        # A single signal set on day 0 only — forward-filled from there on.
+        weights = pd.DataFrame({"X": [1.0]}, index=[dates[0]])
+        config = SimulationConfig(
+            strategy_name="lookahead_test",
+            start_date=str(dates[0].date()),
+            end_date=str(dates[-1].date()),
+            initial_capital=1_000_000.0,
+            transaction_cost_pct=0.0,
+            slippage_pct=0.0,
+            slippage_model="flat",
+            deviation_threshold=0.0,
+        )
+        inp = SimulationInput(
+            strategy_name="lookahead_test",
+            weight_signals=weights,
+            price_data=prices,
+            config=config,
+        )
+        result = WeightSimulator(config).run(inp)
+
+        assert len(result.trades) == 1
+        first_trade = result.trades[0]
+        # Must fill at day 1's price (105), never at day 0's price (100) — the price
+        # that produced the signal.
+        assert first_trade.date == dates[1]
+        assert first_trade.price == 105.0
+        # No position exists on day 0 — the engine had nothing to act on yet.
+        assert result.weights_history.iloc[0]["X"] == 0.0
 
 
 class TestWeightSimulator:

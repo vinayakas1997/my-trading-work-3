@@ -4,59 +4,130 @@
 
 This project is an **Agentic Strategy Researcher** — an AI system that acts like a human quant researcher. You give it a strategy idea in plain English, and it:
 
-1. **Generates** runnable Python strategy code from a template
+1. **Generates** runnable Python strategy code from a template (or LLM)
 2. **Backtests** it using realistic cost models
 3. **Analyzes** why it fails using news-impact story blocks
 4. **Refines** the strategy by adding filters
 5. **Loops** until performance stabilizes or max iterations reached
 6. **Outputs** a research report + optimized strategy code for human review
 
-It works in two modes:
-- **Without LLM** (default): uses 6 hardcoded rules for the Risk Critic — deterministic, instant, zero dependencies
-- **With LLM** (`--llm` flag): rules run first, then an optional LLM pass adds extra suggestions — needs Ollama or OpenAI-compatible API
+### LLM Call Budget
+
+The system has **two independent LLM call sites**, each gated by different settings:
+
+| Call Site | What For | Gated By | Per Iteration | Max Total |
+|-----------|----------|----------|---------------|-----------|
+| **Risk Critic** | Extra analysis suggestions | `--llm` flag | 1 | 5 (default iterations) |
+| **Strategy Generator** | Novel code from description | `--llm` + `generator_mode=hybrid/llm` | `n_candidates` (default 3) only in **iteration 1** | 3 |
+
+Without `--llm`: **0 LLM calls**. Everything runs on templates + deterministic rules.
+
+With `--llm` + template mode: **1 call per iteration** (max 5).
+
+With `--llm` + hybrid mode: **3 calls in iteration 1 + 1 per subsequent iteration** (max 8).
+
+All LLM calls go through `ResilientClient` with circuit breaker (3 failures → 30s open), rate limiter (10/min), SQLite cache (24h TTL on risk critic only).
 
 ---
 
-## 2. Mermaid Flow Diagram
+## 2. Complete Flow Diagram
 
 ```mermaid
 flowchart TD
     User[/"User: test SMA crossover on AAPL"/] --> Parse["Parse idea
     extract symbol, date range"]
-    Parse --> QuantCoder["Quant Coder
-    match keyword → template
-    generate UserStrategy(BaseStrategy)"]
-    QuantCoder --> Backtest["vinu-simulator
+    
+    Parse --> GeneratorChoice{"generator_mode?"}
+    GeneratorChoice -->|template| Template["Template Matcher
+    find_recipe() → keyword scoring
+    15 templates: crossover, rsi, macd,
+    bollinger, breakout, supertrend..."]
+    Template --> GenCode["generate_strategy()
+    fill template with default params"]
+    
+    GeneratorChoice -->|hybrid| HybridGen["Template + LLM Generator
+    Both branches run"]
+    GeneratorChoice -->|llm| LlmGenOnly["LLM Generator only"]
+    
+    HybridGen --> Template
+    HybridGen --> LlmGen
+    LlmGenOnly --> LlmGen
+    Template --> CodeReady
+    
+    subgraph LlmGen["LLM Strategy Generator"]
+        LG1["LLM call 1: candidate 1"]
+        LG2["LLM call 2: candidate 2"]
+        LG3["LLM call 3: candidate 3"]
+        LG1 & LG2 & LG3 --> Validate["AST validation
+        Sandbox exec test"]
+        Validate --> Rank["rank_candidates()
+        score = 100 - complexity penalty
+        + backtest metrics bonus"]
+        Rank --> BestCode["pick best candidate"]
+    end
+    
+    LlmGen --> CodeReady
+    
+    CodeReady["UserStrategy code string"] --> Backtest["vinu-simulator
     POST /simulate/custom
     returns Sharpe, MaxDD, WinRate, trades"]
+    
     Backtest --> Story["vinu-correlation
     GET /story/{ticker}
     returns impact events, correlations,
     drawdowns, baseline anomalies"]
+    
     Story --> RiskCritic
     
     subgraph RiskCritic["Risk Critic Agent"]
         Rules["_rule_based_check()
         6 hardcoded rules
         ⚡ ALWAYS runs, < 1ms"] --> Verdict{verdict?}
-        Rules --> LLM["_llm_enhanced_check()
-        🧠 ONLY if --llm flag
+        
+        LlmGate{"--llm flag?
+        llm_enabled=True?"}
+        Rules --> LlmGate
+        LlmGate -->|Yes| LLMCall["LLM call
         prompt = metrics + story + rules output
-        5-10s call to Ollama/OpenAI
-        cached 24h in SQLite"]
-        LLM -->|extra suggestions| Merge
-        Verdict --> Merge["_merge_feedback()
+        SQLite cache lookup (24h TTL)
+        ResilientClient → /chat/completions
+        Circuit breaker, rate limiter"]
+        LLMCall -->|cache hit| Cached["return cached response"]
+        LLMCall -->|cache miss| API["HTTP POST 5-10s"]
+        API --> ParseResp["Parse JSON response"]
+        Cached --> Merge
+        ParseResp --> CacheWrite["Write to SQLite cache"]
+        CacheWrite --> Merge
+        
+        LlmGate -->|No| RulesOnly["return rules output"]
+        RulesOnly --> Merge
+        
+        Merge["_merge_feedback()
         LLM can ADD suggestions
         LLM can UPGRADE verdict
         LLM CANNOT DOWNGRADE verdict
         ⚡ always produces valid output"]
     end
     
-    Merge -->|REFINE| QuantCoder
+    Merge -->|REFINE| GenLoop["iteration += 1
+    iteration > max_iterations?
+    or no improvement > 0.05?"]
+    GenLoop -->|continue| FilterGen["_generate_filters()
+    keyword match → filter code lines
+    adx → signal[adx < 20] = 0
+    london → session exclusion
+    volatil → ATR guard
+    news → news cooldown"]
+    FilterGen --> Backtest
+    
     Merge -->|PASS or STOP| Report["Research Report
     before/after metrics
     refinement history
-    key findings"]
+    key findings
+    benchmark comparison"]
+    
+    GenLoop -->|stop| Report
+    
     Report --> Approval{"Human Approval
     [y/N] or --approve"}
     Approval -->|Yes| Done[/"✅ Approved strategy
@@ -66,7 +137,87 @@ flowchart TD
 
 ---
 
-## 3. Without LLM — Rules-Only Flow
+## 3. LLM Call Details
+
+### Call Site 1: Risk Critic Enhancement
+
+| Property | Value |
+|----------|-------|
+| **Where** | `loop.py:_llm_enhanced_check()` → `llm.py:chat_json()` |
+| **When** | Every iteration, if `--llm` flag is set |
+| **Count** | 1 per iteration (max 5 by default, tunable via `max_iterations`) |
+| **Prompt** | System: risk analyst role + JSON schema. User: backtest metrics + story blocks + rules output |
+| **Output** | `{"additional_suggestions": [...], "verdict_upgrade": null\|"PASS"\|"STOP", "reasoning": "..."}` |
+| **Caching** | SQLite, keyed by SHA256 of full prompt, 24h TTL |
+| **Failure mode** | Any exception → returns `None` → merge returns rules output unchanged |
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Iteration 1   2   3   4   5                             │
+│ LLM calls:    │   │   │   │   │                         │
+│   Risk Critic ✦   ✦   ✦   ✦   ✦  (if --llm enabled)    │
+│   Generator   ✦✦✦                                     │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Call Site 2: Strategy Code Generator
+
+| Property | Value |
+|----------|-------|
+| **Where** | `loop.py:_default_quant_coder()` → `llm_generator.py:generate()` |
+| **When** | Only **iteration 1**, if `--llm` is set AND `generator_mode` is `hybrid` or `llm` |
+| **Count** | `n_candidates` sequential calls (default 3, tunable via `llm_candidates` config) |
+| **Prompt** | System: quant dev role + `BaseStrategy` interface + JSON schema. User: idea + symbol + period + indicators |
+| **Output** | `{"strategy_code": "...", "features_required": [...], "reasoning": "...", "params": {...}}` |
+| **Caching** | None currently |
+| **Failure mode** | Failed calls are skipped (logged); remaining valid candidates used. If all fail → falls back to template |
+
+### Complete Scenarios
+
+#### Scenario A: No LLM (default)
+
+```
+vinu-research run "SMA crossover on AAPL" --from 2024-01-01 --to 2024-12-31
+→ llm_enabled=False → self._llm = None
+→ generator_mode="template" (default)
+→ LLM calls: 0
+```
+
+#### Scenario B: LLM Risk Critic Only
+
+```
+vinu-research run "SMA crossover on AAPL" --from 2024-01-01 --to 2024-12-31 --llm
+→ llm_enabled=True → self._llm = ResearchLlmClient()
+→ generator_mode="template" (default)
+→ LLM calls: 1 per iteration = max 5
+```
+
+#### Scenario C: Full Hybrid
+
+```
+vinu-research run "SMA crossover on AAPL" --from 2024-01-01 --to 2024-12-31 --llm
+  -e VINU_RESEARCH_GENERATOR_MODE=hybrid
+→ llm_enabled=True
+→ generator_mode="hybrid"
+→ LLM calls:
+    Iteration 1: 3 (generator candidates) + 1 (risk critic) = 4
+    Iterations 2-5: 1 (risk critic) each = 4
+    Total: 8
+```
+
+#### Scenario D: LLM-Only Generator + Risk Critic
+
+```
+vinu-research run "SMA crossover on AAPL" --from 2024-01-01 --to 2024-12-31 --llm
+  -e VINU_RESEARCH_GENERATOR_MODE=llm
+→ llm_enabled=True
+→ generator_mode="llm"
+→ LLM calls: same as Scenario C (8 total), but template branch is skipped
+```
+
+---
+
+## 4. Without LLM — Rules-Only Flow
 
 This is the default mode. No external dependencies, deterministic, instant.
 
@@ -139,6 +290,7 @@ $ vinu-research run "SMA20/SMA50 crossover on AAPL" --from 2024-01-01 --to 2024-
   - Refinement history
   - Key findings
   - Optimized strategy code
+  - Benchmark comparison (if benchmark data available)
 
 **Stage 9 — Approval:**
 - Strategy code saved to `output/{symbol}_{name}.py`
@@ -156,7 +308,7 @@ $ vinu-research run "SMA20/SMA50 crossover on AAPL" --from 2024-01-01 --to 2024-
 ────────────────────────────────────────────
 [Iteration 1] Quant Coder: Crossover strategy generated
 [Iteration 1] Simulator: Sharpe=0.72, MaxDD=-18.3%, WinRate=51%
-[Iteration 1] Risk Critic: 
+[Iteration 1] Risk Critic:
   → MaxDD -18.3% < -15% → add ATR volatility guard
   → Sharpe 0.72 > 0.5 → OK
   → WinRate 51% > 40% → OK
@@ -204,7 +356,7 @@ Approve this strategy for use? [y/N]
 
 ---
 
-## 4. With LLM — Hybrid Enhancement
+## 5. With LLM — Hybrid Enhancement
 
 Run with: `vinu-research run "..." --llm`
 
@@ -227,10 +379,13 @@ Stage 5 (Risk Critic) with LLM:
              │ Yes
              v
   ┌──────────────────────┐
-  │  Build LLM prompt    │
-  │  - backtest metrics  │
-  │  - story blocks      │
-  │  - rules output      │
+  │  SQLite cache lookup │
+  │  SHA256(propmt)      │──Hit──→ return cached response
+  └──────────┬───────────┘
+             │ Miss
+             v
+  ┌──────────────────────┐
+  │  TokenBucket.wait()  │ ← 10 requests/min rate limit
   └──────────┬───────────┘
              │
              v
@@ -238,14 +393,13 @@ Stage 5 (Risk Critic) with LLM:
   │  Call /chat/completions│
   │  via ResilientClient │
   │  (circuit breaker,   │
-  │   retry, 120s timeout)│
+  │   retry 2x, 120s tout)│
   └──────────┬───────────┘
              │
              v
   ┌──────────────────────┐
   │  Parse JSON response │
-  │  Cache result in     │
-  │  SQLite (24h TTL)    │
+  │  Write to SQLite     │
   └──────────┬───────────┘
              │ success     │ failure
              v             v
@@ -257,7 +411,7 @@ Stage 5 (Risk Critic) with LLM:
   └──────────────────┘
 ```
 
-### Example LLM Prompt
+### Example LLM Prompt (Risk Critic)
 
 ```
 SYSTEM: You are a senior quantitative risk analyst...
@@ -304,7 +458,89 @@ Story Blocks:
 
 ---
 
-## 5. Stage-by-Stage Breakdown
+## 6. LLM Generator Detail
+
+When `generator_mode` is `hybrid` or `llm` AND `--llm` is set, the strategy code is generated by the LLM instead of (or in addition to) the template matcher.
+
+```mermaid
+flowchart LR
+    subgraph Iteration1["Iteration 1"]
+        direction LR
+        A["LLM Generator
+        n_candidates=3 calls"] --> B["AST Validation
+        syntax + class + method"]
+        B --> C["Sandbox Exec
+        restricted __builtins__
+        mock BaseStrategy
+        sample data pass-through"]
+        C --> D["rank_candidates()
+        complexity penalty
+        (if backtest results exist)"]
+        D --> E["Pick best candidate"]
+    end
+    
+    subgraph Iterations2_5["Iterations 2-5"]
+        F["Template code only
+        (LLM generator never called again)
+        Filters injected from critique"]
+    end
+    
+    Iteration1 --> Iterations2_5
+```
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ LlmStrategyGenerator.generate()                             │
+│                                                             │
+│  for i in range(n_candidates):  ← default 3                │
+│    candidate = await _generate_one()                        │
+│      │                                                      │
+│      ├─ _build_generation_prompt()                          │
+│      │    system:  "You are a senior quantitative analyst"  │
+│      │    user:    "Generate SMA crossover for AAPL..."     │
+│      │                                                      │
+│      ├─ self._llm.chat_json(system, user)                   │
+│      │    → HTTP POST /chat/completions                     │
+│      │    → parse response JSON                             │
+│      │                                                      │
+│      ├─ validate_code()          ← AST parse & safety check │
+│      ├─ validate_sandbox()       ← restricted exec()        │
+│      └─ return LlmCandidate or None                         │
+│                                                             │
+│  return [candidate, candidate, ...]  ← only valid ones      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 7. Phase 2 Enhancements (Benchmark + Extended Generator)
+
+The system has been extended with two major enhancements:
+
+### Benchmark Comparison
+
+- **New module**: `benchmark.py` — pure numpy/pandas, no simulator dependency
+- Fetches benchmark data (SPY default) from `stock-price` service
+- Computes: Alpha, Beta, Information Ratio, Tracking Error, Up/Down Capture, Market Correlation, Relative Max Drawdown, Excess CAGR
+- Displayed in report as side-by-side comparison table
+- Risk critic has 4 new benchmark-aware rules:
+  - Negative alpha → "consider hedging"
+  - IR < 0.5 → "strategy doesn't justify active risk"
+  - Down capture > 1.2 → "amplifies losses vs benchmark"
+  - Underperforming CAGR → "strategy trails benchmark"
+
+### Strategy Generator Upgrade
+
+| Feature | Before | After |
+|---------|--------|-------|
+| Templates | 3 (crossover, rsi, momentum) | 15 (added macd, vwap, bollinger, zscore, roc, breakout, volatility breakout, supertrend, adx_filtered, volume_breakout, momentum_mr) |
+| Keyword routing | `if "crossover" in idea` | `find_recipe()` with scored matching (`score = n_matched * 500 - n_keywords * 10 + matched_length + word_hits * 5`) |
+| LLM generation | None | `LlmStrategyGenerator` with AST validation + sandbox exec + ranking |
+| Comparison | None | `rank_candidates()` scores by complexity penalty + backtest metrics |
+
+---
+
+## 8. Stage-by-Stage Breakdown
 
 ### Stage 1: Idea Parsing
 
@@ -320,11 +556,11 @@ Story Blocks:
 
 | Aspect | Detail |
 |--------|--------|
-| **What happens** | Keyword matching on user idea: "crossover"/"sma"/"ma" → crossover template, "rsi"/"mean reversion" → RSI template, "momentum"/"trend" → momentum template, unknown → crossover default. Template filled with default params (fast_period=20, slow_period=50, rsi_period=14, etc.). Produces `UserStrategy(BaseStrategy)` class string. |
-| **Code location** | `generator.py:generate_strategy()`, `loop.py:_default_quant_coder()` |
-| **Tunable** | Template params via `params` dict passed to `generate_strategy()`. Only 3 template types exist. |
-| **Error sources** | Unrecognized idea → defaults to crossover (always produces valid code). No crash possible. |
-| **Deterministic?** | Yes |
+| **What happens** | **Template path**: Keyword matching on user idea via `find_recipe()` → selects from 15 templates by scored match. Template filled with default params. **LLM path**: `LlmStrategyGenerator.generate()` makes `n_candidates` LLM calls, validates each with AST + sandbox, ranks results. **Hybrid path**: Both run, LLM candidate used in iteration 1. |
+| **Code location** | `generator.py:generate_strategy()`, `loop.py:_default_quant_coder()`, `llm_generator.py` |
+| **Tunable** | Template params via `params` dict. LLM candidates via `llm_candidates` config. Mode via `generator_mode`. |
+| **Error sources** | Unrecognized idea → defaults to crossover template. LLM fails → falls back to template. Sandbox fails → candidate skipped. |
+| **Deterministic?** | Template: Yes. LLM: No. |
 
 ### Stage 3: Backtest
 
@@ -350,7 +586,7 @@ Story Blocks:
 
 | Aspect | Detail |
 |--------|--------|
-| **What happens** | 6 if-statements evaluated in order. Each checks a metric threshold and appends a text suggestion. Early return for PASS (Sharpe≥1.5 + MaxDD>-8%) or STOP (iteration≥3 + Sharpe<0.3). Default returns REFINE with all matched suggestions (or generic suggestion if none matched). |
+| **What happens** | 6 if-statements evaluated in order. Each checks a metric threshold and appends a text suggestion. Early return for PASS (Sharpe≥1.5 + MaxDD>-8%) or STOP (iteration≥3 + Sharpe<0.3). Default returns REFINE with all matched suggestions (or generic suggestion if none matched). Then 4 benchmark rules check if benchmark data is available. |
 | **Code location** | `loop.py:_rule_based_check()` |
 | **Tunable** | Thresholds are hardcoded in the method. `max_drawdown_threshold` and `improvement_threshold` from config affect the **loop** stop conditions (not the rule check itself). |
 | **Error sources** | **Story is None** → London drawdown rule skipped. **Metrics are all zeros** → all rules fire, generic suggestion added. **No crash possible** — always returns a valid `CriticFeedback`. |
@@ -360,7 +596,7 @@ Story Blocks:
 
 | Aspect | Detail |
 |--------|--------|
-| **What happens** | Checks if `self._llm` exists and `is_configured()`. Builds prompt with metrics + story + rules output. Calls `POST /chat/completions` via `ResilientClient` with 120s timeout. Rate-limited to 10 calls/min via `TokenBucket`. Response cached in SQLite for 24h. JSON parsed and returned. ANY exception → logs warning, returns None. |
+| **What happens** | Checks if `self._llm` exists and `is_configured()`. Checks SQLite cache by SHA256 prompt hash. If miss: builds prompt with metrics + story + rules output. `TokenBucket.wait()` for rate limit. Calls `POST /chat/completions` via `ResilientClient` with 120s timeout. Response cached in SQLite for 24h. JSON parsed and returned. ANY exception → logs warning, returns None. |
 | **Code location** | `llm.py:ResearchLlmClient.chat_json()`, `loop.py:_llm_enhanced_check()` |
 | **Tunable** | `llm_enabled`, `llm_base_url`, `llm_model`, `llm_api_key`, `llm_ttl_sec` via config/env. Model temperature hardcoded to 0.2. |
 | **Error sources** | **LLM unreachable** → `ResilientClient` retries 2x, then returns None → fallback to rules. **Bad JSON response** → `_parse_json()` returns None → not cached, returns None. **Rate limited** → `TokenBucket.wait_async()` blocks until token available (max ~6s). **Circuit breaker open** → returns None immediately. **Timeout** → 120s timeout, returns None. **Cache hit** → returns cached response, no HTTP call. |
@@ -390,7 +626,7 @@ Story Blocks:
 
 | Aspect | Detail |
 |--------|--------|
-| **What happens** | Formats before/after metrics comparison, iteration history table (Iter | Sharpe | MaxDD | WinRate | Verdict), key findings deduplicated from all critiques, optimized strategy code block. Outputs Markdown string. |
+| **What happens** | Formats before/after metrics comparison, iteration history table (Iter \| Sharpe \| MaxDD \| WinRate \| Verdict), key findings deduplicated from all critiques, optimized strategy code block. If benchmark data exists, adds side-by-side comparison (CAGR, Sharpe, MaxDD, Vol, Win Rate) and conditional Alpha/Beta/Capture sub-sections. Outputs Markdown string. |
 | **Code location** | `report.py:generate_report()` |
 | **Tunable** | Not tunable |
 | **Error sources** | **No crash possible** — always produces valid Markdown. Empty history → shows "Final Metrics" without before/after comparison. No best result → skips benchmark comparison. |
@@ -408,12 +644,13 @@ Story Blocks:
 
 ---
 
-## 6. Without LLM vs With LLM — Comparison
+## 9. Without LLM vs With LLM — Comparison
 
 | Aspect | Without LLM | With LLM |
 |--------|-------------|----------|
 | **Critic intelligence** | 6 hardcoded threshold rules | Rules + LLM reading full story blocks |
 | **Catches** | Common patterns (ADX for low Sharpe, ATR for high volatility, London session for win rate) | Nuanced patterns ("losses cluster 30min after London news spikes", "negative London correlation suggests RSI confirmation needed") |
+| **Strategy generation** | 15 templates with keyword routing | LLM generates novel strategies + validates via AST + sandbox |
 | **Speed per iteration** | Instant (< 1ms for critic) | +5-10s for LLM call (depends on model) |
 | **Dependencies** | None — fully self-contained | Ollama or OpenAI-compatible API at `VINU_LLM_BASE_URL` |
 | **Reliability** | 100% deterministic — same input always same output | Non-deterministic — LLM may give different suggestions each run |
@@ -423,10 +660,20 @@ Story Blocks:
 | **Caching** | Not needed | SQLite cache with 24h TTL — same prompt reuses cached response |
 | **Rate limiting** | Not needed | TokenBucket at 10 requests/minute |
 | **Circuit breaker** | Not needed | 3 failures → open for 30s → fast-fail with fallback |
+| **LLM calls per run** | 0 | 1–8 depending on mode + iterations |
+
+### Call Count by Mode
+
+| Mode | `--llm` | `generator_mode` | Iter 1 | Iter 2-5 | Total |
+|------|---------|------------------|--------|-----------|-------|
+| Default | No | template | 0 | 0 | **0** |
+| LLM Critic + Template | Yes | template | 1 | 1 each | **5** |
+| LLM Critic + Hybrid | Yes | hybrid | 4 (3 gen + 1 critic) | 1 each | **8** |
+| LLM Critic + LLM Gen | Yes | llm | 4 (3 gen + 1 critic) | 1 each | **8** |
 
 ---
 
-## 7. Tunability Summary
+## 10. Tunability Summary
 
 All configurable via environment variables or CLI flags:
 
@@ -444,10 +691,14 @@ All configurable via environment variables or CLI flags:
 | `VINU_LLM_MODEL` | — | `llama3.2` | Model name for chat completions |
 | `VINU_LLM_API_KEY` | — | (none) | Bearer token for API auth |
 | `VINU_RESEARCH_LLM_TTL_SEC` | — | `86400` | LLM response cache TTL (24h) |
+| `VINU_RESEARCH_GENERATOR_MODE` | — | `template` | `template`, `hybrid`, or `llm` |
+| `VINU_RESEARCH_LLM_CANDIDATES` | — | `3` | Number of LLM generator candidates |
+| `VINU_STOCK_PRICE_API_URL` | — | `http://127.0.0.1:8081` | Stock price service for benchmark data |
+| `VINU_RESEARCH_BENCHMARK_SYMBOL` | — | `SPY` | Benchmark symbol for comparison |
 
 ---
 
-## 8. Common Error Scenarios & Recovery
+## 11. Common Error Scenarios & Recovery
 
 | Error | Stage | What Happens | Recovery |
 |-------|-------|-------------|----------|
@@ -456,9 +707,11 @@ All configurable via environment variables or CLI flags:
 | No news data for symbol | 4 (Story) | Story returns empty events list. Same as service down — rules run without story analysis. | Check news service has data for the symbol and date range. |
 | LLM service down | 6 (LLM) | Circuit breaker opens after 3 failures → subsequent calls return None immediately. Merge returns rules output unchanged. User sees log warning. | Start Ollama/API service. System works without LLM. |
 | LLM returns bad JSON | 6 (LLM) | `_parse_json()` returns None → not cached → `_llm_enhanced_check()` returns None. Merge returns rules output. | No action needed — result is same as LLM disabled. |
+| LLM generator returns invalid code | 2 (Generator) | `validate_code()` or `validate_sandbox()` returns False → candidate skipped. If all 3 fail, falls back to template. | No action needed — system degrades gracefully. |
 | Market data gaps | 3 (Backtest) | Simulator's internal forward fill handles missing bars. Fewer trades executed during gap periods. | Ensure stock-price service is ingesting data for the period. |
 | Strategy code syntax error | 3 (Backtest) | Simulator returns 422 HTTP error. `ResilientClient` raises exception. Loop logs warning and breaks with best-so-far result. | Generated code is always valid Python — this would indicate a bug in generator. |
 | All metrics zero | 3 (Backtest) | All rules fire, generic "try tightening position sizing" suggestion added. Loop continues refinement. | No crash — system handles gracefully but refinement may not improve. |
 | Max iterations reached | 7 (Loop) | Loop exits normally with best result (may be from earlier iteration if recent ones didn't improve). Report shows all iterations. | Increase `--max-iterations` or check if strategy has fundamental issues. |
 | Invalid date format | 1 (Parse) | `_validate_date()` raises `ValueError` with message. CLI catches and exits with error. User sees: "Invalid --from: 'date'. Expected format: YYYY-MM-DD". | Provide date in correct format. |
 | KeyboardInterrupt | Any | `asyncio.run()` catches Ctrl+C → "Interrupted by user" → exits with code 130. Best-so-far result is lost (not saved). | Use `--quiet` to reduce output noise. Results are not persisted in CLI mode. |
+| Benchmark service unavailable | 3 (Backtest) | `get_benchmark_data()` returns None → benchmark section omitted from report, benchmark rules skipped. | Start stock-price service. System works without benchmark comparison. |

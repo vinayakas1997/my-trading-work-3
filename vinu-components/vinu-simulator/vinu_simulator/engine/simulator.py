@@ -14,7 +14,7 @@ from vinu_simulator.engine.costs import (
     CostModel,
     FlatCostModel,
 )
-from vinu_simulator.engine.metrics import compute_performance_metrics
+from vinu_simulator.engine.metrics import compute_full_metrics, compute_performance_metrics
 from vinu_simulator.models.metrics import MetricBundle
 from vinu_simulator.models.simulation import (
     SimulationConfig,
@@ -81,6 +81,22 @@ class WeightSimulator:
 
         ws_aligned = weight_signals.reindex(total_calendar).ffill().fillna(0.0)
 
+        # T+1 execution: a signal observed using data through day D can only be acted on
+        # starting day D+1 — a real order can't fill at the same close that produced the
+        # signal. Shift the whole weight series forward by one row (one trading day in the
+        # ordered calendar) so the weight applied on day D was decided using information
+        # available through day D-1. Without this shift, the engine fills trades at the
+        # exact price that produced the signal, which is look-ahead bias.
+        target_weights_aligned = ws_aligned.shift(1).fillna(0.0)
+
+        calendar_positions = {date: idx for idx, date in enumerate(total_calendar)}
+        signal_positions = {
+            calendar_positions[d] for d in weight_signals.index if d in calendar_positions
+        }
+        # A rebalance executes on day D if a new signal was set on day D-1 (the signal
+        # now being acted on, one day late by construction).
+        rebalance_positions = {p + 1 for p in signal_positions if p + 1 < len(total_calendar)}
+
         config = inp.config
         n = len(common_tickers)
         cash = config.initial_capital
@@ -93,22 +109,30 @@ class WeightSimulator:
         weights_hist: list[list[float]] = []
         trades: list[TradeRecord] = []
 
-        rebalance_dates = set(weight_signals.index)
+        # Pre-extract to numpy once, outside the loop. price_data / volume_data /
+        # target_weights_aligned are all already reindexed to total_calendar in the
+        # same row order, so integer position lookups here match `enumerate` exactly
+        # — this avoids paying a `.loc[date]` label lookup 2-3x per day, every day,
+        # on every backtest the system runs.
+        price_matrix = price_data.values.astype(np.float64)
+        volume_matrix = volume_data.values.astype(np.float64) if volume_data is not None else None
+        weights_matrix = target_weights_aligned.values.astype(np.float64)
 
         for step_idx, date in enumerate(total_calendar):
-            prices = price_data.loc[date].values.astype(np.float64)
+            prices = price_matrix[step_idx]
             if np.any(~np.isfinite(prices)):
                 raise ValueError(f"NaN/Inf prices on {date}")
-            volumes = (
-                volume_data.loc[date].values.astype(np.float64)
-                if volume_data is not None
-                else None
-            )
+            volumes = volume_matrix[step_idx] if volume_matrix is not None else None
+
+            if config.allow_short:
+                short_notional = float(np.sum(np.abs(np.minimum(holdings, 0.0)) * prices))
+                if short_notional > 0:
+                    cash -= self._cost_model.daily_borrow_cost(short_notional)
 
             nav_before = cash + np.sum(holdings * prices)
-            target_weights = ws_aligned.loc[date].values.astype(np.float64)
+            target_weights = weights_matrix[step_idx]
 
-            is_rebalance = date in rebalance_dates
+            is_rebalance = step_idx in rebalance_positions
             if is_rebalance:
                 current_values = holdings * prices
                 current_weights = np.zeros(n, dtype=np.float64)
@@ -213,7 +237,11 @@ class WeightSimulator:
             columns=common_tickers,
         )
 
-        metrics = compute_performance_metrics(portfolio_values_s, daily_returns_s)
+        metrics = compute_full_metrics(
+            portfolio_values_s, daily_returns_s,
+            trades=trades,
+            risk_free_rate=config.risk_free_rate_annual,
+        )
 
         run_id = str(uuid.uuid4())
 
@@ -240,10 +268,9 @@ class SimulatorEnv:
         self.tickers = tickers
         self.price_data = price_data.sort_index()
         self.config = config
-        self._cost_model = FlatCostModel(
-            cost_pct=config.transaction_cost_pct,
-            slippage_pct=config.slippage_pct,
-        )
+        # Reuse WeightSimulator's selector so this env can't silently diverge from the
+        # cost model production backtests actually use.
+        self._cost_model = WeightSimulator(config)._build_cost_model()
 
         self.dates = self.price_data.index.tolist()
         self.n = len(tickers)

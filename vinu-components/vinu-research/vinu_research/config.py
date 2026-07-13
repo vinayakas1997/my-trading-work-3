@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 DEFAULT_FEATURES_API_URL = "http://127.0.0.1:8082"
 DEFAULT_SIMULATOR_API_URL = "http://127.0.0.1:8085"
 DEFAULT_CORRELATION_API_URL = "http://127.0.0.1:8083"
+DEFAULT_STOCK_PRICE_API_URL = "http://127.0.0.1:8081"
+DEFAULT_BENCHMARK_SYMBOL = "SPY"
 DEFAULT_MAX_ITERATIONS = 5
 DEFAULT_IMPROVEMENT_THRESHOLD = 0.05
 DEFAULT_INITIAL_CAPITAL = 1_000_000.0
@@ -52,6 +54,33 @@ class ResearchConfig:
     llm_api_key: str | None = None
     llm_ttl_sec: int = DEFAULT_LLM_TTL_SEC
     llm_cache_path: str = ""
+    # Enabled by default: without walk-forward, a run's reported Sharpe/MaxDD are
+    # purely in-sample, fit to the exact data they're refined against.
+    walk_forward_enabled: bool = True
+    walk_forward_method: str = "expanding"
+    walk_forward_windows: int = 3
+    walk_forward_train_pct: float = 0.6
+    walk_forward_test_pct: float = 0.2
+    walk_forward_gap_days: int = 5
+    walk_forward_min_train_days: int = 252
+    walk_forward_step_size_days: int = 63
+    stock_price_api_url: str = DEFAULT_STOCK_PRICE_API_URL
+    benchmark_symbol: str = DEFAULT_BENCHMARK_SYMBOL
+    generator_mode: str = "hybrid"
+    llm_candidates: int = 3
+
+    # True holdout: a trailing slice of the requested date range the refinement loop
+    # never sees — filters are never chosen using this data. A PASS verdict is only
+    # accepted if the strategy also clears this bar, not just the in-sample metrics
+    # it was tuned against.
+    holdout_fraction: float = 0.2
+    holdout_gap_days: int = 5
+    # A PASS candidate whose holdout Sharpe degrades by more than this fraction of
+    # its in-sample Sharpe (or goes negative) is rejected and refinement continues.
+    max_holdout_sharpe_degradation: float = 0.5
+    # Never allow PASS on a thin sample, regardless of how good the Sharpe looks —
+    # a handful of trades isn't enough to trust any ratio computed from them.
+    min_trades_for_pass: int = 30
 
 
 def load_config(*, force_reload: bool = False) -> ResearchConfig:
@@ -75,4 +104,22 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         llm_model=os.environ.get("VINU_LLM_MODEL", DEFAULT_LLM_MODEL),
         llm_api_key=os.environ.get("VINU_LLM_API_KEY") or None,
         llm_ttl_sec=int(os.environ.get("VINU_RESEARCH_LLM_TTL_SEC", str(DEFAULT_LLM_TTL_SEC))),
+        walk_forward_enabled=os.environ.get("VINU_RESEARCH_WALK_FORWARD", "true").lower() == "true",
+        walk_forward_method=os.environ.get("VINU_RESEARCH_WF_METHOD", "expanding"),
+        walk_forward_windows=int(os.environ.get("VINU_RESEARCH_WF_WINDOWS", "3")),
+        walk_forward_train_pct=float(os.environ.get("VINU_RESEARCH_WF_TRAIN_PCT", "0.6")),
+        walk_forward_test_pct=float(os.environ.get("VINU_RESEARCH_WF_TEST_PCT", "0.2")),
+        walk_forward_gap_days=int(os.environ.get("VINU_RESEARCH_WF_GAP_DAYS", "5")),
+        walk_forward_min_train_days=int(os.environ.get("VINU_RESEARCH_WF_MIN_TRAIN_DAYS", "252")),
+        walk_forward_step_size_days=int(os.environ.get("VINU_RESEARCH_WF_STEP_DAYS", "63")),
+        stock_price_api_url=os.environ.get("VINU_STOCK_PRICE_API_URL", DEFAULT_STOCK_PRICE_API_URL),
+        benchmark_symbol=os.environ.get("VINU_RESEARCH_BENCHMARK_SYMBOL", DEFAULT_BENCHMARK_SYMBOL),
+        generator_mode=os.environ.get("VINU_RESEARCH_GENERATOR_MODE", "hybrid"),
+        llm_candidates=int(os.environ.get("VINU_RESEARCH_LLM_CANDIDATES", "3")),
+        holdout_fraction=float(os.environ.get("VINU_RESEARCH_HOLDOUT_FRACTION", "0.2")),
+        holdout_gap_days=int(os.environ.get("VINU_RESEARCH_HOLDOUT_GAP_DAYS", "5")),
+        max_holdout_sharpe_degradation=float(
+            os.environ.get("VINU_RESEARCH_MAX_HOLDOUT_SHARPE_DEGRADATION", "0.5")
+        ),
+        min_trades_for_pass=int(os.environ.get("VINU_RESEARCH_MIN_TRADES_FOR_PASS", "30")),
     )

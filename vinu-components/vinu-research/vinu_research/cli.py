@@ -86,6 +86,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     run_p.add_argument("--approve", action="store_true", help="Approve strategy automatically (non-interactive)")
     run_p.add_argument("--llm", action="store_true", help="Enable LLM-enhanced risk analysis")
     run_p.add_argument("--no-llm", action="store_true", help="Disable LLM-enhanced risk analysis")
+    run_p.add_argument("--walk-forward", action="store_true", help="Enable walk-forward validation")
+    run_p.add_argument("--wf-method", default=None, help="Walk-forward method: expanding or sliding")
+    run_p.add_argument("--wf-windows", type=int, default=None, help="Number of walk-forward windows")
     run_p.add_argument("--quiet", action="store_true", help="Suppress progress output")
     run_p.set_defaults(func=run_main)
 
@@ -121,6 +124,12 @@ def run_main(args: argparse.Namespace) -> None:
         overrides["llm_enabled"] = True
     if args.no_llm:
         overrides["llm_enabled"] = False
+    if args.walk_forward:
+        overrides["walk_forward_enabled"] = True
+    if args.wf_method is not None:
+        overrides["walk_forward_method"] = args.wf_method
+    if args.wf_windows is not None:
+        overrides["walk_forward_windows"] = args.wf_windows
     if overrides:
         config = ResearchConfig(**{**config.__dict__, **overrides})
 
@@ -149,6 +158,8 @@ def run_main(args: argparse.Namespace) -> None:
     print(f"[vinu-research] Max iterations: {config.max_iterations}")
     if indicators:
         print(f"[vinu-research] Indicators: {', '.join(indicators)}")
+    if config.walk_forward_enabled:
+        print(f"[vinu-research] Walk-forward: enabled ({config.walk_forward_method}, {config.walk_forward_windows} windows)")
     _print_separator()
 
     try:

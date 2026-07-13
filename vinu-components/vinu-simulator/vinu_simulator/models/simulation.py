@@ -15,7 +15,12 @@ class SimulationConfig:
     initial_capital: float = 1_000_000.0
     transaction_cost_pct: float = 0.001
     slippage_pct: float = 0.0005
-    slippage_model: str = "flat"
+    # Volume-aware market-impact model is the default; flat-percentage costs
+    # systematically understate cost on illiquid names and must be opted into.
+    slippage_model: str = "almgren_chriss"
+    # Explicit — 0.0 is a simplification callers can override, not an assumption
+    # baked silently into every Sharpe/Sortino calculation.
+    risk_free_rate_annual: float = 0.0
     benchmark_tickers: tuple[str, ...] = ("SPY", "QQQ")
     allow_short: bool = True
     deviation_threshold: float = 0.05

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from vinu_research.loop import StrategyResearchLoop, _LRUCache
+from vinu_research.loop import StrategyResearchLoop, _LRUCache, _split_research_and_holdout
 from vinu_research.models import BacktestMetrics, BacktestResult, CriticFeedback, IterationRecord
 
 
@@ -69,11 +69,13 @@ class TestIsImproving:
 
 
 class TestDefaultRiskCritic:
-    def make_result(self, sharpe: float, max_dd: float, win_rate: float) -> BacktestResult:
+    def make_result(
+        self, sharpe: float, max_dd: float, win_rate: float, trade_count: int = 50,
+    ) -> BacktestResult:
         metrics = BacktestMetrics(sharpe_ratio=sharpe, max_drawdown=max_dd, win_rate=win_rate)
         return BacktestResult(
             run_id="r1", strategy_name="s", metrics=metrics,
-            benchmark_metrics={}, trade_count=10, equity_points=100,
+            benchmark_metrics={}, trade_count=trade_count, equity_points=100,
         )
 
     async def test_pass_when_good_metrics(self):
@@ -101,6 +103,24 @@ class TestDefaultRiskCritic:
         assert critique.verdict == "REFINE"
         assert len(critique.suggestions) > 0
 
+    async def test_thin_sample_never_passes_regardless_of_sharpe(self):
+        # A handful of trades isn't enough to trust any Sharpe computed from them —
+        # PASS must never fire on a thin sample, no matter how good the ratio looks.
+        loop = StrategyResearchLoop()
+        result = self.make_result(sharpe=3.0, max_dd=-0.02, win_rate=0.9, trade_count=5)
+        critique = await loop._default_risk_critic(result, story=None, drawdowns=None, iteration=1)
+        assert critique.verdict != "PASS"
+        assert any("trades" in s.lower() for s in critique.suggestions)
+
+    async def test_enough_trades_at_threshold_passes(self):
+        loop = StrategyResearchLoop()
+        result = self.make_result(
+            sharpe=1.5, max_dd=-0.05, win_rate=0.6,
+            trade_count=loop._config.min_trades_for_pass,
+        )
+        critique = await loop._default_risk_critic(result, story=None, drawdowns=None, iteration=1)
+        assert critique.verdict == "PASS"
+
 
 class TestMaxDDStop:
     def make_result(self, max_dd: float) -> BacktestResult:
@@ -123,3 +143,162 @@ class TestMaxDDStop:
         loop = StrategyResearchLoop(config=config)
         result = self.make_result(max_dd=-0.20)
         assert result.metrics.max_drawdown >= config.max_drawdown_threshold
+
+
+class TestSplitResearchAndHoldout:
+    def test_carves_trailing_holdout_with_gap(self):
+        split = _split_research_and_holdout(
+            "2024-01-01", "2024-12-31", holdout_fraction=0.2, gap_days=5,
+        )
+        assert split is not None
+        research_from, research_to, holdout_from, holdout_to = split
+        assert research_from == "2024-01-01"
+        assert research_to < holdout_from < holdout_to
+        assert holdout_to == "2024-12-31"
+
+    def test_too_short_range_returns_none(self):
+        split = _split_research_and_holdout(
+            "2024-01-01", "2024-01-20", holdout_fraction=0.2, gap_days=5,
+        )
+        assert split is None
+
+    def test_research_window_precedes_holdout_with_gap(self):
+        split = _split_research_and_holdout(
+            "2024-01-01", "2024-12-31", holdout_fraction=0.2, gap_days=5,
+        )
+        from datetime import datetime
+        _, research_to, holdout_from, _ = split
+        gap = (datetime.strptime(holdout_from, "%Y-%m-%d") - datetime.strptime(research_to, "%Y-%m-%d")).days
+        assert gap == 5
+
+
+class TestHoldoutGating:
+    def make_backtest_result(self, sharpe: float, trade_count: int = 50) -> BacktestResult:
+        metrics = BacktestMetrics(sharpe_ratio=sharpe, max_drawdown=-0.05, win_rate=0.6)
+        return BacktestResult(
+            run_id="r1", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=trade_count, equity_points=100,
+        )
+
+    async def test_holdout_pass_when_performance_holds_up(self):
+        loop = StrategyResearchLoop()
+        in_sample = self.make_backtest_result(sharpe=1.5)
+        holdout_bt = self.make_backtest_result(sharpe=1.3)
+
+        async def fake_run_backtest(*args, **kwargs):
+            return holdout_bt
+
+        loop._run_backtest = fake_run_backtest
+        result = await loop._check_holdout(
+            "code", "AAPL", "2024-10-01", "2024-12-31", in_sample, None, None,
+        )
+        assert result is not None
+        assert result.passed is True
+
+    async def test_holdout_fails_on_negative_sharpe(self):
+        loop = StrategyResearchLoop()
+        in_sample = self.make_backtest_result(sharpe=1.5)
+        holdout_bt = self.make_backtest_result(sharpe=-0.3)
+
+        async def fake_run_backtest(*args, **kwargs):
+            return holdout_bt
+
+        loop._run_backtest = fake_run_backtest
+        result = await loop._check_holdout(
+            "code", "AAPL", "2024-10-01", "2024-12-31", in_sample, None, None,
+        )
+        assert result.passed is False
+        assert "negative" in result.note.lower()
+
+    async def test_holdout_fails_on_large_sharpe_degradation(self):
+        loop = StrategyResearchLoop()
+        in_sample = self.make_backtest_result(sharpe=2.0)
+        holdout_bt = self.make_backtest_result(sharpe=0.3)  # 85% degradation
+
+        async def fake_run_backtest(*args, **kwargs):
+            return holdout_bt
+
+        loop._run_backtest = fake_run_backtest
+        result = await loop._check_holdout(
+            "code", "AAPL", "2024-10-01", "2024-12-31", in_sample, None, None,
+        )
+        assert result.passed is False
+        assert "degraded" in result.note.lower()
+
+    async def test_holdout_unavailable_accepts_without_gating(self):
+        loop = StrategyResearchLoop()
+        in_sample = self.make_backtest_result(sharpe=1.5)
+
+        async def fake_run_backtest(*args, **kwargs):
+            return None
+
+        loop._run_backtest = fake_run_backtest
+        result = await loop._check_holdout(
+            "code", "AAPL", "2024-10-01", "2024-12-31", in_sample, None, None,
+        )
+        assert result is None
+
+
+class TestClassifySuggestion:
+    def test_adx_keyword_matches(self):
+        loop = StrategyResearchLoop()
+        assert loop._classify_suggestion("Sharpe below 0.5 — add ADX filter to avoid choppy markets") == "adx"
+
+    def test_london_session_requires_both_words(self):
+        loop = StrategyResearchLoop()
+        assert loop._classify_suggestion("Multiple drawdowns in London session — add exclusion filter") == "session_exclusion"
+        # "london" alone, without "session" or "exclusion", should not match.
+        assert loop._classify_suggestion("Strategy underperforms during the London morning") is None
+
+    def test_bare_news_word_does_not_trigger_cooldown_filter(self):
+        # A suggestion that merely mentions "news" in passing must not spuriously
+        # inject a news-cooldown filter — only an actual cooldown/pause suggestion should.
+        loop = StrategyResearchLoop()
+        assert loop._classify_suggestion("Losses cluster around major news events in Q2") is None
+        assert loop._classify_suggestion("Add a news cooldown period after high-impact events") == "news_cooldown"
+
+    def test_bare_cool_word_does_not_trigger_without_news(self):
+        loop = StrategyResearchLoop()
+        assert loop._classify_suggestion("Consider cooling off position sizing in general") is None
+
+    def test_unrelated_suggestion_returns_none(self):
+        loop = StrategyResearchLoop()
+        assert loop._classify_suggestion("Try tightening position sizing") is None
+
+
+class TestGenerateFiltersDataAvailability:
+    def test_adx_filter_skipped_when_indicator_not_requested(self):
+        loop = StrategyResearchLoop()
+        loop._indicators = ["sma_20", "sma_50", "rsi_14"]  # no ADX requested
+        filters = loop._generate_filters(["Sharpe below 0.5 — add ADX filter to avoid choppy markets"])
+        assert filters == []
+
+    def test_adx_filter_applied_when_indicator_present(self):
+        loop = StrategyResearchLoop()
+        loop._indicators = ["sma_20", "adx_14"]
+        filters = loop._generate_filters(["Sharpe below 0.5 — add ADX filter to avoid choppy markets"])
+        assert any("adx" in line.lower() for line in filters)
+        # Verified-present indicator should be read directly, not defaulted to a
+        # constant fake value that would make the filter a silent no-op.
+        assert any("data['adx_14']" in line for line in filters)
+
+    def test_volatility_filter_skipped_without_atr_indicator(self):
+        loop = StrategyResearchLoop()
+        loop._indicators = ["sma_20", "sma_50"]
+        filters = loop._generate_filters(["Max drawdown exceeds 15% — add volatility guard (ATR filter)"])
+        assert filters == []
+
+    def test_unrelated_suggestions_produce_no_filters(self):
+        loop = StrategyResearchLoop()
+        loop._indicators = ["sma_20"]
+        filters = loop._generate_filters(["Try tightening position sizing"])
+        assert filters == []
+
+    def test_duplicate_suggestions_of_same_kind_only_applied_once(self):
+        loop = StrategyResearchLoop()
+        loop._indicators = ["adx_14"]
+        filters = loop._generate_filters([
+            "add ADX filter to avoid choppy markets",
+            "Sharpe still low — ADX filter recommended again",
+        ])
+        assert filters.count("signal[adx < 20] = 0") == 1

@@ -79,7 +79,6 @@ def simulate_custom(
          for sym in symbols},
         index=sorted_dates,
     )
-
     weight_matrix = _normalize_weights(weight_matrix)
 
     prices_list = []
@@ -88,7 +87,11 @@ def simulate_custom(
         prices_list.append(close)
     price_matrix = pd.concat(prices_list, axis=1)
     price_matrix.columns = symbols
-    price_matrix = price_matrix.ffill().bfill()
+    # Forward-fill only. bfill() would leak a future price backward into any date
+    # before a symbol's first available trade (or into a mid-series gap) — the
+    # engine's WeightSimulator.run() already raises a clear ValueError below if any
+    # NaN survives the forward-fill, which is the correct behavior for a real gap.
+    price_matrix = price_matrix.ffill()
 
     volumes_list = []
     for sym in symbols:

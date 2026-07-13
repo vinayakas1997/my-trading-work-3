@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vinu_research.models import BacktestResult, IterationRecord
+from vinu_research.models import BacktestResult, HoldoutResult, IterationRecord, WalkForwardResult
 
 
 def generate_report(
@@ -13,6 +13,8 @@ def generate_report(
     history: list[IterationRecord],
     best_result: BacktestResult | None,
     best_iteration: int,
+    walk_forward: WalkForwardResult | None = None,
+    holdout: HoldoutResult | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("=== FINAL RESEARCH REPORT ===")
@@ -61,6 +63,27 @@ def generate_report(
         lines.append(f"  Total Return:   {best.metrics.total_return:.1%}")
         lines.append("")
 
+    if best and best.metrics.tail_ratio != 0.0:
+        m = best.metrics
+        lines.append("Extended Risk Metrics:")
+        lines.append(f"  VaR (95%):      {m.var_95:.1%}")
+        lines.append(f"  CVaR (95%):     {m.cvar_95:.1%}")
+        lines.append(f"  Tail Ratio:     {m.tail_ratio:.2f}")
+        lines.append(f"  Profit Factor:  {m.profit_factor:.2f}")
+        lines.append(f"  Avg Win / Loss: {m.win_loss_ratio:.2f}x")
+        lines.append(f"  Max DD Duration: {m.max_dd_duration_days} days")
+        lines.append(f"  Recovery Time:  {m.recovery_time_days} days")
+        if m.annual_turnover > 0:
+            lines.append(f"  Annual Turnover: {m.annual_turnover:.0f}%")
+        if m.sharpe_p_value < 1.0:
+            lines.append(f"  Sharpe 95% CI:  [{m.sharpe_ci_95_low:.2f}, {m.sharpe_ci_95_high:.2f}]")
+            lines.append(f"  Sharpe p-value: {m.sharpe_p_value:.3f}")
+        if m.beta != 0.0:
+            lines.append(f"  Beta:           {m.beta:.2f}")
+            lines.append(f"  Alpha (ann.):   {m.alpha:.2%}")
+            lines.append(f"  Info Ratio:     {m.information_ratio:.2f}")
+        lines.append("")
+
     if history:
         lines.append("Iteration History:")
         lines.append(
@@ -76,10 +99,128 @@ def generate_report(
         lines.append("")
 
     if best and best.benchmark_metrics:
-        lines.append("Benchmark Comparison:")
         for bm_name, bm_data in best.benchmark_metrics.items():
-            lines.append(f"  vs {bm_name}: Sharpe={bm_data.get('sharpe_ratio', 0):.2f}, "
-                         f"Total Return={bm_data.get('total_return', 0):.1%}")
+            lines.append(f"Benchmark Comparison (vs {bm_name}):")
+            bm_sharpe = bm_data.get("sharpe_ratio", 0)
+            bm_cagr = bm_data.get("cagr", 0)
+            bm_vol = bm_data.get("annual_volatility", 0)
+            bm_maxdd = bm_data.get("max_drawdown", 0)
+            bm_wr = bm_data.get("win_rate", 0)
+            st_cagr = best.metrics.cagr
+            st_vol = best.metrics.annual_volatility
+            st_maxdd = best.metrics.max_drawdown
+            st_wr = best.metrics.win_rate
+
+            lines.append(f"  {'Metric':<20} {'Strategy':<12} {'Benchmark':<12} {'Diff':<10}")
+            lines.append("  " + "-" * 54)
+            lines.append(f"  {'CAGR':<20} {st_cagr:<11.1%} {bm_cagr:<11.1%} {st_cagr - bm_cagr:<+9.1%}")
+            lines.append(f"  {'Sharpe':<20} {best.metrics.sharpe_ratio:<11.2f} {bm_sharpe:<11.2f} {best.metrics.sharpe_ratio - bm_sharpe:<+9.2f}")
+            lines.append(f"  {'Max Drawdown':<20} {st_maxdd:<11.1%} {bm_maxdd:<11.1%} {st_maxdd - bm_maxdd:<+9.1%}")
+            lines.append(f"  {'Volatility':<20} {st_vol:<11.1%} {bm_vol:<11.1%} {st_vol - bm_vol:<+9.1%}")
+            lines.append(f"  {'Win Rate':<20} {st_wr:<11.0%} {bm_wr:<11.0%} {st_wr - bm_wr:<+9.0%}")
+
+            alpha = bm_data.get("alpha", None)
+            beta = bm_data.get("beta", None)
+            ir = bm_data.get("information_ratio", None)
+            te = bm_data.get("tracking_error", None)
+            up_cap = bm_data.get("up_capture", None)
+            down_cap = bm_data.get("down_capture", None)
+            corr = bm_data.get("market_correlation", None)
+            rel_dd = bm_data.get("relative_max_drawdown", None)
+
+            if alpha is not None:
+                lines.append("")
+                lines.append("  Alpha & Beta vs Benchmark:")
+                lines.append(f"    Alpha (ann.):        {alpha:.2%}")
+                lines.append(f"    Beta:                {beta:.2f}")
+                if corr is not None:
+                    lines.append(f"    Market Correlation:  {corr:.2f}")
+                if ir is not None:
+                    lines.append(f"    Information Ratio:   {ir:.2f}")
+                if te is not None:
+                    lines.append(f"    Tracking Error:      {te:.1%}")
+                if rel_dd is not None:
+                    lines.append(f"    Relative Max DD:     {rel_dd:.1%}")
+            if up_cap is not None and down_cap is not None:
+                lines.append("")
+                lines.append("  Market Capture:")
+                lines.append(f"    Up Capture:    {up_cap:.0%} of market upside")
+                lines.append(f"    Down Capture:  {down_cap:.0%} of market downside")
+            lines.append("")
+
+    if holdout is not None:
+        lines.append("=== HOLDOUT VALIDATION ===")
+        lines.append(
+            f"Holdout period: {holdout.holdout_from} → {holdout.holdout_to} "
+            "(never used during refinement)"
+        )
+        lines.append("")
+        lines.append(f"  {'Metric':<20} {'In-Sample':<14} {'Holdout':<14}")
+        lines.append("  " + "-" * 48)
+        lines.append(
+            f"  {'Sharpe':<20} {holdout.in_sample_sharpe:<14.2f} {holdout.holdout_sharpe:<14.2f}"
+        )
+        lines.append(f"  {'Max Drawdown':<20} {'':<14} {holdout.holdout_max_drawdown:<14.1%}")
+        lines.append(f"  {'Total Return':<20} {'':<14} {holdout.holdout_total_return:<14.1%}")
+        lines.append(f"  {'Trade Count':<20} {'':<14} {holdout.holdout_trade_count:<14}")
+        lines.append("")
+        if holdout.passed:
+            lines.append("Verdict: PASSED holdout validation — performance held up on unseen data.")
+        else:
+            lines.append(f"Verdict: FAILED holdout validation — {holdout.note}")
+            lines.append(
+                "This strategy was NOT approved as PASS on the strength of in-sample "
+                "metrics alone; treat any in-sample-only numbers above with caution."
+            )
+        lines.append("")
+
+    if walk_forward and walk_forward.has_walk_forward:
+        lines.append("=== OUT-OF-SAMPLE VALIDATION ===")
+        lines.append(f"Walk-forward windows: {walk_forward.n_windows} ({walk_forward.method})")
+        lines.append("Aggregation method: Median across windows")
+        lines.append("")
+
+        is_s = walk_forward.aggregated_is_metrics.get("sharpe_ratio", 0)
+        oos_s = walk_forward.aggregated_oos_metrics.get("sharpe_ratio", 0)
+        is_dd = walk_forward.aggregated_is_metrics.get("max_drawdown", 0)
+        oos_dd = walk_forward.aggregated_oos_metrics.get("max_drawdown", 0)
+        is_wr = walk_forward.aggregated_is_metrics.get("win_rate", 0)
+        oos_wr = walk_forward.aggregated_oos_metrics.get("win_rate", 0)
+        is_cagr = walk_forward.aggregated_is_metrics.get("cagr", 0)
+        oos_cagr = walk_forward.aggregated_oos_metrics.get("cagr", 0)
+
+        lines.append(f"  {'Metric':<20} {'In-Sample':<14} {'Out-of-Sample':<16} {'Gap':<10}")
+        lines.append("  " + "-" * 60)
+        lines.append(f"  {'Sharpe':<20} {is_s:<14.2f} {oos_s:<16.2f} {walk_forward.sharpe_gap:<+10.2f}")
+        lines.append(f"  {'Max Drawdown':<20} {is_dd:<14.1%} {oos_dd:<16.1%} {walk_forward.max_dd_gap:<+10.1%}")
+        lines.append(f"  {'Win Rate':<20} {is_wr:<14.0%} {oos_wr:<16.0%} {walk_forward.win_rate_gap:<+10.0%}")
+        lines.append(f"  {'CAGR':<20} {is_cagr:<14.2%} {oos_cagr:<16.2%} {is_cagr - oos_cagr:<+10.1%}")
+
+        gap = walk_forward.sharpe_gap
+        if gap > 0.5:
+            lines.append("")
+            lines.append(f"Verdict: HIGH OVERFITTING RISK — Sharpe gap {gap:.2f} > 0.5")
+            lines.append("Consider simplifying the strategy or adding regularization filters")
+        elif gap > 0.3:
+            lines.append("")
+            lines.append(f"Verdict: MODERATE OVERFITTING RISK — Sharpe gap {gap:.2f}")
+            lines.append("Monitor out-of-sample performance closely")
+        else:
+            lines.append("")
+            lines.append(f"Verdict: LOW OVERFITTING RISK — Sharpe gap {gap:.2f} within acceptable range")
+
+        lines.append("")
+
+        lines.append("Per-Window Breakdown:")
+        lines.append(f"  {'Win':<6} {'IS Sharpe':<12} {'OOS Sharpe':<12} {'IS DD':<12} {'OOS DD':<12}")
+        lines.append("  " + "-" * 54)
+        for w in walk_forward.windows:
+            ism = w["in_sample_metrics"]
+            osm = w["out_of_sample_metrics"]
+            lines.append(
+                f"  {w['window_id']:<6} {ism['sharpe_ratio']:<12.2f} {osm['sharpe_ratio']:<12.2f} "
+                f"{ism['max_drawdown']:<11.1%} {osm['max_drawdown']:<11.1%}"
+            )
         lines.append("")
 
     lines.append("Key Findings:")

@@ -15,7 +15,7 @@ class SimulateRequest(BaseModel):
     initial_capital: float | None = None
     transaction_cost_pct: float | None = None
     slippage_pct: float | None = None
-    slippage_model: Literal["flat", "almgren_chriss"] = "flat"
+    slippage_model: Literal["flat", "almgren_chriss"] = "almgren_chriss"
     benchmark_tickers: list[str] | None = None
     allow_short: bool = True
     deviation_threshold: float | None = None
@@ -73,7 +73,7 @@ class CustomSimulateRequest(BaseModel):
     initial_capital: float | None = None
     transaction_cost_pct: float | None = None
     slippage_pct: float | None = None
-    slippage_model: Literal["flat", "almgren_chriss"] = "flat"
+    slippage_model: Literal["flat", "almgren_chriss"] = "almgren_chriss"
     benchmark_tickers: list[str] | None = None
     allow_short: bool = True
     deviation_threshold: float | None = None

@@ -2,23 +2,77 @@ from __future__ import annotations
 
 import logging
 from collections import OrderedDict
+from datetime import datetime, timedelta
 from typing import Any, Callable
 
+import pandas as pd
+
+from vinu_research.comparison import rank_candidates
 from vinu_research.config import ResearchConfig, load_config
-from vinu_research.generator import generate_strategy
+from vinu_research.generator import find_recipe, generate_strategy
 from vinu_research.llm import LLM_SYSTEM_PROMPT, ResearchLlmClient, _build_risk_critic_prompt
+from vinu_research.llm_generator import LlmStrategyGenerator
 from vinu_research.models import (
     BacktestResult,
     CriticFeedback,
+    HoldoutResult,
     IterationRecord,
     ResearchResult,
+    WalkForwardResult,
 )
 from vinu_research.report import generate_report
+from vinu_research.benchmark import compute_benchmark_comparison, compute_benchmark_returns_metrics
 from vinu_research.tools import ResearchTools, timestamps_from_dates
+from vinu_research.walk_forward import (
+    WalkForwardConfig,
+    WalkForwardWindow,
+    WindowSplitter,
+    aggregate_metrics,
+)
 
 LOG = logging.getLogger(__name__)
 
 _MAX_CACHE_SIZE = 64
+_MIN_HOLDOUT_DAYS = 5
+_MIN_RESEARCH_DAYS = 30
+
+
+def _split_research_and_holdout(
+    from_date: str,
+    to_date: str,
+    holdout_fraction: float,
+    gap_days: int,
+) -> tuple[str, str, str, str] | None:
+    """
+    Carve a trailing slice of the requested range off as a true holdout: the
+    refinement loop (iterations, filter generation, the PASS/REFINE/STOP decision)
+    only ever sees `research_from..research_to`. `holdout_from..holdout_to` is
+    evaluated exactly once, after a candidate has already looked good enough
+    in-sample to be worth checking, and is never used to choose a filter.
+
+    Returns None if the range is too short to carve a meaningful holdout out of —
+    callers should fall back to running without holdout gating in that case rather
+    than fail the whole run.
+    """
+    from_dt = datetime.strptime(from_date, "%Y-%m-%d")
+    to_dt = datetime.strptime(to_date, "%Y-%m-%d")
+    total_days = (to_dt - from_dt).days
+
+    holdout_days = int(total_days * holdout_fraction)
+    research_days = total_days - holdout_days - gap_days
+
+    if holdout_days < _MIN_HOLDOUT_DAYS or research_days < _MIN_RESEARCH_DAYS:
+        return None
+
+    holdout_start_dt = to_dt - timedelta(days=holdout_days)
+    research_end_dt = holdout_start_dt - timedelta(days=gap_days)
+
+    return (
+        from_dt.strftime("%Y-%m-%d"),
+        research_end_dt.strftime("%Y-%m-%d"),
+        holdout_start_dt.strftime("%Y-%m-%d"),
+        to_dt.strftime("%Y-%m-%d"),
+    )
 
 
 class _LRUCache:
@@ -59,6 +113,8 @@ class StrategyResearchLoop:
         self._on_iteration = on_iteration
         self._story_cache = _LRUCache()
         self._drawdown_cache = _LRUCache()
+        self._benchmark_returns: pd.Series | None = None
+        self._benchmark_cache_key: str = ""
         self._llm = ResearchLlmClient(self._config) if self._config.llm_enabled else None
 
     async def run(
@@ -74,12 +130,33 @@ class StrategyResearchLoop:
         best_iteration = -1
         history: list[IterationRecord] = []
         strategy_code = ""
+        holdout_result: HoldoutResult | None = None
 
-        cache_key = f"{symbol.upper()}:{from_date}:{to_date}"
+        # Reserve a trailing slice of the range the refinement loop never sees — no
+        # filter is ever chosen using this data, so it's a real check on whether a
+        # PASS candidate generalizes rather than just fit the researched period.
+        split = _split_research_and_holdout(
+            from_date, to_date,
+            self._config.holdout_fraction, self._config.holdout_gap_days,
+        )
+        if split is not None:
+            research_from, research_to, holdout_from, holdout_to = split
+        else:
+            LOG.info("Date range too short to carve a holdout — running without holdout gating")
+            research_from, research_to, holdout_from, holdout_to = from_date, to_date, "", ""
+
+        cache_key = f"{symbol.upper()}:{research_from}:{research_to}"
         self._user_idea = user_idea
         self._symbol = symbol
-        self._from_date = from_date
-        self._to_date = to_date
+        self._from_date = research_from
+        self._to_date = research_to
+        # Tracked so _generate_filters can check whether an indicator a filter needs
+        # was actually requested — if not, the simulator won't have computed it and
+        # injecting the filter would just run against a fake constant column.
+        self._indicators = indicators or []
+
+        benchmark_symbol = self._config.benchmark_symbol
+        bench_cache_key = f"{benchmark_symbol}:{research_from}:{research_to}"
 
         for iteration in range(1, self._config.max_iterations + 1):
             try:
@@ -94,7 +171,7 @@ class StrategyResearchLoop:
                     )
 
                 result = await self._run_backtest(
-                    strategy_code, symbol, from_date, to_date,
+                    strategy_code, symbol, research_from, research_to,
                     indicators=indicators,
                     initial_capital=initial_capital,
                 )
@@ -102,11 +179,23 @@ class StrategyResearchLoop:
                     LOG.warning("Backtest returned no result, stopping")
                     break
 
+                if self._benchmark_returns is None or self._benchmark_cache_key != bench_cache_key:
+                    self._benchmark_returns = await self._tools.get_benchmark_data(
+                        benchmark_symbol, research_from, research_to,
+                    )
+                    self._benchmark_cache_key = bench_cache_key
+
+                if self._benchmark_returns is not None:
+                    bm_metrics = compute_benchmark_returns_metrics(
+                        self._benchmark_returns
+                    )
+                    result.benchmark_metrics[benchmark_symbol] = bm_metrics
+
                 story = self._story_cache.get(cache_key)
                 if story is None:
                     story = await self._tools.get_story(
                         symbol,
-                        *timestamps_from_dates(from_date, to_date),
+                        *timestamps_from_dates(research_from, research_to),
                     )
                     self._story_cache.set(cache_key, story)
 
@@ -114,7 +203,7 @@ class StrategyResearchLoop:
                 if drawdowns is None:
                     drawdowns = await self._tools.get_drawdowns(
                         symbol,
-                        *timestamps_from_dates(from_date, to_date),
+                        *timestamps_from_dates(research_from, research_to),
                     )
                     self._drawdown_cache.set(cache_key, drawdowns)
 
@@ -134,9 +223,32 @@ class StrategyResearchLoop:
                     self._on_iteration(record)
 
                 if critic_feedback.verdict == "PASS":
-                    best_result = result
-                    best_iteration = iteration
-                    break
+                    if holdout_from and holdout_to:
+                        holdout_result = await self._check_holdout(
+                            strategy_code, symbol, holdout_from, holdout_to,
+                            result, indicators, initial_capital,
+                        )
+                    if holdout_result is None or holdout_result.passed:
+                        best_result = result
+                        best_iteration = iteration
+                        break
+                    # Don't accept an in-sample PASS that fails holdout validation —
+                    # downgrade back to REFINE and let refinement continue.
+                    downgraded = CriticFeedback(
+                        verdict="REFINE",
+                        reasoning=(
+                            f"{critic_feedback.reasoning} | Holdout check failed: "
+                            f"{holdout_result.note}"
+                        ),
+                        suggestions=critic_feedback.suggestions + [
+                            f"Holdout validation failed: {holdout_result.note}. "
+                            "Strategy may be overfit to the researched period."
+                        ],
+                    )
+                    record.critique = downgraded
+                    critic_feedback = downgraded
+                    # Falls through to the REFINE handling below (best_result is set
+                    # there too), so the loop continues iterating instead of stopping.
 
                 if critic_feedback.verdict == "STOP":
                     if best_result is None:
@@ -168,9 +280,37 @@ class StrategyResearchLoop:
                     raise
                 break
 
+        best_rec = next(
+            (r for r in history if r.iteration == best_iteration),
+            history[-1] if history else None,
+        )
+
+        walk_forward_result: WalkForwardResult | None = None
+        if self._config.walk_forward_enabled and best_result and best_rec:
+            walk_forward_result = await self._run_walk_forward(
+                strategy_code=best_rec.strategy_code,
+                symbol=symbol,
+                from_date=from_date,
+                to_date=to_date,
+                indicators=indicators,
+                initial_capital=initial_capital,
+            )
+
+        if best_result and self._benchmark_returns is not None and len(self._benchmark_returns) >= 20:
+            equity_rets = await self._tools.fetch_equity_returns(best_result.run_id)
+            if equity_rets is not None and len(equity_rets) >= 20:
+                comparison = compute_benchmark_comparison(
+                    equity_rets, self._benchmark_returns
+                )
+                if comparison:
+                    bm_dict = best_result.benchmark_metrics.setdefault(benchmark_symbol, {})
+                    bm_dict.update(comparison)
+
         report_md = generate_report(
             symbol, from_date, to_date, user_idea,
             history, best_result, best_iteration,
+            walk_forward=walk_forward_result,
+            holdout=holdout_result,
         )
 
         return ResearchResult(
@@ -183,6 +323,8 @@ class StrategyResearchLoop:
             best_iteration=best_iteration,
             total_iterations=len(history),
             report_md=report_md,
+            walk_forward=walk_forward_result,
+            holdout=holdout_result,
         )
 
     async def _run_backtest(
@@ -208,6 +350,168 @@ class StrategyResearchLoop:
             allow_short=self._config.allow_short,
         )
 
+    async def _check_holdout(
+        self,
+        strategy_code: str,
+        symbol: str,
+        holdout_from: str,
+        holdout_to: str,
+        in_sample_result: BacktestResult,
+        indicators: list[str] | None,
+        initial_capital: float | None,
+    ) -> HoldoutResult | None:
+        """
+        Re-test a strategy that just earned an in-sample PASS against data the
+        refinement loop never touched. Returns None (accept without gating) if the
+        holdout backtest itself can't be run — e.g. the simulator is unreachable —
+        matching the codebase's existing pattern of degrading gracefully on service
+        failures rather than blocking the whole run on an infrastructure issue.
+        """
+        try:
+            holdout_bt = await self._run_backtest(
+                strategy_code, symbol, holdout_from, holdout_to,
+                indicators=indicators, initial_capital=initial_capital,
+            )
+        except Exception as e:
+            LOG.warning("Holdout backtest failed: %s, accepting without holdout gating", e)
+            return None
+        if holdout_bt is None:
+            return None
+
+        is_sharpe = in_sample_result.metrics.sharpe_ratio
+        oos_sharpe = holdout_bt.metrics.sharpe_ratio
+
+        if oos_sharpe < 0:
+            passed, note = False, f"holdout Sharpe {oos_sharpe:.2f} is negative"
+        else:
+            degradation = (is_sharpe - oos_sharpe) / max(abs(is_sharpe), 1e-6)
+            if degradation > self._config.max_holdout_sharpe_degradation:
+                passed = False
+                note = (
+                    f"holdout Sharpe ({oos_sharpe:.2f}) degraded {degradation:.0%} "
+                    f"vs in-sample ({is_sharpe:.2f}), exceeding the "
+                    f"{self._config.max_holdout_sharpe_degradation:.0%} threshold"
+                )
+            else:
+                passed, note = True, ""
+
+        return HoldoutResult(
+            holdout_from=holdout_from,
+            holdout_to=holdout_to,
+            in_sample_sharpe=is_sharpe,
+            holdout_sharpe=oos_sharpe,
+            holdout_max_drawdown=holdout_bt.metrics.max_drawdown,
+            holdout_total_return=holdout_bt.metrics.total_return,
+            holdout_trade_count=holdout_bt.trade_count,
+            passed=passed,
+            note=note,
+        )
+
+    async def _run_walk_forward(
+        self,
+        strategy_code: str,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+        indicators: list[str] | None = None,
+        initial_capital: float | None = None,
+    ) -> WalkForwardResult | None:
+        wf_config = WalkForwardConfig(
+            method=self._config.walk_forward_method,
+            train_pct=self._config.walk_forward_train_pct,
+            test_pct=self._config.walk_forward_test_pct,
+            n_windows=self._config.walk_forward_windows,
+            min_train_days=self._config.walk_forward_min_train_days,
+            step_size_days=self._config.walk_forward_step_size_days,
+            gap_days=self._config.walk_forward_gap_days,
+        )
+        splitter = WindowSplitter(wf_config)
+        windows = splitter.split(from_date, to_date)
+
+        if not windows:
+            LOG.warning("Walk-forward: not enough data for %d windows", wf_config.n_windows)
+            return None
+
+        LOG.info("Walk-forward: running %d windows", len(windows))
+
+        window_records = []
+        for w in windows:
+            is_result = await self._run_backtest(
+                strategy_code=strategy_code,
+                symbol=symbol,
+                from_date=w.train_start,
+                to_date=w.train_end,
+                indicators=indicators,
+                initial_capital=initial_capital,
+            )
+
+            if is_result is None:
+                continue
+
+            oos_result = await self._run_backtest(
+                strategy_code=strategy_code,
+                symbol=symbol,
+                from_date=w.test_start,
+                to_date=w.test_end,
+                indicators=indicators,
+                initial_capital=initial_capital,
+            )
+
+            if oos_result is None:
+                continue
+
+            window_records.append({
+                "window_id": w.window_id,
+                "train_start": w.train_start,
+                "train_end": w.train_end,
+                "test_start": w.test_start,
+                "test_end": w.test_end,
+                "in_sample_metrics": {
+                    "sharpe_ratio": is_result.metrics.sharpe_ratio,
+                    "max_drawdown": is_result.metrics.max_drawdown,
+                    "win_rate": is_result.metrics.win_rate,
+                    "cagr": is_result.metrics.cagr,
+                    "total_return": is_result.metrics.total_return,
+                },
+                "out_of_sample_metrics": {
+                    "sharpe_ratio": oos_result.metrics.sharpe_ratio,
+                    "max_drawdown": oos_result.metrics.max_drawdown,
+                    "win_rate": oos_result.metrics.win_rate,
+                    "cagr": oos_result.metrics.cagr,
+                    "total_return": oos_result.metrics.total_return,
+                },
+            })
+
+        if not window_records:
+            return None
+
+        is_list = [r["in_sample_metrics"] for r in window_records]
+        oos_list = [r["out_of_sample_metrics"] for r in window_records]
+        aggregated_is, aggregated_oos = aggregate_metrics(is_list, oos_list)
+
+        is_sharpe = aggregated_is.get("sharpe_ratio", 0.0)
+        oos_sharpe = aggregated_oos.get("sharpe_ratio", 0.0)
+        is_max_dd = aggregated_is.get("max_drawdown", 0.0)
+        oos_max_dd = aggregated_oos.get("max_drawdown", 0.0)
+        is_win_rate = aggregated_is.get("win_rate", 0.0)
+        oos_win_rate = aggregated_oos.get("win_rate", 0.0)
+
+        LOG.info(
+            "Walk-forward: IS Sharpe=%.2f, OOS Sharpe=%.2f, gap=%.2f",
+            is_sharpe, oos_sharpe, is_sharpe - oos_sharpe,
+        )
+
+        return WalkForwardResult(
+            windows=window_records,
+            aggregated_is_metrics=aggregated_is,
+            aggregated_oos_metrics=aggregated_oos,
+            sharpe_gap=is_sharpe - oos_sharpe,
+            max_dd_gap=oos_max_dd - is_max_dd,
+            win_rate_gap=is_win_rate - oos_win_rate,
+            n_windows=len(window_records),
+            method=self._config.walk_forward_method,
+        )
+
     def _is_improving(self, history: list[IterationRecord]) -> bool:
         if len(history) < 2:
             return True
@@ -222,16 +526,40 @@ class StrategyResearchLoop:
         last_result: BacktestResult | None,
         last_critique: CriticFeedback | None,
     ) -> str:
-        recipe = None
-        desc_lower = user_idea.lower()
-        if "crossover" in desc_lower or "sma" in desc_lower or "ma" in desc_lower:
-            recipe = "crossover"
-        elif "rsi" in desc_lower or "mean reversion" in desc_lower:
-            recipe = "rsi"
-        elif "momentum" in desc_lower or "trend" in desc_lower:
-            recipe = "momentum"
+        recipe = find_recipe(user_idea)
 
-        code = generate_strategy(recipe=recipe, user_description=user_idea)
+        template_code = generate_strategy(recipe=recipe, user_description=user_idea)
+
+        llm_code: str | None = None
+        if self._llm and self._llm.is_configured() and self._config.generator_mode in ("llm", "hybrid"):
+            llm_gen = LlmStrategyGenerator(self._llm)
+            indicators = ["sma_20", "sma_50", "rsi_14"]
+            candidates = await llm_gen.generate(
+                user_idea=user_idea,
+                symbol=self._symbol if hasattr(self, "_symbol") else "",
+                from_date=self._from_date if hasattr(self, "_from_date") else "",
+                to_date=self._to_date if hasattr(self, "_to_date") else "",
+                indicators=indicators,
+                n_candidates=self._config.llm_candidates,
+            )
+            if candidates:
+                # Rank by complexity penalty (no backtest results available yet at
+                # generation time) rather than blindly taking the first candidate the
+                # LLM happened to return first.
+                ranked = rank_candidates(candidates)
+                best = ranked[0].candidate
+                llm_code = best.code
+                LOG.info(
+                    "LLM generated strategy (ranked best of %d candidates, score=%.1f): %s",
+                    len(candidates), ranked[0].score, best.reasoning[:100],
+                )
+
+        if iteration == 1 and llm_code:
+            code = llm_code
+        elif iteration == 1:
+            code = template_code
+        else:
+            code = template_code
 
         if iteration > 1 and last_critique is not None:
             lines = code.split("\n")
@@ -250,27 +578,84 @@ class StrategyResearchLoop:
 
         return code
 
+    def _classify_suggestion(self, suggestion: str) -> str | None:
+        """
+        Map a critique suggestion to one of the known filter kinds, or None if it
+        doesn't clearly match. Requires multiple, more specific signal words per
+        kind (not a single common word like bare "news" or "cool") so that
+        incidental phrasing in free-text LLM suggestions doesn't trigger a filter
+        the suggestion wasn't actually asking for.
+        """
+        s = suggestion.lower()
+        if "adx" in s:
+            return "adx"
+        if "london" in s and ("session" in s or "exclusion" in s):
+            return "session_exclusion"
+        if "news" in s and ("cool" in s or "pause" in s):
+            return "news_cooldown"
+        if "volatil" in s:
+            return "volatility_guard"
+        return None
+
     def _generate_filters(self, suggestions: list[str]) -> list[str]:
+        # What each filter kind actually reads from `data` — if none of these were
+        # requested via --indicators, the simulator never computed the column, and
+        # injecting the filter would run against a constant fake value instead of
+        # real market data (e.g. an "ADX filter" that never actually sees ADX).
+        required_indicator_keywords: dict[str, tuple[str, ...]] = {
+            "adx": ("adx",),
+            "volatility_guard": ("atr", "volatil"),
+            # session/news columns aren't sourced from the --indicators list in this
+            # system; treat them as always available rather than blocking on a
+            # signal this check has no way to verify.
+        }
+
+        filter_code: dict[str, list[str]] = {
+            "adx": [
+                "# ADX filter: no trade if ADX < 20",
+                "adx = data['adx_14']",
+                "signal[adx < 20] = 0",
+            ],
+            "session_exclusion": [
+                "# Session filter: skip London session",
+                "session = data.get('session', pd.Series('ny_regular', index=data.index))",
+                "signal[session == 'london'] = 0",
+            ],
+            "news_cooldown": [
+                "# News cooling-off: skip 60min after high-impact news",
+                "news_cooldown = data.get('news_cooldown', pd.Series(False, index=data.index))",
+                "signal[news_cooldown] = 0",
+            ],
+            "volatility_guard": [
+                "# Volatility guard: skip if ATR > 5%",
+                "atr = data['atr_14']",
+                "close = data['close']",
+                "signal[atr / close > 0.05] = 0",
+            ],
+        }
+
+        available_indicators = [i.lower() for i in getattr(self, "_indicators", [])]
+
+        applied_kinds: set[str] = set()
         filters: list[str] = []
         for suggestion in suggestions:
-            s_lower = suggestion.lower()
-            if "adx" in s_lower:
-                filters.append("# ADX filter: no trade if ADX < 20")
-                filters.append("adx = data.get('adx_14', pd.Series(25.0, index=data.index))")
-                filters.append("signal[adx < 20] = 0")
-            if "session" in s_lower and "london" in s_lower:
-                filters.append("# Session filter: skip London session")
-                filters.append("session = data.get('session', pd.Series('ny_regular', index=data.index))")
-                filters.append("signal[session == 'london'] = 0")
-            if "cool" in s_lower or "news" in s_lower:
-                filters.append("# News cooling-off: skip 60min after high-impact news")
-                filters.append("news_cooldown = data.get('news_cooldown', pd.Series(False, index=data.index))")
-                filters.append("signal[news_cooldown] = 0")
-            if "volatil" in s_lower:
-                filters.append("# Volatility guard: skip if ATR > 5%")
-                filters.append("atr = data.get('atr_14', pd.Series(0.0, index=data.index))")
-                filters.append("close = data['close']")
-                filters.append("signal[atr / close > 0.05] = 0")
+            kind = self._classify_suggestion(suggestion)
+            if kind is None or kind in applied_kinds:
+                continue
+
+            needed = required_indicator_keywords.get(kind)
+            if needed and not any(
+                kw in ind for ind in available_indicators for kw in needed
+            ):
+                LOG.info(
+                    "Skipping %s filter: none of %s present in requested indicators %s",
+                    kind, needed, available_indicators,
+                )
+                continue
+
+            filters.extend(filter_code[kind])
+            applied_kinds.add(kind)
+
         return filters
 
     def _rule_based_check(
@@ -299,7 +684,94 @@ class StrategyResearchLoop:
             if len(london_dd) >= 2:
                 suggestions.append("Multiple drawdowns in London session — add London session exclusion filter")
 
-        if m.sharpe_ratio >= 1.5 and m.max_drawdown > -0.08:
+        if m.cvar_95 < -0.03:
+            suggestions.append(
+                f"CVaR 95% is {m.cvar_95:.1%} — "
+                "extreme tail risk. Consider stop-loss or position limits"
+            )
+
+        if m.recovery_time_days > 120:
+            suggestions.append(
+                f"Recovery from max drawdown took {m.recovery_time_days} days. "
+                "Consider adding drawdown-recovery filters"
+            )
+
+        if m.annual_turnover > 2000:
+            suggestions.append(
+                f"Annual turnover {m.annual_turnover:.0f}% — "
+                "costs will erode edge. Add holding period filter"
+            )
+
+        if m.sharpe_p_value > 0.05:
+            suggestions.append(
+                f"Sharpe {m.sharpe_ratio:.2f} is not statistically significant "
+                f"(p={m.sharpe_p_value:.3f}). Need more data"
+            )
+
+        if m.profit_factor < 1.0 and m.profit_factor > 0:
+            suggestions.append(
+                f"Profit factor {m.profit_factor:.2f} < 1 — "
+                "strategy loses more on losers than it gains on winners"
+            )
+
+        if m.var_95 < -0.04:
+            suggestions.append(
+                f"VaR (95%) is {m.var_95:.1%} — "
+                "daily loss risk too high. Add tighter stop-loss"
+            )
+
+        if result.benchmark_metrics:
+            for bm_name, bm_data in result.benchmark_metrics.items():
+                bm_sharpe = bm_data.get("sharpe_ratio", 0)
+                bm_cagr = bm_data.get("cagr", 0)
+                bm_alpha = bm_data.get("alpha", None)
+                bm_ir = bm_data.get("information_ratio", None)
+                bm_down = bm_data.get("down_capture", None)
+                bm_excess_cagr = bm_data.get("excess_cagr", None)
+
+                if bm_alpha is not None and bm_alpha < 0:
+                    suggestions.append(
+                        f"Alpha is {bm_alpha:.1%} vs {bm_name} — "
+                        "strategy is destroying value relative to benchmark"
+                    )
+
+                if bm_ir is not None and 0 < bm_ir < 0.5:
+                    suggestions.append(
+                        f"Information ratio {bm_ir:.2f} vs {bm_name} — "
+                        "active returns do not justify tracking error"
+                    )
+
+                if bm_down is not None and bm_down > 1.2:
+                    suggestions.append(
+                        f"Down capture {bm_down:.0%} vs {bm_name} — "
+                        "strategy falls more than market in downturns. Add tail protection"
+                    )
+
+                if bm_excess_cagr is not None and bm_excess_cagr < 0:
+                    suggestions.append(
+                        f"CAGR below {bm_name} benchmark — "
+                        "consider if active management is justified"
+                    )
+                elif bm_alpha is None and bm_cagr > m.cagr:
+                    suggestions.append(
+                        f"Benchmark {bm_name} CAGR ({bm_cagr:.1%}) exceeds strategy ({m.cagr:.1%}) — "
+                        "simpler passive approach may outperform"
+                    )
+
+        meets_performance_bar = m.sharpe_ratio >= 1.5 and m.max_drawdown > -0.08
+        has_enough_trades = result.trade_count >= self._config.min_trades_for_pass
+
+        if meets_performance_bar and not has_enough_trades:
+            # Never allow PASS on a thin sample, regardless of how good the ratio
+            # looks — a handful of trades isn't enough to trust any Sharpe computed
+            # from them.
+            suggestions.append(
+                f"Only {result.trade_count} trades over the period (need at least "
+                f"{self._config.min_trades_for_pass}) — insufficient sample to trust "
+                f"Sharpe={m.sharpe_ratio:.2f} despite meeting the PASS threshold"
+            )
+
+        if meets_performance_bar and has_enough_trades:
             return CriticFeedback(
                 verdict="PASS",
                 reasoning=f"Strategy passes with Sharpe={m.sharpe_ratio:.2f}, MaxDD={m.max_drawdown:.1%}",
@@ -316,7 +788,7 @@ class StrategyResearchLoop:
         if not suggestions:
             suggestions.append("Try tightening position sizing or adding a news cooldown period")
 
-        reasoning_parts = [f"Sharpe={m.sharpe_ratio:.2f}, MaxDD={m.max_drawdown:.1%}, WinRate={m.win_rate:.0%}"]
+        reasoning_parts = [f"Sharpe={m.sharpe_ratio:.2f}, MaxDD={m.max_drawdown:.1%}, WinRate={m.win_rate:.0%}, CVaR={m.cvar_95:.1%}"]
         reasoning_parts.append(f"Suggestions: {'; '.join(suggestions)}")
 
         return CriticFeedback(

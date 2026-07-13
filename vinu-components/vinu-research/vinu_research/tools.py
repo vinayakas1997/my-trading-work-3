@@ -8,6 +8,8 @@ import httpx
 import pandas as pd
 
 from vinu_lib.client import ResilientClient
+from vinu_research.benchmark import compute_benchmark_comparison as _compute_benchmark_comparison
+from vinu_research.benchmark import compute_benchmark_returns_metrics as _compute_benchmark_returns_metrics
 from vinu_research.config import ResearchConfig, load_config
 from vinu_research.models import BacktestMetrics, BacktestResult
 
@@ -29,11 +31,16 @@ class ResearchTools:
             self._config.correlation_api_url, "vinu-correlation",
             timeout=60.0, max_retries=3, circuit_breaker_threshold=3,
         )
+        self._stock_client = ResilientClient(
+            self._config.stock_price_api_url, "vinu-stock-price",
+            timeout=30.0, max_retries=2, circuit_breaker_threshold=3,
+        )
 
     async def close(self) -> None:
         await self._features_client.close()
         await self._simulator_client.close()
         await self._correlation_client.close()
+        await self._stock_client.close()
 
     async def get_indicators(
         self,
@@ -185,6 +192,61 @@ class ResearchTools:
         except Exception as e:
             LOG.warning("get_correlation(%s) failed: %s", symbol, e)
             return None
+
+    async def get_benchmark_data(
+        self,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+    ) -> pd.Series | None:
+        """Fetch benchmark close prices and return daily returns series."""
+        from_ts = int(pd.Timestamp(from_date).timestamp())
+        to_ts = int(pd.Timestamp(to_date).timestamp())
+        try:
+            data = await self._stock_client.get(
+                f"/query/{symbol.upper()}",
+                params={"from": from_ts, "to": to_ts, "interval": "1d"},
+            )
+        except Exception as e:
+            LOG.warning("get_benchmark_data(%s) failed: %s", symbol, e)
+            return None
+        if not isinstance(data, dict):
+            return None
+        close_prices = data.get("close")
+        timestamps = data.get("timestamp")
+        if close_prices is None or timestamps is None:
+            return None
+        prices = pd.Series(close_prices, index=pd.to_datetime(timestamps)).sort_index()
+        if len(prices) < 2:
+            return None
+        returns = prices.pct_change().dropna()
+        return returns
+
+    async def fetch_equity_returns(self, run_id: str) -> pd.Series | None:
+        """Fetch equity curve for a completed run and return daily returns."""
+        try:
+            data = await self._simulator_client.get(f"/results/{run_id}/equity")
+        except Exception as e:
+            LOG.warning("fetch_equity_returns(%s) failed: %s", run_id, e)
+            return None
+        if not isinstance(data, list) or len(data) < 2:
+            return None
+        df = pd.DataFrame(data)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date")
+        returns = df["portfolio_value"].pct_change().dropna()
+        return returns
+
+    @staticmethod
+    def compute_benchmark_returns_metrics(daily_returns: pd.Series) -> dict[str, float]:
+        return _compute_benchmark_returns_metrics(daily_returns)
+
+    @staticmethod
+    def compute_benchmark_comparison(
+        strategy_returns: pd.Series,
+        benchmark_returns: pd.Series,
+    ) -> dict[str, float]:
+        return _compute_benchmark_comparison(strategy_returns, benchmark_returns)
 
 
 def timestamps_from_dates(from_date: str, to_date: str) -> tuple[int, int]:
