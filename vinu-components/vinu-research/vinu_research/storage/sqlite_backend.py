@@ -38,7 +38,7 @@ class ResearchStorage:
         self._local = threading.local()
 
     def _get_conn(self) -> sqlite3.Connection:
-        conn = getattr(self._local, "conn", None)
+        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is None:
             conn = sqlite3.connect(str(self.db_path))
             conn.execute("PRAGMA journal_mode=WAL")
@@ -52,6 +52,7 @@ class ResearchStorage:
         conn = getattr(self._local, "conn", None)
         if conn is not None:
             conn.close()
+            self._local.conn = None
 
     def __enter__(self) -> ResearchStorage:
         return self

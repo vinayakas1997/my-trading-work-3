@@ -1,5 +1,3 @@
-"""ResearchService facade — wraps the research loop with persistence, lifecycle, and health."""
-
 from __future__ import annotations
 
 import asyncio
@@ -9,9 +7,10 @@ from typing import Any
 import httpx
 
 from vinu_research.config import ResearchConfig, load_config
+from vinu_research.loop import StrategyResearchLoop
 from vinu_research.storage import ResearchStorage
 from vinu_research.storage.models import ResearchRunRecord, STATUS_DONE, STATUS_FAILED, STATUS_PENDING, STATUS_RUNNING
-from vinu_research.storage.sqlite_backend import ResearchStorage
+from vinu_research.tools import ResearchTools
 
 LOG = logging.getLogger(__name__)
 
@@ -27,6 +26,7 @@ class ResearchService:
             self._config.data_root / "research_meta.db"
         )
         self._owns_storage = storage is None
+        self._http = httpx.AsyncClient(timeout=5.0)
 
     @property
     def config(self) -> ResearchConfig:
@@ -35,6 +35,9 @@ class ResearchService:
     @property
     def storage(self) -> ResearchStorage:
         return self._storage
+
+    async def _run_in_thread(self, func, *args, **kwargs):
+        return await asyncio.to_thread(func, *args, **kwargs)
 
     async def run_research(
         self,
@@ -53,17 +56,27 @@ class ResearchService:
             to_date=to_date,
             status=STATUS_PENDING,
         )
-        if not dry_run:
-            record = self._storage.insert_run(record)
-            record.status = STATUS_RUNNING
-            self._storage.update_run(record)
-        else:
-            record.id = -1
+
+        if dry_run:
+            return {
+                "id": -1,
+                "user_idea": user_idea,
+                "symbol": symbol.upper(),
+                "from_date": from_date,
+                "to_date": to_date,
+                "status": "dry_run",
+                "total_iterations": 0,
+                "best_iteration": -1,
+                "best_sharpe": 0.0,
+                "best_max_dd": 0.0,
+                "report_md": "",
+            }
+
+        record = await self._run_in_thread(self._storage.insert_run, record)
+        record.status = STATUS_RUNNING
+        await self._run_in_thread(self._storage.update_run, record)
 
         try:
-            from vinu_research.tools import ResearchTools
-            from vinu_research.loop import StrategyResearchLoop
-
             tools = ResearchTools(self._config)
             loop = StrategyResearchLoop(
                 tools=tools,
@@ -78,15 +91,14 @@ class ResearchService:
                 initial_capital=initial_capital or self._config.initial_capital,
             )
 
-            if not dry_run:
-                record.status = STATUS_DONE
-                record.total_iterations = result.total_iterations
-                record.best_iteration = result.best_iteration or -1
-                if result.best_result:
-                    record.best_sharpe = result.best_result.metrics.sharpe_ratio
-                    record.best_max_dd = result.best_result.metrics.max_drawdown
-                record.report_md = result.report_md or ""
-                self._storage.update_run(record)
+            record.status = STATUS_DONE
+            record.total_iterations = result.total_iterations
+            record.best_iteration = result.best_iteration or -1
+            if result.best_result:
+                record.best_sharpe = result.best_result.metrics.sharpe_ratio
+                record.best_max_dd = result.best_result.metrics.max_drawdown
+            record.report_md = result.report_md or ""
+            await self._run_in_thread(self._storage.update_run, record)
 
             return {
                 "id": record.id,
@@ -103,28 +115,28 @@ class ResearchService:
             }
         except Exception as e:
             LOG.warning("Research failed: %s", e, exc_info=True)
-            if not dry_run:
-                record.status = STATUS_FAILED
-                record.error_message = str(e)
-                self._storage.update_run(record)
+            record.status = STATUS_FAILED
+            record.error_message = str(e)
+            await self._run_in_thread(self._storage.update_run, record)
             raise
 
-    def list_runs(
+    async def list_runs(
         self,
         symbol: str | None = None,
         status: str | None = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
-        return [r.to_dict() for r in self._storage.list_runs(symbol, status, limit)]
+        runs = await self._run_in_thread(self._storage.list_runs, symbol, status, limit)
+        return [r.to_dict() for r in runs]
 
-    def get_run(self, run_id: int) -> dict[str, Any] | None:
-        r = self._storage.get_run(run_id)
+    async def get_run(self, run_id: int) -> dict[str, Any] | None:
+        r = await self._run_in_thread(self._storage.get_run, run_id)
         return r.to_dict() if r else None
 
-    def delete_run(self, run_id: int) -> bool:
-        return self._storage.delete_run(run_id)
+    async def delete_run(self, run_id: int) -> bool:
+        return await self._run_in_thread(self._storage.delete_run, run_id)
 
-    def health(self) -> dict[str, Any]:
+    async def health(self) -> dict[str, Any]:
         deps: dict[str, dict] = {}
         for name, url in [
             ("simulator", self._config.simulator_api_url),
@@ -132,22 +144,23 @@ class ResearchService:
             ("correlation", self._config.correlation_api_url),
         ]:
             try:
-                res = httpx.get(f"{url}/health", timeout=2.0)
+                res = await self._http.get(f"{url}/health")
                 deps[name] = {"reachable": True, "status_code": res.status_code}
             except Exception as e:
                 deps[name] = {"reachable": False, "error": str(e)}
-        info = self._storage.health_info()
+        info = await self._run_in_thread(self._storage.health_info)
         info["dependencies"] = deps
         info["service"] = "vinu-research"
         info["version"] = "0.1.0"
         return info
 
-    def close(self) -> None:
+    async def close(self) -> None:
         if self._owns_storage:
-            self._storage.close()
+            await self._run_in_thread(self._storage.close)
+        await self._http.aclose()
 
-    def __enter__(self) -> ResearchService:
+    async def __aenter__(self) -> ResearchService:
         return self
 
-    def __exit__(self, *args: object) -> None:
-        self.close()
+    async def __aexit__(self, *args: object) -> None:
+        await self.close()

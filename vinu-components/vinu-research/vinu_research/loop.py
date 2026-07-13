@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from typing import Any, Callable
 
 from vinu_research.config import ResearchConfig, load_config
@@ -15,6 +16,30 @@ from vinu_research.report import generate_report
 from vinu_research.tools import ResearchTools, timestamps_from_dates
 
 LOG = logging.getLogger(__name__)
+
+_MAX_CACHE_SIZE = 64
+
+
+class _LRUCache:
+    def __init__(self, maxsize: int = _MAX_CACHE_SIZE):
+        self._data: OrderedDict[str, Any] = OrderedDict()
+        self._maxsize = maxsize
+
+    def get(self, key: str) -> Any | None:
+        if key not in self._data:
+            return None
+        self._data.move_to_end(key)
+        return self._data[key]
+
+    def set(self, key: str, value: Any) -> None:
+        if key in self._data:
+            self._data.move_to_end(key)
+        self._data[key] = value
+        if len(self._data) > self._maxsize:
+            self._data.popitem(last=False)
+
+    def clear(self) -> None:
+        self._data.clear()
 
 
 class StrategyResearchLoop:
@@ -31,8 +56,8 @@ class StrategyResearchLoop:
         self._quant_coder = quant_coder or self._default_quant_coder
         self._risk_critic = risk_critic or self._default_risk_critic
         self._on_iteration = on_iteration
-        self._story_cache: dict[str, dict[str, Any] | None] = {}
-        self._drawdown_cache: dict[str, dict[str, Any] | None] = {}
+        self._story_cache = _LRUCache()
+        self._drawdown_cache = _LRUCache()
 
     async def run(
         self,
@@ -71,23 +96,21 @@ class StrategyResearchLoop:
                     LOG.warning("Backtest returned no result, stopping")
                     break
 
-                if cache_key in self._story_cache:
-                    story = self._story_cache[cache_key]
-                else:
+                story = self._story_cache.get(cache_key)
+                if story is None:
                     story = await self._tools.get_story(
                         symbol,
                         *timestamps_from_dates(from_date, to_date),
                     )
-                    self._story_cache[cache_key] = story
+                    self._story_cache.set(cache_key, story)
 
-                if cache_key in self._drawdown_cache:
-                    drawdowns = self._drawdown_cache[cache_key]
-                else:
+                drawdowns = self._drawdown_cache.get(cache_key)
+                if drawdowns is None:
                     drawdowns = await self._tools.get_drawdowns(
                         symbol,
                         *timestamps_from_dates(from_date, to_date),
                     )
-                    self._drawdown_cache[cache_key] = drawdowns
+                    self._drawdown_cache.set(cache_key, drawdowns)
 
                 critic_feedback = await self._risk_critic(
                     result, story, drawdowns, iteration

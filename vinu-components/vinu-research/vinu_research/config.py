@@ -14,15 +14,20 @@ DEFAULT_IMPROVEMENT_THRESHOLD = 0.05
 DEFAULT_INITIAL_CAPITAL = 1_000_000.0
 DEFAULT_DATA_ROOT = Path.cwd() / "data"
 
-_ENV_LOADED = False
+_env_loaded = False
 
 
-def _ensure_dotenv_loaded() -> None:
-    global _ENV_LOADED
-    if _ENV_LOADED:
+def _ensure_dotenv_loaded(*, force: bool = False) -> None:
+    global _env_loaded
+    if _env_loaded and not force:
         return
     load_dotenv()
-    _ENV_LOADED = True
+    _env_loaded = True
+
+
+def _reset_env_for_testing() -> None:
+    global _env_loaded
+    _env_loaded = False
 
 
 @dataclass
@@ -39,8 +44,8 @@ class ResearchConfig:
     data_root: Path = DEFAULT_DATA_ROOT
 
 
-def load_config() -> ResearchConfig:
-    _ensure_dotenv_loaded()
+def load_config(*, force_reload: bool = False) -> ResearchConfig:
+    _ensure_dotenv_loaded(force=force_reload)
     data_root_raw = os.environ.get("VINU_RESEARCH_DATA_ROOT", "")
     data_root = Path(data_root_raw) if data_root_raw else DEFAULT_DATA_ROOT
     return ResearchConfig(

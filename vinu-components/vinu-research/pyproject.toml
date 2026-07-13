@@ -32,3 +32,4 @@ vinu_research = ["server/static/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"

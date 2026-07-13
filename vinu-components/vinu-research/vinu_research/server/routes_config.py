@@ -20,7 +20,7 @@ def set_service(svc: Any) -> None:
 async def health() -> dict[str, Any]:
     if _service is None:
         return {"status": "error", "message": "Service not initialized"}
-    return _service.health()
+    return await _service.health()
 
 
 @router.get("/settings")

@@ -91,6 +91,8 @@ class SqliteBackend:
         llm_analysis_mode: str | None = None,
         llm_analysis_concurrency: int | None = None,
         active_tiers: list[int] | None = None,
+        backfill_start_date: str | None = None,
+        backfill_pause_on_error: bool | None = None,
     ) -> SettingsView:
         return self._settings.patch(
             mode=mode,
@@ -98,6 +100,8 @@ class SqliteBackend:
             llm_analysis_mode=llm_analysis_mode,
             llm_analysis_concurrency=llm_analysis_concurrency,
             active_tiers=active_tiers,
+            backfill_start_date=backfill_start_date,
+            backfill_pause_on_error=backfill_pause_on_error,
         )
 
     def get_poll_status(self) -> PollStatusView:
