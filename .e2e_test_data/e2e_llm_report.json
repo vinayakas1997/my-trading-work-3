@@ -1,0 +1,89 @@
+{
+  "symbol": "MSFT",
+  "period": "2023-01-01 to 2026-07-13",
+  "steps": [
+    {
+      "name": "1. Stock Price Download",
+      "status": "PASS",
+      "symbol": "MSFT",
+      "total_bars": 581594,
+      "chunks": 43,
+      "errors": 0,
+      "disk_bytes": 12800531,
+      "disk_bytes_human": "12.21 MB",
+      "elapsed_sec": 31.84
+    },
+    {
+      "name": "2. News Download (manual, no LLM)",
+      "status": "PASS",
+      "symbol": "MSFT",
+      "backfill_result": {
+        "ticker": "MSFT",
+        "status": "completed",
+        "articles_fetched": 0
+      },
+      "llm_analysis_mode": "manual",
+      "disk_bytes": 25337856,
+      "disk_bytes_human": "24.16 MB",
+      "elapsed_sec": 1.45
+    },
+    {
+      "name": "3. Strategy Refinement (real LLM loop)",
+      "status": "PASS",
+      "symbol": "MSFT",
+      "user_idea": "SMA 20/50 crossover on MSFT, long when fast SMA > slow SMA, flat otherwise, with an RSI(14) filter to skip entries when RSI > 70 (overbought).",
+      "total_iterations": 2,
+      "best_iteration": 2,
+      "iterations": [
+        {
+          "iteration": 1,
+          "sharpe": 0.0,
+          "return_pct": 0.0,
+          "max_dd_pct": 0.0,
+          "win_rate_pct": 0.0,
+          "trades": 0,
+          "verdict": "REFINE",
+          "run_id": "69d4558e-2905-46fe-a086-bb6d19600ecc"
+        },
+        {
+          "iteration": 2,
+          "sharpe": -0.881,
+          "return_pct": -20.45,
+          "max_dd_pct": -24.71,
+          "win_rate_pct": 5.9,
+          "trades": 63,
+          "verdict": "REFINE",
+          "run_id": "3f9059da-6024-4f98-8436-6834c1f24b04"
+        }
+      ],
+      "best_run_id": "3f9059da-6024-4f98-8436-6834c1f24b04",
+      "best_sharpe": -0.881,
+      "holdout": null,
+      "llm_calls_total": 4,
+      "llm_calls_by_type": {
+        "candidate_generation": 2,
+        "risk_critic": 2,
+        "unknown": 0
+      },
+      "llm_call_log_file": "C:\\Users\\vinay\\Desktop\\my-trading-work-3\\.e2e_test_data\\msft_llm_calls.json",
+      "elapsed_sec": 613.96
+    },
+    {
+      "name": "4. Cash Maintained",
+      "status": "PASS",
+      "run_id": "3f9059da-6024-4f98-8436-6834c1f24b04",
+      "days": 743,
+      "start_cash": 1000000.0,
+      "end_cash": 795537.71,
+      "min_cash": -24065.05,
+      "max_cash": 1000000.0,
+      "mean_cash_pct_of_nav": 86.71,
+      "pct_days_fully_invested": 4.4,
+      "start_nav": 1000000.0,
+      "end_nav": 795537.71,
+      "elapsed_sec": 0.36,
+      "cash_curve_file": "C:\\Users\\vinay\\Desktop\\my-trading-work-3\\.e2e_test_data\\msft_cash_curve.csv"
+    }
+  ],
+  "overall_elapsed_sec": 649.9
+}
