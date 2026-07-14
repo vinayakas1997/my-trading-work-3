@@ -2,7 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY . /app/vinu-stock-price
+COPY vinu-lib /app/vinu-lib
+RUN pip install --no-cache-dir -e /app/vinu-lib
+
+COPY vinu-stock-price /app/vinu-stock-price
 
 WORKDIR /app/vinu-stock-price
 

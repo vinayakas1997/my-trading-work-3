@@ -24,6 +24,9 @@ class SimulationConfig:
     benchmark_tickers: tuple[str, ...] = ("SPY", "QQQ")
     allow_short: bool = True
     deviation_threshold: float = 0.05
+    # Bar granularity of price_data/weight_signals — drives annualization
+    # (periods-per-year) in metrics.py. "1d" preserves prior behavior.
+    interval: str = "1d"
 
     # "fixed" = today's behavior (strategy's own weights used as-is). "vol_target"
     # scales exposure to hold realized volatility roughly constant. "kelly" scales

@@ -58,9 +58,20 @@ class AlpacaProvider:
             while True:
                 if page_token:
                     params["page_token"] = page_token
-                resp = http_get_with_retry(
-                    url, params=params, headers=self._headers(), timeout=REQUEST_TIMEOUT_SEC
-                )
+                try:
+                    resp = http_get_with_retry(
+                        url, params=params, headers=self._headers(), timeout=REQUEST_TIMEOUT_SEC
+                    )
+                except requests.HTTPError as exc:
+                    # Free/basic Alpaca plans are restricted to the IEX feed; SIP
+                    # (the default) 403s on those accounts. Retry once with IEX.
+                    if exc.response is not None and exc.response.status_code == 403 and params.get("feed") != "iex":
+                        params["feed"] = "iex"
+                        resp = http_get_with_retry(
+                            url, params=params, headers=self._headers(), timeout=REQUEST_TIMEOUT_SEC
+                        )
+                    else:
+                        raise
                 data = resp.json()
                 for row in (data.get("bars") or {}).get(sym) or []:
                     ts = row.get("t", "")

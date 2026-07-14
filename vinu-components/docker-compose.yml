@@ -4,8 +4,8 @@ services:
   # =========================================================================
   news-ingest:
     build:
-      context: ./vinu-news
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: vinu-news/Dockerfile
     command: ["vinu-news-ingest", "--continuous"]
     env_file: ./vinu-news/.env
     environment:
@@ -15,14 +15,14 @@ services:
       ALPACA_API_KEY: ${ALPACA_API_KEY}
       ALPACA_API_SECRET: ${ALPACA_API_SECRET}
     volumes:
-      - vinu_news_data:/data
-      - vinu_shared_exchange:/shared
+      - ./data/news:/data
+      - ./data/shared:/shared
     restart: unless-stopped
 
   news-api:
     build:
-      context: ./vinu-news
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: vinu-news/Dockerfile
     command: ["vinu-news-serve", "--host", "0.0.0.0", "--port", "8080"]
     env_file: ./vinu-news/.env
     environment:
@@ -32,8 +32,8 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - vinu_news_data:/data
-      - vinu_shared_exchange:/shared
+      - ./data/news:/data
+      - ./data/shared:/shared
     restart: unless-stopped
     depends_on:
       - news-ingest
@@ -43,8 +43,8 @@ services:
   # =========================================================================
   stock-ingest:
     build:
-      context: ./vinu-stock-price
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: vinu-stock-price/Dockerfile
     command: ["vinu-stock-ingest", "--interval", "60"]
     env_file: ./vinu-stock-price/.env
     environment:
@@ -52,14 +52,14 @@ services:
       VINU_STOCK_META_DB_PATH: /data/meta.db
       VINU_SHARED_WATCHLIST_PATH: /shared/watchlist.json
     volumes:
-      - vinu_stock_data:/data
-      - vinu_shared_exchange:/shared
+      - ./data/stock-price:/data
+      - ./data/shared:/shared
     restart: unless-stopped
 
   stock-api:
     build:
-      context: ./vinu-stock-price
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: vinu-stock-price/Dockerfile
     command: ["vinu-stock-serve", "--host", "0.0.0.0", "--port", "8081"]
     env_file: ./vinu-stock-price/.env
     environment:
@@ -69,8 +69,8 @@ services:
     ports:
       - "8081:8081"
     volumes:
-      - vinu_stock_data:/data
-      - vinu_shared_exchange:/shared
+      - ./data/stock-price:/data
+      - ./data/shared:/shared
     restart: unless-stopped
     depends_on:
       - stock-ingest
@@ -80,8 +80,8 @@ services:
   # =========================================================================
   features-worker:
     build:
-      context: ./vinu-features
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: vinu-features/Dockerfile
     command: ["vinu-features", "worker", "--loop"]
     env_file: ./vinu-features/.env
     environment:
@@ -89,13 +89,13 @@ services:
       VINU_FEATURES_META_DB_PATH: /data/meta.db
       VINU_STOCK_API_URL: http://stock-api:8081
     volumes:
-      - vinu_features_data:/data
+      - ./data/features:/data
     restart: unless-stopped
 
   features-api:
     build:
-      context: ./vinu-features
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: vinu-features/Dockerfile
     command: ["vinu-features", "serve", "--host", "0.0.0.0", "--port", "8082"]
     env_file: ./vinu-features/.env
     environment:
@@ -105,7 +105,7 @@ services:
     ports:
       - "8082:8082"
     volumes:
-      - vinu_features_data:/data
+      - ./data/features:/data
     restart: unless-stopped
     depends_on:
       - features-worker
@@ -116,8 +116,8 @@ services:
   # =========================================================================
   correlation-compute:
     build:
-      context: ./vinu-correlation
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: vinu-correlation/Dockerfile
     command: ["vinu-correlation-compute", "--continuous", "--incremental"]
     env_file: ./vinu-correlation/.env
     environment:
@@ -126,7 +126,7 @@ services:
       VINU_STOCK_API_URL: http://stock-api:8081
       VINU_CORRELATION_MARKET_HOURS_ONLY: "true"
     volumes:
-      - vinu_correlation_data:/data
+      - ./data/correlation:/data
     restart: unless-stopped
     depends_on:
       - news-api
@@ -134,8 +134,8 @@ services:
 
   correlation-api:
     build:
-      context: ./vinu-correlation
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: vinu-correlation/Dockerfile
     command: ["vinu-correlation-serve", "--host", "0.0.0.0", "--port", "8083"]
     env_file: ./vinu-correlation/.env
     environment:
@@ -145,7 +145,7 @@ services:
     ports:
       - "8083:8083"
     volumes:
-      - vinu_correlation_data:/data
+      - ./data/correlation:/data
     restart: unless-stopped
     depends_on:
       - correlation-compute
@@ -155,8 +155,8 @@ services:
   # =========================================================================
   strategy-api:
     build:
-      context: ./vinu-strategy
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: vinu-strategy/Dockerfile
     command: ["vinu-strategy", "serve", "--host", "0.0.0.0", "--port", "8084"]
     env_file: ./vinu-strategy/.env
     environment:
@@ -167,7 +167,7 @@ services:
     ports:
       - "8084:8084"
     volumes:
-      - vinu_strategy_data:/data
+      - ./data/strategy:/data
     restart: unless-stopped
     depends_on:
       - features-api
@@ -178,8 +178,8 @@ services:
   # =========================================================================
   simulator-api:
     build:
-      context: ./vinu-simulator
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: vinu-simulator/Dockerfile
     command: ["vinu-simulator", "serve", "--host", "0.0.0.0", "--port", "8085"]
     env_file: ./vinu-simulator/.env
     environment:
@@ -189,17 +189,9 @@ services:
     ports:
       - "8085:8085"
     volumes:
-      - vinu_simulator_data:/data
+      - ./data/simulator:/data
     restart: unless-stopped
     depends_on:
       - strategy-api
       - stock-api
 
-volumes:
-  vinu_news_data:
-  vinu_stock_data:
-  vinu_features_data:
-  vinu_correlation_data:
-  vinu_strategy_data:
-  vinu_simulator_data:
-  vinu_shared_exchange:

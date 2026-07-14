@@ -14,7 +14,11 @@ from vinu_simulator.engine.costs import (
     CostModel,
     FlatCostModel,
 )
-from vinu_simulator.engine.metrics import compute_full_metrics, compute_performance_metrics
+from vinu_simulator.engine.metrics import (
+    compute_full_metrics,
+    compute_performance_metrics,
+    periods_per_year_for_interval,
+)
 from vinu_simulator.engine.sizing import PositionSizer, build_position_sizer
 from vinu_simulator.models.metrics import MetricBundle
 from vinu_simulator.models.simulation import (
@@ -219,6 +223,18 @@ class WeightSimulator:
                         cost = self._cost_model.buy_cost(
                             float(prices[idx]), float(shares_to_buy), volume=vol
                         )
+                        # A target of exactly 100% notional leaves no room for fees/
+                        # slippage/impact, so `cost` lands just above `cash` and the
+                        # order would silently never fill — every step, forever, on
+                        # any fully-invested strategy. Shrink toward whatever size
+                        # actually fits instead of dropping the order.
+                        for _ in range(5):
+                            if cost <= cash or shares_to_buy <= 1e-12:
+                                break
+                            shares_to_buy *= cash / cost
+                            cost = self._cost_model.buy_cost(
+                                float(prices[idx]), float(shares_to_buy), volume=vol
+                            )
                         if cost <= cash:
                             cash -= cost
                             holdings[idx] += shares_to_buy
@@ -258,6 +274,7 @@ class WeightSimulator:
             portfolio_values_s, daily_returns_s,
             trades=trades,
             risk_free_rate=config.risk_free_rate_annual,
+            periods_per_year=periods_per_year_for_interval(config.interval),
         )
 
         run_id = str(uuid.uuid4())
@@ -427,4 +444,7 @@ class SimulatorEnv:
         )
 
     def metrics(self) -> dict[str, float]:
-        return compute_performance_metrics(self.equity_curve, self.daily_returns)
+        return compute_performance_metrics(
+            self.equity_curve, self.daily_returns,
+            periods_per_year=periods_per_year_for_interval(self.config.interval),
+        )

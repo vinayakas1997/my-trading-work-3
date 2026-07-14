@@ -90,6 +90,7 @@ class ResearchTools:
         transaction_cost_pct: float | None = None,
         slippage_pct: float | None = None,
         allow_short: bool = True,
+        interval: str | None = None,
     ) -> BacktestResult | None:
         body: dict[str, Any] = {
             "strategy_code": strategy_code,
@@ -107,6 +108,8 @@ class ResearchTools:
             body["slippage_pct"] = slippage_pct
         if indicators is not None:
             body["indicators"] = indicators
+        if interval is not None:
+            body["interval"] = interval
         try:
             data = await self._simulator_client.post(
                 "/simulate/custom",

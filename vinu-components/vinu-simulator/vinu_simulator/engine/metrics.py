@@ -4,11 +4,31 @@ import numpy as np
 import pandas as pd
 from scipy import stats as scipy_stats
 
+# Trading day = 6.5h (390min) on US equities. periods_per_year is "how many bars
+# of this size occur in a 252-trading-day year" — the annualization factor for
+# CAGR/vol/Sharpe/etc. Wrong for non-equity calendars, but this is what the rest
+# of the pipeline (session filters, market-hours-only correlation) assumes too.
+_BARS_PER_DAY = {
+    "1m": 390.0,
+    "5m": 78.0,
+    "15m": 26.0,
+    "30m": 13.0,
+    "1h": 6.5,
+    "4h": 1.625,
+    "1d": 1.0,
+}
+
+
+def periods_per_year_for_interval(interval: str) -> float:
+    bars_per_day = _BARS_PER_DAY.get((interval or "1d").strip().lower(), 1.0)
+    return bars_per_day * 252.0
+
 
 def compute_performance_metrics(
     portfolio_values: pd.Series,
     daily_returns: pd.Series,
     risk_free_rate: float = 0.0,
+    periods_per_year: float = 252.0,
 ) -> dict[str, float]:
     if len(portfolio_values) < 2 or len(daily_returns) < 1:
         return _empty_metrics()
@@ -16,23 +36,23 @@ def compute_performance_metrics(
     initial_value = portfolio_values.iloc[0]
     total_return = (portfolio_values.iloc[-1] / initial_value - 1) if initial_value > 0 else 0.0
     num_days = len(daily_returns)
-    cagr = (1 + total_return) ** (252 / max(num_days, 1)) - 1
+    cagr = (1 + total_return) ** (periods_per_year / max(num_days, 1)) - 1
 
     daily_vol = float(daily_returns.std()) if len(daily_returns) > 1 else 0.0
-    annual_vol = daily_vol * np.sqrt(252)
+    annual_vol = daily_vol * np.sqrt(periods_per_year)
 
-    rf_daily = (1 + risk_free_rate) ** (1 / 252) - 1
+    rf_daily = (1 + risk_free_rate) ** (1 / periods_per_year) - 1
     excess_daily = daily_returns - rf_daily
     excess_mean = float(excess_daily.mean()) if len(excess_daily) > 1 else 0.0
     sharpe = (
-        (excess_mean / daily_vol * np.sqrt(252) if daily_vol > 0 else 0.0)
+        (excess_mean / daily_vol * np.sqrt(periods_per_year) if daily_vol > 0 else 0.0)
         if len(daily_returns) > 1
         else 0.0
     )
 
     downside = daily_returns[daily_returns < 0]
     downside_std = float(downside.std()) if len(downside) > 1 else 0.0
-    annual_downside = downside_std * np.sqrt(252)
+    annual_downside = downside_std * np.sqrt(periods_per_year)
     sortino = (cagr / annual_downside) if annual_downside > 0 else 0.0
 
     cumulative = (
@@ -71,6 +91,7 @@ def compute_extended_metrics(
     trades: list | None = None,
     benchmark_returns: pd.Series | None = None,
     risk_free_rate: float = 0.0,
+    periods_per_year: float = 252.0,
 ) -> dict[str, float]:
     if len(portfolio_values) < 2 or len(daily_returns) < 1:
         return {}
@@ -137,7 +158,7 @@ def compute_extended_metrics(
             bench_rets = aligned.iloc[:, 1]
 
             beta = float(strat_rets.cov(bench_rets) / bench_rets.var()) if bench_rets.var() > 0 else 0.0
-            annual_factor = 252
+            annual_factor = periods_per_year
             rf_daily = (1 + risk_free_rate) ** (1 / annual_factor) - 1
             excess_strat = strat_rets.mean() - rf_daily
             excess_bench = bench_rets.mean() - rf_daily
@@ -166,7 +187,7 @@ def compute_extended_metrics(
     extended["sharpe_ci_95_low"] = 0.0
     extended["sharpe_ci_95_high"] = 0.0
 
-    basic_sharpe = _get_basic_sharpe(portfolio_values, daily_returns, risk_free_rate) if n > 1 else None
+    basic_sharpe = _get_basic_sharpe(portfolio_values, daily_returns, risk_free_rate, periods_per_year) if n > 1 else None
     if basic_sharpe is not None:
         sharpe_se = float(np.sqrt((1 + 0.5 * basic_sharpe**2) / n))
         extended["sharpe_standard_error"] = sharpe_se
@@ -186,7 +207,7 @@ def compute_extended_metrics(
 
         avg_portfolio_value = float(portfolio_values.mean())
         num_days = len(daily_returns)
-        annual_turnover = (total_traded_value / avg_portfolio_value) * (252 / num_days) if avg_portfolio_value > 0 and num_days > 0 else 0.0
+        annual_turnover = (total_traded_value / avg_portfolio_value) * (periods_per_year / num_days) if avg_portfolio_value > 0 and num_days > 0 else 0.0
         extended["annual_turnover"] = annual_turnover
     else:
         extended["annual_turnover"] = 0.0
@@ -200,9 +221,10 @@ def compute_full_metrics(
     trades: list | None = None,
     benchmark_returns: pd.Series | None = None,
     risk_free_rate: float = 0.0,
+    periods_per_year: float = 252.0,
 ) -> dict[str, float]:
-    basic = compute_performance_metrics(portfolio_values, daily_returns, risk_free_rate)
-    extended = compute_extended_metrics(portfolio_values, daily_returns, trades, benchmark_returns, risk_free_rate)
+    basic = compute_performance_metrics(portfolio_values, daily_returns, risk_free_rate, periods_per_year)
+    extended = compute_extended_metrics(portfolio_values, daily_returns, trades, benchmark_returns, risk_free_rate, periods_per_year)
     merged = {**basic, **extended}
     # inf/-inf/nan are not valid JSON and would break API responses (profit_factor,
     # win_loss_ratio, and others can hit a zero denominator on a flat/no-trade run) —
@@ -217,13 +239,14 @@ def _get_basic_sharpe(
     portfolio_values: pd.Series,
     daily_returns: pd.Series,
     risk_free_rate: float = 0.0,
+    periods_per_year: float = 252.0,
 ) -> float | None:
     if len(daily_returns) < 2:
         return None
-    rf_daily = (1 + risk_free_rate) ** (1 / 252) - 1
+    rf_daily = (1 + risk_free_rate) ** (1 / periods_per_year) - 1
     excess = daily_returns - rf_daily
     if excess.std() > 0:
-        return float(excess.mean() / excess.std() * np.sqrt(252))
+        return float(excess.mean() / excess.std() * np.sqrt(periods_per_year))
     return 0.0
 
 

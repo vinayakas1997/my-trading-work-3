@@ -387,6 +387,7 @@ class StrategyResearchLoop:
             transaction_cost_pct=self._config.transaction_cost_pct,
             slippage_pct=self._config.slippage_pct,
             allow_short=self._config.allow_short,
+            interval=self._config.interval,
         )
 
     async def _check_holdout(

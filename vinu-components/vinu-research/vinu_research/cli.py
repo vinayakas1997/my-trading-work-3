@@ -174,9 +174,9 @@ def run_main(args: argparse.Namespace) -> None:
         print(f"[vinu-research] Walk-forward: enabled ({config.walk_forward_method}, {config.walk_forward_windows} windows)")
     _print_separator()
 
-    try:
-        result = asyncio.run(
-            loop.run(
+    async def _run_and_close():
+        try:
+            return await loop.run(
                 user_idea=args.idea,
                 symbol=symbol,
                 from_date=from_date,
@@ -185,7 +185,15 @@ def run_main(args: argparse.Namespace) -> None:
                 initial_capital=config.initial_capital,
                 universe=universe,
             )
-        )
+        finally:
+            # Must close under the same event loop that created these httpx
+            # clients — a second, separate asyncio.run() call for cleanup
+            # raises "RuntimeError: Event loop is closed" (the transport's
+            # callbacks are bound to the now-dead loop from loop.run()).
+            await tools.close()
+
+    try:
+        result = asyncio.run(_run_and_close())
     except KeyboardInterrupt:
         print("\n[vinu-research] Interrupted by user")
         sys.exit(130)
@@ -193,8 +201,6 @@ def run_main(args: argparse.Namespace) -> None:
         print(f"\n[vinu-research] Error: {e}")
         LOG.exception("Research loop failed")
         sys.exit(1)
-    finally:
-        asyncio.run(tools.close())
 
     print()
     print(result.report_md)

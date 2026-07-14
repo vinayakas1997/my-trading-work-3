@@ -12,7 +12,7 @@ from vinu_simulator.clients.price_client import PriceClient
 from vinu_simulator.clients.strategy_client import StrategyClient
 from vinu_simulator.config import load_config
 from vinu_simulator.engine.custom_sim import simulate_custom as _run_custom_sim
-from vinu_simulator.engine.metrics import compute_performance_metrics
+from vinu_simulator.engine.metrics import compute_performance_metrics, periods_per_year_for_interval
 from vinu_simulator.engine.simulator import WeightSimulator
 from vinu_simulator.engine.strategies import BaseStrategy
 from vinu_simulator.models.simulation import SimulationConfig, SimulationInput, SimulationResult
@@ -149,7 +149,8 @@ class SimulatorService:
         # supply what generate_weights() needs across the backtest window.
         requested_indicators = ["sma_20", "sma_50", "rsi_14"]
         ohclv_data = self._price_client.get_ohclv(
-            req.symbols, start_date, end_date, indicators=requested_indicators
+            req.symbols, start_date, end_date,
+            resolution=req.interval, indicators=requested_indicators,
         )
         missing = [s for s in req.symbols if s not in ohclv_data or ohclv_data[s].empty]
         if missing:
@@ -175,6 +176,7 @@ class SimulatorService:
             benchmark_tickers=tuple(req.benchmark_tickers) if req.benchmark_tickers else self._config.benchmark_tickers,
             allow_short=req.allow_short,
             deviation_threshold=req.deviation_threshold if req.deviation_threshold is not None else self._config.deviation_threshold,
+            interval=req.interval,
         )
 
         result = _run_custom_sim(
@@ -236,7 +238,10 @@ class SimulatorService:
                 continue
             values = prices / prices.iloc[0] * config.initial_capital
             returns = values.pct_change().dropna()
-            bm = compute_performance_metrics(values, returns)
+            bm = compute_performance_metrics(
+                values, returns,
+                periods_per_year=periods_per_year_for_interval(config.interval),
+            )
             benchmark_metrics[ticker] = bm
         return benchmark_metrics
 

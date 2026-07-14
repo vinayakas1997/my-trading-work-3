@@ -71,4 +71,4 @@ flowchart LR
 |---------|------|------|
 | vinu-news | `../../vinu-news/` | Provides news articles with sentiment, impact, tickers |
 | vinu-stock-price | `../../vinu-stock-price/` | Provides price candles (1m bars) |
-| vinu_lib | `../../vinu_lib/` | Shared DB utilities |
+| vinu_lib | `../../vinu-lib/` | Shared DB utilities |

@@ -2,7 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY . /app/vinu-simulator
+COPY vinu-lib /app/vinu-lib
+RUN pip install --no-cache-dir -e /app/vinu-lib
+
+COPY vinu-simulator /app/vinu-simulator
 
 WORKDIR /app/vinu-simulator
 

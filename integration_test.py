@@ -29,6 +29,8 @@ from dotenv import load_dotenv
 logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
 LOG = logging.getLogger("integration_test")
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / "vinu-components"))
+
 SYMBOL = "AAPL"
 FROM_YEAR, FROM_MONTH, FROM_DAY = 2023, 1, 1
 TO_YEAR, TO_MONTH, TO_DAY = 2026, 7, 13

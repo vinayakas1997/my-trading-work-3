@@ -120,7 +120,14 @@ def _normalize_rows(rows: list[dict[str, Any]], symbol: str) -> list[dict[str, A
     if not rows:
         return []
     first = rows[0]
-    ts_key: str = "ts" if "ts" in first else ("timestamp" if "timestamp" in first else "sort_ts")
+    if "ts" in first:
+        ts_key = "ts"
+    elif "timestamp" in first:
+        ts_key = "timestamp"
+    elif "bar_ts" in first:
+        ts_key = "bar_ts"
+    else:
+        ts_key = "sort_ts"
     out: list[dict[str, Any]] = []
     for row in rows:
         ts = row.get(ts_key)

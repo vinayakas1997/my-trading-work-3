@@ -47,6 +47,9 @@ class ResearchConfig:
     transaction_cost_pct: float = 0.001
     slippage_pct: float = 0.0005
     allow_short: bool = True
+    # Bar granularity fed to the simulator ("1m","5m","15m","30m","1h","4h","1d").
+    # Daily by default; matches vinu-simulator's CustomSimulateRequest.interval.
+    interval: str = "1d"
     data_root: Path = DEFAULT_DATA_ROOT
     max_drawdown_threshold: float = -0.25
     llm_enabled: bool = False
@@ -106,6 +109,7 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         transaction_cost_pct=float(os.environ.get("VINU_RESEARCH_TRANSACTION_COST_PCT", "0.001")),
         slippage_pct=float(os.environ.get("VINU_RESEARCH_SLIPPAGE_PCT", "0.0005")),
         allow_short=os.environ.get("VINU_RESEARCH_ALLOW_SHORT", "true").lower() == "true",
+        interval=os.environ.get("VINU_RESEARCH_INTERVAL", "1d"),
         data_root=data_root,
         max_drawdown_threshold=float(os.environ.get("VINU_RESEARCH_MAX_DRAWDOWN_THRESHOLD", "-0.25")),
         llm_enabled=os.environ.get("VINU_RESEARCH_LLM_ENABLED", "false").lower() == "true",
