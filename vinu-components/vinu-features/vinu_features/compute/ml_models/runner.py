@@ -1,8 +1,16 @@
-"""ML model dispatch — train and score on feature parquet."""
+"""ML model dispatch — train and score on feature parquet.
+
+Uses time-ordered holdout split (first 80% train / last 20% test, no shuffle)
+to produce honest out-of-sample scores. OOS IC is written alongside predictions.
+"""
 
 from __future__ import annotations
 
+import json
+import logging
 from pathlib import Path
+
+LOG = logging.getLogger(__name__)
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -31,15 +39,43 @@ def run_ml_step(
     if len(X) < 10:
         return None
 
-    scores = registry.score(ml_model, X, y_clean)
+    # Time-ordered holdout split: first 80% train, last 20% test
+    split = max(int(len(X) * 0.8), 1)
+    X_train, y_train = X[:split], y_clean[:split]
+    X_test, y_test = X[split:], y_clean[split:]
+
+    train_preds, test_preds = registry.train_and_predict(
+        ml_model, X_train, y_train, X_test
+    )
+
+    # OOS IC on test set
+    oos = registry.oos_ic(y_test, test_preds)
+    LOG.info("run_ml_step: %s OOS IC = %.4f (train=%d, test=%d)",
+             ml_model, oos, len(X_train), len(X_test))
+
+    # Write predictions for ALL rows (train preds for in-sample, test preds for OOS)
     out_rows = []
+    train_end = len(train_preds)
+    all_preds = train_preds + test_preds
     for i, idx in enumerate(valid_idx):
         rec = dict(rows[idx])
-        rec["ml_score"] = scores[i]
+        rec["ml_score"] = all_preds[i]
+        rec["ml_oos"] = i >= train_end  # mark which rows are out-of-sample
         out_rows.append(rec)
 
     out_path = run_dir / "scores.parquet"
     pq.write_table(pa.Table.from_pylist(out_rows), out_path)
+
+    # Write OOS metrics alongside
+    oos_metrics = {
+        "ml_model": ml_model,
+        "ml_label": ml_label,
+        "oos_ic": oos,
+        "train_count": len(X_train),
+        "test_count": len(X_test),
+    }
+    oos_path = run_dir / "oos_metrics.json"
+    oos_path.write_text(json.dumps(oos_metrics, indent=2))
     return out_path
 
 

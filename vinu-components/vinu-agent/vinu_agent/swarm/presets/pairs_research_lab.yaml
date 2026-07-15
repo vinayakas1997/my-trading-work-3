@@ -1,0 +1,26 @@
+name: pairs_research_lab
+description: Dedicated pairs trading research with ratio analysis, entry/exit rules, and walk-forward
+tasks:
+  - agent_name: pair_selector
+    role: Pair Selector
+    prompt: >
+      Select the best trading pair involving {{symbol}}.
+      Filter by: correlation > 0.7, cointegration p-value < 0.05,
+      and half-life between 5-50 days. Justify the pair selection
+      with statistical evidence.
+  - agent_name: ratio_analyst
+    role: Ratio Analyst
+    prompt: >
+      Analyze the price ratio and spread for the selected pair.
+      Calculate Z-score history, identify structural breaks,
+      and set optimal Z-score entry thresholds (-2.0, -1.5, etc.)
+      and exit thresholds (0, +0.5). Test sensitivity.
+    depends_on: [pair_selector]
+  - agent_name: walk_forward_validator
+    role: Walk-Forward Validator
+    prompt: >
+      Validate the pairs trading strategy using walk-forward analysis.
+      Use 12-month training / 3-month testing windows.
+      Report: Sharpe, trades/month, win rate, max drawdown, and
+      strategy stability across windows.
+    depends_on: [ratio_analyst]

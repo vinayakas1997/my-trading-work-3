@@ -6,6 +6,14 @@ NAME = "elastic_net"
 ALIASES = ("elastic_net",)
 
 
+def create():
+    try:
+        from sklearn.linear_model import ElasticNet
+    except ImportError as exc:
+        raise ImportError("Install ml extras: pip install -e '.[ml]'") from exc
+    return ElasticNet(max_iter=2000)
+
+
 def score(X: list[list[float]], y: list[float]) -> list[float]:
     try:
         import numpy as np

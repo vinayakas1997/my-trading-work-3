@@ -12,7 +12,7 @@ from tests.conftest import MockCandleClient
 
 
 def test_feature_catalog_lists_all_indicators():
-    assert len(list_indicators()) == 23
+    assert len(list_indicators()) == 24
 
 
 def test_features_help_rsi_shows_period_default():
@@ -101,5 +101,5 @@ def test_http_features_catalog(config, backend):
     client = TestClient(create_app(service))
     resp = client.get("/features")
     assert resp.status_code == 200
-    assert resp.json()["count"] == 23
+    assert resp.json()["count"] == 24
     service.close()

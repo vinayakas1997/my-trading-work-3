@@ -1,0 +1,33 @@
+name: fund_selection_panel
+description: Mutual fund and hedge fund due diligence with performance, risk, and style analysis
+tasks:
+  - agent_name: fund_performance_analyst
+    role: Fund Performance Analyst
+    prompt: >
+      Analyze the performance track record of {{fund_name}}.
+      Evaluate: annualized return, Sharpe ratio, Sortino ratio,
+      up/down capture, maximum drawdown, and rolling returns.
+      Compare against the category benchmark {{benchmark}}.
+  - agent_name: fund_risk_analyst
+    role: Fund Risk Analyst
+    prompt: >
+      Analyze the risk profile of {{fund_name}}.
+      Decompose risk: market beta, sector concentration,
+      single-name concentration, leverage usage, and liquidity risk.
+      Identify hidden risks not captured by standard metrics.
+    depends_on: [fund_performance_analyst]
+  - agent_name: fund_style_analyst
+    role: Fund Style Analyst
+    prompt: >
+      Analyze the investment style of {{fund_name}}.
+      Determine: value vs growth tilt, market cap orientation,
+      active share, and R-squared. Is the fund truly active
+      or a closet indexer? Has the style drifted over time?
+    depends_on: [fund_risk_analyst]
+  - agent_name: fund_due_diligence_chair
+    role: Due Diligence Chair
+    prompt: >
+      Synthesize the performance, risk, and style analysis for {{fund_name}}.
+      Provide a PASS/HOLD/WATCH/FAIL recommendation for inclusion
+      in the portfolio. Specify monitoring triggers and review cadence.
+    depends_on: [fund_style_analyst]

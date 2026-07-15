@@ -141,15 +141,55 @@ class ResearchLlmClient:
     def __init__(self, config: ResearchConfig) -> None:
         self._config = config
         cache_path = config.llm_cache_path or str(config.data_root / "llm_cache.db")
+        
+        provider = self._resolve_provider(config.llm_model, config.llm_base_url)
+        from vinu_research.llm_capabilities.client import ChatLLM
+        self._chat_llm = ChatLLM(
+            provider=provider,
+            model=config.llm_model,
+            base_url=config.llm_base_url,
+            api_key=config.llm_api_key,
+        )
+
         self._http = ResilientClient(
             config.llm_base_url.rstrip("/"),
             "llm",
             timeout=config.llm_timeout_sec,
             max_retries=2,
             circuit_breaker_threshold=3,
+            allow_local=True,
+            headers=self._chat_llm.get_headers(),
         )
         self._cache = LlmCache(cache_path, ttl_sec=config.llm_ttl_sec)
         self._limiter = TokenBucket(rate=10, per=60)
+
+    @staticmethod
+    def _resolve_provider(model: str, base_url: str) -> str:
+        m = model.lower()
+        url = base_url.lower()
+        if "deepseek" in m or "deepseek" in url:
+            return "deepseek"
+        if "openai" in m or "openai" in url:
+            return "openai"
+        if "anthropic" in m or "claude" in m or "anthropic" in url:
+            return "anthropic"
+        if "gemini" in m or "gemini" in url:
+            return "gemini"
+        if "mistral" in m or "mistral" in url:
+            return "mistral"
+        if "groq" in m or "groq" in url:
+            return "groq"
+        if "together" in m or "together" in url:
+            return "together"
+        if "perplexity" in m or "perplexity" in url:
+            return "perplexity"
+        if "cohere" in m or "cohere" in url:
+            return "cohere"
+        if "qwen" in m or "qwen" in url:
+            return "qwen"
+        if "ollama" in m or "ollama" in url or "11434" in url:
+            return "ollama"
+        return "ollama"
 
     def is_configured(self) -> bool:
         return bool(self._config.llm_base_url and self._config.llm_model)
@@ -163,18 +203,17 @@ class ResearchLlmClient:
                 return cached
 
         await self._limiter.wait_async()
-        payload = {
-            "model": self._config.llm_model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "temperature": 0.2,
-            "max_tokens": self._config.llm_max_tokens,
-        }
-        headers = {}
-        if self._config.llm_api_key:
-            headers["Authorization"] = f"Bearer {self._config.llm_api_key}"
+        
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        
+        payload = self._chat_llm.build_request(
+            messages=messages,
+            temperature=0.2,
+            max_tokens=self._config.llm_max_tokens,
+        )
 
         data = await self._http.post("/chat/completions", json=payload)
         if data is None:
@@ -182,8 +221,9 @@ class ResearchLlmClient:
             return None
 
         try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as e:
+            normalized = self._chat_llm.normalize_response(data)
+            content = normalized.get("content", "")
+        except Exception as e:
             LOG.warning("LLM response missing expected fields: %s", e)
             return None
 

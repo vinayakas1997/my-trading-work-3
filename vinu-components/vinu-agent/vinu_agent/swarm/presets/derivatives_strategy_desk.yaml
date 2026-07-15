@@ -1,0 +1,26 @@
+name: derivatives_strategy_desk
+description: Options strategy construction with Greeks analysis and risk management
+tasks:
+  - agent_name: options_analyst
+    role: Options Analyst
+    prompt: >
+      Analyze the options chain for {{symbol}}.
+      Review implied volatility surface, term structure, and skew.
+      Identify unusual options activity and large block trades.
+      What is the expected move for the next event/expiry?
+  - agent_name: greeks_analyst
+    role: Greeks Analyst
+    prompt: >
+      For the options strategies under consideration for {{symbol}},
+      calculate Greeks: delta, gamma, theta, vega, and rho.
+      Analyze the risk profile under different scenarios
+      (volatility expansion/contraction, time decay, directional move).
+    depends_on: [options_analyst]
+  - agent_name: strategy_constructor
+    role: Strategy Constructor
+    prompt: >
+      Based on the outlook for {{symbol}}, construct optimal
+      options strategies. Consider: covered calls, protective puts,
+      vertical spreads, iron condors, straddles/strangles,
+      and calendar spreads. Recommend best risk-adjusted strategy.
+    depends_on: [greeks_analyst]

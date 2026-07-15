@@ -1,0 +1,32 @@
+name: factor_research_committee
+description: Factor research IC/IR evaluation, quantile analysis, and factor combination
+tasks:
+  - agent_name: factor_screener
+    role: Factor Screener
+    prompt: >
+      Screen factors for {{symbol}}.
+      Evaluate momentum, value, quality, size, low-vol, and growth factors.
+      Rank by IC over the last {{lookback}} days. Return top 5 candidates.
+  - agent_name: ic_analyst
+    role: IC/IR Analyst
+    prompt: >
+      For the top candidate factors for {{symbol}},
+      compute rank IC, ICIR, and cumulative IC charts.
+      Test for IC decay and regime dependency. Which factors
+      are most robust across market regimes?
+    depends_on: [factor_screener]
+  - agent_name: quantile_analyst
+    role: Quantile Analyst
+    prompt: >
+      For the top 3 factors for {{symbol}},
+      run quantile backtests (5 quintiles).
+      Report monotonicity, spread between top/bottom quintiles,
+      and factor return consistency over time.
+    depends_on: [ic_analyst]
+  - agent_name: factor_combiner
+    role: Factor Combiner
+    prompt: >
+      Based on the IC and quantile analysis for {{symbol}},
+      recommend an optimal factor combination weighting scheme.
+      Propose a composite factor with weights and rebalancing frequency.
+    depends_on: [quantile_analyst]

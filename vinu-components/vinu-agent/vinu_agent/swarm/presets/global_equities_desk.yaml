@@ -1,0 +1,32 @@
+name: global_equities_desk
+description: Global equity research covering US, EU, Japan, and emerging markets
+tasks:
+  - agent_name: us_equity_analyst
+    role: US Equity Analyst
+    prompt: >
+      Analyze the US equity market for {{symbol}} or sector.
+      Consider: valuation levels (S&P 500 forward P/E), earnings
+      revision breadth, buyback activity, and sector leadership.
+      What is the US equity outlook?
+  - agent_name: eu_equity_analyst
+    role: EU Equity Analyst
+    prompt: >
+      Analyze the European equity market context for {{symbol}}.
+      Consider: ECB policy, EUR/USD impact, sector composition
+      of Euro Stoxx 50, and relative valuation vs US.
+      Are European equities attractively valued?
+  - agent_name: em_equity_analyst
+    role: Emerging Market Analyst
+    prompt: >
+      Analyze the EM equity context relevant to {{symbol}}.
+      Consider: China reopening, India demographics, commodity
+      exposure, USD strength/weakness, and political risk.
+      Which EM markets are most attractive?
+    depends_on: [us_equity_analyst]
+  - agent_name: global_equity_strategist
+    role: Global Equity Strategist
+    prompt: >
+      Synthesize US, EU, and EM equity views.
+      Recommend regional equity allocation with specific
+      country/sector tilts. Provide ETF tickers to implement.
+    depends_on: [eu_equity_analyst, em_equity_analyst]

@@ -6,6 +6,14 @@ NAME = "catboost"
 ALIASES = ("catboost",)
 
 
+def create():
+    try:
+        from catboost import CatBoostRegressor
+    except ImportError as exc:
+        raise ImportError("Install ml extras: pip install -e '.[ml]'") from exc
+    return CatBoostRegressor(iterations=50, depth=5, verbose=False)
+
+
 def score(X: list[list[float]], y: list[float]) -> list[float]:
     try:
         import numpy as np

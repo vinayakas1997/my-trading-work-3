@@ -1,0 +1,34 @@
+name: portfolio_review_board
+description: Comprehensive portfolio review with risk decomposition, attribution, and rebalancing
+tasks:
+  - agent_name: performance_analyst
+    role: Performance Analyst
+    prompt: >
+      Review the portfolio performance ({{portfolio_id}} or current holdings).
+      Calculate: total return, Sharpe ratio, Sortino ratio, max drawdown,
+      and information ratio against benchmark {{benchmark}}.
+      Report performance by month and year.
+  - agent_name: risk_analyst
+    role: Risk Analyst
+    prompt: >
+      Decompose portfolio risk for {{portfolio_id}}.
+      Attribute risk to: market (beta), sector, style (value/growth),
+      and idiosyncratic factors. Calculate VaR (95/99%), CVaR,
+      and stress test scenarios. Identify concentrated risks.
+    depends_on: [performance_analyst]
+  - agent_name: attribution_analyst
+    role: Attribution Analyst
+    prompt: >
+      Run performance attribution for {{portfolio_id}} vs {{benchmark}}.
+      Break down excess return into: allocation effect,
+      selection effect, and interaction effect.
+      Identify which decisions added or subtracted value.
+    depends_on: [risk_analyst]
+  - agent_name: rebalancing_strategist
+    role: Rebalancing Strategist
+    prompt: >
+      Based on the portfolio review, recommend rebalancing trades.
+      Specify: which positions to trim/add, target weights,
+      rebalancing method (calendar vs threshold), and expected
+      impact on risk/return profile.
+    depends_on: [attribution_analyst]

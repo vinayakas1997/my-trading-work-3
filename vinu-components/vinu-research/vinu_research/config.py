@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -93,6 +93,24 @@ class ResearchConfig:
     # computed analytically from realized returns using a causal rolling beta.
     portfolio_beta_hedge_lookback_days: int = 60
     portfolio_beta_hedge_max_ratio: float = 1.5
+    target_sharpe_ratio: float = 1.5
+    target_max_drawdown: float = -0.30
+
+
+@dataclass(frozen=True)
+class DecayThresholds:
+    ic_ratio_healthy: float = 0.7
+    ic_ratio_warning: float = 0.5
+    ic_ratio_critical: float = 0.3
+    ir_healthy: float = 1.0
+    ir_warning: float = 0.5
+    ir_critical: float = 0.1
+    ic_pos_healthy: float = 0.55
+    ic_pos_warning: float = 0.45
+    ic_pos_critical: float = 0.35
+    sharpe_healthy: float = 1.0
+    sharpe_warning: float = 0.5
+    sharpe_critical: float = 0.0
 
 
 def load_config(*, force_reload: bool = False) -> ResearchConfig:
@@ -143,4 +161,6 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         portfolio_beta_hedge_max_ratio=float(
             os.environ.get("VINU_RESEARCH_PORTFOLIO_BETA_MAX_RATIO", "1.5")
         ),
+        target_sharpe_ratio=float(os.environ.get("VINU_RESEARCH_TARGET_SHARPE", "1.5")),
+        target_max_drawdown=float(os.environ.get("VINU_RESEARCH_TARGET_MAX_DRAWDOWN", "-0.30")),
     )

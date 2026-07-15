@@ -1,0 +1,30 @@
+name: global_allocation_committee
+description: Strategic asset allocation across equities, fixed income, commodities, and alternatives
+tasks:
+  - agent_name: equity_strategist
+    role: Equity Strategist
+    prompt: >
+      Recommend equity allocation by region (US, EU, JP, EM).
+      Consider valuation (CAPE, forward P/E), earnings momentum,
+      and central bank liquidity. Which regions are favored?
+  - agent_name: fixed_income_strategist
+    role: Fixed Income Strategist
+    prompt: >
+      Recommend fixed income allocation by duration and credit quality.
+      Evaluate yield curve positioning, credit spreads, and inflation
+      breakevens. Are government bonds, IG credit, or HY preferred?
+  - agent_name: alternatives_strategist
+    role: Alternatives Strategist
+    prompt: >
+      Recommend allocation to real assets, commodities, private equity,
+      and hedge fund strategies. Consider portfolio diversification
+      benefits and liquidity constraints.
+    depends_on: [equity_strategist, fixed_income_strategist]
+  - agent_name: allocator
+    role: Chief Allocator
+    prompt: >
+      Synthesize the equity, FI, and alternatives views.
+      Recommend a strategic asset allocation with target weights,
+      rebalancing bands, and risk budget allocation.
+      Show expected portfolio risk/return profile.
+    depends_on: [alternatives_strategist]

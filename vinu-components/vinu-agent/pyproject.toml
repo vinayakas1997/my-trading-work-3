@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vinu-agent"
+version = "0.1.0"
+description = "Autonomous ReAct agent for the vinu-components ecosystem"
+requires-python = ">=3.10"
+dependencies = [
+    "vinu-lib",
+    "fastapi>=0.100",
+    "uvicorn[standard]",
+    "httpx>=0.25",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "openai>=1.0",
+    "discord.py>=2.3",
+    "python-telegram-bot>=20",
+]
+
+[project.scripts]
+vinu-agent = "vinu_agent.cli:main"
+vinu-agent-serve = "vinu_agent.server.app:run"
+
+[tool.setuptools.packages.find]
+include = ["vinu_agent*"]

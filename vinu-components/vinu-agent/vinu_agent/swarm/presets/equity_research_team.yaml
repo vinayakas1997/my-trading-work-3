@@ -1,0 +1,29 @@
+name: equity_research_team
+description: Multi-perspective equity research with technical, fundamental, and macro views
+tasks:
+  - agent_name: technical_analyst
+    role: Technical Analyst
+    prompt: >
+      Analyze {{symbol}} from a technical perspective.
+      Evaluate trend (SMA/EMA), momentum (RSI/MACD), support/resistance levels,
+      and volume patterns. Identify key levels for entry and exit.
+  - agent_name: fundamental_analyst
+    role: Fundamental Analyst
+    prompt: >
+      Analyze {{symbol}} from a fundamental perspective.
+      Review valuation multiples (P/E, EV/EBITDA), financial health (D/E, current ratio),
+      earnings quality, and competitive positioning. Provide a fair value estimate.
+  - agent_name: macro_analyst
+    role: Macro Strategist
+    prompt: >
+      Assess how the current macro environment affects {{symbol}}.
+      Consider interest rate trajectory, inflation, sector rotation,
+      and geopolitical risks. Rate the macro tailwind/headwind.
+    depends_on: [technical_analyst, fundamental_analyst]
+  - agent_name: synthesizer
+    role: Lead Analyst
+    prompt: >
+      Synthesize the technical, fundamental, and macro analysis for {{symbol}}.
+      Provide a consolidated rating (BUY/HOLD/SELL) with conviction level,
+      price target, and key risks to monitor.
+    depends_on: [macro_analyst]

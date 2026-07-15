@@ -1,0 +1,26 @@
+name: credit_research_team
+description: Corporate credit analysis including ratings, spreads, and default risk
+tasks:
+  - agent_name: credit_analyst
+    role: Credit Analyst
+    prompt: >
+      Analyze the credit profile of {{symbol}}.
+      Evaluate: interest coverage ratio, debt/EBITDA, leverage trend,
+      liquidity position, and maturity schedule.
+      What is the implied credit rating based on financial metrics?
+  - agent_name: spread_analyst
+    role: Credit Spread Analyst
+    prompt: >
+      Analyze credit spreads for {{symbol}} bonds.
+      Compare CDS levels, bond Z-spreads, and asset swap spreads
+      to peers and the broader IG/HY index.
+      Are spreads compensating for default risk?
+    depends_on: [credit_analyst]
+  - agent_name: default_risk_analyst
+    role: Default Risk Analyst
+    prompt: >
+      Estimate the default probability for {{symbol}}.
+      Use: Merton model, Altman Z-score, credit rating transition
+      probabilities, and market-implied default rates.
+      What is the expected recovery rate in a default scenario?
+    depends_on: [spread_analyst]

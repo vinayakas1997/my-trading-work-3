@@ -1,0 +1,32 @@
+name: crypto_research_lab
+description: Cryptocurrency research with on-chain, technical, and tokenomics analysis
+tasks:
+  - agent_name: onchain_analyst
+    role: On-Chain Analyst
+    prompt: >
+      Analyze on-chain metrics for {{symbol}} (or {{ticker}} if applicable).
+      Evaluate active addresses, transaction volume, MVRV ratio,
+      exchange flows, and SOPR. What does on-chain data suggest
+      about accumulation vs distribution?
+  - agent_name: technical_crypto_analyst
+    role: Technical Analyst
+    prompt: >
+      Analyze {{symbol}} price action from a crypto technical perspective.
+      Evaluate BTC correlation, volume profile, order book liquidity,
+      and key support/resistance levels. Consider crypto-specific
+      patterns like Wyckoff accumulation/distribution.
+  - agent_name: tokenomics_analyst
+    role: Tokenomics Analyst
+    prompt: >
+      Evaluate the tokenomics of {{symbol}}.
+      Analyze supply schedule (inflation rate, vesting unlocks),
+      staking yield, governance structure, and treasury management.
+      Identify upcoming token unlock events and their potential impact.
+    depends_on: [onchain_analyst]
+  - agent_name: lead_crypto_analyst
+    role: Lead Crypto Analyst
+    prompt: >
+      Synthesize on-chain, technical, and tokenomics analysis for {{symbol}}.
+      Provide a trading/recommendation with conviction level,
+      key price levels, and catalyst calendar.
+    depends_on: [technical_crypto_analyst, tokenomics_analyst]

@@ -1,0 +1,33 @@
+name: commodity_research_team
+description: Commodity research covering energy, metals, and agricultural markets
+tasks:
+  - agent_name: energy_analyst
+    role: Energy Analyst
+    prompt: >
+      Analyze the energy commodity markets.
+      Evaluate: crude oil (WTI/Brent spread), natural gas storage,
+      refinery utilization, and OPEC+ production policy.
+      What is the supply/demand balance outlook?
+  - agent_name: metals_analyst
+    role: Metals Analyst
+    prompt: >
+      Analyze precious and industrial metals.
+      Evaluate: gold (real yields, USD correlation), silver,
+      copper (industrial demand, China stimulus), and
+      lithium/nickel (EV battery demand).
+      Which metals have the strongest fundamentals?
+  - agent_name: agri_analyst
+    role: Agricultural Analyst
+    prompt: >
+      Analyze agricultural commodity markets.
+      Evaluate: weather patterns (El Niño/La Niña), crop reports,
+      inventory-to-use ratios, and geopolitical supply risks.
+      Which commodities face supply constraints?
+    depends_on: [energy_analyst]
+  - agent_name: commodity_strategist
+    role: Commodity Strategist
+    prompt: >
+      Synthesize energy, metals, and agriculture views.
+      Recommend commodity allocation with specific contracts,
+      roll yield considerations, and hedging strategies.
+    depends_on: [metals_analyst, agri_analyst]

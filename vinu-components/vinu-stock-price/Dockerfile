@@ -11,6 +11,9 @@ WORKDIR /app/vinu-stock-price
 
 RUN pip install --no-cache-dir -e ".[dev]"
 
+RUN addgroup --system app && adduser --system --ingroup app app
+USER app
+
 ENV VINU_STOCK_DATA_ROOT=/data
 ENV VINU_STOCK_META_DB_PATH=/data/meta.db
 

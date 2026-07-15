@@ -6,12 +6,17 @@ NAME = "linear_regression"
 ALIASES = ("linear_regression", "linear")
 
 
-def score(X: list[list[float]], y: list[float]) -> list[float]:
+def create():
     try:
-        import numpy as np
         from sklearn.linear_model import LinearRegression
     except ImportError as exc:
         raise ImportError("Install ml extras: pip install -e '.[ml]'") from exc
+    return LinearRegression()
+
+
+def score(X: list[list[float]], y: list[float]) -> list[float]:
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
     model = LinearRegression()
     arr = np.array(X)
     model.fit(arr, y)

@@ -6,6 +6,14 @@ NAME = "ridge"
 ALIASES = ("ridge",)
 
 
+def create():
+    try:
+        from sklearn.linear_model import Ridge
+    except ImportError as exc:
+        raise ImportError("Install ml extras: pip install -e '.[ml]'") from exc
+    return Ridge()
+
+
 def score(X: list[list[float]], y: list[float]) -> list[float]:
     try:
         import numpy as np

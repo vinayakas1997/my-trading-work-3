@@ -11,6 +11,9 @@ WORKDIR /app/vinu-news
 
 RUN pip install --no-cache-dir -e .
 
+RUN addgroup --system app && adduser --system --ingroup app app
+USER app
+
 ENV VINU_NEWS_DB_PATH=/data/news.db
 
 VOLUME ["/data"]

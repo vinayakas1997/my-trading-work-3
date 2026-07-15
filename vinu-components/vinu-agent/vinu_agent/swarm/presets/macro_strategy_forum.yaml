@@ -1,0 +1,30 @@
+name: macro_strategy_forum
+description: Global macro discussion covering rates, FX, commodities, and cross-asset implications
+tasks:
+  - agent_name: rates_strategist
+    role: Rates Strategist
+    prompt: >
+      Analyze the current interest rate environment.
+      Evaluate central bank policy stance (Fed, ECB, BOJ, PBOC),
+      yield curve shape, and rate expectations. What does this mean
+      for duration positioning and curve trades?
+  - agent_name: fx_strategist
+    role: FX Strategist
+    prompt: >
+      Analyze major FX pairs (EUR/USD, USD/JPY, GBP/USD) and emerging market FX.
+      Identify the dominant FX themes: carry, momentum, or value.
+      Which currencies are most vulnerable?
+  - agent_name: commodity_strategist
+    role: Commodity Strategist
+    prompt: >
+      Analyze the commodity complex: oil, gold, copper, and agricultural.
+      How are supply/demand dynamics, inventory levels, and geopolitical
+      risks affecting each sector?
+    depends_on: [rates_strategist]
+  - agent_name: cross_asset_strategist
+    role: Cross-Asset Strategist
+    prompt: >
+      Synthesize the rates, FX, and commodity views. Recommend a
+      multi-asset portfolio tilt (risk-on vs risk-off), key trades,
+      and hedge recommendations. Highlight regime change signals.
+    depends_on: [fx_strategist, commodity_strategist]

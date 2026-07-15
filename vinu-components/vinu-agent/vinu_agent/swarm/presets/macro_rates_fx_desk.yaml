@@ -1,0 +1,25 @@
+name: macro_rates_fx_desk
+description: Global rates and FX trading desk with macro flow analysis
+tasks:
+  - agent_name: rates_trader
+    role: Rates Trader
+    prompt: >
+      Analyze the global rates market.
+      Review: yield curve levels (2s10s, 5s30s), real yields,
+      breakeven inflation rates, and central bank meeting calendars.
+      Recommend duration and curve positioning.
+  - agent_name: fx_trader
+    role: FX Trader
+    prompt: >
+      Analyze major and EM FX pairs.
+      Evaluate: interest rate differentials, carry trade returns,
+      positioning (CFTC COT data), and technical levels.
+      Recommend FX trades with defined risk parameters.
+  - agent_name: cross_market_analyst
+    role: Cross-Market Analyst
+    prompt: >
+      Analyze the interaction between rates and FX markets.
+      How are rate differentials affecting currency pairs?
+      Are there any dislocations between rate expectations
+      and current FX pricing? Identify convergence trades.
+    depends_on: [rates_trader, fx_trader]

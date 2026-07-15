@@ -21,7 +21,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "httpx>=0.27"]
+yfinance = ["yfinance>=0.2"]
+dev = ["pytest>=8.0", "httpx>=0.27", "vinu-stock-price[yfinance]"]
 
 [project.scripts]
 vinu-stock-backfill = "vinu_stock.cli:backfill_main"

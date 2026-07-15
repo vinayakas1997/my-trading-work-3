@@ -6,6 +6,14 @@ NAME = "xgboost"
 ALIASES = ("xgboost",)
 
 
+def create():
+    try:
+        import xgboost as xgb
+    except ImportError as exc:
+        raise ImportError("Install ml extras: pip install -e '.[ml]'") from exc
+    return xgb.XGBRegressor(n_estimators=50, max_depth=5, verbosity=0)
+
+
 def score(X: list[list[float]], y: list[float]) -> list[float]:
     try:
         import numpy as np

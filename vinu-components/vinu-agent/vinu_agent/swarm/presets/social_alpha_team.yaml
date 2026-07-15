@@ -1,0 +1,27 @@
+name: social_alpha_team
+description: Social sentiment alpha generation from alternative data sources
+tasks:
+  - agent_name: alternative_data_analyst
+    role: Alternative Data Analyst
+    prompt: >
+      Gather alternative data signals for {{symbol}}.
+      Analyze: web traffic trends, app download rankings,
+      credit card spending data, job posting trends,
+      and satellite imagery (parking lot fill rates, etc.).
+      Quantify the signal strength.
+  - agent_name: sentiment_correlation_analyst
+    role: Sentiment Correlation Analyst
+    prompt: >
+      Correlate alternative data signals for {{symbol}}
+      with subsequent price movements. Calculate lead/lag
+      relationships between signal changes and price reactions.
+      Which signals have the strongest predictive power?
+    depends_on: [alternative_data_analyst]
+  - agent_name: alpha_strategist
+    role: Social Alpha Strategist
+    prompt: >
+      Convert the alternative data insights for {{symbol}}
+      into a tradable strategy. Define entry/exit rules,
+      position sizing, and risk management. Backtest the
+      strategy and report risk-adjusted returns.
+    depends_on: [sentiment_correlation_analyst]

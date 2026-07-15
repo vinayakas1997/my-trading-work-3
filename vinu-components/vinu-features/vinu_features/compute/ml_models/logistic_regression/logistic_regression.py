@@ -6,6 +6,14 @@ NAME = "logistic_regression"
 ALIASES = ("logistic_regression", "logistic")
 
 
+def create():
+    try:
+        from sklearn.linear_model import LogisticRegression
+    except ImportError as exc:
+        raise ImportError("Install ml extras: pip install -e '.[ml]'") from exc
+    return LogisticRegression(max_iter=500)
+
+
 def score(X: list[list[float]], y: list[float]) -> list[float]:
     try:
         import numpy as np

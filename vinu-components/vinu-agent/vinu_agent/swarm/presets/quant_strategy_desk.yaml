@@ -1,0 +1,30 @@
+name: quant_strategy_desk
+description: Factor screening to backtest to audit pipeline
+tasks:
+  - agent_name: screener
+    role: Factor Screener
+    prompt: >
+      Screen for the best factors for {{symbol}} over {{lookback}} days.
+      Evaluate momentum, value, quality, and low-vol signals.
+      Rank factors by IC and return the top 3 candidates.
+  - agent_name: factor_miner
+    role: Factor Miner
+    prompt: >
+      For the top factors identified for {{symbol}},
+      compute composite z-score and validate monotonicity
+      across quintiles. Report IC, ICIR, and quantile spreads.
+    depends_on: [screener]
+  - agent_name: backtester
+    role: Backtester
+    prompt: >
+      Backtest the composite factor strategy for {{symbol}}.
+      Use {{interval}} data from {{start_date}} to {{end_date}}.
+      Report Sharpe, MaxDD, trade count, and profit factor.
+    depends_on: [factor_miner]
+  - agent_name: risk_auditor
+    role: Risk Auditor
+    prompt: >
+      Audit the backtest results for {{symbol}}.
+      Check for overfitting, regime dependency, and tail risk.
+      Validate OOS performance. Provide a PASS/FAIL recommendation.
+    depends_on: [backtester]

@@ -98,17 +98,20 @@ class ResilientClient:
         circuit_breaker_threshold: int = 3,
         circuit_breaker_timeout: float = 30.0,
         fallback: Any = None,
+        allow_local: bool = True,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._service_name = service_name
         self._max_retries = max_retries
         self._retry_backoff = retry_backoff
         self._default_fallback = fallback
-        self._http = httpx.AsyncClient(timeout=timeout)
+        self._http = httpx.AsyncClient(timeout=timeout, headers=headers)
         self._breaker = CircuitBreaker(
             threshold=circuit_breaker_threshold,
             recovery_timeout=circuit_breaker_timeout,
         )
+        self._allow_local = allow_local
 
     @property
     def base_url(self) -> str:
@@ -124,12 +127,19 @@ class ResilientClient:
         params: dict[str, Any] | None = None,
         fallback: Any = None,
     ) -> Any:
+        url = f"{self._base_url}{path}"
+        if not self._allow_local:
+            from vinu_lib.security.network import validate_url_target
+            if not validate_url_target(url):
+                raise ValueError(f"URL target failed SSRF security validation: {url}")
         fb = fallback if fallback is not None else self._default_fallback
         try:
             return await self._breaker.call(
                 lambda: self._request("GET", path, params=params),
                 fallback=fb,
             )
+        except ValueError:
+            raise
         except Exception:
             return fb
 
@@ -139,12 +149,19 @@ class ResilientClient:
         json: dict[str, Any] | None = None,
         fallback: Any = None,
     ) -> Any:
+        url = f"{self._base_url}{path}"
+        if not self._allow_local:
+            from vinu_lib.security.network import validate_url_target
+            if not validate_url_target(url):
+                raise ValueError(f"URL target failed SSRF security validation: {url}")
         fb = fallback if fallback is not None else self._default_fallback
         try:
             return await self._breaker.call(
                 lambda: self._request("POST", path, json=json),
                 fallback=fb,
             )
+        except ValueError:
+            raise
         except Exception:
             return fb
 

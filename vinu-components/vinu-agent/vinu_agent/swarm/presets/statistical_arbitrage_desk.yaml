@@ -1,0 +1,26 @@
+name: statistical_arbitrage_desk
+description: Statistical arbitrage with cointegration, mean reversion, and market-neutral strategies
+tasks:
+  - agent_name: cointegration_analyst
+    role: Cointegration Analyst
+    prompt: >
+      Screen for cointegrated pairs involving {{symbol}}.
+      Use the Engle-Granger and Johansen tests on a universe of
+      sector peers. Identify pairs with stable spread relationships.
+      Return the top 3 candidate pairs with cointegration stats.
+  - agent_name: mean_reversion_analyst
+    role: Mean Reversion Analyst
+    prompt: >
+      For the top cointegrated pairs, characterize the spread:
+      half-life of mean reversion, Bollinger band widths,
+      and optimal entry/exit Z-score thresholds.
+      Backtest the mean reversion strategy on each pair.
+    depends_on: [cointegration_analyst]
+  - agent_name: market_neutral_strategist
+    role: Market-Neutral Strategist
+    prompt: >
+      Design a market-neutral portfolio from the validated pairs.
+      Calculate optimal hedge ratios, position sizing (Kelly),
+      and portfolio-level beta exposure. Ensure total portfolio
+      beta is near zero. Provide ongoing monitoring rules.
+    depends_on: [mean_reversion_analyst]

@@ -1,0 +1,26 @@
+name: earnings_research_desk
+description: Pre-earnings analysis, whisper numbers, and post-earnings trade setup
+tasks:
+  - agent_name: pre_earnings_analyst
+    role: Pre-Earnings Analyst
+    prompt: >
+      Prepare a pre-earnings analysis for {{symbol}}.
+      Review consensus estimates, whisper numbers, guidance history,
+      and earnings beat/miss patterns over the last 8 quarters.
+      What is the options market pricing for the move?
+  - agent_name: quality_of_earnings_analyst
+    role: Quality of Earnings Analyst
+    prompt: >
+      Analyze the quality of {{symbol}} earnings.
+      Evaluate revenue vs EPS growth drivers, accruals ratio,
+      tax rate changes, share buyback impact, and one-time items.
+      Are earnings high quality or manufactured?
+    depends_on: [pre_earnings_analyst]
+  - agent_name: post_earnings_strategist
+    role: Post-Earnings Strategist
+    prompt: >
+      Based on the pre-earnings analysis for {{symbol}},
+      recommend a trade strategy: directional (call/put),
+      volatility (straddle/strangle), or post-earnings drift.
+      Define entry, stop, and target levels.
+    depends_on: [quality_of_earnings_analyst]

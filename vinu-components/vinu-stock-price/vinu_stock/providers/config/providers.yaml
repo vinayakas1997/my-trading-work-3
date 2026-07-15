@@ -7,6 +7,14 @@ providers:
     enabled: false
     priority: 2
     roles: [backfill, live]
+  - id: yfinance
+    enabled: false
+    priority: 10
+    roles: [backfill, live]
+  - id: tushare
+    enabled: false
+    priority: 20
+    roles: [backfill, live]
   - id: yahoo
     enabled: false
     priority: 99

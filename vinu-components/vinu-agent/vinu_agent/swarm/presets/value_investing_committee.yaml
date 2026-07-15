@@ -1,0 +1,34 @@
+name: value_investing_committee
+description: Value investing deep dive with margin of safety, moat analysis, and catalyst identification
+tasks:
+  - agent_name: moat_analyst
+    role: Economic Moat Analyst
+    prompt: >
+      Analyze the competitive moat of {{symbol}}.
+      Evaluate: brand power, switching costs, network effects,
+      cost advantages, and regulatory barriers.
+      Rate moat width (none/narrow/wide) and durability.
+  - agent_name: margin_of_safety_analyst
+    role: Margin of Safety Analyst
+    prompt: >
+      Calculate the margin of safety for {{symbol}}.
+      Estimate intrinsic value using DCF (base, bull, bear cases),
+      sum-of-the-parts, and comparable company analysis.
+      What is the current discount to intrinsic value?
+    depends_on: [moat_analyst]
+  - agent_name: catalyst_identifier
+    role: Catalyst Identifier
+    prompt: >
+      Identify catalysts that could close the value gap for {{symbol}}.
+      Consider: operational improvements, new products, margin expansion,
+      capital allocation changes (buybacks, dividends), activist involvement,
+      or industry tailwinds. Rate each catalyst's probability.
+    depends_on: [margin_of_safety_analyst]
+  - agent_name: value_committee_chair
+    role: Committee Chair
+    prompt: >
+      Synthesize the moat, valuation, and catalyst analysis for {{symbol}}.
+      Provide a BUY/HOLD/SELL recommendation with target price,
+      expected time horizon, and position sizing guideline.
+      Maximum 5% of portfolio per position.
+    depends_on: [catalyst_identifier]

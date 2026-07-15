@@ -1,0 +1,31 @@
+name: sentiment_intelligence_team
+description: Multi-source sentiment analysis with news, social media, and positioning data
+tasks:
+  - agent_name: news_sentiment_analyst
+    role: News Sentiment Analyst
+    prompt: >
+      Analyze news sentiment for {{symbol}}.
+      Review recent news articles, earnings call transcripts,
+      and analyst reports. What is the dominant narrative?
+      Classify sentiment as bullish, bearish, or neutral with supporting evidence.
+  - agent_name: social_media_analyst
+    role: Social Media Analyst
+    prompt: >
+      Analyze social media sentiment for {{symbol}} across platforms.
+      Evaluate retail sentiment (Reddit, Twitter), influencer positioning,
+      and trending topics. Any unusual activity or coordinated posts?
+  - agent_name: positioning_analyst
+    role: Positioning Analyst
+    prompt: >
+      Analyze positioning data for {{symbol}}.
+      Review short interest, options flow (put/call ratio, max pain),
+      institutional ownership changes, and insider transactions.
+      Is positioning crowded or contrarian?
+    depends_on: [news_sentiment_analyst]
+  - agent_name: sentiment_strategist
+    role: Sentiment Strategist
+    prompt: >
+      Synthesize news, social, and positioning sentiment for {{symbol}}.
+      Provide a composite sentiment score and actionable contrarian
+      or consensus trade recommendation.
+    depends_on: [social_media_analyst, positioning_analyst]

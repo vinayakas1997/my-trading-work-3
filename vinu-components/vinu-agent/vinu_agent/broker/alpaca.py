@@ -1,0 +1,191 @@
+"""Read-only Alpaca broker connector — portfolio, positions, orders."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+from dataclasses import dataclass, field, asdict
+from typing import Any
+
+import requests
+
+logger = logging.getLogger(__name__)
+
+ALPACA_PAPER_URL = "https://paper-api.alpaca.markets"
+ALPACA_LIVE_URL = "https://api.alpaca.markets"
+
+API_KEY = os.environ.get("ALPACA_API_KEY", "")
+API_SECRET = os.environ.get("ALPACA_API_SECRET", "")
+USE_PAPER = os.environ.get("ALPACA_PAPER", "true").lower() == "true"
+
+BASE_URL = ALPACA_PAPER_URL if USE_PAPER else ALPACA_LIVE_URL
+
+
+@dataclass
+class Account:
+    account_id: str
+    status: str
+    currency: str
+    cash: float
+    portfolio_value: float
+    buying_power: float
+    equity: float
+    daytrade_count: int
+    pattern_day_trader: bool
+
+    @classmethod
+    def from_api(cls, data: dict) -> Account:
+        return cls(
+            account_id=data.get("id", ""),
+            status=data.get("status", ""),
+            currency=data.get("currency", "USD"),
+            cash=float(data.get("cash", 0)),
+            portfolio_value=float(data.get("portfolio_value", 0)),
+            buying_power=float(data.get("buying_power", 0)),
+            equity=float(data.get("equity", 0)),
+            daytrade_count=int(data.get("daytrade_count", 0)),
+            pattern_day_trader=bool(data.get("pattern_day_trader", False)),
+        )
+
+
+@dataclass
+class Position:
+    symbol: str
+    qty: float
+    market_value: float
+    cost_basis: float
+    unrealized_pl: float
+    unrealized_plpc: float
+    current_price: float
+    avg_entry_price: float
+
+    @classmethod
+    def from_api(cls, data: dict) -> Position:
+        return cls(
+            symbol=data.get("symbol", ""),
+            qty=float(data.get("qty", 0)),
+            market_value=float(data.get("market_value", 0)),
+            cost_basis=float(data.get("cost_basis", 0)),
+            unrealized_pl=float(data.get("unrealized_pl", 0)),
+            unrealized_plpc=float(data.get("unrealized_plpc", 0)),
+            current_price=float(data.get("current_price", 0)),
+            avg_entry_price=float(data.get("avg_entry_price", 0)),
+        )
+
+
+@dataclass
+class Order:
+    order_id: str
+    symbol: str
+    side: str
+    type: str
+    status: str
+    qty: float
+    filled_qty: float
+    limit_price: float | None
+    stop_price: float | None
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def from_api(cls, data: dict) -> Order:
+        return cls(
+            order_id=data.get("id", ""),
+            symbol=data.get("symbol", ""),
+            side=data.get("side", ""),
+            type=data.get("type", ""),
+            status=data.get("status", ""),
+            qty=float(data.get("qty", 0)),
+            filled_qty=float(data.get("filled_qty", 0)),
+            limit_price=float(data["limit_price"]) if data.get("limit_price") else None,
+            stop_price=float(data["stop_price"]) if data.get("stop_price") else None,
+            created_at=data.get("created_at", ""),
+            updated_at=data.get("updated_at", ""),
+        )
+
+
+class AlpacaBroker:
+    def __init__(self) -> None:
+        self._session = requests.Session()
+        self._session.headers.update({
+            "APCA-API-KEY-ID": API_KEY,
+            "APCA-API-SECRET-KEY": API_SECRET,
+        })
+
+    def is_configured(self) -> bool:
+        return bool(API_KEY and API_SECRET)
+
+    def _get(self, path: str) -> dict:
+        resp = self._session.get(f"{BASE_URL}{path}", timeout=30)
+        resp.raise_for_status()
+        return resp.json()
+
+    def _delete(self, path: str) -> dict:
+        resp = self._session.delete(f"{BASE_URL}{path}", timeout=30)
+        resp.raise_for_status()
+        return resp.json() if resp.text else {}
+
+    def _post(self, path: str, payload: dict) -> dict:
+        resp = self._session.post(f"{BASE_URL}{path}", json=payload, timeout=30)
+        resp.raise_for_status()
+        return resp.json()
+
+    def _patch(self, path: str, payload: dict) -> dict:
+        resp = self._session.patch(f"{BASE_URL}{path}", json=payload, timeout=30)
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_account(self) -> Account:
+        data = self._get("/v2/account")
+        return Account.from_api(data)
+
+    def get_positions(self) -> list[Position]:
+        data = self._get("/v2/positions")
+        return [Position.from_api(p) for p in data]
+
+    def get_orders(self, status: str = "open", limit: int = 50) -> list[Order]:
+        data = self._get(f"/v2/orders?status={status}&limit={limit}")
+        return [Order.from_api(o) for o in data]
+
+    def submit_order(
+        self,
+        symbol: str,
+        qty: float,
+        side: str,
+        order_type: str = "market",
+        limit_price: float | None = None,
+        stop_price: float | None = None,
+        time_in_force: str = "day",
+    ) -> dict:
+        payload: dict[str, object] = {
+            "symbol": symbol.upper(),
+            "qty": str(qty),
+            "side": side,
+            "type": order_type,
+            "time_in_force": time_in_force,
+        }
+        if limit_price is not None:
+            payload["limit_price"] = str(limit_price)
+        if stop_price is not None:
+            payload["stop_price"] = str(stop_price)
+        return self._post("/v2/orders", payload)
+
+    def cancel_order(self, order_id: str) -> dict:
+        return self._delete(f"/v2/orders/{order_id}")
+
+    def replace_order(
+        self,
+        order_id: str,
+        qty: float | None = None,
+        limit_price: float | None = None,
+        stop_price: float | None = None,
+    ) -> dict:
+        payload: dict[str, object] = {}
+        if qty is not None:
+            payload["qty"] = str(qty)
+        if limit_price is not None:
+            payload["limit_price"] = str(limit_price)
+        if stop_price is not None:
+            payload["stop_price"] = str(stop_price)
+        return self._patch(f"/v2/orders/{order_id}", payload)

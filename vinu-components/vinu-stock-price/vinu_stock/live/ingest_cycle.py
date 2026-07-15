@@ -129,6 +129,7 @@ def run_live_cycle(
             ): sym
             for sym in clean_symbols
         }
-        concurrent.futures.wait(futures.keys())
+        for future in concurrent.futures.as_completed(futures):
+            future.result()
 
     return summary

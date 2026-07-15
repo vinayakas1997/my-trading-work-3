@@ -4,6 +4,8 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from statistics import NormalDist
+import numpy as np
+import pandas as pd
 
 _STANDARD_NORMAL = NormalDist()
 _EULER_GAMMA = 0.5772156649015329
@@ -39,37 +41,48 @@ class WindowSplitter:
         to_dt = datetime.strptime(to_date, "%Y-%m-%d")
         total_days = (to_dt - from_dt).days
 
-        if total_days < self.config.min_train_days * 1.5:
+        if total_days < self.config.min_train_days or self.config.n_windows <= 0:
             return []
 
-        train_size = int(total_days * self.config.train_pct)
+        # Determine OOS test size
         test_size = int(total_days * self.config.test_pct)
-        step = max(self.config.step_size_days, test_size // 2)
+        # Ensure test_size is at least 1 day
+        test_size = max(test_size, 1)
+
+        # Guard against date underflow and check configuration feasibility
+        min_required_days = self.config.n_windows * test_size + self.config.gap_days + self.config.min_train_days
+        if total_days < min_required_days:
+            return []
 
         windows: list[WalkForwardWindow] = []
         for i in range(self.config.n_windows):
+            # Calculate test window by working backward from to_dt
+            # so that the last window's test ends exactly at to_dt
+            test_end_dt = to_dt - timedelta(days=(self.config.n_windows - 1 - i) * test_size)
+            test_start_dt = test_end_dt - timedelta(days=test_size)
+            
+            if test_start_dt <= from_dt:
+                continue
+                
+            train_end_dt = test_start_dt - timedelta(days=self.config.gap_days)
+            
             if self.config.method == "expanding":
-                train_end_offset = int(train_size * (i + 1) / self.config.n_windows)
                 train_start_dt = from_dt
-                train_end_dt = from_dt + timedelta(days=train_end_offset)
-            else:
-                train_start_dt = from_dt + timedelta(days=i * step)
-                train_end_dt = train_start_dt + timedelta(days=train_size)
-
-            if train_end_dt > to_dt:
-                break
-
-            test_start_dt = train_end_dt + timedelta(days=self.config.gap_days)
-            test_end_dt = test_start_dt + timedelta(days=test_size)
-
-            if test_end_dt > to_dt:
-                test_end_dt = to_dt
-            if test_start_dt >= test_end_dt:
+            else: # sliding
+                train_size = int(total_days * self.config.train_pct)
+                train_start_dt = train_end_dt - timedelta(days=train_size)
+                
+            if train_start_dt < from_dt:
+                # Fallback: slide start can't go before from_dt
+                train_start_dt = from_dt
+                
+            train_size_days = (train_end_dt - train_start_dt).days
+            if train_size_days < self.config.min_train_days:
                 continue
 
             windows.append(
                 WalkForwardWindow(
-                    window_id=i + 1,
+                    window_id=len(windows) + 1,
                     train_start=train_start_dt.strftime("%Y-%m-%d"),
                     train_end=train_end_dt.strftime("%Y-%m-%d"),
                     test_start=test_start_dt.strftime("%Y-%m-%d"),
@@ -87,16 +100,12 @@ def aggregate_metrics(
     if not is_metrics_list or not oos_metrics_list:
         return {}, {}
 
-    import numpy as np
-
     is_aggregated: dict[str, float] = {}
     oos_aggregated: dict[str, float] = {}
 
     for key in is_metrics_list[0]:
         values = [m.get(key, 0.0) for m in is_metrics_list]
         is_aggregated[key] = float(np.median(values))
-        # Dispersion across windows — a median alone hides whether the strategy is
-        # consistently OK or swings between great and terrible windows.
         is_aggregated[f"{key}_std"] = float(np.std(values)) if len(values) > 1 else 0.0
 
     for key in oos_metrics_list[0]:
@@ -104,8 +113,6 @@ def aggregate_metrics(
         oos_aggregated[key] = float(np.median(values))
         oos_aggregated[f"{key}_std"] = float(np.std(values)) if len(values) > 1 else 0.0
 
-    # Fraction of out-of-sample windows that lost money — a strategy can have a
-    # decent median OOS Sharpe while still losing money in a third of windows.
     oos_returns = [m.get("total_return", 0.0) for m in oos_metrics_list]
     oos_aggregated["losing_window_fraction"] = float(
         sum(1 for r in oos_returns if r < 0) / len(oos_returns)
@@ -120,6 +127,7 @@ def deflated_sharpe_ratio(
     n_obs: int,
     skew: float = 0.0,
     excess_kurtosis: float = 0.0,
+    periods_per_year: float = 252.0,
 ) -> float:
     """
     Bailey & Lopez de Prado (2014) Deflated Sharpe Ratio: the probability that the
@@ -138,8 +146,11 @@ def deflated_sharpe_ratio(
     if n_obs < 2 or n_trials < 1:
         return 0.5
 
+    # De-annualize Sharpe to get daily Sharpe (non-annualized)
+    daily_sharpe = sharpe / math.sqrt(periods_per_year) if periods_per_year > 0 else sharpe
+
     kurt = excess_kurtosis + 3.0  # convert to regular (non-excess) kurtosis
-    variance_term = max(1 - skew * sharpe + ((kurt - 1) / 4) * sharpe**2, 1e-12)
+    variance_term = max(1 - skew * daily_sharpe + ((kurt - 1) / 4) * daily_sharpe**2, 1e-12)
     sr_std = math.sqrt(variance_term / max(n_obs - 1, 1))
     if sr_std <= 0:
         return 0.5
@@ -151,5 +162,5 @@ def deflated_sharpe_ratio(
         z_b = _STANDARD_NORMAL.inv_cdf(1 - 1.0 / (n_trials * math.e))
         expected_max_sharpe = sr_std * ((1 - _EULER_GAMMA) * z_a + _EULER_GAMMA * z_b)
 
-    z = (sharpe - expected_max_sharpe) / sr_std
+    z = (daily_sharpe - expected_max_sharpe) / sr_std
     return float(_STANDARD_NORMAL.cdf(z))

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query
 
 from vinu_simulator.server.schemas import (
@@ -24,9 +25,26 @@ async def _run_sync(callable: Any, *args: Any) -> Any:
     return await loop.run_in_executor(None, callable, *args)
 
 
+async def _check_service(base_url: str) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{base_url}/health")
+            return resp.status_code == 200
+    except Exception:
+        return False
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    return HealthResponse()
+    svc: SimulatorService = _get_service()
+    strategy_ok = await _check_service(svc._strategy_client._base_url)
+    stock_ok = await _check_service(svc._price_client._base_url)
+    features_ok = await _check_service(svc._features_client._base_url)
+    return HealthResponse(
+        strategy_api_healthy=strategy_ok,
+        stock_api_healthy=stock_ok,
+        features_api_healthy=features_ok,
+    )
 
 
 @router.post("/simulate", response_model=SimulateResponse)

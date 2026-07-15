@@ -78,6 +78,7 @@ class CustomSimulateRequest(BaseModel):
     allow_short: bool = True
     deviation_threshold: float | None = None
     interval: Literal["1m", "5m", "15m", "30m", "1h", "4h", "1d"] = "1d"
+    indicators: list[str] | None = None
 
 
 class CustomSimulateResponse(BaseModel):

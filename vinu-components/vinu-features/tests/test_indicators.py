@@ -30,3 +30,12 @@ def test_sma_100_computes():
 
 def test_warmup_bars():
     assert warmup_bars_for_features(["sma_100", "rsi_14"]) >= 100
+
+
+def test_session_computes():
+    # 1700000000 is 2023-11-14 22:13:20 UTC
+    rows = _candles(10)
+    out = apply_indicators(rows, ["session"])
+    assert "session" in out[0]
+    assert out[0]["session"] in ("asia", "london", "ny_regular", "london_ny_overlap", "off_hours")
+

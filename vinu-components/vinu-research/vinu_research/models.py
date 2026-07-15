@@ -1,9 +1,118 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from enum import Enum
 from typing import Any
 
 from vinu_research.portfolio import PortfolioAnalysisResult
+
+
+class HypothesisStatus(Enum):
+    exploring = "exploring"
+    testing = "testing"
+    validated = "validated"
+    rejected = "rejected"
+    monitoring = "monitoring"
+
+
+@dataclass
+class Hypothesis:
+    hypothesis_id: str
+    title: str
+    thesis: str
+    status: HypothesisStatus = HypothesisStatus.exploring
+    universe: list[str] = field(default_factory=list)
+    signal_definition: str = ""
+    run_cards: list[str] = field(default_factory=list)
+    created_at: str = ""
+    updated_at: str = ""
+
+    @classmethod
+    def create(cls, title: str, thesis: str, universe: list[str] | None = None) -> Hypothesis:
+        import hashlib
+        now = datetime.now(timezone.utc).isoformat()
+        raw = f"{title}:{thesis}:{now}"
+        h = hashlib.sha256(raw.encode()).hexdigest()[:12]
+        return cls(
+            hypothesis_id=f"hyp_{h}",
+            title=title,
+            thesis=thesis,
+            universe=universe or [],
+            created_at=now,
+            updated_at=now,
+        )
+
+
+@dataclass
+class Goal:
+    goal_id: str
+    hypothesis_id: str
+    objective: str
+    criteria: list[str] = field(default_factory=list)
+    status: str = "pending"
+
+
+class ArtifactStatus(Enum):
+    CREATED = "CREATED"
+    BENCHING = "BENCHING"
+    ACTIVE = "ACTIVE"
+    MONITORING = "MONITORING"
+    DECAYED = "DECAYED"
+    DISABLED = "DISABLED"
+
+
+@dataclass
+class Artifact:
+    artifact_id: str
+    type: str
+    name: str
+    universe: list[str]
+    status: ArtifactStatus = ArtifactStatus.CREATED
+    decay_horizon: int = 60
+    signal_definition: str = ""
+    entry_rules: str = ""
+    exit_rules: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+    @classmethod
+    def create(cls, type_: str, name: str, universe: list[str] | None = None) -> Artifact:
+        import hashlib
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        raw = f"{type_}:{name}:{now}"
+        h = hashlib.sha256(raw.encode()).hexdigest()[:12]
+        return cls(
+            artifact_id=f"art_{h}",
+            type=type_,
+            name=name,
+            universe=universe or [],
+            created_at=now,
+            updated_at=now,
+        )
+
+
+@dataclass
+class BenchEntry:
+    artifact_id: str
+    date: str
+    ic: float = 0.0
+    ir: float = 0.0
+    ic_positive: bool = False
+    sharpe: float = 0.0
+
+
+@dataclass
+class DecaySnapshot:
+    artifact_id: str
+    evaluation: str
+    ic_ratio: float = 0.0
+    rolling_ir: float = 0.0
+    ic_positive_ratio: float = 0.0
+    rolling_sharpe: float = 0.0
+    n_entries: int = 0
+    timestamp: str = ""
 
 
 @dataclass

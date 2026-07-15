@@ -1,0 +1,23 @@
+name: crypto_trading_desk
+description: Crypto trading desk with market microstructure, funding rates, and execution analysis
+tasks:
+  - agent_name: market_microstructure_analyst
+    role: Microstructure Analyst
+    prompt: >
+      Analyze the market microstructure for {{symbol}}.
+      Review order book depth, bid-ask spread, trade frequency,
+      and whale wallet activity. Is there any spoofing or manipulation?
+  - agent_name: funding_analyst
+    role: Funding & Perps Analyst
+    prompt: >
+      Analyze perpetual futures data for {{symbol}}.
+      Review funding rate history, open interest trends,
+      and long/short ratios. Is positioning extreme or neutral?
+      What does basis tell us about market sentiment?
+  - agent_name: execution_analyst
+    role: Execution Analyst
+    prompt: >
+      Design optimal execution strategy for a {{size}} position in {{symbol}}.
+      Consider VWAP, TWAP, iceberg orders, and CEX/DEX routing.
+      Estimate slippage and optimal timing.
+    depends_on: [market_microstructure_analyst, funding_analyst]

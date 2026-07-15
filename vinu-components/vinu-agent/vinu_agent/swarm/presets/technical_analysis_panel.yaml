@@ -1,0 +1,29 @@
+name: technical_analysis_panel
+description: Multi-timeframe technical analysis with pattern recognition and risk/reward assessment
+tasks:
+  - agent_name: trend_analyst
+    role: Trend Analyst
+    prompt: >
+      Analyze the trend structure for {{symbol}} on daily and weekly timeframes.
+      Identify trend direction, strength (ADX), and key moving averages.
+      Is the trend healthy, weakening, or reversing?
+  - agent_name: momentum_analyst
+    role: Momentum Analyst
+    prompt: >
+      Analyze momentum indicators for {{symbol}}.
+      Evaluate RSI, MACD, Stochastic, and rate of change.
+      Identify divergences and momentum regime shifts.
+  - agent_name: pattern_analyst
+    role: Pattern Analyst
+    prompt: >
+      Identify chart patterns for {{symbol}}: support/resistance levels,
+      trendlines, candlestick patterns, and classical formations
+      (head-and-shoulders, double top/bottom, flags, wedges).
+    depends_on: [trend_analyst]
+  - agent_name: risk_reward_analyst
+    role: Risk/Reward Analyst
+    prompt: >
+      Based on the technical setup for {{symbol}}, define optimal entry price,
+      stop-loss level, and profit targets. Calculate the risk/reward ratio
+      for each potential trade setup. Recommend the highest-probability setup.
+    depends_on: [momentum_analyst, pattern_analyst]

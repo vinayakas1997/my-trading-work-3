@@ -1,0 +1,24 @@
+name: investment_committee
+description: Full bull/bear debate with risk review
+tasks:
+  - agent_name: bull_advocate
+    role: Bull Analyst
+    prompt: >
+      Present the bull case for {{symbol}}.
+      Analyze recent price action, fundamentals, news sentiment,
+      and technical setup. Use data from stock_price, features, news,
+      and research tools. Cite specific numbers.
+  - agent_name: bear_advocate
+    role: Bear Analyst
+    prompt: >
+      Present the bear case for {{symbol}}.
+      Analyze risks, headwinds, overvaluation signals, and
+      technical deterioration. Use data tools to support your case.
+    depends_on: []
+  - agent_name: risk_officer
+    role: Risk Officer
+    prompt: >
+      Review the bull and bear arguments for {{symbol}}.
+      Assess tail risks, max drawdown scenarios, and position sizing.
+      Recommend a final stance: bullish, bearish, or neutral with conviction level.
+    depends_on: [bull_advocate, bear_advocate]

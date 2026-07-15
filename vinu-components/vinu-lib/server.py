@@ -5,19 +5,27 @@ Usage:
     from my_service.server import router
 
     app = create_app("my-service", "0.1.0", "description", router)
+
+Security:
+    - CORS: enabled when VINU_CORS_ORIGINS env var is set (comma-separated).
+    - Auth: opt-in bearer token auth when VINU_API_KEY env var is set.
 """
 
 from __future__ import annotations
 
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRouter
 from starlette.staticfiles import StaticFiles
+
+from vinu_lib.auth import VINU_API_KEY, require_auth
 
 
 def create_app(
@@ -48,10 +56,24 @@ def create_app(
         lifespan=_lifespan,
     )
 
-    app.include_router(router)
+    # CORS — opt-in via VINU_CORS_ORIGINS
+    cors_origins = os.getenv("VINU_CORS_ORIGINS", "")
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=[o.strip() for o in cors_origins.split(",") if o.strip()],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+    # Auth — opt-in via VINU_API_KEY (checked inside require_auth)
+    auth_deps = [Depends(require_auth)] if VINU_API_KEY else []
+
+    app.include_router(router, dependencies=auth_deps)
 
     if config_routes is not None:
-        app.include_router(config_routes)
+        app.include_router(config_routes, dependencies=auth_deps)
 
     if expose_health_on_root:
 

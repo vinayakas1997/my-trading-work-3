@@ -1,0 +1,26 @@
+name: etf_allocation_desk
+description: ETF-based portfolio construction with factor exposure, cost efficiency, and rebalancing
+tasks:
+  - agent_name: etf_screener
+    role: ETF Screener
+    prompt: >
+      Screen ETFs that provide exposure to {{theme_or_asset_class}}.
+      Evaluate: expense ratio, AUM, liquidity (bid-ask spread, volume),
+      tracking error, and underlying index methodology.
+      Recommend the top 3 most suitable ETFs.
+  - agent_name: factor_exposure_analyst
+    role: Factor Exposure Analyst
+    prompt: >
+      Analyze the factor exposures of the recommended ETFs.
+      Calculate loadings on: market, size, value, momentum,
+      quality, low-vol, and duration factors.
+      Ensure the portfolio has the intended factor tilts.
+    depends_on: [etf_screener]
+  - agent_name: etf_portfolio_constructor
+    role: ETF Portfolio Constructor
+    prompt: >
+      Construct an ETF portfolio for {{theme_or_asset_class}}.
+      Allocate across the recommended ETFs with target weights.
+      Optimize for: maximum Sharpe, risk parity, or factor targeting.
+      Report expected risk/return and rebalancing schedule.
+    depends_on: [factor_exposure_analyst]

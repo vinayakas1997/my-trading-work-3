@@ -1,0 +1,26 @@
+name: convertible_bond_team
+description: Convertible bond analysis with valuation, delta hedging, and arbitrage opportunities
+tasks:
+  - agent_name: cb_valuation_analyst
+    role: CB Valuation Analyst
+    prompt: >
+      Analyze the convertible bond for {{symbol}}.
+      Calculate: conversion premium, bond floor, delta, and
+      break-even period. Is the CB trading closer to bond-like
+      or equity-like? What is the yield-to-maturity and yield-to-call?
+  - agent_name: cb_arbitrage_analyst
+    role: CB Arbitrage Analyst
+    prompt: >
+      Evaluate the convertible arbitrage opportunity for {{symbol}}.
+      Calculate the implied volatility, credit spread, and
+      the theoretical value vs market price. Is there a
+      convertible arbitrage opportunity? What is the expected
+      return and Greeks profile?
+    depends_on: [cb_valuation_analyst]
+  - agent_name: cb_strategist
+    role: CB Strategist
+    prompt: >
+      Based on the CB analysis for {{symbol}},
+      recommend a strategy: long CB, CB arbitrage (long CB + short stock),
+      or option-based CB replication. Specify position sizing and risk limits.
+    depends_on: [cb_arbitrage_analyst]

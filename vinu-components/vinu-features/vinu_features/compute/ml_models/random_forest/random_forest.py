@@ -6,6 +6,14 @@ NAME = "random_forest"
 ALIASES = ("random_forest", "rf")
 
 
+def create():
+    try:
+        from sklearn.ensemble import RandomForestRegressor
+    except ImportError as exc:
+        raise ImportError("Install ml extras: pip install -e '.[ml]'") from exc
+    return RandomForestRegressor(n_estimators=50, max_depth=5, random_state=42)
+
+
 def score(X: list[list[float]], y: list[float]) -> list[float]:
     try:
         import numpy as np

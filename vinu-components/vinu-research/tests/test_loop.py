@@ -467,3 +467,65 @@ class TestUniverseBacktesting:
         assert all(s == ["AAPL"] for s in captured_symbols_args)
         assert result.portfolio is None
         assert "PORTFOLIO ANALYSIS" not in result.report_md
+
+
+class TestStrategyVerification:
+    def test_verify_strategy_code_success(self):
+        loop = StrategyResearchLoop()
+        loop._indicators = ["rsi_14", "sma_20"]
+        code = """
+class MyStrategy(BaseStrategy):
+    def generate_weights(self, data):
+        close = data['close']
+        rsi = data.get('rsi_14')
+        session = data.session
+        return (close > rsi).astype(float)
+"""
+        errors = loop._verify_strategy_code(code)
+        assert errors == []
+
+    def test_verify_strategy_code_hallucination(self):
+        loop = StrategyResearchLoop()
+        loop._indicators = ["rsi_14"]
+        code = """
+class MyStrategy(BaseStrategy):
+    def generate_weights(self, data):
+        close = data['close']
+        hallucinated = data['unknown_col_xyz']
+        return close * 0
+"""
+        errors = loop._verify_strategy_code(code)
+        assert len(errors) == 1
+        assert "unknown_col_xyz" in errors[0]
+
+    async def test_verify_weights_holding_success(self):
+        loop = StrategyResearchLoop()
+        async def fake_fetch_weights(run_id):
+            return [
+                {"date": "1", "AAPL": 0.5},
+                {"date": "2", "AAPL": 0.5},
+                {"date": "3", "AAPL": 0.5},
+                {"date": "4", "AAPL": 0.0},
+                {"date": "5", "AAPL": 0.5},
+                {"date": "6", "AAPL": 0.5},
+            ]
+        loop._tools.fetch_weights = fake_fetch_weights
+        errors = await loop._verify_weights_holding("run1")
+        assert errors == []
+
+    async def test_verify_weights_holding_crossover_bug(self):
+        loop = StrategyResearchLoop()
+        async def fake_fetch_weights(run_id):
+            return [
+                {"date": "1", "AAPL": 0.5},
+                {"date": "2", "AAPL": 0.0},
+                {"date": "3", "AAPL": -0.5},
+                {"date": "4", "AAPL": 0.0},
+                {"date": "5", "AAPL": 0.5},
+                {"date": "6", "AAPL": 0.0},
+            ]
+        loop._tools.fetch_weights = fake_fetch_weights
+        errors = await loop._verify_weights_holding("run1")
+        assert len(errors) == 1
+        assert "crossover state bug" in errors[0]
+

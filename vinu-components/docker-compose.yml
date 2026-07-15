@@ -17,6 +17,20 @@ services:
     volumes:
       - ./data/news:/data
       - ./data/shared:/shared
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/app/.cache
+    mem_limit: 1g
+    cpus: 1
+    pids_limit: 256
     restart: unless-stopped
 
   news-api:
@@ -30,10 +44,24 @@ services:
       VINU_NEWS_STORAGE: sqlite
       VINU_SHARED_WATCHLIST_PATH: /shared/watchlist.json
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./data/news:/data
       - ./data/shared:/shared
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/app/.cache
+    mem_limit: 1g
+    cpus: 1
+    pids_limit: 256
     restart: unless-stopped
     depends_on:
       - news-ingest
@@ -54,6 +82,20 @@ services:
     volumes:
       - ./data/stock-price:/data
       - ./data/shared:/shared
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/app/.cache
+    mem_limit: 1g
+    cpus: 1
+    pids_limit: 256
     restart: unless-stopped
 
   stock-api:
@@ -67,10 +109,24 @@ services:
       VINU_STOCK_META_DB_PATH: /data/meta.db
       VINU_SHARED_WATCHLIST_PATH: /shared/watchlist.json
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     volumes:
       - ./data/stock-price:/data
       - ./data/shared:/shared
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/app/.cache
+    mem_limit: 1g
+    cpus: 1
+    pids_limit: 256
     restart: unless-stopped
     depends_on:
       - stock-ingest
@@ -90,6 +146,20 @@ services:
       VINU_STOCK_API_URL: http://stock-api:8081
     volumes:
       - ./data/features:/data
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/app/.cache
+    mem_limit: 1g
+    cpus: 1
+    pids_limit: 256
     restart: unless-stopped
 
   features-api:
@@ -103,9 +173,23 @@ services:
       VINU_FEATURES_META_DB_PATH: /data/meta.db
       VINU_STOCK_API_URL: http://stock-api:8081
     ports:
-      - "8082:8082"
+      - "127.0.0.1:8082:8082"
     volumes:
       - ./data/features:/data
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/app/.cache
+    mem_limit: 2g
+    cpus: 1
+    pids_limit: 256
     restart: unless-stopped
     depends_on:
       - features-worker
@@ -127,6 +211,20 @@ services:
       VINU_CORRELATION_MARKET_HOURS_ONLY: "true"
     volumes:
       - ./data/correlation:/data
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/app/.cache
+    mem_limit: 1g
+    cpus: 1
+    pids_limit: 256
     restart: unless-stopped
     depends_on:
       - news-api
@@ -143,9 +241,23 @@ services:
       VINU_NEWS_API_URL: http://news-api:8080
       VINU_STOCK_API_URL: http://stock-api:8081
     ports:
-      - "8083:8083"
+      - "127.0.0.1:8083:8083"
     volumes:
       - ./data/correlation:/data
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/app/.cache
+    mem_limit: 1g
+    cpus: 1
+    pids_limit: 256
     restart: unless-stopped
     depends_on:
       - correlation-compute
@@ -165,9 +277,23 @@ services:
       VINU_FEATURES_API_URL: http://features-api:8082
       VINU_CORRELATION_API_URL: http://correlation-api:8083
     ports:
-      - "8084:8084"
+      - "127.0.0.1:8084:8084"
     volumes:
       - ./data/strategy:/data
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/app/.cache
+    mem_limit: 1g
+    cpus: 1
+    pids_limit: 256
     restart: unless-stopped
     depends_on:
       - features-api
@@ -187,11 +313,61 @@ services:
       VINU_STRATEGY_API_URL: http://strategy-api:8084
       VINU_STOCK_API_URL: http://stock-api:8081
     ports:
-      - "8085:8085"
+      - "127.0.0.1:8085:8085"
     volumes:
       - ./data/simulator:/data
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/app/.cache
+    mem_limit: 1g
+    cpus: 1
+    pids_limit: 256
     restart: unless-stopped
     depends_on:
       - strategy-api
       - stock-api
+
+  # =========================================================================
+  # vinu-agent Service (Ports: 8086)
+  # =========================================================================
+  agent-api:
+    build:
+      context: .
+      dockerfile: vinu-agent/Dockerfile
+    command: ["vinu-agent", "serve", "--host", "0.0.0.0", "--port", "8086"]
+    ports:
+      - "127.0.0.1:8086:8086"
+    volumes:
+      - ./data/agent:/data
+      - ./vinu-agent/skills:/app/vinu-agent/skills:ro
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/app/.cache
+    mem_limit: 2g
+    cpus: 2
+    pids_limit: 512
+    restart: unless-stopped
+    depends_on:
+      - stock-api
+      - features-api
+      - news-api
+      - correlation-api
+      - strategy-api
+      - simulator-api
 

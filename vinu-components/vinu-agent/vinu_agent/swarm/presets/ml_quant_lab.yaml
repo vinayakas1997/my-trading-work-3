@@ -1,0 +1,26 @@
+name: ml_quant_lab
+description: Machine learning-driven quantitative research with feature engineering and model validation
+tasks:
+  - agent_name: feature_engineer
+    role: Feature Engineer
+    prompt: >
+      Engineer predictive features for {{symbol}}.
+      Generate technical (RSI, MACD, BB, ATR), fundamental (ratios),
+      and alternative features (volatility regime, correlation shifts).
+      Rank features by predictive power (information coefficient).
+  - agent_name: model_trainer
+    role: ML Model Trainer
+    prompt: >
+      Train a predictive model for {{symbol}} using engineered features.
+      Try: XGBoost, Random Forest, and Logistic Regression.
+      Use walk-forward cross-validation. Report OOS accuracy,
+      precision/recall, feature importance, and confusion matrix.
+    depends_on: [feature_engineer]
+  - agent_name: model_validator
+    role: Model Validator
+    prompt: >
+      Validate the ML model for {{symbol}}.
+      Check for overfitting (train vs test performance gap),
+      feature stability over time, and regime dependency.
+      Is the model robust enough for live deployment?
+    depends_on: [model_trainer]

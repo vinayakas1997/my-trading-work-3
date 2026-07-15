@@ -155,7 +155,10 @@ def _rows_to_table(rows: list[dict[str, Any]], features: list[str]) -> pa.Table:
             columns[col].append(row[col])
         for feat in features:
             val = row.get(feat)
-            columns[feat].append(float(val) if val is not None else None)
+            if isinstance(val, str):
+                columns[feat].append(val)
+            else:
+                columns[feat].append(float(val) if val is not None else None)
     return pa.table(columns)
 
 

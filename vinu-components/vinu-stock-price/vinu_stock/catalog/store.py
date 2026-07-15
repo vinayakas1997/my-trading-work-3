@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,37 +44,45 @@ class CatalogStore:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
         self._conn.row_factory = sqlite3.Row
+        self._lock = threading.Lock()
+
+    def _with_lock(self) -> threading.Lock:
+        return self._lock
 
     def init_schema(self, schema_sql: str) -> None:
-        self._conn.executescript(schema_sql)
+        with self._lock:
+            self._conn.executescript(schema_sql)
         self._migrate_schema()
 
     def _migrate_schema(self) -> None:
-        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(symbol_catalog)")}
-        migrations = [
-            ("has_adj_data", "INTEGER NOT NULL DEFAULT 0"),
-            ("gap_count", "INTEGER NOT NULL DEFAULT 0"),
-            ("last_validation_at", "INTEGER"),
-        ]
-        for name, typedef in migrations:
-            if name not in cols:
-                try:
-                    self._conn.execute(f"ALTER TABLE symbol_catalog ADD COLUMN {name} {typedef}")
-                except sqlite3.OperationalError:
-                    pass
-        self._conn.commit()
+        with self._lock:
+            cols = {row[1] for row in self._conn.execute("PRAGMA table_info(symbol_catalog)")}
+            migrations = [
+                ("has_adj_data", "INTEGER NOT NULL DEFAULT 0"),
+                ("gap_count", "INTEGER NOT NULL DEFAULT 0"),
+                ("last_validation_at", "INTEGER"),
+            ]
+            for name, typedef in migrations:
+                if name not in cols:
+                    try:
+                        self._conn.execute(f"ALTER TABLE symbol_catalog ADD COLUMN {name} {typedef}")
+                    except sqlite3.OperationalError:
+                        pass
+            self._conn.commit()
 
     def get_symbol(self, symbol: str) -> SymbolCatalogEntry | None:
-        row = self._conn.execute(
-            "SELECT * FROM symbol_catalog WHERE symbol = ?",
-            (symbol.strip().upper(),),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM symbol_catalog WHERE symbol = ?",
+                (symbol.strip().upper(),),
+            ).fetchone()
         return self._row_to_entry(row) if row else None
 
     def list_symbols(self) -> list[SymbolCatalogEntry]:
-        rows = self._conn.execute(
-            "SELECT * FROM symbol_catalog ORDER BY symbol ASC"
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM symbol_catalog ORDER BY symbol ASC"
+            ).fetchall()
         return [self._row_to_entry(row) for row in rows]
 
     def upsert_symbol(
@@ -92,36 +101,37 @@ class CatalogStore:
     ) -> SymbolCatalogEntry:
         sym = symbol.strip().upper()
         now = int(time.time())
-        self._conn.execute(
-            """
-            INSERT INTO symbol_catalog (
-                symbol, provider, first_bar_ts, last_bar_ts,
-                archive_through, live_file, backfill_status, updated_at,
-                has_adj_data, gap_count, last_validation_at
-            ) VALUES (?, COALESCE(?, ''), ?, ?, ?, ?, COALESCE(?, 'pending'), ?, COALESCE(?, 0), COALESCE(?, 0), ?)
-            ON CONFLICT(symbol) DO UPDATE SET
-                provider = COALESCE(?, provider),
-                first_bar_ts = COALESCE(?, first_bar_ts),
-                last_bar_ts = COALESCE(?, last_bar_ts),
-                archive_through = COALESCE(?, archive_through),
-                live_file = COALESCE(?, live_file),
-                backfill_status = COALESCE(?, backfill_status),
-                has_adj_data = COALESCE(?, has_adj_data),
-                gap_count = COALESCE(?, gap_count),
-                last_validation_at = COALESCE(?, last_validation_at),
-                updated_at = ?
-            """,
-            (
-                sym, provider, first_bar_ts, last_bar_ts,
-                archive_through, live_file, backfill_status,
-                now, has_adj_data, gap_count, last_validation_at,
-                provider, first_bar_ts, last_bar_ts,
-                archive_through, live_file, backfill_status,
-                has_adj_data, gap_count, last_validation_at,
-                now,
-            ),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO symbol_catalog (
+                    symbol, provider, first_bar_ts, last_bar_ts,
+                    archive_through, live_file, backfill_status, updated_at,
+                    has_adj_data, gap_count, last_validation_at
+                ) VALUES (?, COALESCE(?, ''), ?, ?, ?, ?, COALESCE(?, 'pending'), ?, COALESCE(?, 0), COALESCE(?, 0), ?)
+                ON CONFLICT(symbol) DO UPDATE SET
+                    provider = COALESCE(?, provider),
+                    first_bar_ts = COALESCE(?, first_bar_ts),
+                    last_bar_ts = COALESCE(?, last_bar_ts),
+                    archive_through = COALESCE(?, archive_through),
+                    live_file = COALESCE(?, live_file),
+                    backfill_status = COALESCE(?, backfill_status),
+                    has_adj_data = COALESCE(?, has_adj_data),
+                    gap_count = COALESCE(?, gap_count),
+                    last_validation_at = COALESCE(?, last_validation_at),
+                    updated_at = ?
+                """,
+                (
+                    sym, provider, first_bar_ts, last_bar_ts,
+                    archive_through, live_file, backfill_status,
+                    now, has_adj_data, gap_count, last_validation_at,
+                    provider, first_bar_ts, last_bar_ts,
+                    archive_through, live_file, backfill_status,
+                    has_adj_data, gap_count, last_validation_at,
+                    now,
+                ),
+            )
+            self._conn.commit()
         return self.get_symbol(sym)  # type: ignore[return-value]
 
     def update_bar_range(
@@ -154,25 +164,27 @@ class CatalogStore:
 
     def queue_backfill_job(self, symbol: str, year: int) -> None:
         now = int(time.time())
-        self._conn.execute(
-            """
-            INSERT OR IGNORE INTO backfill_jobs (symbol, year, status, updated_at)
-            VALUES (?, ?, 'queued', ?)
-            """,
-            (symbol.strip().upper(), year, now),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT OR IGNORE INTO backfill_jobs (symbol, year, status, updated_at)
+                VALUES (?, ?, 'queued', ?)
+                """,
+                (symbol.strip().upper(), year, now),
+            )
+            self._conn.commit()
 
     def get_pending_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
-            """
-            SELECT * FROM backfill_jobs
-            WHERE status IN ('queued', 'failed')
-            ORDER BY symbol, year
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM backfill_jobs
+                WHERE status IN ('queued', 'failed')
+                ORDER BY symbol, year
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
         return [dict(row) for row in rows]
 
     def set_job_status(
@@ -186,19 +198,20 @@ class CatalogStore:
         error: str | None = None,
     ) -> None:
         now = int(time.time())
-        self._conn.execute(
-            """
-            UPDATE backfill_jobs SET
-                status = ?,
-                provider = COALESCE(?, provider),
-                rows_written = COALESCE(?, rows_written),
-                error = ?,
-                updated_at = ?
-            WHERE symbol = ? AND year = ?
-            """,
-            (status, provider, rows_written, error, now, symbol.strip().upper(), year),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                """
+                UPDATE backfill_jobs SET
+                    status = ?,
+                    provider = COALESCE(?, provider),
+                    rows_written = COALESCE(?, rows_written),
+                    error = ?,
+                    updated_at = ?
+                WHERE symbol = ? AND year = ?
+                """,
+                (status, provider, rows_written, error, now, symbol.strip().upper(), year),
+            )
+            self._conn.commit()
 
     def log_ingest(
         self,
@@ -210,22 +223,23 @@ class CatalogStore:
         ok: bool,
         error: str | None = None,
     ) -> None:
-        self._conn.execute(
-            """
-            INSERT INTO ingest_log (symbol, run_at, bars_added, from_ts, to_ts, ok, error)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                symbol.strip().upper(),
-                int(time.time()),
-                bars_added,
-                from_ts,
-                to_ts,
-                1 if ok else 0,
-                error,
-            ),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO ingest_log (symbol, run_at, bars_added, from_ts, to_ts, ok, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    symbol.strip().upper(),
+                    int(time.time()),
+                    bars_added,
+                    from_ts,
+                    to_ts,
+                    1 if ok else 0,
+                    error,
+                ),
+            )
+            self._conn.commit()
 
     @staticmethod
     def _row_to_entry(row: sqlite3.Row) -> SymbolCatalogEntry:
@@ -247,7 +261,7 @@ class CatalogStore:
 
 def open_catalog_db(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn

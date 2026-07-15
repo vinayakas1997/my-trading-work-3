@@ -184,6 +184,34 @@ class StrategyResearchLoop:
                         user_idea, iteration, last.result, last.critique
                     )
 
+                # 1. Static AST Verification Check
+                verification_errors = self._verify_strategy_code(strategy_code)
+                if verification_errors:
+                    result = BacktestResult(
+                        run_id=f"failed_verification_{iteration}",
+                        strategy_name="UserStrategy",
+                        metrics=BacktestMetrics.from_dict({}),
+                        benchmark_metrics={},
+                        trade_count=0,
+                        equity_points=0,
+                        raw={},
+                    )
+                    critic_feedback = CriticFeedback(
+                        verdict="REFINE",
+                        reasoning=f"Static AST Verification failed: {verification_errors[0]}",
+                        suggestions=verification_errors,
+                    )
+                    record = IterationRecord(
+                        iteration=iteration,
+                        strategy_code=strategy_code,
+                        result=result,
+                        critique=critic_feedback,
+                    )
+                    history.append(record)
+                    if self._on_iteration:
+                        self._on_iteration(record)
+                    continue
+
                 result = await self._run_backtest(
                     strategy_code, symbol, research_from, research_to,
                     indicators=indicators,
@@ -225,6 +253,15 @@ class StrategyResearchLoop:
                 critic_feedback = await self._risk_critic(
                     result, story, drawdowns, iteration
                 )
+
+                # 2. Post-backtest Weight Holding Check
+                holding_errors = await self._verify_weights_holding(result.run_id)
+                if holding_errors:
+                    critic_feedback = CriticFeedback(
+                        verdict="REFINE",
+                        reasoning=f"Weight holding verification failed: {holding_errors[0]}",
+                        suggestions=critic_feedback.suggestions + holding_errors,
+                    )
 
                 record = IterationRecord(
                     iteration=iteration,
@@ -277,7 +314,7 @@ class StrategyResearchLoop:
 
                 if result.metrics.max_drawdown < self._config.max_drawdown_threshold:
                     LOG.warning(
-                        "MaxDD %.1%% exceeds threshold %.1%%, stopping",
+                        "MaxDD %.1f%% exceeds threshold %.1f%%, stopping",
                         result.metrics.max_drawdown * 100,
                         self._config.max_drawdown_threshold * 100,
                     )
@@ -812,7 +849,10 @@ class StrategyResearchLoop:
                         "simpler passive approach may outperform"
                     )
 
-        meets_performance_bar = m.sharpe_ratio >= 1.5 and m.max_drawdown > -0.08
+        meets_performance_bar = (
+            m.sharpe_ratio >= self._config.target_sharpe_ratio
+            and m.max_drawdown >= self._config.target_max_drawdown
+        )
         has_enough_trades = result.trade_count >= self._config.min_trades_for_pass
 
         if meets_performance_bar and not has_enough_trades:
@@ -915,3 +955,113 @@ class StrategyResearchLoop:
             result, story, rules,
         )
         return self._merge_feedback(rules, llm)
+
+    def _verify_strategy_code(self, strategy_code: str) -> list[str]:
+        """
+        Statically check strategy code for hallucinations or missing columns in AST.
+        """
+        import ast
+        errors = []
+        try:
+            tree = ast.parse(strategy_code)
+        except Exception as e:
+            return [f"Failed to parse Python AST: {e}"]
+
+        class ColumnAccessVisitor(ast.NodeVisitor):
+            def __init__(self, df_name: str = "data"):
+                self.df_name = df_name
+                self.referenced_columns: set[str] = set()
+
+            def visit_Subscript(self, node: ast.Subscript):
+                if isinstance(node.value, ast.Name) and node.value.id == self.df_name:
+                    if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                        self.referenced_columns.add(node.slice.value)
+                    elif hasattr(node.slice, "value") and isinstance(node.slice.value, ast.Constant) and isinstance(node.slice.value.value, str):
+                        self.referenced_columns.add(node.slice.value.value)
+                self.generic_visit(node)
+
+            def visit_Call(self, node: ast.Call):
+                if (
+                    isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == self.df_name
+                    and node.func.attr == "get"
+                ):
+                    if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                        self.referenced_columns.add(node.args[0].value)
+                self.generic_visit(node)
+
+            def visit_Attribute(self, node: ast.Attribute):
+                if isinstance(node.value, ast.Name) and node.value.id == self.df_name:
+                    if node.attr != "get":
+                        self.referenced_columns.add(node.attr)
+                self.generic_visit(node)
+
+        visitor = ColumnAccessVisitor()
+        visitor.visit(tree)
+
+        allowed = {"open", "high", "low", "close", "volume", "symbol", "ts", "timestamp", "bar_ts"}
+        available_indicators = [i.lower() for i in getattr(self, "_indicators", [])]
+        for ind in available_indicators:
+            allowed.add(ind)
+            if "_" in ind:
+                allowed.add(ind)
+                allowed.add(ind.split("_")[0])
+            allowed.add(f"{ind}_14")
+            allowed.add(f"{ind}_20")
+            allowed.add(f"{ind}_50")
+
+        allowed.add("session")
+        allowed.add("news_cooldown")
+
+        for col in visitor.referenced_columns:
+            if col not in allowed:
+                if col in ("index", "columns", "copy", "reindex", "fillna", "iloc", "loc", "dropna", "astype", "diff", "shift", "values", "pct_change", "get"):
+                    continue
+                errors.append(
+                    f"Referenced column '{col}' is not available in the dataset. "
+                    f"Available columns/indicators: {sorted(list(allowed))}. "
+                    f"Please request the indicator or use available fields."
+                )
+        return errors
+
+    async def _verify_weights_holding(self, run_id: str) -> list[str]:
+        """
+        Post-backtest check to ensure weights are held consecutively and not just single-bar spikes.
+        """
+        errors = []
+        weights_data = await self._tools.fetch_weights(run_id)
+        if not weights_data:
+            return []
+
+        tickers = [col for col in weights_data[0].keys() if col != "date"]
+        if not tickers:
+            return []
+
+        for ticker in tickers:
+            non_zero_runs = []
+            current_run = 0
+            for row in weights_data:
+                val = float(row.get(ticker) or 0.0)
+                if val != 0.0:
+                    current_run += 1
+                else:
+                    if current_run > 0:
+                        non_zero_runs.append(current_run)
+                        current_run = 0
+            if current_run > 0:
+                non_zero_runs.append(current_run)
+
+            if not non_zero_runs:
+                continue
+
+            total_runs = len(non_zero_runs)
+            single_bar_runs = sum(1 for r in non_zero_runs if r == 1)
+            
+            if total_runs >= 3 and single_bar_runs == total_runs:
+                errors.append(
+                    f"Strategy has a crossover state bug: all {total_runs} trades for {ticker} "
+                    "were held for exactly 1 bar. Please rewrite signal/weight generation "
+                    "to hold positions rather than exiting immediately."
+                )
+        return errors

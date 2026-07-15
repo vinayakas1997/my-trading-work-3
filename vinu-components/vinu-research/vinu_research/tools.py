@@ -11,7 +11,7 @@ from vinu_lib.client import ResilientClient
 from vinu_research.benchmark import compute_benchmark_comparison as _compute_benchmark_comparison
 from vinu_research.benchmark import compute_benchmark_returns_metrics as _compute_benchmark_returns_metrics
 from vinu_research.config import ResearchConfig, load_config
-from vinu_research.models import BacktestMetrics, BacktestResult
+from vinu_research.models import BacktestMetrics, BacktestResult, HypothesisStatus
 
 LOG = logging.getLogger(__name__)
 
@@ -41,42 +41,6 @@ class ResearchTools:
         await self._simulator_client.close()
         await self._correlation_client.close()
         await self._stock_client.close()
-
-    async def get_indicators(
-        self,
-        symbol: str,
-        kinds: list[str],
-        from_ts: int | None = None,
-        to_ts: int | None = None,
-        interval: str = "1d",
-    ) -> pd.DataFrame | None:
-        params: dict[str, Any] = {
-            "kinds": ",".join(kinds),
-            "interval": interval,
-        }
-        if from_ts is not None:
-            params["from"] = from_ts
-        if to_ts is not None:
-            params["to"] = to_ts
-        try:
-            data = await self._features_client.get(
-                f"/indicators/{symbol.upper()}",
-                params=params,
-            )
-        except Exception as e:
-            LOG.warning("get_indicators(%s, %s) failed: %s", symbol, kinds, e)
-            return None
-        if not isinstance(data, list):
-            LOG.warning("get_indicators(%s, %s): unexpected response type %s", symbol, kinds, type(data).__name__)
-            return None
-        if not data:
-            return None
-        df = pd.DataFrame(data)
-        df["ts"] = pd.to_datetime(df["ts"], unit="s")
-        df = df.set_index("ts").sort_index()
-        drop_cols = [c for c in ["symbol"] if c in df.columns]
-        df = df.drop(columns=drop_cols, errors="ignore")
-        return df
 
     async def run_backtest(
         self,
@@ -242,6 +206,14 @@ class ResearchTools:
         returns = df["portfolio_value"].pct_change().dropna()
         return returns
 
+    async def fetch_weights(self, run_id: str) -> list[dict[str, Any]] | None:
+        """Fetch weights history for a completed run."""
+        try:
+            return await self._simulator_client.get(f"/results/{run_id}/weights")
+        except Exception as e:
+            LOG.warning("fetch_weights(%s) failed: %s", run_id, e)
+            return None
+
     @staticmethod
     def compute_benchmark_returns_metrics(daily_returns: pd.Series) -> dict[str, float]:
         return _compute_benchmark_returns_metrics(daily_returns)
@@ -258,3 +230,201 @@ def timestamps_from_dates(from_date: str, to_date: str) -> tuple[int, int]:
     from_ts = int(pd.Timestamp(from_date).timestamp())
     to_ts = int(pd.Timestamp(to_date).timestamp())
     return from_ts, to_ts
+
+
+# ── Research Autopilot Tools (Feature 2) ──────────────────────────────
+
+import hashlib
+import json
+import os
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+from vinu_research.hypothesis_registry import HypothesisRegistry
+from vinu_research.models import Goal
+
+
+def run_autopilot(
+    hypothesis_id: str,
+    registry: HypothesisRegistry | None = None,
+) -> dict[str, Any]:
+    reg = registry or HypothesisRegistry()
+    hypothesis = reg.get(hypothesis_id)
+    if hypothesis is None:
+        raise ValueError(f"Hypothesis {hypothesis_id} not found")
+
+    now = datetime.now(timezone.utc).isoformat()
+    raw = f"goal:{hypothesis_id}:{now}"
+    goal_id = f"goal_{hashlib.sha256(raw.encode()).hexdigest()[:12]}"
+
+    goal = Goal(
+        goal_id=goal_id,
+        hypothesis_id=hypothesis_id,
+        objective=f"Test hypothesis: {hypothesis.title}",
+        criteria=[
+            "Sharpe ratio > 1.0",
+            "Max drawdown > -20%",
+            "Win rate > 40%",
+        ],
+        status="active",
+    )
+
+    return {
+        "goal_id": goal.goal_id,
+        "hypothesis_id": hypothesis_id,
+        "hypothesis_title": hypothesis.title,
+        "hypothesis_thesis": hypothesis.thesis,
+        "objective": goal.objective,
+        "criteria": goal.criteria,
+        "status": goal.status,
+        "universe": hypothesis.universe,
+        "created_at": now,
+    }
+
+
+def generate_backtest_config(
+    hypothesis_id: str,
+    start_date: str,
+    end_date: str,
+    registry: HypothesisRegistry | None = None,
+    output_dir: str | None = None,
+) -> str:
+    reg = registry or HypothesisRegistry()
+    hypothesis = reg.get(hypothesis_id)
+    if hypothesis is None:
+        raise ValueError(f"Hypothesis {hypothesis_id} not found")
+
+    run_dir = Path(output_dir or Path.home() / ".vinu" / "runs" / f"autopilot_{hypothesis_id}")
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    config = {
+        "run_id": f"autopilot_{hypothesis_id}",
+        "hypothesis_id": hypothesis_id,
+        "title": hypothesis.title,
+        "thesis": hypothesis.thesis,
+        "universe": hypothesis.universe,
+        "start_date": start_date,
+        "end_date": end_date,
+        "interval": "1d",
+        "initial_capital": 1_000_000.0,
+        "transaction_cost_pct": 0.001,
+        "slippage_pct": 0.0005,
+        "allow_short": True,
+        "signal_definition": hypothesis.signal_definition or "",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    config_path = run_dir / "config.json"
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(suffix=".tmp", prefix="config_", dir=str(run_dir))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+            f.flush()
+            os.fsync(fd)
+        os.replace(tmp, str(config_path))
+    finally:
+        if tmp is not None and os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    return str(config_path)
+
+
+def scaffold_signal_engine(
+    hypothesis_id: str,
+    registry: HypothesisRegistry | None = None,
+    output_dir: str | None = None,
+) -> str:
+    reg = registry or HypothesisRegistry()
+    hypothesis = reg.get(hypothesis_id)
+    if hypothesis is None:
+        raise ValueError(f"Hypothesis {hypothesis_id} not found")
+
+    run_dir = Path(output_dir or Path.home() / ".vinu" / "runs" / f"autopilot_{hypothesis_id}")
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    sig_def = hypothesis.signal_definition or "Custom signal"
+    universe_str = ", ".join(hypothesis.universe) if hypothesis.universe else "symbol"
+
+    code = f'''"""Signal Engine: {hypothesis.title}
+
+Hypothesis: {hypothesis.thesis}
+Signal Definition: {sig_def}
+Universe: {universe_str}
+Generated: {datetime.now(timezone.utc).isoformat()}
+"""
+
+from typing import Any
+import pandas as pd
+import numpy as np
+
+
+class SignalEngine:
+    def __init__(self, config: dict[str, Any] | None = None):
+        self.config = config or {{}}
+
+    def compute_signals(self, data: pd.DataFrame) -> pd.Series:
+        """
+        Compute trading signals from price/feature data.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            OHLCV data with columns: open, high, low, close, volume
+
+        Returns
+        -------
+        pd.Series
+            Trading signals: +1 (long), -1 (short), 0 (neutral)
+        """
+        # TODO: Implement signal logic based on hypothesis
+        # {sig_def}
+        signals = pd.Series(0.0, index=data.index)
+        return signals
+'''
+    sig_path = run_dir / "signal_engine.py"
+    sig_path.write_text(code, encoding="utf-8")
+    return str(sig_path)
+
+
+def link_autopilot_backtest(
+    hypothesis_id: str,
+    run_dir: str,
+    registry: HypothesisRegistry | None = None,
+) -> dict[str, Any]:
+    reg = registry or HypothesisRegistry()
+    hypothesis = reg.get(hypothesis_id)
+    if hypothesis is None:
+        raise ValueError(f"Hypothesis {hypothesis_id} not found")
+
+    run_dir_path = Path(run_dir)
+    run_card_path = run_dir_path / "run_card.json"
+
+    result = {
+        "hypothesis_id": hypothesis_id,
+        "run_dir": run_dir,
+        "run_card_found": False,
+        "metrics": {},
+        "hypothesis_status": hypothesis.status.value,
+    }
+
+    if run_card_path.exists():
+        try:
+            run_card = json.loads(run_card_path.read_text(encoding="utf-8"))
+            result["run_card_found"] = True
+            result["metrics"] = run_card.get("metrics", {})
+
+            reg.link_backtest(hypothesis_id, str(run_card_path))
+            linked = reg.get(hypothesis_id)
+            if linked is not None:
+                linked.status = HypothesisStatus.testing
+                reg.update(linked)
+                result["hypothesis_status"] = "testing"
+        except (json.JSONDecodeError, OSError) as exc:
+            LOG.warning("Failed to read run_card.json at %s: %s", run_card_path, exc)
+
+    return result

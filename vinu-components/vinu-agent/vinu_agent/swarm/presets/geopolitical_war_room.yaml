@@ -1,0 +1,26 @@
+name: geopolitical_war_room
+description: Geopolitical risk assessment with scenario analysis and portfolio hedging
+tasks:
+  - agent_name: geopolitical_risk_analyst
+    role: Geopolitical Risk Analyst
+    prompt: >
+      Analyze geopolitical risks affecting {{symbol}} or {{region}}.
+      Consider: trade tensions, sanctions, military conflicts,
+      election risks, regulatory changes, and resource nationalism.
+      Rate each risk by probability and market impact.
+  - agent_name: scenario_analyst
+    role: Scenario Analyst
+    prompt: >
+      Run scenario analysis for the identified geopolitical risks.
+      Construct: base case (60% probability), adverse case (25%),
+      and tail case (15%). For each scenario, estimate the
+      impact on {{symbol}} valuation, supply chains, and revenue.
+    depends_on: [geopolitical_risk_analyst]
+  - agent_name: hedge_strategist
+    role: Portfolio Hedge Strategist
+    prompt: >
+      Design hedges for the geopolitical risks identified.
+      Consider: tail risk hedges (puts, VIX calls), currency hedges,
+      commodity hedges (oil, gold), and geographic diversification.
+      Estimate hedge costs and recommend specific instruments.
+    depends_on: [scenario_analyst]

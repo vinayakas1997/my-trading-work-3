@@ -50,6 +50,16 @@ class TestWindowSplitter:
         windows = splitter.split("2024-01-01", "2024-03-01")
         assert len(windows) == 0
 
+    def test_returns_empty_for_extreme_test_pct_underflow(self):
+        config = WalkForwardConfig(
+            n_windows=3,
+            min_train_days=10,
+            test_pct=0.9,
+        )
+        splitter = WindowSplitter(config)
+        windows = splitter.split("2024-01-01", "2024-03-01")
+        assert len(windows) == 0
+
     def test_expanding_train_start_is_always_from_date(self):
         config = WalkForwardConfig(
             method="expanding",

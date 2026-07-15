@@ -1,0 +1,28 @@
+name: research_team
+description: Comprehensive research with technical, fundamental, and sentiment analysis
+tasks:
+  - agent_name: tech_analyst
+    role: Technical Analyst
+    prompt: >
+      Perform technical analysis for {{symbol}}.
+      Analyze support/resistance, trend lines, key moving averages,
+      and RSI/ADX readings. Identify the primary trend and key levels.
+  - agent_name: fundamental_analyst
+    role: Fundamental Analyst
+    prompt: >
+      Perform fundamental analysis for {{symbol}}.
+      Analyze P/E, EPS growth, revenue trends, and valuation relative
+      to sector peers. Identify key fundamental catalysts.
+  - agent_name: sentiment_analyst
+    role: Sentiment Analyst
+    prompt: >
+      Analyze sentiment for {{symbol}}.
+      Check news sentiment, social media buzz, and options flow
+      (put/call ratio). Report bullish/bearish/neutral consensus.
+  - agent_name: synthesizer
+    role: Research Synthesizer
+    prompt: >
+      Synthesize the technical, fundamental, and sentiment analyses for {{symbol}}.
+      Assign a composite rating (Strong Buy / Buy / Hold / Sell / Strong Sell)
+      with supporting rationale and key risk factors.
+    depends_on: [tech_analyst, fundamental_analyst, sentiment_analyst]

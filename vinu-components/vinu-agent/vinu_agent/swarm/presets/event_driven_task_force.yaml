@@ -1,0 +1,33 @@
+name: event_driven_task_force
+description: M&A, spin-off, restructuring, and special situation analysis
+tasks:
+  - agent_name: catalyst_analyst
+    role: Catalyst Analyst
+    prompt: >
+      Identify upcoming catalysts for {{symbol}}.
+      Consider M&A rumors, activist involvement, spin-offs,
+      asset sales, legal rulings, and regulatory decisions.
+      Rate each catalyst's probability and potential impact.
+  - agent_name: risk_arb_analyst
+    role: Risk Arbitrage Analyst
+    prompt: >
+      If {{symbol}} is involved in an M&A transaction,
+      analyze the deal: structure (cash/stock), regulatory hurdles,
+      timeline, and deal spread. Calculate the annualized return
+      and risk of deal failure.
+    depends_on: [catalyst_analyst]
+  - agent_name: special_situations_analyst
+    role: Special Situations Analyst
+    prompt: >
+      Analyze special situation opportunities related to {{symbol}}.
+      Consider spin-off valuation, stub trades, rights offerings,
+      and restructuring plays. Identify any dislocation between
+      current price and intrinsic value.
+    depends_on: [catalyst_analyst]
+  - agent_name: event_strategist
+    role: Event Strategist
+    prompt: >
+      Synthesize catalyst, risk arb, and special situations analysis.
+      Recommend the highest-conviction event-driven trade with
+      position sizing, hedging, and exit plan.
+    depends_on: [risk_arb_analyst, special_situations_analyst]

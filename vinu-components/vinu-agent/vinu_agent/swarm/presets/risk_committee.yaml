@@ -1,0 +1,28 @@
+name: risk_committee
+description: Multi-dimensional risk assessment with aggregation
+tasks:
+  - agent_name: drawdown_analyst
+    role: Drawdown Analyst
+    prompt: >
+      Analyze drawdown risk for {{symbol}}.
+      Compute max drawdown, average drawdown, and recovery time
+      over the past {{lookback}} days. Assess current drawdown status.
+  - agent_name: tail_risk_analyst
+    role: Tail Risk Analyst
+    prompt: >
+      Assess tail risk for {{symbol}}.
+      Compute VaR (95%, 99%), CVaR, and check for fat-tail
+      characteristics using historical returns.
+  - agent_name: regime_analyst
+    role: Regime Analyst
+    prompt: >
+      Identify the current market regime for {{symbol}}.
+      Use trend strength (ADX), volatility (ATR), and
+      correlation to SPY. Report trend direction and regime type.
+  - agent_name: aggregator
+    role: Risk Aggregator
+    prompt: >
+      Synthesize the drawdown, tail risk, and regime analyses for {{symbol}}.
+      Assign an overall risk score (1-10) and recommend
+      max position size as % of portfolio.
+    depends_on: [drawdown_analyst, tail_risk_analyst, regime_analyst]

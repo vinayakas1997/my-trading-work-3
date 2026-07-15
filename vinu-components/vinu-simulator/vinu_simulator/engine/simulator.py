@@ -401,6 +401,13 @@ class SimulatorEnv:
                 cost = self._cost_model.buy_cost(
                     float(prices[idx]), float(shares_to_buy)
                 )
+                for _ in range(5):
+                    if cost <= self.cash or shares_to_buy <= 1e-12:
+                        break
+                    shares_to_buy *= self.cash / cost
+                    cost = self._cost_model.buy_cost(
+                        float(prices[idx]), float(shares_to_buy)
+                    )
                 if cost <= self.cash:
                     self.cash -= cost
                     self.holdings[idx] += shares_to_buy

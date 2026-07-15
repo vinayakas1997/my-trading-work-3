@@ -1,0 +1,30 @@
+name: fundamental_research_team
+description: Deep fundamental analysis with financial statements, valuation, and quality scoring
+tasks:
+  - agent_name: financial_analyst
+    role: Financial Statement Analyst
+    prompt: >
+      Analyze the financial statements of {{symbol}}.
+      Review revenue trends, margins, cash flow conversion, and balance sheet strength.
+      Identify any red flags (declining margins, rising debt, negative FCF).
+  - agent_name: valuation_analyst
+    role: Valuation Analyst
+    prompt: >
+      Value {{symbol}} using DCF, trading comps, and precedent transactions.
+      Calculate implied upside/downside. Provide sensitivity analysis
+      on WACC and terminal growth assumptions.
+    depends_on: [financial_analyst]
+  - agent_name: quality_scorer
+    role: Quality Scorer
+    prompt: >
+      Score {{symbol}} on the quality framework: profitability,
+      stability, capital allocation, and governance.
+      Provide a composite quality score (1-10) with justification.
+    depends_on: [financial_analyst]
+  - agent_name: lead_analyst
+    role: Lead Analyst
+    prompt: >
+      Consolidate the financial analysis, valuation, and quality score for {{symbol}}.
+      Provide an investment recommendation with price target,
+      time horizon, and key catalysts to watch.
+    depends_on: [valuation_analyst, quality_scorer]

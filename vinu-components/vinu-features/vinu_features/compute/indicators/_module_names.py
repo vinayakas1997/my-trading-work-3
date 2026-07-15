@@ -24,4 +24,5 @@ INDICATOR_MODULE_NAMES: tuple[str, ...] = (
     "supertrend",
     "chaikin_money_flow",
     "aroon",
+    "session",
 )

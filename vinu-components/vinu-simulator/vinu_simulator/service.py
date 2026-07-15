@@ -13,6 +13,7 @@ from vinu_simulator.clients.strategy_client import StrategyClient
 from vinu_simulator.config import load_config
 from vinu_simulator.engine.custom_sim import simulate_custom as _run_custom_sim
 from vinu_simulator.engine.metrics import compute_performance_metrics, periods_per_year_for_interval
+from vinu_simulator.engine.run_card import write_run_card
 from vinu_simulator.engine.simulator import WeightSimulator
 from vinu_simulator.engine.strategies import BaseStrategy
 from vinu_simulator.models.simulation import SimulationConfig, SimulationInput, SimulationResult
@@ -120,9 +121,34 @@ class SimulatorService:
             trade_count=len(result.trades),
         )
 
+        validation, attribution = self._run_validation_and_attribution(result, price_data)
+        run_dir = self._config.data_root / "simulations" / result.run_id[:2] / result.run_id
+        write_run_card(
+            run_dir=run_dir,
+            run_id=result.run_id,
+            config={
+                "symbols": list(weight_signals.columns),
+                "start_date": sim_config.start_date,
+                "end_date": sim_config.end_date,
+                "interval": sim_config.interval,
+                "initial_capital": sim_config.initial_capital,
+            },
+            metrics=result.metrics,
+            benchmark_metrics=benchmark_metrics,
+            trade_count=len(result.trades),
+            equity_points=len(result.portfolio_values),
+            validation=validation,
+            attribution=attribution,
+        )
+
         return result
 
     def simulate_custom(self, req: CustomSimulateRequest) -> SimulationResult:
+        from vinu_simulator.engine.ast_guard import validate_strategy_code
+        violations = validate_strategy_code(req.strategy_code)
+        if violations:
+            raise ValueError(f"Strategy code failed security validation: {', '.join(violations)}")
+
         start_date = req.start_date
         end_date = req.end_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -147,7 +173,7 @@ class SimulatorService:
         # below hits a route (/indicators/{symbol}) that only ever returns a
         # single latest-value snapshot, not a historical series, so it can't
         # supply what generate_weights() needs across the backtest window.
-        requested_indicators = ["sma_20", "sma_50", "rsi_14"]
+        requested_indicators = req.indicators or ["sma_20", "sma_50", "rsi_14"]
         ohclv_data = self._price_client.get_ohclv(
             req.symbols, start_date, end_date,
             resolution=req.interval, indicators=requested_indicators,
@@ -197,6 +223,7 @@ class SimulatorService:
                                 if s in ohclv_data and not ohclv_data[s].empty]
             benchmark_metrics = self._compute_benchmark_metrics(price_df, sim_config)
         else:
+            price_df = pd.DataFrame()
             benchmark_metrics = {}
         result.benchmark_metrics = benchmark_metrics
 
@@ -220,6 +247,26 @@ class SimulatorService:
             benchmark_metrics=benchmark_metrics,
             equity_points=len(result.portfolio_values),
             trade_count=len(result.trades),
+        )
+
+        validation, attribution = self._run_validation_and_attribution(result, price_df)
+        run_dir = self._config.data_root / "simulations" / result.run_id[:2] / result.run_id
+        write_run_card(
+            run_dir=run_dir,
+            run_id=result.run_id,
+            config={
+                "symbols": req.symbols,
+                "start_date": sim_config.start_date,
+                "end_date": sim_config.end_date,
+                "interval": sim_config.interval,
+                "initial_capital": sim_config.initial_capital,
+            },
+            metrics=result.metrics,
+            benchmark_metrics=benchmark_metrics,
+            trade_count=len(result.trades),
+            equity_points=len(result.portfolio_values),
+            validation=validation,
+            attribution=attribution,
         )
 
         return result
@@ -347,5 +394,76 @@ class SimulatorService:
         self._strategy_client.close()
         self._price_client.close()
         self._meta_storage.close()
+
+    def _run_validation_and_attribution(
+        self,
+        result: SimulationResult,
+        price_data: pd.DataFrame,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        from vinu_simulator.engine.validation import monte_carlo_permutation, bootstrap_sharpe_ci, walk_forward_consistency
+        from vinu_simulator.engine.attribution import by_symbol_stats, beta_regression, match_trades
+        from vinu_simulator.engine.regime import classify_regime, per_regime_performance
+        
+        sim_config = result.config
+        periods_per_year = periods_per_year_for_interval(sim_config.interval)
+        
+        # Validation
+        round_trips = match_trades(result.trades)
+        trade_pnls = [rt["pnl"] for rt in round_trips]
+        
+        mc_result = monte_carlo_permutation(
+            trade_pnls=trade_pnls,
+            actual_sharpe=result.metrics.get("sharpe_ratio", 0.0),
+            initial_capital=sim_config.initial_capital,
+        )
+        
+        bs_result = bootstrap_sharpe_ci(
+            daily_returns=result.daily_returns,
+            periods_per_year=periods_per_year,
+        )
+        
+        wf_result = walk_forward_consistency(
+            equity_curve=result.portfolio_values,
+            periods_per_year=periods_per_year,
+        )
+        
+        validation = {
+            "monte_carlo": mc_result,
+            "bootstrap": bs_result,
+            "walk_forward": wf_result,
+        }
+        
+        # Attribution
+        symbol_attribution = by_symbol_stats(result.trades)
+        
+        benchmark_attribution = {}
+        regime_attribution = {}
+        
+        for ticker in sim_config.benchmark_tickers:
+            if ticker in price_data.columns:
+                bench_prices = price_data[ticker].dropna()
+                if len(bench_prices) >= 2:
+                    bench_vals = bench_prices / bench_prices.iloc[0] * sim_config.initial_capital
+                    bench_returns = bench_vals.pct_change().dropna()
+                    
+                    beta_reg = beta_regression(
+                        strategy_returns=result.daily_returns,
+                        benchmark_returns=bench_returns,
+                        periods_per_year=periods_per_year,
+                    )
+                    if beta_reg:
+                        benchmark_attribution[ticker] = beta_reg
+                        
+                    regimes = classify_regime(bench_returns)
+                    regime_perf = per_regime_performance(result.daily_returns, regimes)
+                    regime_attribution[ticker] = regime_perf
+                    
+        attribution = {
+            "by_symbol": symbol_attribution,
+            "by_benchmark": benchmark_attribution,
+            "by_regime": regime_attribution,
+        }
+        
+        return validation, attribution
 
 

@@ -1,0 +1,31 @@
+name: sector_rotation_team
+description: Sector rotation analysis based on economic cycle, relative strength, and fund flows
+tasks:
+  - agent_name: cycle_analyst
+    role: Economic Cycle Analyst
+    prompt: >
+      Identify the current phase of the economic cycle:
+      early expansion, late expansion, slowdown, or recession.
+      Which sectors typically lead and lag in this phase?
+      Reference historical sector performance by cycle phase.
+  - agent_name: relative_strength_analyst
+    role: Relative Strength Analyst
+    prompt: >
+      Analyze relative strength rankings across all sectors.
+      Use RSI, price momentum, and relative rotation graphs.
+      Identify sectors with improving vs deteriorating momentum.
+      Which sectors are in the leading vs lagging quadrants?
+  - agent_name: flow_analyst
+    role: Fund Flow Analyst
+    prompt: >
+      Analyze sector fund flows (ETF flows, institutional positioning).
+      Which sectors are seeing accumulation vs distribution?
+      Are flows confirming or diverging from price momentum?
+    depends_on: [cycle_analyst]
+  - agent_name: rotation_strategist
+    role: Rotation Strategist
+    prompt: >
+      Synthesize cycle, relative strength, and flow analysis.
+      Recommend sector overweight/underweight positioning.
+      Provide specific sector ETFs or baskets to implement the rotation.
+    depends_on: [relative_strength_analyst, flow_analyst]

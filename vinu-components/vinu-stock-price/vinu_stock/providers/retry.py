@@ -75,3 +75,23 @@ def http_get_with_retry(
         return resp
 
     return _get()
+
+
+def http_post_with_retry(
+    url: str,
+    *,
+    json: dict | None = None,
+    headers: dict | None = None,
+    timeout: float = 30.0,
+    n: int = 3,
+    backoff: float = 1.5,
+) -> requests.Response:
+    @retry_on_transient(n=n, backoff=backoff)
+    def _post() -> requests.Response:
+        resp = requests.post(url, json=json, headers=headers, timeout=timeout)
+        if resp.status_code in (429, 500, 502, 503, 504):
+            raise TransientProviderError(f"HTTP {resp.status_code}")
+        resp.raise_for_status()
+        return resp
+
+    return _post()

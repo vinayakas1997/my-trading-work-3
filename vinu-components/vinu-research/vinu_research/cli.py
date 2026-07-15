@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from datetime import datetime
 import logging
 import re
 import sys
@@ -95,11 +96,30 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     run_p.add_argument("--walk-forward", action="store_true", help="Enable walk-forward validation")
     run_p.add_argument("--wf-method", default=None, help="Walk-forward method: expanding or sliding")
     run_p.add_argument("--wf-windows", type=int, default=None, help="Number of walk-forward windows")
+    run_p.add_argument("--target-sharpe", type=float, default=None, help="Target Sharpe ratio threshold for PASS verdict")
+    run_p.add_argument("--target-max-drawdown", type=float, default=None, help="Target Max Drawdown threshold for PASS verdict")
     run_p.add_argument("--quiet", action="store_true", help="Suppress progress output")
     run_p.set_defaults(func=run_main)
 
     list_p = sub.add_parser("recipes", help="List available strategy recipes")
     list_p.set_defaults(func=recipes_main)
+
+    auto_p = sub.add_parser("autopilot", help="Run research autopilot pipeline")
+    auto_p.add_argument("hypothesis_id", help="Hypothesis ID to run autopilot for")
+    auto_p.add_argument("--from", dest="from_date", default=None, help="Start date (YYYY-MM-DD)")
+    auto_p.add_argument("--to", dest="to_date", default=None, help="End date (YYYY-MM-DD)")
+    auto_p.add_argument("--scaffold-only", action="store_true", help="Only scaffold signal engine, skip config generation")
+    auto_p.set_defaults(func=autopilot_main)
+
+    link_p = sub.add_parser("link-autopilot", help="Link backtest results to hypothesis")
+    link_p.add_argument("hypothesis_id", help="Hypothesis ID")
+    link_p.add_argument("run_dir", help="Path to backtest run directory (containing run_card.json)")
+    link_p.set_defaults(func=link_autopilot_main)
+
+    decay_p = sub.add_parser("decay-scan", help="Run decay scan on ACTIVE/MONITORING artifacts")
+    decay_p.add_argument("--db", default=None, help="Path to strategy store database")
+    decay_p.add_argument("--dry-run", action="store_true", help="Show transitions without persisting")
+    decay_p.set_defaults(func=decay_scan_main)
 
     return parser.parse_args(argv)
 
@@ -136,6 +156,10 @@ def run_main(args: argparse.Namespace) -> None:
         overrides["walk_forward_method"] = args.wf_method
     if args.wf_windows is not None:
         overrides["walk_forward_windows"] = args.wf_windows
+    if getattr(args, "target_sharpe", None) is not None:
+        overrides["target_sharpe_ratio"] = args.target_sharpe
+    if getattr(args, "target_max_drawdown", None) is not None:
+        overrides["target_max_drawdown"] = args.target_max_drawdown
     if overrides:
         config = ResearchConfig(**{**config.__dict__, **overrides})
 
@@ -209,7 +233,9 @@ def run_main(args: argparse.Namespace) -> None:
     if result.best_result:
         safe_sym = _sanitize_filename(symbol.lower())
         safe_name = _sanitize_filename(result.best_result.strategy_name.lower())
-        output_path = Path("output") / f"{safe_sym}_{safe_name}.py"
+        interval_str = getattr(config, "interval", "1d")
+        ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = Path("output") / f"{safe_sym}_{safe_name}_{interval_str}_{ts_str}.py"
         best_rec = next(
             (r for r in result.iterations if r.iteration == result.best_iteration),
             result.iterations[-1] if result.iterations else None,
@@ -236,6 +262,122 @@ def run_main(args: argparse.Namespace) -> None:
             print(f"[vinu-research] Approved strategy saved to {approved_path}")
     else:
         print("[vinu-research] Strategy saved but not approved (run with --approve or re-run later)")
+
+
+def autopilot_main(args: argparse.Namespace) -> None:
+    from vinu_research.hypothesis_registry import HypothesisRegistry
+    from vinu_research.tools import (
+        generate_backtest_config,
+        link_autopilot_backtest,
+        run_autopilot,
+        scaffold_signal_engine,
+    )
+
+    reg = HypothesisRegistry()
+    hypothesis = reg.get(args.hypothesis_id)
+    if hypothesis is None:
+        print(f"[autopilot] Hypothesis {args.hypothesis_id} not found")
+        sys.exit(1)
+
+    print(f"[autopilot] Running autopilot for: {hypothesis.title}")
+    print(f"[autopilot] Thesis: {hypothesis.thesis}")
+    print()
+
+    result = run_autopilot(args.hypothesis_id, reg)
+    print(f"[autopilot] Goal created: {result['goal_id']}")
+    print(f"[autopilot] Objective: {result['objective']}")
+    print()
+
+    if not args.scaffold_only:
+        from_date = _validate_date(args.from_date, "--from") or "2024-01-01"
+        to_date = _validate_date(args.to_date, "--to") or "2024-12-31"
+        config_path = generate_backtest_config(
+            args.hypothesis_id, from_date, to_date, reg,
+        )
+        print(f"[autopilot] Config written: {config_path}")
+    else:
+        print("[autopilot] Skipping config generation (--scaffold-only)")
+
+    sig_path = scaffold_signal_engine(args.hypothesis_id, reg)
+    print(f"[autopilot] Signal engine scaffold: {sig_path}")
+    print()
+    print("[autopilot] Next steps:")
+    print(f"  1. Edit {sig_path} to implement signal logic")
+    print(f"  2. Run backtest via vinu-simulator")
+    print(f"  3. Run: vinu-research autopilot link {args.hypothesis_id} <run_dir>")
+
+
+def link_autopilot_main(args: argparse.Namespace) -> None:
+    from vinu_research.hypothesis_registry import HypothesisRegistry
+    from vinu_research.tools import link_autopilot_backtest
+
+    reg = HypothesisRegistry()
+    result = link_autopilot_backtest(args.hypothesis_id, args.run_dir, reg)
+    if result["run_card_found"]:
+        print(f"[link-autopilot] Linked backtest to hypothesis {args.hypothesis_id}")
+        print(f"[link-autopilot] Hypothesis status: {result['hypothesis_status']}")
+        print(f"[link-autopilot] Metrics: sharpe={result['metrics'].get('sharpe', 'N/A')}")
+    else:
+        print(f"[link-autopilot] No run_card.json found in {args.run_dir}")
+        print(f"[link-autopilot] Run card will be linked when found")
+
+
+def decay_scan_main(args: argparse.Namespace) -> None:
+    from pathlib import Path as _Path
+    from vinu_research.config import DecayThresholds
+    from vinu_research.decay import compute_decay_snapshot, transition_status
+    from vinu_research.models import ArtifactStatus
+    from vinu_research.storage.strategy_store import SqliteStrategyStore
+
+    db_path = _Path(args.db) if args.db else _Path("data") / "strategy_store.db"
+    store = SqliteStrategyStore(db_path)
+
+    artifacts = store.list_artifacts(
+        status=ArtifactStatus.ACTIVE,
+    ) + store.list_artifacts(
+        status=ArtifactStatus.MONITORING,
+    )
+
+    if not artifacts:
+        print("[decay-scan] No ACTIVE or MONITORING artifacts found")
+        return
+
+    thresholds = DecayThresholds()
+    print(f"[decay-scan] Scanning {len(artifacts)} artifacts (thresholds: IC>={thresholds.ic_ratio_healthy}, IR>={thresholds.ir_healthy})")
+    print()
+
+    for art in artifacts:
+        history = store.get_bench_history(art.artifact_id)
+        if len(history) < 2:
+            print(f"  SKIP {art.artifact_id} ({art.name}): only {len(history)} bench entries (need >= 2)")
+            continue
+
+        snapshot = compute_decay_snapshot(art.artifact_id, history, thresholds)
+        previous_snapshots = store.get_snapshots(art.artifact_id)
+        eval_history = [s.evaluation for s in previous_snapshots] + [snapshot.evaluation]
+
+        new_status = transition_status(art.status, eval_history)
+        changed = new_status != art.status
+
+        status_icon = {
+            "HEALTHY": "\u2713",
+            "WARNING": "\u26a0",
+            "DECAYED": "\u2717",
+            "CRITICAL": "\u203c",
+        }.get(snapshot.evaluation, "?")
+
+        print(f"  {art.artifact_id} ({art.name})")
+        print(f"    Status: {art.status.value} \u2192 {new_status.value if changed else '(unchanged)'}")
+        print(f"    Eval: {status_icon} {snapshot.evaluation}  IC_ratio={snapshot.ic_ratio:.2f}  IR={snapshot.rolling_ir:.2f}  IC_pos={snapshot.ic_positive_ratio:.2f}  Sharpe={snapshot.rolling_sharpe:.2f}")
+        print()
+
+        if not args.dry_run:
+            store.save_snapshot(snapshot)
+            if changed:
+                art.status = new_status
+                store.upsert_artifact(art)
+
+    store.close()
 
 
 def recipes_main(args: argparse.Namespace) -> None:
