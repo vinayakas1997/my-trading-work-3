@@ -1,0 +1,5 @@
+INFO:     Started server process [13760]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8084 (Press CTRL+C to quit)
+WARNING:vinu_strategy.models.strategy:[vinu-strategy\strategies\news_aware_momentum.yaml] Unknown keys in pipeline.selection: [True]

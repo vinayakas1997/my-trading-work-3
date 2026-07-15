@@ -19,7 +19,7 @@ LOG = logging.getLogger(__name__)
 # because market structure stabilised around this point — earlier data may
 # have different trading hours, tick sizes, or settlement rules that can
 # skew strategy backtests.
-MIN_BACKFILL_YEAR = 2023
+MIN_BACKFILL_YEAR = 2022
 
 
 @dataclass

@@ -2,20 +2,4 @@ providers:
   - id: alpaca
     enabled: true
     priority: 1
-    roles: [backfill, live]
-  - id: polygon
-    enabled: false
-    priority: 2
-    roles: [backfill, live]
-  - id: yfinance
-    enabled: false
-    priority: 10
-    roles: [backfill, live]
-  - id: tushare
-    enabled: false
-    priority: 20
-    roles: [backfill, live]
-  - id: yahoo
-    enabled: false
-    priority: 99
-    roles: [fallback]
+    roles: [backfill, live, fallback]

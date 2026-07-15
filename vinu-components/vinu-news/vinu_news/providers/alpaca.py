@@ -42,7 +42,9 @@ class AlpacaTickerNewsProvider:
         page_token: str | None = None
         url = f"{ALPACA_DATA_BASE_URL}/v1beta1/news"
 
+        page = 0
         while True:
+            page += 1
             params: dict[str, str] = {
                 "symbols": ticker.upper(),
                 "start": start_iso,
@@ -58,8 +60,14 @@ class AlpacaTickerNewsProvider:
                 _RATE_LIMITER.wait()
                 resp = requests.get(url, headers=self._headers, params=params, timeout=TIMEOUT_SEC)
                 resp.raise_for_status()
-            except requests.RequestException:
-                LOG.warning("Alpaca news fetch failed for %s", ticker, exc_info=True)
+            except requests.RequestException as exc:
+                status = resp.status_code if hasattr(resp, 'status_code') else 'N/A'
+                body = resp.text[:200] if hasattr(resp, 'text') else 'N/A'
+                LOG.warning(
+                    "Alpaca news fetch failed for %s (page %d, range %s to %s): "
+                    "HTTP %s, body=%s, error=%s",
+                    ticker, page, start_iso, end_iso, status, body, exc,
+                )
                 break
 
             data = resp.json()
@@ -69,6 +77,11 @@ class AlpacaTickerNewsProvider:
             page_token = data.get("next_page_token")
             if not page_token:
                 break
+
+        LOG.info(
+            "Alpaca news fetched %d articles for %s in %d pages (%s to %s)",
+            len(articles), ticker, page, start_iso, end_iso,
+        )
 
         return articles
 

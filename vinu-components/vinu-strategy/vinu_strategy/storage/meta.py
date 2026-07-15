@@ -52,7 +52,7 @@ class MetaStorage:
         return conn
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
-        migrate_schema(conn, "vinu_strategy_meta", current_version=1)
+        migrate_schema(conn, version=1, migrations=[])
 
     def register_strategy(self, name: str, description: str = "", schedule: str = "daily") -> None:
         conn = self._get_conn()

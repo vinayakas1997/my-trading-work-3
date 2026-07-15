@@ -51,6 +51,7 @@ class AlpacaProvider:
             "start": start_iso,
             "end": end_iso,
             "limit": "10000",
+            "feed": "iex",
         }
         try:
             all_bars: list[BarRecord] = []
@@ -58,20 +59,9 @@ class AlpacaProvider:
             while True:
                 if page_token:
                     params["page_token"] = page_token
-                try:
-                    resp = http_get_with_retry(
-                        url, params=params, headers=self._headers(), timeout=REQUEST_TIMEOUT_SEC
-                    )
-                except requests.HTTPError as exc:
-                    # Free/basic Alpaca plans are restricted to the IEX feed; SIP
-                    # (the default) 403s on those accounts. Retry once with IEX.
-                    if exc.response is not None and exc.response.status_code == 403 and params.get("feed") != "iex":
-                        params["feed"] = "iex"
-                        resp = http_get_with_retry(
-                            url, params=params, headers=self._headers(), timeout=REQUEST_TIMEOUT_SEC
-                        )
-                    else:
-                        raise
+                resp = http_get_with_retry(
+                    url, params=params, headers=self._headers(), timeout=REQUEST_TIMEOUT_SEC
+                )
                 data = resp.json()
                 for row in (data.get("bars") or {}).get(sym) or []:
                     ts = row.get("t", "")
@@ -100,10 +90,30 @@ class AlpacaProvider:
             return FetchBarsResult(False, [], str(exc))
 
     def earliest_available(self, symbol: str) -> EarliestResult:
-        # Alpaca 1m history is limited; probe with a wide window
         end_ts = int(datetime.now(timezone.utc).timestamp())
-        start_ts = end_ts - 365 * 24 * 3600
-        result = self.fetch_bars(symbol, start_ts, end_ts)
-        if result.bars:
-            return EarliestResult(True, min(b.bar_ts for b in result.bars))
-        return EarliestResult(False, None, result.error or "No data")
+        start_ts = int(datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp())
+        url = f"{self._config.alpaca_data_base_url.rstrip('/')}/v2/stocks/bars"
+        start_iso = datetime.fromtimestamp(start_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        end_iso = datetime.fromtimestamp(end_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        params: dict[str, str] = {
+            "symbols": symbol.strip().upper(),
+            "timeframe": "1Day",
+            "start": start_iso,
+            "end": end_iso,
+            "limit": "10000",
+            "feed": "iex",
+        }
+        try:
+            resp = http_get_with_retry(url, params=params, headers=self._headers(), timeout=REQUEST_TIMEOUT_SEC)
+            data = resp.json()
+            bars = (data.get("bars") or {}).get(symbol.strip().upper()) or []
+            if bars:
+                ts = bars[0].get("t", "")
+                if ts.endswith("Z"):
+                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                else:
+                    dt = datetime.fromisoformat(ts)
+                return EarliestResult(True, int(dt.timestamp()))
+            return EarliestResult(False, None, "No bars returned")
+        except requests.RequestException as exc:
+            return EarliestResult(False, None, str(exc))

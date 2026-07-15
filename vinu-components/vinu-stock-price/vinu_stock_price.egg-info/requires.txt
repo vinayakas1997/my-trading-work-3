@@ -12,3 +12,7 @@ numpy>=1.24
 [dev]
 pytest>=8.0
 httpx>=0.27
+vinu-stock-price[yfinance]
+
+[yfinance]
+yfinance>=0.2

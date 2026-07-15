@@ -1,0 +1,27 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\vinay\AppData\Local\Programs\Python\Python312\Scripts\vinu-agent.exe\__main__.py", line 7, in <module>
+  File "C:\Users\vinay\Desktop\my-trading-work-3\vinu-components\vinu-agent\vinu_agent\cli.py", line 225, in main
+    run(host=args.host, port=args.port)
+  File "C:\Users\vinay\Desktop\my-trading-work-3\vinu-components\vinu-agent\vinu_agent\server\app.py", line 49, in run
+    app = create_app()
+          ^^^^^^^^^^^^
+  File "C:\Users\vinay\Desktop\my-trading-work-3\vinu-components\vinu-agent\vinu_agent\server\app.py", line 14, in create_app
+    app_service = service or AgentService()
+                             ^^^^^^^^^^^^^^
+  File "C:\Users\vinay\Desktop\my-trading-work-3\vinu-components\vinu-agent\vinu_agent\service.py", line 30, in __init__
+    self._skills_loader = SkillsLoader(
+                          ^^^^^^^^^^^^^
+  File "C:\Users\vinay\Desktop\my-trading-work-3\vinu-components\vinu-agent\vinu_agent\agent\skills.py", line 40, in __init__
+    self._load_from_dir(skills_dir)
+  File "C:\Users\vinay\Desktop\my-trading-work-3\vinu-components\vinu-agent\vinu_agent\agent\skills.py", line 53, in _load_from_dir
+    content = skill_md.read_text()
+              ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\vinay\AppData\Local\Programs\Python\Python312\Lib\pathlib.py", line 1028, in read_text
+    return f.read()
+           ^^^^^^^^
+  File "C:\Users\vinay\AppData\Local\Programs\Python\Python312\Lib\encodings\cp1252.py", line 23, in decode
+    return codecs.charmap_decode(input,self.errors,decoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeDecodeError: 'charmap' codec can't decode byte 0x81 in position 809: character maps to <undefined>

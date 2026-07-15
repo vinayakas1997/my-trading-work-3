@@ -3,6 +3,7 @@ pyproject.toml
 tests/test_aggregate.py
 tests/test_api.py
 tests/test_catalog.py
+tests/test_fallback.py
 tests/test_gap_validation.py
 tests/test_indicators.py
 tests/test_parquet_io.py
@@ -28,7 +29,9 @@ vinu_stock/providers/base.py
 vinu_stock/providers/polygon.py
 vinu_stock/providers/registry.py
 vinu_stock/providers/retry.py
+vinu_stock/providers/tushare.py
 vinu_stock/providers/yahoo.py
+vinu_stock/providers/yfinance.py
 vinu_stock/providers/config/__init__.py
 vinu_stock/providers/config/providers.yaml
 vinu_stock/providers/config/settings.py
