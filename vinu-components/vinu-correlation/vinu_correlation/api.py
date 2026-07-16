@@ -259,10 +259,11 @@ class CorrelationAPI:
         time_gaps = compute_time_gaps(articles)
 
         candles = []
+        now_ts = int(__import__("time").time())
         if from_ts is not None and to_ts is not None:
             candles = self._price_client.get_candles(symbol, from_ts=from_ts, to_ts=to_ts)
         else:
-            candles = self._price_client.get_candles(symbol, days=30)
+            candles = self._price_client.get_candles(symbol, from_ts=now_ts - 30*86400, to_ts=now_ts)
 
         by_session_corr = compute_correlation_by_session(articles, candles)
 

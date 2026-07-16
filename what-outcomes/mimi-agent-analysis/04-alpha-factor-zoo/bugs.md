@@ -14,12 +14,12 @@
 - **Impact**: Same as Bug 1.
 - **Workaround**: Compute qlib158 factors individually via Python API.
 
-## Bug 3: Individual Alpha Factor Names Fail via HTTP API
+## Bug 3: Individual Alpha Factor Names Fail via HTTP API (FIXED)
 - **Endpoint**: `POST /requests` with `features: ["ALPHA101_001"]`
 - **Error**: `400 {"detail":"Unknown feature: alpha101_001"}`
-- **Root Cause**: The API lowercases input feature names (`ALPHA101_001` → `alpha101_001`) before lookup, but the internal feature store uses uppercase. Even the reverse (`alpha101_001` → `alpha101_001` lowercased) fails. Individual alpha factor names can only be used via the `preset` expansion mechanism.
-- **Impact**: Cannot request individual alpha factors via REST — must request full presets.
-- **Workaround**: Use `preset: "alpha101"` to compute all 101 factors, or compute individual factors via Python API.
+- **Root Cause**: The API lowercases input feature names before lookup, but the internal alpha name sets from `_alpha_name_sets()` stored uppercase names. Case mismatch caused all alpha features to be rejected.
+- **Fix**: Changed `if name in a158 or name in a360 or name in a101:` to `if name.upper() in a158 or name.upper() in a360 or name.upper() in a101:` in `validate_feature_name()` — registry.py:69
+- **Impact**: Fixed. Individual alpha factor names (alpha101_001, KMID, CLOSE0) now work via the features API.
 
 ## Bug 4: Fundamental Factors Not Registered
 - **Subject**: `fundamental_roe`, `fundamental_asset_growth`

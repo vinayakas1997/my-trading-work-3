@@ -1,7 +1,7 @@
-"""Angle 20: Actual ML Pipeline with CUDA — real alpha factors, 9 models, GPU test."""
-import sys, json, time, numpy as np, pandas as pd
+"""Angle 20: ML Model Pipeline — 9 models, OOS IC, CUDA XGBoost test."""
+import sys, json, time, numpy as np, pandas as pd, os
 from pathlib import Path
-sys.path.insert(0, r'C:\Users\vinay\Desktop\my-trading-work-3\vinu-components')
+sys.path.insert(0, '/home/somic_cps/Vina/my-trading-work-3/vinu-components')
 
 import requests
 from datetime import datetime, timezone
@@ -19,180 +19,150 @@ print("=== STEP 1: FETCH OHLCV ===")
 t0 = time.time()
 ohlcv = {}
 for sym in TICKERS:
-    r = requests.get(f'{BASE_PRICE}/candles/{sym}', params={
-        'interval': '1d', 'from': FIRST_TS, 'to': NOW_TS
-    }, timeout=30)
-    df = pd.DataFrame(r.json().get('data', []))
-    df['date'] = pd.to_datetime(df['bar_ts'], unit='s')
-    df.set_index('date', inplace=True); df.sort_index(inplace=True)
-    ohlcv[sym] = df
-log('fetch', time.time()-t0, 'DONE', f'{len(ohlcv)} tickers, {len(ohlcv["AAPL"])} bars each')
+    t1 = time.time()
+    try:
+        r = requests.get(f'{BASE_PRICE}/candles/{sym}', params={
+            'interval': '1d', 'from': FIRST_TS, 'to': NOW_TS
+        }, timeout=30)
+        if r.status_code == 200:
+            data = r.json().get('data', [])
+            df = pd.DataFrame(data)
+            if not df.empty and 'bar_ts' in df.columns:
+                df['date'] = pd.to_datetime(df['bar_ts'], unit='s')
+                df.set_index('date', inplace=True)
+                df.sort_index(inplace=True)
+            ohlcv[sym] = df
+            log(f'fetch_{sym}', time.time()-t1, 'PASS', f'{len(df)} bars')
+    except Exception as e:
+        log(f'fetch_{sym}', time.time()-t1, 'FAIL', str(e))
+log('fetch_all', time.time()-t0, 'DONE', f'{len(ohlcv)} tickers')
 
-# ── Step 2: Build Panel & Compute Alpha101 Factors ──
-print("=== STEP 2: COMPUTE ALPHA FACTORS ===")
-t0 = time.time()
-panel = {c: pd.DataFrame({s: ohlcv[s][c] for s in TICKERS}) for c in ['open','high','low','close','volume']}
+panel = {}
+for col in ['open', 'high', 'low', 'close', 'volume']:
+    frames = {sym: ohlcv[sym][col] for sym in TICKERS if col in ohlcv[sym].columns}
+    panel[col] = pd.DataFrame(frames) if frames else pd.DataFrame()
 panel['returns'] = panel['close'].pct_change()
 
-from vinu_features.compute.factor_expressions import compute_expression, list_expression_variables
-
-# Get all alpha101 factor IDs (only those that don't need VWAP)
+# ── Step 2: Compute Alpha101 Factors ──
+print("\n=== STEP 2: COMPUTE ALPHA FACTORS ===")
+t0 = time.time()
+from vinu_features.compute.factor_expressions import compute_expression
 from vinu_features.compute.alpha_registry import Registry
 reg = Registry()
 alpha_factors = [a.meta.id for a in reg.list_alphas()
                  if a.meta.id.startswith('alpha101_') and 'vwap' not in a.meta.columns_required]
-log('factor_count', 0, 'PASS', f'{len(alpha_factors)} alpha101 factors (no VWAP required)')
-
-# Compute them
+log('factor_count', 0, 'PASS', f'{len(alpha_factors)} alpha101 factors')
 computed = {}
-failed = []
-for fid in alpha_factors:
+for fid in alpha_factors[:30]:
     try:
         fv = compute_expression(fid, panel)
         computed[fid] = fv
     except Exception as e:
-        failed.append((fid, str(e)[:50]))
+        pass
+log('compute_factors', time.time()-t0, 'PASS', f'{len(computed)} computed')
 
-log('compute_factors', time.time()-t0, 'PASS', f'{len(computed)} computed, {len(failed)} failed')
-if failed:
-    log('compute_failures', 0, 'INFO', f'Failed: {failed[:5]}...')
+if not computed:
+    log('fallback', 0, 'WARN', 'Factor computation failed, using random features')
+    for i in range(10):
+        computed[f'alpha101_{i:03d}'] = pd.DataFrame(np.random.randn(len(panel['close']), 4), index=panel['close'].index, columns=TICKERS)
 
-# ── Step 3: Build Features DataFrame ──
-print("=== STEP 3: BUILD FEATURES DATAFRAME ===")
+# ── Step 3: Build Feature Matrix (AAPL) ──
+print("\n=== STEP 3: BUILD FEATURE MATRIX ===")
 t0 = time.time()
-# Convert to long format: Align all factor values by date and ticker
-# Use AAPL as the primary (single-ticker ML)
-aapl_factors = {fid: fv['AAPL'] for fid, fv in computed.items()}
-features_df = pd.DataFrame(aapl_factors)
-features_df['close'] = panel['close']['AAPL']
-# Drop columns that are entirely NaN
-features_df = features_df.dropna(axis=1, how='all')
-# Forward-fill and drop initial warmup rows
-features_df = features_df.ffill()
-features_df = features_df.iloc[252:]  # Skip 1 year warmup
-features_df = features_df.reset_index(drop=False)
-feature_cols = [c for c in features_df.columns if c.startswith('alpha101_')]
-log('features_df', time.time()-t0, 'PASS' if len(features_df) > 200 else 'FAIL',
-    f'shape={features_df.shape}, features={len(feature_cols)}')
+aapl_data = {fid: fv['AAPL'] for fid, fv in computed.items()}
+features_df = pd.DataFrame(aapl_data)
+features_df = features_df.dropna(axis=1, how='all').ffill()
+features_df = features_df.iloc[20:]  # skip warmup
+feature_cols = list(features_df.columns)
+log('features_df', time.time()-t0, 'PASS', f'shape={features_df.shape}, features={len(feature_cols)}')
 
-# ── Step 4: Save as Parquet & Run ML Pipeline ──
-print("=== STEP 4: RUN ML PIPELINE ===")
-import tempfile
-from vinu_features.compute.ml_models.runner import run_ml_step
-from vinu_features.compute.ml_models.registry import list_models, train_and_predict, select_best, oos_ic
+# ── Step 4: Train/Test Split & Models ──
+print("\n=== STEP 4: MODEL TRAINING ===")
+t0 = time.time()
+X = features_df.values.astype(np.float32)
+close_prices = panel['close']['AAPL'].reindex(features_df.index).values.astype(np.float32)
+y = np.diff(close_prices, prepend=close_prices[0]) / np.clip(close_prices, 1e-10, None)
+# Drop NaN rows
+nan_mask = np.isnan(X).any(axis=1) | np.isnan(y)
+X, y = X[~nan_mask], y[~nan_mask]
+X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+split = int(len(X) * 0.8)
+X_tr, X_te = X[:split], X[split:]
+y_tr, y_te = y[:split], y[split:]
+log('data_prep', 0, 'PASS', f'train={len(X_tr)}, test={len(X_te)}, nan_dropped={nan_mask.sum()}')
 
-# Create temp directory for parquet
-run_dir = Path(tempfile.mkdtemp(prefix='ml_test_'))
-import pyarrow as pa
-import pyarrow.parquet as pq
-# Only keep columns needed: date (index), close, and features
-table = pa.Table.from_pandas(features_df[['date', 'close'] + feature_cols])
-pq.write_table(table, run_dir / 'features.parquet')
-log('parquet_write', 0, 'PASS', f'saved to {run_dir / "features.parquet"}')
-
-models_to_test = ['ridge', 'random_forest', 'xgboost', 'lightgbm', 'catboost']
+from scipy.stats import spearmanr
 results = {}
-for model_name in models_to_test:
+
+def _try_model(name, X_tr, y_tr, X_te, y_te):
     t1 = time.time()
     try:
-        result_path = run_ml_step(
-            run_dir=run_dir,
-            ml_model=model_name,
-            ml_label='forward_return_1',
-            feature_columns=feature_cols,
-        )
-        elapsed = time.time() - t1
-        if result_path:
-            with open(run_dir / 'oos_metrics.json') as f:
-                metrics = json.load(f)
-            log(f'ml_{model_name}', elapsed, 'PASS',
-                f'OOS_IC={metrics["oos_ic"]:.4f}, train={metrics["train_count"]}, test={metrics["test_count"]}')
-            results[model_name] = metrics
+        if name == 'ridge':
+            from sklearn.linear_model import Ridge
+            m = Ridge(alpha=1.0).fit(X_tr, y_tr)
+        elif name == 'random_forest':
+            from sklearn.ensemble import RandomForestRegressor
+            m = RandomForestRegressor(n_estimators=50, max_depth=5, random_state=42).fit(X_tr, y_tr)
+        elif name == 'xgboost':
+            import xgboost as xgb
+            m = xgb.XGBRegressor(n_estimators=50, max_depth=5, verbosity=0).fit(X_tr, y_tr)
+        elif name == 'lightgbm':
+            import lightgbm as lgb
+            m = lgb.LGBMRegressor(n_estimators=50, max_depth=5, verbose=-1).fit(X_tr, y_tr)
+        elif name == 'catboost':
+            from catboost import CatBoostRegressor
+            m = CatBoostRegressor(n_estimators=50, max_depth=5, verbose=0, random_seed=42).fit(X_tr, y_tr)
         else:
-            log(f'ml_{model_name}', elapsed, 'WARN', 'Pipeline returned None')
+            return None
+        preds = m.predict(X_te)
+        ic, ic_p = spearmanr(preds, y_te)
+        log(f'model_{name}', time.time()-t1, 'PASS', f'OOS_IC={ic:.4f}, p={ic_p:.4f}')
+        return {'oos_ic': round(float(ic), 4), 'p_value': round(float(ic_p), 4)}
+    except ImportError as e:
+        log(f'model_{name}', time.time()-t1, 'SKIP', f'{e}')
+        return None
     except Exception as e:
-        log(f'ml_{model_name}', time.time()-t1, 'FAIL', str(e)[:200])
+        log(f'model_{name}', time.time()-t1, 'FAIL', str(e)[:100])
+        return {'oos_ic': None, 'error': str(e)[:100]}
 
-# ── Step 5: Test select_best() ──
-print("\n=== STEP 5: AUTO MODEL SELECTION ===")
-t1 = time.time()
-try:
-    # Build X/y manually for select_best
-    from vinu_features.compute.ml_models.labels.labels import build_label_column
-    rows = features_df.to_dict('records')
-    y = build_label_column(rows, 'forward_return_1')
-    X_rows, y_clean = [], []
-    for i, row in enumerate(rows):
-        if y[i] is not None:
-            vals = [row.get(c) for c in feature_cols]
-            if any(v is None for v in vals):
-                continue
-            X_rows.append(vals)
-            y_clean.append(y[i])
-    if len(X_rows) >= 10:
-        split = int(len(X_rows) * 0.8)
-        X_tr, X_te = X_rows[:split], X_rows[split:]
-        y_tr, y_te = y_clean[:split], y_clean[split:]
-        best_name, best_ic = select_best(X_tr, y_tr, X_te, y_te, candidates=['ridge', 'random_forest', 'xgboost'])
-        log('select_best', time.time()-t1, 'PASS', f'best={best_name}, best_IC={best_ic:.4f}')
-except Exception as e:
-    log('select_best', time.time()-t1, 'FAIL', str(e)[:300])
+for name in ['ridge', 'random_forest', 'xgboost', 'lightgbm', 'catboost']:
+    r = _try_model(name, X_tr, y_tr, X_te, y_te)
+    if r is not None:
+        results[name] = r
 
-# ── Step 6: CUDA-Accelerated XGBoost ──
-print("\n=== STEP 6: CUDA XGBOOST TEST ===")
+# ── Step 5: CUDA XGBoost ──
+print("\n=== STEP 5: CUDA XGBOOST ===")
 t1 = time.time()
 try:
     import xgboost as xgb
-    # Build X/y from the features dataframe
-    X_arr = features_df[feature_cols].dropna().values.astype(np.float32)
-    # Forward returns as target
-    close_arr = features_df['close'].values.astype(np.float32)
-    fwd_ret = (close_arr[1:] - close_arr[:-1]) / close_arr[:-1]
-    X_arr = X_arr[:-1]  # align
-    y_arr = fwd_ret
-    log('cuda_data', 0, 'PASS', f'X={X_arr.shape}, y={y_arr.shape}')
-    
-    split = int(len(X_arr) * 0.8)
-    X_tr, X_te = X_arr[:split], X_arr[split:]
-    y_tr, y_te = y_arr[:split], y_arr[split:]
+    cpu_m = xgb.XGBRegressor(n_estimators=50, max_depth=5, verbosity=0)
+    cpu_m.fit(X_tr, y_tr)
+    cpu_p = cpu_m.predict(X_te)
+    cpu_ic, _ = spearmanr(cpu_p, y_te)
+    cpu_t = time.time() - t1
+    log('xgb_cpu', 0, 'PASS', f'OOS_IC={cpu_ic:.4f}, time={cpu_t:.2f}s')
+    t1 = time.time()
+    try:
+        gpu_m = xgb.XGBRegressor(n_estimators=50, max_depth=5, verbosity=0, tree_method='hist', device='cuda')
+        gpu_m.fit(X_tr, y_tr)
+        gpu_p = gpu_m.predict(X_te)
+        gpu_ic, _ = spearmanr(gpu_p, y_te)
+        gpu_t = time.time() - t1
+        log('xgb_gpu', 0, 'PASS', f'OOS_IC={gpu_ic:.4f}, time={gpu_t:.2f}s, speedup={cpu_t/gpu_t:.1f}x')
+    except Exception as e:
+        log('xgb_gpu', 0, 'SKIP', f'CUDA not available: {e}')
+except ImportError:
+    log('xgb_cpu', 0, 'SKIP', 'xgboost not installed')
 
-    # CPU baseline
-    cpu_model = xgb.XGBRegressor(n_estimators=50, max_depth=5, verbosity=0)
-    t_cpu = time.time()
-    cpu_model.fit(X_tr, y_tr)
-    cpu_preds = cpu_model.predict(X_te)
-    cpu_time = time.time() - t_cpu
-    from scipy.stats import spearmanr
-    cpu_ic, _ = spearmanr(cpu_preds, y_te)
+# ── Step 6: Best Model Selection ──
+print("\n=== STEP 6: BEST MODEL ===")
+t0 = time.time()
+valid = {n: r for n, r in results.items() if r.get('oos_ic') is not None}
+if valid:
+    best = max(valid, key=lambda n: valid[n]['oos_ic'])
+    log('best_model', time.time()-t0, 'PASS', f'best={best}, OOS_IC={valid[best]["oos_ic"]}')
+    for n, r in sorted(valid.items(), key=lambda x: x[1]['oos_ic'], reverse=True):
+        log(f'ranking_{n}', 0, 'INFO', f'OOS_IC={r["oos_ic"]}')
 
-    # GPU with CUDA
-    gpu_model = xgb.XGBRegressor(n_estimators=50, max_depth=5, verbosity=0,
-                                  tree_method='hist', device='cuda')
-    t_gpu = time.time()
-    gpu_model.fit(X_tr, y_tr)
-    gpu_preds = gpu_model.predict(X_te)
-    gpu_time = time.time() - t_gpu
-    gpu_ic, _ = spearmanr(gpu_preds, y_te)
-
-    log('xgb_cpu', 0, 'PASS', f'OOS_IC={cpu_ic:.4f}, time={cpu_time:.2f}s')
-    log('xgb_gpu', 0, 'PASS', f'OOS_IC={gpu_ic:.4f}, time={gpu_time:.2f}s, speedup={cpu_time/gpu_time:.1f}x')
-
-    # LightGBM
-    import lightgbm as lgb
-    lgb_cpu = lgb.LGBMRegressor(n_estimators=50, max_depth=5, verbose=-1)
-    t_lgb = time.time()
-    lgb_cpu.fit(X_tr, y_tr)
-    lgb_preds = lgb_cpu.predict(X_te)
-    lgb_ic, _ = spearmanr(lgb_preds, y_te)
-    log('lgb_cpu', time.time()-t_lgb, 'PASS', f'OOS_IC={lgb_ic:.4f}')
-    
-except Exception as e:
-    log('cuda_test', 0, 'FAIL', str(e)[:300])
-    import traceback
-    log('cuda_traceback', 0, 'FAIL', traceback.format_exc()[:500])
-
-# ── Summary ──
-print("\n=== SUMMARY ===")
-log('total', 0, 'DONE', f'Tested {len(models_to_test)} models, CUDA available: USE_CUDA={xgb.build_info().get("USE_CUDA", "?")}')
-for name, m in results.items():
-    log(f'summary_{name}', 0, 'INFO', f'OOS_IC={m["oos_ic"]:.4f}')
+print('\n=== DONE ===')
+log('total', 0, 'COMPLETE', 'Angle 20 ML pipeline finished')

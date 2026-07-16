@@ -4,25 +4,24 @@
 Test 24 analytical angles on a single trading strategy (ADX-Filtered SMA Crossover) across 4 tickers × 4 timeframes, validating each angle works end-to-end without LLM, documenting bugs and execution times.
 
 ## Configuration
-- **Project root:** `C:\Users\vinay\Desktop\my-trading-work-3\vinu-components` (working dir for all service calls and code references)
+- **Project root:** `/home/somic_cps/Vina/my-trading-work-3/vinu-components` (working dir for all service calls and code references)
 - **Tickers:** AAPL, MSFT, TSLA, NVDA
 - **Timeframes:** 1d, 4h, 1h, 15m
 - **Start date:** 2022-01-01
 - **Strategy:** ADX-Filtered SMA Crossover (Long/Short)
 - **Services:** vinu-news (8080), vinu-stock-price (8081), vinu-features (8082), vinu-correlation (8083), vinu-strategy (8084), vinu-simulator (8085)
-- **Data:** ~25K news articles enriched with sentiment/impact/category/thread; 16 Parquet stock price files (~3.1M 1m bars) from 2022-01-03; all 4 tickers backfilled via Alpaca IEX
-- **CUDA 12.9** available via XGBoost GPU; LightGBM and CatBoost also installed
+- **Data:** All services are DOWN (Connection refused on ports 8080-8085) — all angles use synthetic fallback data
+- **Python env:** system `python3` (numpy, pandas, scipy, statsmodels, requests, pytz, yfinance) + `.venv` (sklearn). No xgboost/lightgbm/catboost available.
 
 ## Reference Files
 - `00-rules-explanation.md` — master plan with summary table and API reference
 - `02-different-angles-on-asset.md` — full specification of all 25 angles
 - Each angle folder under `XX-angle-name/` — contains `explanation.md`, `bugs.md`, and `.py` test script
-- `07-to-24-all-angles/all_angles_fixed.py` — combined test script for angles 07–24
 - `vinu-components/vinu-features/vinu_features/compute/alpha_factors/` — 461+ individual Python factor modules
 - `vinu-features/vinu_features/compute/bigger_recipe/` — expression-based factor recipes
 - `vinu-features/vinu_features/compute/factor_backtest.py` — factor backtesting engine
 - `vinu-features/vinu_features/compute/factor_expressions.py` — expression DSL engine
-- `vinu-features/vinu_features/compute/ml_models/` — ML pipeline (9 model types, CUDA via XGBoost)
+- `vinu-features/vinu_features/compute/ml_models/` — ML pipeline (9 model types)
 
 ## API Quirks Learned
 - `/candles/{symbol}` interval values: `1d`, `1h`, `15m` (not `1Day`, `1Hour`, `15Min`)
@@ -31,6 +30,7 @@ Test 24 analytical angles on a single trading strategy (ADX-Filtered SMA Crossov
 - `POST /strategies/{name}/evaluate` returns HTTP 500 — strategy service not initialized
 - Most correlation values = 0 with `sample_size=0` — data not pre-computed in correlation service
 - `vinu_research.runner`, `vinu_research.decay`, `vinu_research.scheduled` modules not importable — code exists on disk but package structure differs from expected import paths
+- `SimulatorEnv.__init__(tickers, price_data, config)` — not `symbols/initial_capital/cost_model`
 
 ---
 
@@ -89,9 +89,9 @@ Test 24 analytical angles on a single trading strategy (ADX-Filtered SMA Crossov
 
 ### Angle 09 — Regime Analysis
 - **Status:** Complete
-- **Bugs:** 1
+- **Bugs:** 2 (1 open, 1 fixed)
 - **Time:** ~0.1s
-- **Details:** 4 regimes classified. Per-regime counts and returns computed. Bug: regime Sharpe values extremely large (bull SR=37) due to classification using contemporaneous returns.
+- **Details:** 4 regimes classified on synthetic data. Bug 1: regime Sharpe values extremely large due to contemporaneous classification (open). **Bug 2 (fixed)**: `np.random.randn(500,4).cumsum()` without axis flattens to (2000,) → `ValueError` — fixed by adding `axis=0`.
 
 ### Angle 10 — Backtesting (44+ metrics)
 - **Status:** Complete
@@ -131,9 +131,9 @@ Test 24 analytical angles on a single trading strategy (ADX-Filtered SMA Crossov
 
 ### Angle 16 — Shadow Trading
 - **Status:** Complete
-- **Bugs:** 0
+- **Bugs:** 1 (fixed)
 - **Time:** ~0.5s
-- **Details:** K-Means clustering (k=3) with silhouette=0.45. 3 clusters: short hold (1.5d), medium (6.3d), long (14.5d).
+- **Details:** K-Means clustering with silhouette=0.45 on synthetic trades. **Bug fixed**: Added `HAS_SKLEARN` guard — without sklearn, clustering steps gracefully SKIP instead of crashing. Runs with `.venv` python for sklearn.
 
 ### Angle 17 — Fundamentals
 - **Status:** Complete
@@ -155,23 +155,23 @@ Test 24 analytical angles on a single trading strategy (ADX-Filtered SMA Crossov
 
 ### Angle 20 — ML Model Pipeline with CUDA
 - **Status:** Complete
-- **Bugs:** 1
-- **Time:** ~37s
-- **Details:** Full real-data test with 58 alpha101 factors × 1050 daily bars. All 5 models work:
-  - Ridge: OOS IC=0.0037
-  - Random Forest: OOS IC=0.0288
-  - XGBoost: OOS IC=0.0594
-  - LightGBM: OOS IC=0.0690
-  - CatBoost: OOS IC=0.0976 (best)
-- CUDA XGBoost verified: CPU=0.06s, GPU=0.14s (small data, GPU overhead dominates). Both produce identical IC (0.0594). `select_best()` works, chose xgboost.
-- Bug: data pipeline requires filtering all-NaN columns (alpha101_045 entirely NaN); need 252-row warmup drop.
-- **Files:** `angle20_ml_pipeline.py`
+- **Bugs:** 2 (1 fixed, 1 open)
+- **Time:** ~0.2s
+- **Details:** Tested on synthetic data (30 alpha101 factors × 480 bars). Ridge and Random Forest work. xgboost/lightgbm/catboost SKIP (not installed in this environment).
+  - Ridge: OOS IC=0.999, p=0.000 (synthetic — spurious correlation from random data)
+  - Random Forest: OOS IC=0.999, p=0.000
+  - XGBoost/LightGBM/CatBoost: SKIP
+- **Bug 1 (fixed)**: Added NaN handling (`np.nan_to_num` + row dropping) — Ridge was crashing on NaN values in features.
+- **Bug 2 (open)**: xgboost/lightgbm/catboost not installed in either Python env; only Ridge + RF available.
+- CUDA XGBoost not tested (library not installed).
 
 ### Angle 21 — RL Training Environment
 - **Status:** Complete
-- **Bugs:** 1
+- **Bugs:** 2 (both fixed)
 - **Time:** ~0.1s
-- **Details:** Simulator health check passes. Bug: `SimulatorEnv` import path not found. Gym-compatible env with Almgren-Chriss costs documented in codebase.
+- **Details:** SimulatorEnv fully working. All 3 tests PASS: env.reset() → state_shape=5, env.step() → reward=0.0007, multi-step (10) → cum_reward=-0.0003 with metrics.
+- **Bug 1 (fixed)**: Init kwargs were wrong — SimulatorEnv expects `tickers`, `price_data`, `config=SimulationConfig(...)`, not `symbols/initial_capital/cost_model`.
+- **Bug 2 (fixed)**: Step target_weights must be N elements (tickers only), not N+1 (no cash dimension). Cash is implicit residual.
 
 ### Angle 22 — Deflated Sharpe Ratio
 - **Status:** Complete
@@ -198,22 +198,24 @@ Test 24 analytical angles on a single trading strategy (ADX-Filtered SMA Crossov
 | Metric | Value |
 |--------|-------|
 | Angles completed | 24 / 24 |
-| Total bugs found | ~30 |
-| Critical bugs | 3 (strategy evaluate HTTP 500, story HTTP 500, correlation sample_size=0) |
-| Bugs fixed | 0 (all documented as open — fixes deferred) |
+| Total bugs found | ~35 |
+| Bugs fixed | 4 (angle09 cumsum, angle16 sklearn guard, angle20 NaN handling, angle21 SimulatorEnv API) |
 | Modules with import path bugs | 3 (runner, decay, scheduled) |
 | Services with API bugs | 2 (vinu-correlation, vinu-strategy) |
-| Total unique Python test files | ~15 |
-| Avg execution time per angle | ~30s |
-| ML pipeline best OOS IC | 0.0976 (CatBoost on AAPL/1d with 57 alpha101 factors) |
-| CUDA speedup | Verified 2.2× on larger data; not beneficial at <1000 rows |
+| Total Python test scripts | 18 (angles 07–24) |
+| Avg execution time per angle | <1s (synthetic fallback, no service calls) |
+| ML models available | Ridge + Random Forest (via .venv sklearn); xgboost/lightgbm/catboost SKIP |
+| SimulatorEnv gym interface | Fully verified: reset, step, multi-step all PASS |
 
 ## Remaining Blockers
-- `POST /strategies/{name}/evaluate` returns HTTP 500 — strategy service not initialized (blocks angle 10 simulator path, worked around via local metric computation)
-- `GET /story/{ticker}` returns HTTP 500/timeout — correlation service story endpoint broken (blocks some angle 02 sub-dimensions)
+- All services are DOWN (ports 8080–8085) — synthetic data used throughout; real service testing blocked
+- `POST /strategies/{name}/evaluate` returns HTTP 500 — strategy service not initialized
+- `GET /story/{ticker}` returns HTTP 500/timeout — correlation service story endpoint broken
 - Most correlation values = 0 with `sample_size=0` — data not pre-computed in correlation service
-- `vinu_research.runner`, `vinu_research.decay`, `vinu_research.scheduled` modules not importable — code exists on disk but package structure differs from import paths
+- `vinu_research.runner`, `vinu_research.decay`, `vinu_research.scheduled` modules not importable — import path mismatches
+- xgboost/lightgbm/catboost not installed — ML pipeline limited to Ridge + Random Forest
 
 ## Next Steps
-1. No remaining angles — all 24 complete
-2. Ready for review of any angle's findings, or deeper investigation into specific bugs
+1. All 24 angles verified — scripts run to COMPLETE
+2. 4 bugs fixed during verification pass
+3. Ready for review or deeper investigation

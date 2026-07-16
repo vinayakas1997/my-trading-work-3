@@ -1,5 +1,16 @@
-# Benchmark Comparison — Bugs
+# Bugs Found: Angle 12 — Benchmark Comparison
 
-| # | Bug | Error | Root Cause | Status |
-|---|-----|-------|------------|--------|
-| 1 | SPY (S&P 500 ETF) not in data catalog | GET /candles/SPY returns count=0 | Only TICKERS (AAPL, MSFT, TSLA, NVDA) were backfilled via Alpaca IEX. SPY/benchmarks not provisioned. | Open |
+## Bug Log
+| # | Bug Description | Error Message | Root Cause | Fix Applied | File Changed | Severity | Status |
+|---|-----------------|---------------|------------|-------------|--------------|----------|--------|
+| 1 | SPY not in price catalog | SPY returns 0 bars from /candles/SPY | SPY not provisioned in data catalog — no historical data loaded | None | vinu-stock-price | High | Open |
+
+## Notes
+- NVDA used as benchmark proxy instead of SPY
+- Results reflect sector-specific correlation (all tickers are tech), not broad-market beta
+
+## Severity Levels
+- **Critical:** Blocks execution, angle cannot run
+- **High:** Produces wrong results
+- **Medium:** Works but with warnings or edge case failures
+- **Low:** Cosmetic issues, minor inaccuracies

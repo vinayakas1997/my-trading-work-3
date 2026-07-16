@@ -4,7 +4,7 @@
 | # | Bug Description | Error Message | Root Cause | Fix Applied | File Changed | Severity | Status |
 |---|-----------------|---------------|------------|-------------|--------------|----------|--------|
 | 1 | `/candles/{symbol}` with `days` param returns 0 bars | `{"count":0,"data":[]}` | `days` parameter calculation likely has timezone/offset issue in `vinu-stock-price` service | Workaround: use `from`/`to` Unix timestamps instead of `days`. Need root cause analysis in service. | vinu-stock-price/server/routes_read.py | High | Open |
-| 2 | `/story/{ticker}` endpoint returns HTTP 500 for all tickers | `HTTP 500: Internal Server Error` | Server-side error in `vinu-correlation` story/thread tracking. Likely missing data or unhandled edge case in story endpoint logic. | Not yet fixed. Need to check `vinu-correlation` server routes. | vinu-correlation/server/routes_read.py | Medium | Open |
+| 2 | `/story/{ticker}` endpoint returns HTTP 500 for all tickers | `HTTP 500: Internal Server Error` | `PriceClient.get_candles()` does not accept `days` parameter — only `from_ts`/`to_ts` | Changed `days=30` to `from_ts=now_ts-30*86400, to_ts=now_ts` | vinu-correlation/vinu_correlation/api.py:265 | Medium | Fixed |
 | 3 | Price correlation values are all zero (sample_size=0) | `news_return_corr: 0.0, sample_size: 0` | Correlation data may need pre-computation or a separate trigger endpoint to populate. The `/correlation/{ticker}` endpoint has no data to analyze. | Not yet fixed. May need to run correlation computation pipeline. | vinu-correlation/engine/ | Medium | Open |
 
 ## Notes

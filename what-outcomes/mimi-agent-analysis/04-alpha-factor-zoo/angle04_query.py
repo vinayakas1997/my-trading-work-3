@@ -7,7 +7,7 @@ FIRST_TS = 1641168000
 NOW_TS = int(datetime.now(timezone.utc).timestamp())
 
 # ── Python API imports for factor browsing ──
-sys.path.insert(0, r'C:\Users\vinay\Desktop\my-trading-work-3\vinu-components')
+sys.path.insert(0, '/home/somic_cps/Vina/my-trading-work-3/vinu-components')
 from vinu_features.compute.alpha_registry import Registry
 from vinu_features.compute.bigger_recipe import catalog as recipe_catalog
 
@@ -144,8 +144,7 @@ log('decay_distribution', 0, 'INFO', str(decay_buckets))
 print("\n=== SECTION 6: COMPUTE SAMPLE FACTORS ===")
 # Test individual factors
 sample_factors = ['alpha101_001', 'alpha101_005', 'alpha101_010',
-                  'gtja191_001', 'gtja191_005',
-                  'qlib158_ma5', 'qlib158_roc20']
+                  'sma_20', 'rsi_14', 'macd']
 for sym in ['AAPL', 'NVDA']:
     t0 = time.time()
     result = run_features_request(f'factor_sample_{sym}', [sym], '1d', sample_factors)

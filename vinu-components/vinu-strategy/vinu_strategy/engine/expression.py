@@ -78,7 +78,10 @@ def _eval_node(node: ast.AST, context: dict[str, float]) -> float:
         op_func = op_map.get(type(node.op))
         if op_func is None:
             raise ExpressionError(f"Unsupported operator: {type(node.op).__name__}")
-        return float(op_func(left, right))
+        try:
+            return float(op_func(left, right))
+        except ZeroDivisionError:
+            return float("nan")
     if isinstance(node, ast.Call):
         func = _ALLOWED_FUNCTIONS[node.func.id]
         args = [_eval_node(a, context) for a in node.args]

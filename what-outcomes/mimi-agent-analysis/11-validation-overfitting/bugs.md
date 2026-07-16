@@ -1,5 +1,12 @@
-# Validation Overfitting — Bugs
+# Bugs Found: Angle 11 — Validation & Overfitting
 
-| # | Bug | Error | Root Cause | Status |
-|---|-----|-------|------------|--------|
-| 1 | vinu_research.walk_forward functions not importable | cannot import name monte_carlo_permutation, bootstrap_sharpe_ci, walk_forward_analysis, deflated_sharpe_ratio | Functions exist in the module but are not exported or named differently | Open |
+## Bug Log
+| # | Bug Description | Error Message | Root Cause | Fix Applied | File Changed | Severity | Status |
+|---|-----------------|---------------|------------|-------------|--------------|----------|--------|
+| 1 | `vinu_research.walk_forward` functions not importable | ImportError: no module named vinu_research.walk_forward | Package structure differs from expected import paths | None | vinu-research | Medium | Open |
+
+## Severity Levels
+- **Critical:** Blocks execution, angle cannot run
+- **High:** Produces wrong results
+- **Medium:** Works but with warnings or edge case failures
+- **Low:** Cosmetic issues, minor inaccuracies

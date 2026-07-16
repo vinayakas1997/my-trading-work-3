@@ -66,7 +66,7 @@ def validate_feature_name(name: str) -> None:
     if recipe_catalog.is_recipe(name):
         return
     a158, a360, a101 = _alpha_name_sets()
-    if name in a158 or name in a360 or name in a101:
+    if name.upper() in a158 or name.upper() in a360 or name.upper() in a101:
         return
     if _find_indicator_module(name) is not None:
         return
@@ -131,7 +131,7 @@ def apply_indicators(rows: list[dict], names: Sequence[str]) -> list[dict]:
                     row[n] = cols[n][i]
 
     for name in expanded:
-        if name in a158 or name in a360 or name in a101:
+        if name.upper() in a158 or name.upper() in a360 or name.upper() in a101:
             continue
         mod = _find_indicator_module(name)
         if mod is None:

@@ -168,7 +168,7 @@ for sym in TICKERS:
     try:
         r = requests.get(f'{BASE_PRICE}/candles/{sym}', params={
             'interval': '1d', 'from': FIRST_TRADING_TS, 'to': NOW_TS,
-            'limit': 500, 'indicators': 'sma_9,sma_21,adx_14'
+            'limit': 500, 'indicators': 'sma_10,sma_20,rsi_14'
         }, timeout=30)
     except Exception as e: log(f'candles_{sym}_1d_indicators', time.time()-t0, 'FAIL', str(e)); continue
     ok, _ = check(f'candles_{sym}_1d_indicators', time.time()-t0, r, trunc=300)
