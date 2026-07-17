@@ -17,7 +17,7 @@ def log(label, elapsed, status, detail=''):
 # ── Step 1: _compute_metrics unit test ──
 print("=== STEP 1: _compute_metrics UNIT TEST ===")
 t0 = time.time()
-from vinu_features.compute.factor_backtest import _compute_metrics, _annualization_factor
+from vinu_tools.compute.factor_backtest import _compute_metrics, _annualization_factor
 np.random.seed(42)
 for freq in ['1d', '4h', '1h', '15m']:
     n = 500 if freq == '1d' else 2000

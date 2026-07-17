@@ -2,9 +2,9 @@
 import sys, pandas as pd, numpy as np
 sys.path.insert(0, r'C:\Users\vinay\Desktop\my-trading-work-3\vinu-components')
 
-from vinu_features.compute.alpha_registry import Registry
-from vinu_features.compute.bigger_recipe import catalog as rc
-from vinu_features.compute.bigger_recipe.executor import Executor
+from vinu_tools.compute.alpha_registry import Registry
+from vinu_tools.compute.bigger_recipe import catalog as rc
+from vinu_tools.compute.bigger_recipe.executor import Executor
 
 reg = Registry()
 

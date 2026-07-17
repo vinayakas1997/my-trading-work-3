@@ -1,4 +1,4 @@
-SERVICES := vinu-news vinu-stock-price vinu-features vinu-correlation vinu-strategy vinu-simulator vinu-research
+SERVICES := vinu-news vinu-stock-price vinu-tools vinu-initial-analysis vinu-strategy vinu-simulator vinu-research
 
 .PHONY: setup
 setup:

@@ -1,0 +1,14 @@
+title: ML Model Pipeline
+purpose: Train/evaluate 9 ML models, OOS IC, auto-selection, CUDA detection
+time_formats:
+- 1D
+- 1W
+- 1M
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: Angle-specific results

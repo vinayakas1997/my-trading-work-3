@@ -46,8 +46,8 @@ panel['returns'] = panel['close'].pct_change()
 # ── Step 2: Compute Alpha101 Factors ──
 print("\n=== STEP 2: COMPUTE ALPHA FACTORS ===")
 t0 = time.time()
-from vinu_features.compute.factor_expressions import compute_expression
-from vinu_features.compute.alpha_registry import Registry
+from vinu_tools.compute.factor_expressions import compute_expression
+from vinu_tools.compute.alpha_registry import Registry
 reg = Registry()
 alpha_factors = [a.meta.id for a in reg.list_alphas()
                  if a.meta.id.startswith('alpha101_') and 'vwap' not in a.meta.columns_required]

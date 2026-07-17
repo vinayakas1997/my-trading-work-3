@@ -26,7 +26,7 @@ class FeaturesTool(BaseTool):
 
     def execute(self, **kwargs) -> str:
         import httpx
-        url = self._services_config.get("vinu_features", "http://localhost:8082")
+        url = self._services_config.get("vinu_tools", "http://localhost:8082")
         resp = httpx.post(
             f"{url}/requests",
             json={

@@ -1,0 +1,15 @@
+title: Pairs Cointegration
+purpose: Engle-Granger and Johansen cointegration tests, z-score trading signals,
+  half-life mean reversion
+time_formats:
+- 1D
+- 1W
+- 1M
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: Angle-specific results

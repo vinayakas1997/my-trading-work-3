@@ -1,0 +1,43 @@
+
+# ============================================================
+# 中文名称: Kakushadze Alpha #11
+# 简要说明: Kakushadze (2015) 101 Formulaic Alphas 中的第11号因子，详见公式定义。
+# 典型用途: 作为多因子模型中的alpha信号，经中性化处理后用于选股或股指期货交易。
+# ============================================================
+"""Kakushadze Alpha #11.
+
+Formula (paper appendix): (rank(ts_max(vwap-close,3))+rank(ts_min(vwap-close,3)))*rank(delta(volume,3))
+Source: Kakushadze (2015), "101 Formulaic Alphas", arXiv:1601.00991, eq. 11.
+"""
+
+import numpy as np
+import pandas as pd
+from .._compat import *  # noqa: F401, F403
+
+__alpha_meta__ = {
+    'id': 'alpha101_011',
+    'nickname': 'Kakushadze Alpha #11',
+    'theme': ['volume', 'reversal'],
+    'formula_latex': '(rank(ts_max(vwap-close,3))+rank(ts_min(vwap-close,3)))*rank(delta(volume,3))',
+    'columns_required': ['close', 'volume', 'vwap'],
+    'extras_required': [],
+    'requires_sector': False,
+    'universe': ['equity_us', 'equity_in'],
+    'frequency': ['1D'],
+    'decay_horizon': 5,
+    'min_warmup_bars': 5,
+    'notes': '',
+}
+
+
+def compute(panel: dict, **kwargs) -> pd.DataFrame:
+    """Compute the alpha on the OHLCV+ panel and return a wide DataFrame."""
+    close = panel["close"]
+    volume = panel["volume"]
+    vwap = panel["vwap"]
+
+
+    # Helper aliases (local closures keep the file standalone & purity-safe).
+    diff = vwap - close
+    out = (rank(ts_max(diff, kwargs.get('lag', 3))) + rank(ts_min(diff, kwargs.get('window', 3)))) * rank(delta(volume, kwargs.get('window_1', 3)))
+    return out

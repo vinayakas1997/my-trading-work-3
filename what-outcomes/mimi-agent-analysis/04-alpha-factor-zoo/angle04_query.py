@@ -8,8 +8,8 @@ NOW_TS = int(datetime.now(timezone.utc).timestamp())
 
 # ── Python API imports for factor browsing ──
 sys.path.insert(0, '/home/somic_cps/Vina/my-trading-work-3/vinu-components')
-from vinu_features.compute.alpha_registry import Registry
-from vinu_features.compute.bigger_recipe import catalog as recipe_catalog
+from vinu_tools.compute.alpha_registry import Registry
+from vinu_tools.compute.bigger_recipe import catalog as recipe_catalog
 
 def log(label, elapsed, status, detail=''):
     print(json.dumps({"step": label, "time_s": round(elapsed, 3), "status": status, "detail": detail}))

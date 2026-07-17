@@ -1,0 +1,63 @@
+fund_asset_growth:
+  id: fund_asset_growth
+  theme: [growth]
+  formula: -\mathrm{zscore}_{x}(\Delta \mathrm{total\_assets}_{YoY})
+  columns_required: ['fund:asset_growth']
+  universe: [equity_us, equity_cn, equity_hk]
+  frequency: [1d]
+  decay_horizon: 252
+  min_warmup_bars: 1
+  params: {}
+  description: Captures changes in earnings, revenue, or other fundamental growth metrics. It computes the Inverted, negative
+    \mathrm{zscore} {x}(\delta \mathrm{total\ assets} {yoy}). Negated to create an inverse signal — high raw values predict
+    downward moves. Uses price data. Best suited for growth investing.
+  interpretation: Higher values indicate stronger factor exposure.. Because the signal is negated, high raw values predict
+    downward moves.
+  when_to_use: growth_investing, earnings_momentum, fundamental_analysis
+  source: factors/singles/fundamental/asset_growth.py
+fund_earnings_yield:
+  id: fund_earnings_yield
+  theme: [value]
+  formula: \mathrm{zscore}_{x}\left(\frac{\mathrm{net\_income}}{\mathrm{close}\times\mathrm{shares\_diluted}}\right)
+  columns_required: [close, 'fund:net_income', 'fund:shares_diluted']
+  universe: [equity_us, equity_cn, equity_hk]
+  frequency: [1d]
+  decay_horizon: 252
+  min_warmup_bars: 1
+  params: {}
+  description: Compares price to fundamental value proxies to identify over/underpriced assets. It computes the close price.
+    The signal uses a 252-period estimation window. Uses close price data. Best suited for value investing.
+  interpretation: Higher values indicate stronger factor exposure.
+  when_to_use: value_investing, fundamental_screening, cross_sectional_ranking
+  source: factors/singles/fundamental/earnings_yield.py
+fund_gross_profitability:
+  id: fund_gross_profitability
+  theme: [quality]
+  formula: \mathrm{zscore}_{x}(\mathrm{gross\_profit}/\mathrm{total\_assets})
+  columns_required: ['fund:gross_profitability']
+  universe: [equity_us, equity_cn, equity_hk]
+  frequency: [1d]
+  decay_horizon: 252
+  min_warmup_bars: 1
+  params: {}
+  description: Measures profitability, stability, or other quality characteristics. It computes the \mathrm{zscore} {x}(\mathrm{gross\
+    profit} divided by \mathrm{total\ assets}. The signal uses a 252-period estimation window. Uses price data. Best suited
+    for quality screening.
+  interpretation: Higher values indicate stronger factor exposure.
+  when_to_use: quality_screening, defensive_investing, fundamental_analysis
+  source: factors/singles/fundamental/gross_profitability.py
+fund_roe:
+  id: fund_roe
+  theme: [quality]
+  formula: \mathrm{zscore}_{x}(\mathrm{ROE})
+  columns_required: ['fund:roe']
+  universe: [equity_us, equity_cn, equity_hk]
+  frequency: [1d]
+  decay_horizon: 252
+  min_warmup_bars: 1
+  params: {}
+  description: Measures profitability, stability, or other quality characteristics. It computes the \mathrm{zscore} {x}(\mathrm{roe}).
+    The signal uses a 252-period estimation window. Uses price data. Best suited for quality screening.
+  interpretation: Higher values indicate stronger factor exposure.
+  when_to_use: quality_screening, defensive_investing, fundamental_analysis
+  source: factors/singles/fundamental/roe.py

@@ -1,0 +1,15 @@
+title: Regime Analysis
+purpose: 4-regime classifier (bull/bear/high_vol/sideways), transition matrix, per-regime
+  Sharpe ratio
+time_formats:
+- 1D
+- 1W
+- 1M
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: Angle-specific results

@@ -1,0 +1,177 @@
+academic_bab:
+  id: academic_bab
+  theme: [volatility]
+  formula: \mathrm{zscore}_{x}\bigl(-\,\mathrm{ts\_cov}(r_i, r_m, 252) / \mathrm{ts\_std}(r_m, 252)^2\bigr)
+  columns_required: [close]
+  universe: [equity_us, equity_cn, equity_hk]
+  frequency: [1d]
+  decay_horizon: 252
+  min_warmup_bars: 253
+  params: {}
+  description: Betting Against Beta (BAB) factor from Frazzini and Pedersen. Goes long low-beta stocks and short high-beta
+    stocks, leveraging the low-beta anomaly. Low-beta stocks historically outperform on a risk-adjusted basis due to leverage
+    constraints on institutional investors. Best suited for low-volatility and risk-parity strategies.
+  interpretation: Higher values indicate stronger factor exposure.. Rises during market stress, falls during calm periods
+  when_to_use: volatility_breakout, options_trading, risk_management
+  source: factors/singles/academic/bab.py
+academic_carhart_mom:
+  id: academic_carhart_mom
+  theme: [momentum]
+  formula: \mathrm{zscore}_{x}\bigl((\mathrm{close}_t - \mathrm{close}_{t-252})/\mathrm{close}_{t-252} - (\mathrm{close}_t
+    - \mathrm{close}_{t-21})/\mathrm{close}_{t-21}\bigr)
+  columns_required: [close]
+  universe: [equity_us, equity_cn, equity_hk]
+  frequency: [1d]
+  decay_horizon: 60
+  min_warmup_bars: 252
+  params: {}
+  description: 'Carhart''s four-factor momentum model extends Fama-French by adding a momentum factor (UMD: up-minus-down).
+    This factor captures the tendency of stocks with strong recent returns to continue outperforming. Uses 12-month formation
+    period with 1-month skip to avoid bid-ask bounce. Best suited for trend following.'
+  interpretation: Higher values indicate stronger factor exposure.. Works best in trending markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/academic/carhart_mom.py
+academic_cma:
+  id: academic_cma
+  theme: [quality]
+  formula: \mathrm{zscore}_{x}\bigl(-\Delta_{60}\log(\mathrm{ts\_mean}(\mathrm{volume},\,60) + 1)\bigr)
+  columns_required: [volume]
+  universe: [equity_us, equity_cn, equity_hk]
+  frequency: [1d]
+  decay_horizon: 60
+  min_warmup_bars: 120
+  params: {}
+  description: Conservative Minus Aggressive (CMA) is the Fama-French investment factor. It goes long stocks with low total
+    asset growth (conservative) and short high-growth (aggressive) firms. Based on the empirical finding that firms with low
+    asset growth earn higher returns. Best suited for value-oriented quality screening.
+  interpretation: Higher values indicate stronger factor exposure.
+  when_to_use: quality_screening, defensive_investing, fundamental_analysis
+  source: factors/singles/academic/cma.py
+academic_high52w:
+  id: academic_high52w
+  theme: [momentum]
+  formula: \mathrm{zscore}_{x}\bigl(\mathrm{close}_t / \mathrm{ts\_max}(\mathrm{close},\,252)\bigr)
+  columns_required: [close]
+  universe: [equity_us, equity_cn, equity_hk]
+  frequency: [1d]
+  decay_horizon: 60
+  min_warmup_bars: 252
+  params: {}
+  description: The 52-week high strategy compares current price to the 52-week high. Stocks near their 52-week high tend to
+    continue outperforming (momentum effect), while stocks far below tend to underperform. A proxy for the anchoring bias
+    in investor behavior. Best suited for trend following.
+  interpretation: Higher values indicate stronger factor exposure.. Works best in trending markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/academic/high52w.py
+academic_hml:
+  id: academic_hml
+  theme: [value]
+  formula: \mathrm{zscore}_{x}\bigl(-(\mathrm{close}_t - \mathrm{close}_{t-252}) / \mathrm{close}_{t-252}\bigr)
+  columns_required: [close]
+  universe: [equity_us, equity_cn, equity_hk]
+  frequency: [1d]
+  decay_horizon: 60
+  min_warmup_bars: 252
+  params: {}
+  description: High Minus Low (HML) is the classic Fama-French value factor. It goes long high book-to-market (value) stocks
+    and short low book-to-market (growth) stocks. Value stocks have historically provided higher returns than growth stocks.
+    Best suited for value investing.
+  interpretation: Higher values indicate stronger factor exposure.
+  when_to_use: value_investing, fundamental_screening, cross_sectional_ranking
+  source: factors/singles/academic/hml.py
+academic_illiq:
+  id: academic_illiq
+  theme: [liquidity]
+  formula: \mathrm{zscore}_{x}\bigl(\mathrm{ts\_mean}(|r_t| / (\mathrm{close}_t \cdot \mathrm{volume}_t),\,21)\bigr)
+  columns_required: [close, volume]
+  universe: [equity_us, equity_cn, equity_hk]
+  frequency: [1d]
+  decay_horizon: 21
+  min_warmup_bars: 22
+  params: {}
+  description: 'Amihud illiquidity measure: the average ratio of daily absolute return to dollar volume. Higher values indicate
+    greater price impact per unit of trading volume (less liquid). Stocks with high illiquidity historically earn a premium.
+    Best suited for liquidity screening and size factor research.'
+  interpretation: Higher values indicate stronger factor exposure.. Lower values may indicate illiquid stocks
+  when_to_use: liquidity_screening, execution_analysis, market_making
+  source: factors/singles/academic/illiq.py
+academic_mkt_rf:
+  id: academic_mkt_rf
+  theme: [momentum]
+  formula: \mathrm{zscore}_{x}\bigl((\mathrm{close}_t - \mathrm{close}_{t-21}) / \mathrm{close}_{t-21}\bigr)
+  columns_required: [close]
+  universe: [equity_us, equity_cn, equity_hk]
+  frequency: [1d]
+  decay_horizon: 21
+  min_warmup_bars: 21
+  params: {}
+  description: 'Market excess return factor from Fama-French: the value-weighted return of all stocks minus the risk-free
+    rate. Represents the systematic equity risk premium. All other factors in the model explain returns not captured by the
+    market factor. Best suited for beta estimation and performance attribution.'
+  interpretation: Higher values indicate stronger factor exposure.. Works best in trending markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/academic/mkt_rf.py
+academic_retskew:
+  id: academic_retskew
+  theme: [volatility]
+  formula: \mathrm{zscore}_{x}\bigl(-\mathrm{skew}_{60}(r_t)\bigr)
+  columns_required: [close]
+  universe: [equity_us, equity_cn, equity_hk]
+  frequency: [1d]
+  decay_horizon: 60
+  min_warmup_bars: 61
+  params: {}
+  description: 'Return skewness factor: measures the asymmetry of the return distribution over a 60-day window. Negative skew
+    indicates frequent small gains and occasional large losses (lottery stock profile). Stocks with high negative skew underperform.
+    Best suited for volatility and lottery-demand anomaly research.'
+  interpretation: Higher values indicate stronger factor exposure.. Rises during market stress, falls during calm periods
+  when_to_use: volatility_breakout, options_trading, risk_management
+  source: factors/singles/academic/retskew.py
+academic_rmw:
+  id: academic_rmw
+  theme: [quality]
+  formula: \mathrm{zscore}_{x}\bigl(-\mathrm{ts\_std}((\mathrm{close}_t - \mathrm{close}_{t-1}) / \mathrm{close}_{t-1},\,60)\bigr)
+  columns_required: [close]
+  universe: [equity_us, equity_cn, equity_hk]
+  frequency: [1d]
+  decay_horizon: 60
+  min_warmup_bars: 60
+  params: {}
+  description: Robust Minus Weak (RMW) is the Fama-French profitability factor. It goes long stocks with high operating profitability
+    and short low-profitability stocks. Profitable firms tend to have higher future returns. Best suited for quality screening
+    and defensive investing.
+  interpretation: Higher values indicate stronger factor exposure.
+  when_to_use: quality_screening, defensive_investing, fundamental_analysis
+  source: factors/singles/academic/rmw.py
+academic_smb:
+  id: academic_smb
+  theme: [quality]
+  formula: \mathrm{zscore}_{x}\bigl(-\log(\mathrm{ts\_mean}(\mathrm{volume} \cdot \mathrm{close},\,60) + 1)\bigr)
+  columns_required: [close, volume]
+  universe: [equity_us, equity_cn, equity_hk]
+  frequency: [1d]
+  decay_horizon: 60
+  min_warmup_bars: 60
+  params: {}
+  description: Small Minus Big (SMB) is the classic Fama-French size factor. It goes long small-cap stocks and short large-cap
+    stocks. Small caps have historically earned higher returns but with greater risk. Best suited for size factor research
+    and market-neutral strategies.
+  interpretation: Higher values indicate stronger factor exposure.
+  when_to_use: quality_screening, defensive_investing, fundamental_analysis
+  source: factors/singles/academic/smb.py
+academic_strev:
+  id: academic_strev
+  theme: [reversal]
+  formula: \mathrm{zscore}_{x}\bigl(-(\mathrm{close}_t - \mathrm{close}_{t-21}) / \mathrm{close}_{t-21}\bigr)
+  columns_required: [close]
+  universe: [equity_us, equity_cn, equity_hk]
+  frequency: [1d]
+  decay_horizon: 21
+  min_warmup_bars: 21
+  params: {}
+  description: Measures short-term reversal by comparing today's return against the average of recent returns. Stocks that
+    moved up sharply are expected to reverse downward (and vice versa). Uses a 21-day estimation window typical of short-horizon
+    mean reversion strategies. Best suited for high-frequency contrarian trading.
+  interpretation: Higher values indicate stronger factor exposure.. Best used near price extremes for contrarian entries
+  when_to_use: mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/academic/strev.py

@@ -1,0 +1,12 @@
+title: Event Study Methodology
+purpose: Abnormal return, cumulative abnormal return (CAR), t-test significance classification
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: Angle-specific results

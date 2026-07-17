@@ -132,14 +132,14 @@ services:
       - stock-ingest
 
   # =========================================================================
-  # vinu-features Services (Ports: 8082)
+  # vinu-tools Services (Ports: 8082)
   # =========================================================================
   features-worker:
     build:
       context: .
-      dockerfile: vinu-features/Dockerfile
-    command: ["vinu-features", "worker", "--loop"]
-    env_file: ./vinu-features/.env
+      dockerfile: vinu-tools/Dockerfile
+    command: ["vinu-tools", "worker", "--loop"]
+    env_file: ./vinu-tools/.env
     environment:
       VINU_FEATURES_DATA_DIR: /data
       VINU_FEATURES_META_DB_PATH: /data/meta.db
@@ -165,9 +165,9 @@ services:
   features-api:
     build:
       context: .
-      dockerfile: vinu-features/Dockerfile
-    command: ["vinu-features", "serve", "--host", "0.0.0.0", "--port", "8082"]
-    env_file: ./vinu-features/.env
+      dockerfile: vinu-tools/Dockerfile
+    command: ["vinu-tools", "serve", "--host", "0.0.0.0", "--port", "8082"]
+    env_file: ./vinu-tools/.env
     environment:
       VINU_FEATURES_DATA_DIR: /data
       VINU_FEATURES_META_DB_PATH: /data/meta.db
@@ -196,21 +196,20 @@ services:
       - stock-api
 
   # =========================================================================
-  # vinu-correlation Services (Ports: 8083)
+  # vinu-initial-analysis Services (Ports: 8083)
   # =========================================================================
-  correlation-compute:
+  initial-analysis-compute:
     build:
       context: .
-      dockerfile: vinu-correlation/Dockerfile
-    command: ["vinu-correlation-compute", "--continuous", "--incremental"]
-    env_file: ./vinu-correlation/.env
+      dockerfile: vinu-initial-analysis/Dockerfile
+    command: ["vinu-initial-compute", "--continuous", "--incremental"]
+    env_file: ./vinu-initial-analysis/.env
     environment:
-      VINU_CORRELATION_DATA_ROOT: /data
+      VINU_INITIAL_ANALYSIS_DATA_ROOT: /data
       VINU_NEWS_API_URL: http://news-api:8080
       VINU_STOCK_API_URL: http://stock-api:8081
-      VINU_CORRELATION_MARKET_HOURS_ONLY: "true"
     volumes:
-      - ./data/correlation:/data
+      - ./data/initial-analysis:/data
     cap_drop:
       - ALL
     cap_add:
@@ -230,20 +229,20 @@ services:
       - news-api
       - stock-api
 
-  correlation-api:
+  initial-analysis-api:
     build:
       context: .
-      dockerfile: vinu-correlation/Dockerfile
-    command: ["vinu-correlation-serve", "--host", "0.0.0.0", "--port", "8083"]
-    env_file: ./vinu-correlation/.env
+      dockerfile: vinu-initial-analysis/Dockerfile
+    command: ["vinu-initial-serve", "--host", "0.0.0.0", "--port", "8083"]
+    env_file: ./vinu-initial-analysis/.env
     environment:
-      VINU_CORRELATION_DATA_ROOT: /data
+      VINU_INITIAL_ANALYSIS_DATA_ROOT: /data
       VINU_NEWS_API_URL: http://news-api:8080
       VINU_STOCK_API_URL: http://stock-api:8081
     ports:
       - "127.0.0.1:8083:8083"
     volumes:
-      - ./data/correlation:/data
+      - ./data/initial-analysis:/data
     cap_drop:
       - ALL
     cap_add:
@@ -260,7 +259,7 @@ services:
     pids_limit: 256
     restart: unless-stopped
     depends_on:
-      - correlation-compute
+      - initial-analysis-compute
 
   # =========================================================================
   # vinu-strategy Services (Ports: 8084)
@@ -275,7 +274,7 @@ services:
       VINU_STRATEGY_DATA_ROOT: /data
       VINU_STRATEGY_STRATEGIES_DIR: /app/vinu-strategy/strategies
       VINU_FEATURES_API_URL: http://features-api:8082
-      VINU_CORRELATION_API_URL: http://correlation-api:8083
+      VINU_INITIAL_ANALYSIS_API_URL: http://initial-analysis-api:8083
     ports:
       - "127.0.0.1:8084:8084"
     volumes:
@@ -297,7 +296,7 @@ services:
     restart: unless-stopped
     depends_on:
       - features-api
-      - correlation-api
+      - initial-analysis-api
 
   # =========================================================================
   # vinu-simulator Services (Ports: 8085)
@@ -367,7 +366,7 @@ services:
       - stock-api
       - features-api
       - news-api
-      - correlation-api
+      - initial-analysis-api
       - strategy-api
       - simulator-api
 

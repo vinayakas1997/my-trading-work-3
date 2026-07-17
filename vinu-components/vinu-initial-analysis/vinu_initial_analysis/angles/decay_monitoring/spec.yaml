@@ -1,0 +1,14 @@
+title: Decay Monitoring
+purpose: Rolling IC, information ratio half-life, 4-level health score, decay curve
+time_formats:
+- 1D
+- 1W
+- 1M
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: Angle-specific results

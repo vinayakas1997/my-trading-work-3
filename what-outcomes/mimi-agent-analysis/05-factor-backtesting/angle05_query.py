@@ -16,7 +16,7 @@ def log(label, elapsed, status, detail=''):
     print(json.dumps(j))
 
 # ── Local backtest_factor (fixes min_assets=10 -> 2 for 4 tickers) ──
-from vinu_features.compute.factor_backtest import (
+from vinu_tools.compute.factor_backtest import (
     _annualization_factor, _compute_metrics, FactorBacktestResult, WeightScheme
 )
 
@@ -156,7 +156,7 @@ log('panel_built', 0, 'PASS', f'close={panel["close"].shape}, returns={panel["re
 
 # ── Step 3: Compute Factors (skip VWAP-requiring ones) ──
 print("\n=== STEP 3: COMPUTE FACTORS ===")
-from vinu_features.compute.factor_expressions import compute_expression
+from vinu_tools.compute.factor_expressions import compute_expression
 
 test_factors = [
     'alpha101_001', 'alpha101_010', 'alpha101_101',
@@ -215,7 +215,7 @@ if panel.get('returns') is not None and factor_values:
                        for fid, fv in factor_values.items()
                        if fid in factor_values}
             if len(aligned) >= 2:
-                from vinu_features.compute.factor_backtest import compare_factors
+                from vinu_tools.compute.factor_backtest import compare_factors
                 # Patch compare_factors to use our backtest
                 # Use direct computation instead
                 comparison_data = []

@@ -52,7 +52,7 @@ Use this to find the right factors for a given trading strategy or market regime
 
     def _get_registry(self):
         if self._registry is None:
-            from vinu_features.compute.alpha_registry import Registry
+            from vinu_tools.compute.alpha_registry import Registry
             self._registry = Registry()
         return self._registry
 
@@ -64,7 +64,7 @@ Use this to find the right factors for a given trading strategy or market regime
             return json.dumps({"status": "ok", "count": r.count()})
 
         if action == "list_themes":
-            from vinu_features.compute.alpha_meta import ALPHA_THEMES
+            from vinu_tools.compute.alpha_meta import ALPHA_THEMES
             return json.dumps({
                 "status": "ok",
                 "themes": sorted(ALPHA_THEMES),

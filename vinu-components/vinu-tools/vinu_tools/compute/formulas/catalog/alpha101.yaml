@@ -1,0 +1,2667 @@
+alpha101_001:
+  id: alpha101_001
+  theme: [reversal, volatility]
+  formula: rank(ts_argmax(SignedPower((returns<0)?stddev(returns,20):close, 2.), 5)) - 0.5
+  columns_required: [close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 25
+  params:
+    window:
+      default: 20
+      range: [10, 80]
+      description: 'window parameter (original: 20)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the conditional
+    returns if returns, else close price. The signal uses a 5-period estimation window. Rises during market stress and volatile
+    periods. Falls during calm, trending markets. Uses close price data. Best suited for mean reversion.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Best used near price extremes for contrarian entries. Rises during market stress, falls during calm periods
+  when_to_use: volatility_breakout, options_trading, risk_management, mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_001.py
+alpha101_002:
+  id: alpha101_002
+  theme: [volume, reversal]
+  formula: -1 * correlation(rank(delta(log(volume), 2)), rank(((close-open)/open)), 6)
+  columns_required: [open, close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 10
+  params:
+    window_1:
+      default: 6
+      range: [3, 24]
+      description: 'window parameter (original: 6)'
+    lag:
+      default: 2
+      range: [1, 8]
+      description: 'lag parameter (original: 2)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the Inverted, 2-period change
+    in log(volume), with further adjustment via cross-sectional rank applied to normalize output across assets. Negated to
+    create an inverse signal — high raw values predict downward moves. When volume rises but price stalls, correlation drops
+    — signaling potential reversal or exhaustion. Uses close price, open price, volume data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = trend continuation (sell). High negative = volume-price divergence, reversal
+    expected (buy).. Best used near price extremes for contrarian entries. Volume spikes indicate institutional activity or
+    unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_002.py
+alpha101_003:
+  id: alpha101_003
+  theme: [volume, reversal]
+  formula: -1 * correlation(rank(open), rank(volume), 10)
+  columns_required: [open, volume, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 10
+  params:
+    window:
+      default: 10
+      range: [5, 40]
+      description: 'window parameter (original: 10)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the Inverted,
+    cross-sectional rank applied to normalize output across assets. Negated to create an inverse signal — high raw values
+    predict downward moves. Uses close price, open price, volume data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = trend continuation (sell). High negative = volume-price divergence, reversal
+    expected (buy).. Best used near price extremes for contrarian entries. Volume spikes indicate institutional activity or
+    unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_003.py
+alpha101_004:
+  id: alpha101_004
+  theme: [reversal]
+  formula: -1 * Ts_Rank(rank(low), 9)
+  columns_required: [low, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 9
+  params:
+    window:
+      default: 9
+      range: [4, 36]
+      description: 'window parameter (original: 9)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the Inverted,
+    cross-sectional rank of cross-sectional rank of low price. Negated to create an inverse signal — high raw values predict
+    downward moves. Uses close price, low price data. Best suited for mean reversion.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Because the signal is negated, high raw values predict downward moves.. Best used near price extremes for contrarian entries
+  when_to_use: mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_004.py
+alpha101_005:
+  id: alpha101_005
+  theme: [reversal]
+  formula: rank((open - sum(vwap,10)/10)) * (-1 * abs(rank((close - vwap))))
+  columns_required: [open, close, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 10
+  params:
+    window:
+      default: 10
+      range: [5, 40]
+      description: 'window parameter (original: 10)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the 10-period
+    sum of VWAP, with further adjustment via cross-sectional rank applied to normalize output across assets. The signal uses
+    a 5-period estimation window. Uses close price, open price, VWAP data. Best suited for mean reversion.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Best used near price extremes for contrarian entries
+  when_to_use: mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_005.py
+alpha101_006:
+  id: alpha101_006
+  theme: [volume, reversal]
+  formula: -1 * correlation(open, volume, 10)
+  columns_required: [open, volume, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 10
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the Inverted, negative
+    1 multiplied by open price and volume. Negated to create an inverse signal — high raw values predict downward moves. Uses
+    close price, open price, volume data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = trend continuation (sell). High negative = volume-price divergence, reversal
+    expected (buy).. Best used near price extremes for contrarian entries. Volume spikes indicate institutional activity or
+    unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_006.py
+alpha101_007:
+  id: alpha101_007
+  theme: [momentum, volume]
+  formula: (adv20<volume)?((-1*ts_rank(abs(delta(close,7)),60))*sign(delta(close,7))):(-1)
+  columns_required: [close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 67
+  params:
+    window_1:
+      default: 60
+      range: [30, 240]
+      description: 'window parameter (original: 60)'
+    lag:
+      default: 7
+      range: [3, 28]
+      description: 'lag parameter (original: 7)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 7-period change in close
+    price. The signal uses a 5-period estimation window. Uses close price, volume data. Best suited for trend following.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Works best in trending markets. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_007.py
+alpha101_008:
+  id: alpha101_008
+  theme: [reversal]
+  formula: -1 * rank((sum(open,5)*sum(returns,5)) - delay(sum(open,5)*sum(returns,5),10))
+  columns_required: [open, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 15
+  params:
+    window:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    lag:
+      default: 5
+      range: [2, 20]
+      description: 'lag parameter (original: 5)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the Inverted,
+    5-period sum of open price, with further adjustment via 5-period sum of returns. Negated to create an inverse signal —
+    high raw values predict downward moves. Uses close price, open price data. Best suited for mean reversion.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Because the signal is negated, high raw values predict downward moves.. Best used near price extremes for contrarian entries
+  when_to_use: mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_008.py
+alpha101_009:
+  id: alpha101_009
+  theme: [momentum]
+  formula: (0<ts_min(delta(close,1),5))?delta(close,1):((ts_max(delta(close,1),5)<0)?delta(close,1):(-1*delta(close,1)))
+  columns_required: [close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 6
+  params:
+    window_2:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    window_3:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    lag:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+    lag_1:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+  description: Measures trend strength and directional price movement over a lookback window. It computes the 1-period change
+    in close price, with further adjustment via 1-period extremum of close price. The signal uses a 5-period estimation window.
+    Uses close price data. Best suited for trend following.
+  interpretation: Higher values indicate stronger factor exposure.. Works best in trending markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_009.py
+alpha101_010:
+  id: alpha101_010
+  theme: [momentum]
+  formula: rank((0<ts_min(delta(close,1),4))?delta(close,1):((ts_max(delta(close,1),4)<0)?delta(close,1):(-1*delta(close,1))))
+  columns_required: [close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 5
+  params:
+    window_2:
+      default: 4
+      range: [2, 16]
+      description: 'window parameter (original: 4)'
+    window_3:
+      default: 4
+      range: [2, 16]
+      description: 'window parameter (original: 4)'
+    lag:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+    lag_1:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 1-period change in close
+    price, with further adjustment via 1-period extremum of close price. The signal uses a 5-period estimation window. Uses
+    close price data. Best suited for trend following.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Works best in trending markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_010.py
+alpha101_011:
+  id: alpha101_011
+  theme: [volume, reversal]
+  formula: (rank(ts_max(vwap-close,3))+rank(ts_min(vwap-close,3)))*rank(delta(volume,3))
+  columns_required: [close, volume, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 5
+  params:
+    window:
+      default: 3
+      range: [1, 12]
+      description: 'window parameter (original: 3)'
+    window_1:
+      default: 3
+      range: [1, 12]
+      description: 'window parameter (original: 3)'
+    lag:
+      default: 3
+      range: [1, 12]
+      description: 'lag parameter (original: 3)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 3-period change in volume,
+    with further adjustment via 3-period extremum of VWAP relative to close price, cross-sectional rank applied to normalize
+    output across assets. The signal uses a 5-period estimation window. Uses close price, volume, VWAP data. Best suited for
+    volume analysis.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Best used near price extremes for contrarian entries. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_011.py
+alpha101_012:
+  id: alpha101_012
+  theme: [volume, reversal]
+  formula: sign(delta(volume,1)) * (-1 * delta(close,1))
+  columns_required: [close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 2
+  params:
+    lag:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+    lag_1:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 1-period change
+    in volume, with further adjustment via 1-period change in close price. The signal uses a 5-period estimation window. Uses
+    close price, volume data. Best suited for volume analysis.
+  interpretation: Higher values indicate stronger factor exposure.. Best used near price extremes for contrarian entries.
+    Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_012.py
+alpha101_013:
+  id: alpha101_013
+  theme: [volume]
+  formula: -1 * rank(covariance(rank(close), rank(volume), 5))
+  columns_required: [close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 5
+  params:
+    window:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the Inverted,
+    cross-sectional rank applied to normalize output across assets. Negated to create an inverse signal — high raw values
+    predict downward moves. Uses close price, volume data. Best suited for volume analysis.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Because the signal is negated, high raw values predict downward moves.. Volume spikes indicate institutional activity
+    or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_013.py
+alpha101_014:
+  id: alpha101_014
+  theme: [volume, momentum]
+  formula: (-1*rank(delta(returns,3))) * correlation(open, volume, 10)
+  columns_required: [open, close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 10
+  params:
+    lag:
+      default: 3
+      range: [1, 12]
+      description: 'lag parameter (original: 3)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the Inverted, 3-period change
+    in returns. Negated to create an inverse signal — high raw values predict downward moves. Uses close price, open price,
+    volume data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = trend continuation (sell). High negative = volume-price divergence, reversal
+    expected (buy).. Works best in trending markets. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_014.py
+alpha101_015:
+  id: alpha101_015
+  theme: [volume]
+  formula: -1 * sum(rank(correlation(rank(high), rank(volume), 3)), 3)
+  columns_required: [high, volume, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 6
+  params:
+    window:
+      default: 3
+      range: [1, 12]
+      description: 'window parameter (original: 3)'
+    window_1:
+      default: 3
+      range: [1, 12]
+      description: 'window parameter (original: 3)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the Inverted,
+    3-period sum of cross-sectional rank of cross-sectional rank of high price, with further adjustment via cross-sectional
+    rank applied to normalize output across assets. Negated to create an inverse signal — high raw values predict downward
+    moves. Uses close price, high price, volume data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = trend continuation (sell). High negative = volume-price divergence, reversal
+    expected (buy).. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_015.py
+alpha101_016:
+  id: alpha101_016
+  theme: [volume]
+  formula: -1 * rank(covariance(rank(high), rank(volume), 5))
+  columns_required: [high, volume, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 5
+  params:
+    window:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the Inverted,
+    cross-sectional rank applied to normalize output across assets. Negated to create an inverse signal — high raw values
+    predict downward moves. Uses close price, high price, volume data. Best suited for volume analysis.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Because the signal is negated, high raw values predict downward moves.. Volume spikes indicate institutional activity
+    or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_016.py
+alpha101_017:
+  id: alpha101_017
+  theme: [volume, reversal]
+  formula: ((-1*rank(ts_rank(close,10)))*rank(delta(delta(close,1),1)))*rank(ts_rank(volume/adv20,5))
+  columns_required: [close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 25
+  params:
+    window:
+      default: 10
+      range: [5, 40]
+      description: 'window parameter (original: 10)'
+    window_1:
+      default: 1
+      range: [1, 4]
+      description: 'window parameter (original: 1)'
+    window_2:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    window_3:
+      default: 1
+      range: [1, 4]
+      description: 'window parameter (original: 1)'
+    lag:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 1-period change in close
+    price, with further adjustment via cross-sectional rank applied to normalize output across assets. The signal uses a 5-period
+    estimation window. Uses close price, volume data. Best suited for volume analysis.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Best used near price extremes for contrarian entries. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_017.py
+alpha101_018:
+  id: alpha101_018
+  theme: [volatility]
+  formula: -1 * rank(stddev(abs(close-open),5) + (close-open) + correlation(close,open,10))
+  columns_required: [open, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 10
+  params:
+    window:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the Inverted,
+    cross-sectional rank of absolute value of close price, open price, close price, open price, close price, open price. Negated
+    to create an inverse signal — high raw values predict downward moves. Positive = bullish intraday session. Negative =
+    bearish intraday session. Uses close price, open price data. Best suited for volatility breakout.
+  interpretation: Range [-1, 1]. High positive = trend continuation (sell). High negative = volume-price divergence, reversal
+    expected (buy).. Rises during market stress, falls during calm periods
+  when_to_use: volatility_breakout, options_trading, risk_management
+  source: factors/singles/alpha101/alpha_018.py
+alpha101_019:
+  id: alpha101_019
+  theme: [momentum]
+  formula: (-1*sign((close-delay(close,7))+delta(close,7))) * (1+rank(1+sum(returns,250)))
+  columns_required: [close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 250
+  params:
+    window:
+      default: 250
+      range: [125, 252]
+      description: 'window parameter (original: 250)'
+    lag:
+      default: 7
+      range: [3, 28]
+      description: 'lag parameter (original: 7)'
+    lag_1:
+      default: 7
+      range: [3, 28]
+      description: 'lag parameter (original: 7)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the Inverted, 7-period change
+    in close price, with further adjustment via 250-period sum of returns. Negated to create an inverse signal — high raw
+    values predict downward moves. Uses close price data. Best suited for trend following.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Because the signal is negated, high raw values predict downward moves.. Works best in trending markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_019.py
+alpha101_020:
+  id: alpha101_020
+  theme: [reversal]
+  formula: (((-1*rank(open-delay(high,1)))*rank(open-delay(close,1)))*rank(open-delay(low,1)))
+  columns_required: [open, high, low, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 2
+  params:
+    window:
+      default: 1
+      range: [1, 4]
+      description: 'window parameter (original: 1)'
+    lag:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+    lag_1:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+    lag_2:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+  description: Ranks securities by their closing price position within the recent trading range. It computes the cross-sectional
+    rank applied to normalize output across assets. The signal uses a 5-period estimation window. Values near 1 = close at
+    range top (strength). Values near 0 = close at range bottom (weakness). Cross-sectional rank makes this relative across
+    assets. Uses close price, open price, high price, low price data. Best suited for mean reversion.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Best used near price extremes for contrarian entries
+  when_to_use: mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_020.py
+alpha101_021:
+  id: alpha101_021
+  theme: [momentum, volatility]
+  formula: complex piecewise; see paper
+  columns_required: [close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 20
+  description: Measures trend strength and directional price movement over a lookback window. It computes the complex piecewise;
+    see paper. The signal uses a 5-period estimation window. Uses close price, volume data. Best suited for trend following.
+  interpretation: Higher values indicate stronger factor exposure.. Works best in trending markets. Rises during market stress,
+    falls during calm periods
+  when_to_use: volatility_breakout, options_trading, risk_management, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_021.py
+alpha101_022:
+  id: alpha101_022
+  theme: [volume, volatility]
+  formula: -1 * (delta(correlation(high,volume,5),5) * rank(stddev(close,20)))
+  columns_required: [high, close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 25
+  params:
+    window:
+      default: 20
+      range: [10, 80]
+      description: 'window parameter (original: 20)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the Inverted, 5-period change
+    in high price and volume. Negated to create an inverse signal — high raw values predict downward moves. Rises during market
+    stress and volatile periods. Falls during calm, trending markets. Uses close price, high price, volume data. Best suited
+    for volume analysis.
+  interpretation: Range [-1, 1]. High positive = trend continuation (sell). High negative = volume-price divergence, reversal
+    expected (buy).. Rises during market stress, falls during calm periods. Volume spikes indicate institutional activity
+    or unusual interest
+  when_to_use: volatility_breakout, options_trading, risk_management, volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_022.py
+alpha101_023:
+  id: alpha101_023
+  theme: [momentum]
+  formula: '((sum(high,20)/20) < high) ? (-1*delta(high,2)) : 0'
+  columns_required: [high, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 20
+  params:
+    window:
+      default: 20
+      range: [10, 80]
+      description: 'window parameter (original: 20)'
+    lag:
+      default: 2
+      range: [1, 8]
+      description: 'lag parameter (original: 2)'
+  description: Measures trend strength and directional price movement over a lookback window. It computes the 2-period change
+    in high price, with further adjustment via 20-period sum of high price. The signal uses a 5-period estimation window.
+    Uses close price, high price data. Best suited for trend following.
+  interpretation: Higher values indicate stronger factor exposure.. Works best in trending markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_023.py
+alpha101_024:
+  id: alpha101_024
+  theme: [momentum]
+  formula: complex piecewise; see paper
+  columns_required: [close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 200
+  description: Measures trend strength and directional price movement over a lookback window. It computes the complex piecewise;
+    see paper. The signal uses a 5-period estimation window. Uses close price data. Best suited for trend following.
+  interpretation: Higher values indicate stronger factor exposure.. Works best in trending markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_024.py
+alpha101_025:
+  id: alpha101_025
+  theme: [momentum, volume]
+  formula: rank((((-1*returns)*adv20)*vwap)*(high-close))
+  columns_required: [high, close, volume, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 21
+  description: Measures trend strength and directional price movement over a lookback window. It computes the cross-sectional
+    rank of ((-1 multiplied by returns multiplied by adv20 multiplied by VWAP multiplied by high price relative to close price.
+    The signal uses a 5-period estimation window. Uses close price, high price, volume, VWAP data. Best suited for trend following.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Works best in trending markets. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_025.py
+alpha101_026:
+  id: alpha101_026
+  theme: [volume]
+  formula: -1 * ts_max(correlation(ts_rank(volume,5),ts_rank(high,5),5),3)
+  columns_required: [high, volume, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 13
+  params:
+    window:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    window_1:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    window_2:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the Inverted,
+    5-period extremum of volume. Negated to create an inverse signal — high raw values predict downward moves. High correlation
+    = volume confirms price trend. Low correlation = divergence warns of reversal. Uses close price, high price, volume data.
+    Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = trend continuation (sell). High negative = volume-price divergence, reversal
+    expected (buy).. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_026.py
+alpha101_027:
+  id: alpha101_027
+  theme: [volume]
+  formula: (0.5<rank((sum(correlation(rank(volume),rank(vwap),6),2)/2.0)))?(-1):1
+  columns_required: [volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 10
+  params:
+    window:
+      default: 6
+      range: [3, 24]
+      description: 'window parameter (original: 6)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 6-period sum
+    of cross-sectional rank of volume and VWAP, with further adjustment via cross-sectional rank applied to normalize output
+    across assets. The signal uses a 5-period estimation window. Uses close price, volume, VWAP data. Best suited for volume
+    analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_027.py
+alpha101_028:
+  id: alpha101_028
+  theme: [volume]
+  formula: scale((correlation(adv20,low,5) + (high+low)/2) - close)
+  columns_required: [high, low, close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 25
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the low price and
+    high price and low price divided by close price. The signal uses a 5-period estimation window. Values near 1 = close at
+    range top (strength). Values near 0 = close at range bottom (weakness). Cross-sectional rank makes this relative across
+    assets. Uses close price, high price, low price, volume data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_028.py
+alpha101_029:
+  id: alpha101_029
+  theme: [reversal, volume]
+  formula: min(product(rank(rank(scale(log(sum(ts_min(rank(rank(-1*rank(delta(close-1,5)))),2),1))))),1),5) + ts_rank(delay(-1*returns,6),5)
+  columns_required: [close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 12
+  params:
+    window:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    window_2:
+      default: 2
+      range: [1, 8]
+      description: 'window parameter (original: 2)'
+    window_3:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    lag:
+      default: 5
+      range: [2, 20]
+      description: 'lag parameter (original: 5)'
+    lag_1:
+      default: 6
+      range: [3, 24]
+      description: 'lag parameter (original: 6)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 5-period change in close
+    price, with further adjustment via 5-period sum of ts min(rank(rank(-1 multiplied by close price, 5-period extremum of
+    rank(rank(-1 multiplied by close price, cross-sectional rank applied to normalize output across assets. The signal uses
+    a 5-period estimation window. Uses close price, volume data. Best suited for mean reversion.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Best used near price extremes for contrarian entries. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_029.py
+alpha101_030:
+  id: alpha101_030
+  theme: [momentum, volume]
+  formula: ((1-rank(sign(d1)+sign(d2)+sign(d3))) * sum(volume,5)) / sum(volume,20)
+  columns_required: [close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 20
+  params:
+    window:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    window_1:
+      default: 20
+      range: [10, 80]
+      description: 'window parameter (original: 20)'
+  description: Measures trend strength and directional price movement over a lookback window. It computes the 5-period sum
+    of volume, with further adjustment via 20-period sum of volume. The signal uses a 5-period estimation window. Uses close
+    price, volume data. Best suited for trend following.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Works best in trending markets. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_030.py
+alpha101_031:
+  id: alpha101_031
+  theme: [momentum]
+  formula: rank(rank(rank(decay_linear(-1*rank(rank(delta(close,10))),10)))) + rank(-1*delta(close,3)) + sign(scale(correlation(adv20,low,12)))
+  columns_required: [low, close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 25
+  params:
+    lag:
+      default: 10
+      range: [5, 40]
+      description: 'lag parameter (original: 10)'
+    lag_1:
+      default: 3
+      range: [1, 12]
+      description: 'lag parameter (original: 3)'
+    decay:
+      default: 10
+      range: [5, 40]
+      description: 'decay parameter (original: 10)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 10-period change in close
+    price, with further adjustment via 3-period change in close price, cross-sectional rank applied to normalize output across
+    assets. The signal uses a 5-period estimation window. Uses close price, low price, volume data. Best suited for trend
+    following.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Works best in trending
+    markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_031.py
+alpha101_032:
+  id: alpha101_032
+  theme: [momentum]
+  formula: scale(sum(close,7)/7 - close) + 20*scale(correlation(vwap, delay(close,5), 230))
+  columns_required: [close, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 235
+  params:
+    window:
+      default: 7
+      range: [3, 28]
+      description: 'window parameter (original: 7)'
+    lag:
+      default: 5
+      range: [2, 20]
+      description: 'lag parameter (original: 5)'
+  description: Measures trend strength and directional price movement over a lookback window. It computes the 7-period sum
+    of close price. The signal uses a 5-period estimation window. Uses close price, VWAP data. Best suited for trend following.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Works best in trending
+    markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_032.py
+alpha101_033:
+  id: alpha101_033
+  theme: [reversal]
+  formula: rank(-1*(1-open/close))
+  columns_required: [open, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 1
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the cross-sectional
+    rank of negative 1 multiplied by open price divided by close price. The signal uses a 5-period estimation window. Uses
+    close price, open price data. Best suited for mean reversion.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Best used near price extremes for contrarian entries
+  when_to_use: mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_033.py
+alpha101_034:
+  id: alpha101_034
+  theme: [volatility]
+  formula: rank((1-rank(stddev(returns,2)/stddev(returns,5))) + (1-rank(delta(close,1))))
+  columns_required: [close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 6
+  params:
+    window:
+      default: 2
+      range: [1, 8]
+      description: 'window parameter (original: 2)'
+    window_1:
+      default: 1
+      range: [1, 4]
+      description: 'window parameter (original: 1)'
+    window_2:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    lag:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 1-period change in close
+    price, with further adjustment via cross-sectional rank applied to normalize output across assets. The signal uses a 5-period
+    estimation window. Rises during market stress and volatile periods. Falls during calm, trending markets. Uses close price
+    data. Best suited for volatility breakout.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Rises during market stress, falls during calm periods
+  when_to_use: volatility_breakout, options_trading, risk_management
+  source: factors/singles/alpha101/alpha_034.py
+alpha101_035:
+  id: alpha101_035
+  theme: [volume, momentum]
+  formula: ts_rank(volume,32) * (1 - ts_rank((close+high-low),16)) * (1 - ts_rank(returns,32))
+  columns_required: [high, low, close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 33
+  params:
+    window:
+      default: 32
+      range: [16, 128]
+      description: 'window parameter (original: 32)'
+    window_1:
+      default: 16
+      range: [8, 64]
+      description: 'window parameter (original: 16)'
+    window_2:
+      default: 32
+      range: [16, 128]
+      description: 'window parameter (original: 32)'
+  description: Ranks securities by their closing price position within the recent trading range. It computes the cross-sectional
+    rank of cross-sectional rank of close price and high price and low price multiplied by returns. The signal uses a 5-period
+    estimation window. Values near 1 = close at range top (strength). Values near 0 = close at range bottom (weakness). Cross-sectional
+    rank makes this relative across assets. Uses close price, high price, low price, volume data. Best suited for volume analysis.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Works best in trending markets. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_035.py
+alpha101_036:
+  id: alpha101_036
+  theme: [momentum, volume]
+  formula: weighted sum; see paper
+  columns_required: [open, close, volume, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 200
+  description: Measures trend strength and directional price movement over a lookback window. It computes the weighted sum;
+    see paper. The signal uses a 5-period estimation window. Uses close price, open price, volume, VWAP data. Best suited
+    for trend following.
+  interpretation: Higher values indicate stronger factor exposure.. Works best in trending markets. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_036.py
+alpha101_037:
+  id: alpha101_037
+  theme: [momentum]
+  formula: rank(correlation(delay(open-close,1),close,200)) + rank(open-close)
+  columns_required: [open, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 201
+  params:
+    lag:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+  description: Measures trend strength and directional price movement over a lookback window. It computes the cross-sectional
+    rank applied to normalize output across assets. The signal uses a 5-period estimation window. Uses close price, open price
+    data. Best suited for trend following.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Works best in trending
+    markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_037.py
+alpha101_038:
+  id: alpha101_038
+  theme: [reversal]
+  formula: (-1*rank(ts_rank(close,10))) * rank(close/open)
+  columns_required: [open, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 10
+  params:
+    window:
+      default: 10
+      range: [5, 40]
+      description: 'window parameter (original: 10)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the Inverted,
+    cross-sectional rank applied to normalize output across assets. Negated to create an inverse signal — high raw values
+    predict downward moves. Uses close price, open price data. Best suited for mean reversion.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Because the signal is negated, high raw values predict downward moves.. Best used near price extremes for contrarian entries
+  when_to_use: mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_038.py
+alpha101_039:
+  id: alpha101_039
+  theme: [momentum, volume]
+  formula: (-1*rank(delta(close,7)*(1-rank(decay_linear(volume/adv20,9))))) * (1+rank(sum(returns,250)))
+  columns_required: [close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 250
+  params:
+    window_2:
+      default: 250
+      range: [125, 252]
+      description: 'window parameter (original: 250)'
+    lag:
+      default: 7
+      range: [3, 28]
+      description: 'lag parameter (original: 7)'
+    decay:
+      default: 9
+      range: [4, 36]
+      description: 'decay parameter (original: 9)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the Inverted, 7-period change
+    in close price, with further adjustment via 250-period sum of returns, cross-sectional rank applied to normalize output
+    across assets. Negated to create an inverse signal — high raw values predict downward moves. Uses close price, volume
+    data. Best suited for trend following.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Because the signal is negated, high raw values predict downward moves.. Works best in trending markets. Volume spikes
+    indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_039.py
+alpha101_040:
+  id: alpha101_040
+  theme: [volatility, volume]
+  formula: (-1*rank(stddev(high,10))) * correlation(high,volume,10)
+  columns_required: [high, volume, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 10
+  params:
+    window:
+      default: 10
+      range: [5, 40]
+      description: 'window parameter (original: 10)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the Inverted,
+    cross-sectional rank of high price multiplied by high price and volume. Negated to create an inverse signal — high raw
+    values predict downward moves. Uses close price, high price, volume data. Best suited for volatility breakout.
+  interpretation: Range [-1, 1]. High positive = trend continuation (sell). High negative = volume-price divergence, reversal
+    expected (buy).. Rises during market stress, falls during calm periods. Volume spikes indicate institutional activity
+    or unusual interest
+  when_to_use: volatility_breakout, options_trading, risk_management, volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_040.py
+alpha101_041:
+  id: alpha101_041
+  theme: [reversal]
+  formula: (high*low)^0.5 - vwap
+  columns_required: [high, low, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 1
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the high price
+    multiplied by low price raised to power 0. The signal uses a 5-period estimation window. Uses close price, high price,
+    low price, VWAP data. Best suited for mean reversion.
+  interpretation: Higher values indicate stronger factor exposure.. Best used near price extremes for contrarian entries
+  when_to_use: mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_041.py
+alpha101_042:
+  id: alpha101_042
+  theme: [reversal]
+  formula: rank(vwap-close) / rank(vwap+close)
+  columns_required: [close, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 1
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the cross-sectional
+    rank applied to normalize output across assets. The signal uses a 5-period estimation window. Uses close price, VWAP data.
+    Best suited for mean reversion.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Best used near price extremes for contrarian entries
+  when_to_use: mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_042.py
+alpha101_043:
+  id: alpha101_043
+  theme: [volume, momentum]
+  formula: ts_rank(volume/adv20,20) * ts_rank(-1*delta(close,7),8)
+  columns_required: [close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 39
+  params:
+    window:
+      default: 20
+      range: [10, 80]
+      description: 'window parameter (original: 20)'
+    lag:
+      default: 7
+      range: [3, 28]
+      description: 'lag parameter (original: 7)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 7-period change in close
+    price. The signal uses a 5-period estimation window. Uses close price, volume data. Best suited for volume analysis.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Works best in trending markets. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_043.py
+alpha101_044:
+  id: alpha101_044
+  theme: [volume]
+  formula: -1 * correlation(high, rank(volume), 5)
+  columns_required: [high, volume, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 5
+  params:
+    window:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the Inverted,
+    cross-sectional rank of volume. Negated to create an inverse signal — high raw values predict downward moves. Uses close
+    price, high price, volume data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = trend continuation (sell). High negative = volume-price divergence, reversal
+    expected (buy).. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_044.py
+alpha101_045:
+  id: alpha101_045
+  theme: [momentum, volume]
+  formula: -1 * (rank(sum(delay(close,5),20)/20)*correlation(close,volume,2)*rank(correlation(sum(close,5),sum(close,20),2)))
+  columns_required: [close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 25
+  params:
+    window:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    window_2:
+      default: 20
+      range: [10, 80]
+      description: 'window parameter (original: 20)'
+    window_3:
+      default: 20
+      range: [10, 80]
+      description: 'window parameter (original: 20)'
+    window_4:
+      default: 2
+      range: [1, 8]
+      description: 'window parameter (original: 2)'
+    lag:
+      default: 5
+      range: [2, 20]
+      description: 'lag parameter (original: 5)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the Inverted,
+    5-period sum of close price, with further adjustment via 20-period sum of close price, cross-sectional rank applied to
+    normalize output across assets. Negated to create an inverse signal — high raw values predict downward moves. Uses close
+    price, volume data. Best suited for trend following.
+  interpretation: Range [-1, 1]. High positive = trend continuation (sell). High negative = volume-price divergence, reversal
+    expected (buy).. Works best in trending markets. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_045.py
+alpha101_046:
+  id: alpha101_046
+  theme: [momentum]
+  formula: complex piecewise; see paper
+  columns_required: [close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 21
+  description: Measures trend strength and directional price movement over a lookback window. It computes the complex piecewise;
+    see paper. The signal uses a 5-period estimation window. Uses close price data. Best suited for trend following.
+  interpretation: Higher values indicate stronger factor exposure.. Works best in trending markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_046.py
+alpha101_047:
+  id: alpha101_047
+  theme: [volume, momentum]
+  formula: ((rank(1/close)*volume/adv20) * (high*rank(high-close)/(sum(high,5)/5))) - rank(vwap-delay(vwap,5))
+  columns_required: [high, close, volume, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 25
+  params:
+    window:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    window_1:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    lag:
+      default: 5
+      range: [2, 20]
+      description: 'lag parameter (original: 5)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 5-period sum
+    of high price, with further adjustment via cross-sectional rank of cross-sectional rank of high price relative to close
+    price, cross-sectional rank applied to normalize output across assets. The signal uses a 5-period estimation window. Uses
+    close price, high price, volume, VWAP data. Best suited for volume analysis.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Works best in trending markets. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_047.py
+alpha101_048:
+  id: alpha101_048
+  theme: [momentum, volatility]
+  formula: indneutralize(...subindustry...) / sum((delta(close,1)/delay(close,1))^2, 250)
+  columns_required: [close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 251
+  params:
+    window:
+      default: 1
+      range: [1, 4]
+      description: 'window parameter (original: 1)'
+    window_1:
+      default: 1
+      range: [1, 4]
+      description: 'window parameter (original: 1)'
+    lag:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+    lag_1:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+  description: Measures trend strength and directional price movement over a lookback window. It computes the 1-period change
+    in close price, with further adjustment via 1-period sum of close price. The signal uses a 5-period estimation window.
+    Uses close price data. Best suited for trend following.
+  interpretation: Higher values indicate stronger factor exposure.. Works best in trending markets. Rises during market stress,
+    falls during calm periods
+  when_to_use: volatility_breakout, options_trading, risk_management, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_048.py
+alpha101_049:
+  id: alpha101_049
+  theme: [momentum]
+  formula: '(((delay(close,20)-delay(close,10))/10 - (delay(close,10)-close)/10) < -0.1) ? 1 : -1*(close-delay(close,1))'
+  columns_required: [close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 21
+  params:
+    lag:
+      default: 20
+      range: [10, 80]
+      description: 'lag parameter (original: 20)'
+    lag_1:
+      default: 10
+      range: [5, 40]
+      description: 'lag parameter (original: 10)'
+    lag_2:
+      default: 10
+      range: [5, 40]
+      description: 'lag parameter (original: 10)'
+    lag_3:
+      default: 0.1
+      range: [0, 50]
+      description: 'lag parameter (original: 0.1)'
+  description: 'Measures trend strength and directional price movement over a lookback window. It computes the close price
+    relative to close price divided by close price and close price divided by 10) < -0.1) ? 1 : -1 multiplied by close price
+    relative to close price. The signal uses a 5-period estimation window. Uses close price data. Best suited for trend following.'
+  interpretation: Higher values indicate stronger factor exposure.. Works best in trending markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_049.py
+alpha101_050:
+  id: alpha101_050
+  theme: [volume]
+  formula: -1 * ts_max(rank(correlation(rank(volume), rank(vwap), 5)), 5)
+  columns_required: [volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 10
+  params:
+    window:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    window_1:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the Inverted,
+    5-period extremum of cross-sectional rank of cross-sectional rank of volume, with further adjustment via cross-sectional
+    rank applied to normalize output across assets. Negated to create an inverse signal — high raw values predict downward
+    moves. Uses close price, volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = trend continuation (sell). High negative = volume-price divergence, reversal
+    expected (buy).. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_050.py
+alpha101_051:
+  id: alpha101_051
+  theme: [momentum]
+  formula: '(...< -0.05) ? 1 : -1*(close-delay(close,1))'
+  columns_required: [close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 21
+  params:
+    lag:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+  description: 'Measures trend strength and directional price movement over a lookback window. It computes the ...< -0.05)
+    ? 1 : -1 multiplied by close price relative to close price. The signal uses a 5-period estimation window. Uses close price
+    data. Best suited for trend following.'
+  interpretation: Higher values indicate stronger factor exposure.. Works best in trending markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_051.py
+alpha101_052:
+  id: alpha101_052
+  theme: [momentum]
+  formula: ((-1*ts_min(low,5)+delay(ts_min(low,5),5)) * rank((sum(returns,240)-sum(returns,20))/220)) * ts_rank(volume,5)
+  columns_required: [low, close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 240
+  params:
+    window:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    window_1:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    window_2:
+      default: 240
+      range: [120, 252]
+      description: 'window parameter (original: 240)'
+    window_3:
+      default: 20
+      range: [10, 80]
+      description: 'window parameter (original: 20)'
+    window_4:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    lag:
+      default: 5
+      range: [2, 20]
+      description: 'lag parameter (original: 5)'
+  description: Measures trend strength and directional price movement over a lookback window. It computes the 240-period sum
+    of returns, with further adjustment via 20-period sum of returns, 5-period extremum of low price. The signal uses a 5-period
+    estimation window. Uses close price, low price, volume data. Best suited for trend following.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Works best in trending markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_052.py
+alpha101_053:
+  id: alpha101_053
+  theme: [reversal]
+  formula: -1 * delta(((close-low) - (high-close))/(close-low), 9)
+  columns_required: [high, low, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 10
+  params:
+    lag:
+      default: 9
+      range: [4, 36]
+      description: 'lag parameter (original: 9)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the Inverted,
+    9-period change in (close price minus low price and high price and close price) divided by (close price minus low price),
+    with further adjustment via (close price minus low price and high price and close price) divided by (close price minus
+    low price). Negated to create an inverse signal — high raw values predict downward moves. Values near 1 = close at range
+    top (strength). Values near 0 = close at range bottom (weakness). Cross-sectional rank makes this relative across assets.
+    Uses close price, high price, low price data. Best suited for mean reversion.
+  interpretation: Higher values indicate stronger factor exposure.. Because the signal is negated, high raw values predict
+    downward moves.. Best used near price extremes for contrarian entries
+  when_to_use: mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_053.py
+alpha101_054:
+  id: alpha101_054
+  theme: [reversal]
+  formula: -1 * ((low-close)*(open^5)) / ((low-high)*(close^5))
+  columns_required: [open, high, low, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 1
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the Inverted,
+    (low price minus close price multiplied by open price) divided by (low price minus high price). Negated to create an inverse
+    signal — high raw values predict downward moves. Values near 1 = close at range top (strength). Values near 0 = close
+    at range bottom (weakness). Cross-sectional rank makes this relative across assets. Uses close price, open price, high
+    price, low price data. Best suited for mean reversion.
+  interpretation: Higher values indicate stronger factor exposure.. Because the signal is negated, high raw values predict
+    downward moves.. Best used near price extremes for contrarian entries
+  when_to_use: mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_054.py
+alpha101_055:
+  id: alpha101_055
+  theme: [volume, reversal]
+  formula: -1 * correlation(rank((close-ts_min(low,12))/(ts_max(high,12)-ts_min(low,12))), rank(volume), 6)
+  columns_required: [high, low, close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 17
+  params:
+    window:
+      default: 12
+      range: [6, 48]
+      description: 'window parameter (original: 12)'
+    window_1:
+      default: 12
+      range: [6, 48]
+      description: 'window parameter (original: 12)'
+    window_2:
+      default: 12
+      range: [6, 48]
+      description: 'window parameter (original: 12)'
+    window_3:
+      default: 6
+      range: [3, 24]
+      description: 'window parameter (original: 6)'
+  description: Ranks securities by their closing price position within the recent trading range. It computes the Inverted,
+    12-period extremum of low price, with further adjustment via 12-period extremum of high price, cross-sectional rank of
+    12-period minimum of low price, cross-sectional rank applied to normalize output across assets. Negated to create an inverse
+    signal — high raw values predict downward moves. Values near 1 = close at range top (strength). Values near 0 = close
+    at range bottom (weakness). Cross-sectional rank makes this relative across assets. Uses close price, high price, low
+    price, volume data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = trend continuation (sell). High negative = volume-price divergence, reversal
+    expected (buy).. Best used near price extremes for contrarian entries. Volume spikes indicate institutional activity or
+    unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_055.py
+alpha101_056:
+  id: alpha101_056
+  theme: [momentum]
+  formula: 0 - 1*(rank(sum(returns,10)/sum(sum(returns,2),3)) * rank((returns * cap)))  [cap unavailable -> 1]
+  columns_required: [close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 10
+  params:
+    window:
+      default: 10
+      range: [5, 40]
+      description: 'window parameter (original: 10)'
+    window_1:
+      default: 2
+      range: [1, 8]
+      description: 'window parameter (original: 2)'
+  description: Measures trend strength and directional price movement over a lookback window. It computes the 10-period sum
+    of returns, with further adjustment via 2-period sum of returns, cross-sectional rank applied to normalize output across
+    assets. The signal uses a 5-period estimation window. Uses close price data. Best suited for trend following.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Works best in trending markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_056.py
+alpha101_057:
+  id: alpha101_057
+  theme: [reversal]
+  formula: 0 - 1 * ((close-vwap) / decay_linear(rank(ts_argmax(close,30)), 2))
+  columns_required: [close, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 32
+  params:
+    window_1:
+      default: 2
+      range: [1, 8]
+      description: 'window parameter (original: 2)'
+    decay:
+      default: 30
+      range: [15, 120]
+      description: 'decay parameter (original: 30)'
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the cross-sectional
+    rank of 2-period maximum of close price. The signal uses a 5-period estimation window. Uses close price, VWAP data. Best
+    suited for mean reversion.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Best used near price extremes for contrarian entries
+  when_to_use: mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_057.py
+alpha101_058:
+  id: alpha101_058
+  theme: [volume]
+  formula: -1 * Ts_Rank(decay_linear(correlation(IndNeutralize(vwap, sector), volume, 4), 8), 6)
+  columns_required: [volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 25
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the Inverted, cross-sectional
+    rank of VWAP and volume. Negated to create an inverse signal — high raw values predict downward moves. Uses close price,
+    volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = trend continuation (sell). High negative = volume-price divergence, reversal
+    expected (buy).. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_058.py
+alpha101_059:
+  id: alpha101_059
+  theme: [volume]
+  formula: -1 * Ts_Rank(decay_linear(correlation(IndNeutralize(vwap*0.728+vwap*0.272, industry), volume, 4), 16), 8)
+  columns_required: [volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 30
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the Inverted, cross-sectional
+    rank of VWAP multiplied by VWAP multiplied by volume. Negated to create an inverse signal — high raw values predict downward
+    moves. Uses close price, volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = trend continuation (sell). High negative = volume-price divergence, reversal
+    expected (buy).. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_059.py
+alpha101_060:
+  id: alpha101_060
+  theme: [volume]
+  formula: 0 - (2*scale(rank((((close-low)-(high-close))/(high-low))*volume)) - scale(rank(ts_argmax(close,10))))
+  columns_required: [high, low, close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 10
+  params:
+    window:
+      default: 10
+      range: [5, 40]
+      description: 'window parameter (original: 10)'
+  description: Ranks securities by their closing price position within the recent trading range. It computes the cross-sectional
+    rank of close price, low price, high price, close price divided by high price relative to low price, with further adjustment
+    via cross-sectional rank applied to normalize output across assets. The signal uses a 5-period estimation window. Values
+    near 1 = close at range top (strength). Values near 0 = close at range bottom (weakness). Cross-sectional rank makes this
+    relative across assets. Uses close price, high price, low price, volume data. Best suited for volume analysis.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_060.py
+alpha101_061:
+  id: alpha101_061
+  theme: [volume]
+  formula: rank(vwap - ts_min(vwap,16)) < rank(correlation(vwap, adv180, 18))
+  columns_required: [volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 197
+  params:
+    window:
+      default: 16
+      range: [8, 64]
+      description: 'window parameter (original: 16)'
+    window_1:
+      default: 18
+      range: [9, 72]
+      description: 'window parameter (original: 18)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 16-period extremum
+    of VWAP, with further adjustment via cross-sectional rank applied to normalize output across assets. The signal uses a
+    5-period estimation window. Uses close price, volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_061.py
+alpha101_062:
+  id: alpha101_062
+  theme: [volume]
+  formula: (rank(correlation(vwap, sum(adv20,22), 10)) < rank(((rank(open)+rank(open)) < (rank((high+low)/2)+rank(high)))))
+    * -1
+  columns_required: [open, high, low, volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 35
+  params:
+    window:
+      default: 22
+      range: [11, 88]
+      description: 'window parameter (original: 22)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 22-period sum
+    of adv20, with further adjustment via cross-sectional rank applied to normalize output across assets. The signal uses
+    a 5-period estimation window. Uses close price, open price, high price, low price, volume, VWAP data. Best suited for
+    volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_062.py
+alpha101_063:
+  id: alpha101_063
+  theme: [volume, momentum]
+  formula: (rank(decay_linear(delta(IndNeutralize(close, industry), 2), 8)) - rank(decay_linear(correlation(0.318*vwap+0.682*open,
+    sum(adv180,37), 14), 12))) * -1
+  columns_required: [open, close, volume, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 204
+  params:
+    window:
+      default: 37
+      range: [18, 148]
+      description: 'window parameter (original: 37)'
+    window_1:
+      default: 2
+      range: [1, 8]
+      description: 'window parameter (original: 2)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 2-period change in close
+    price, with further adjustment via 37-period sum of adv180, cross-sectional rank applied to normalize output across assets.
+    The signal uses a 5-period estimation window. Uses close price, open price, volume, VWAP data. Best suited for volume
+    analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Works best in trending
+    markets. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_063.py
+alpha101_064:
+  id: alpha101_064
+  theme: [volume]
+  formula: (rank(correlation(sum(0.178*open+0.822*low,13), sum(adv120,13), 17)) < rank(delta(0.178*((high+low)/2)+0.822*vwap,
+    4))) * -1
+  columns_required: [open, high, low, volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 136
+  params:
+    window:
+      default: 13
+      range: [6, 52]
+      description: 'window parameter (original: 13)'
+    window_1:
+      default: 13
+      range: [6, 52]
+      description: 'window parameter (original: 13)'
+    window_3:
+      default: 17
+      range: [8, 68]
+      description: 'window parameter (original: 17)'
+    lag:
+      default: 4
+      range: [2, 16]
+      description: 'lag parameter (original: 4)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 4-period change in 0.178
+    multiplied by high price and low price divided by 2)+0.822 multiplied by VWAP, with further adjustment via 13-period sum
+    of 0.178 multiplied by open price multiplied by low price, 13-period sum of adv120, cross-sectional rank applied to normalize
+    output across assets. The signal uses a 5-period estimation window. Uses close price, open price, high price, low price,
+    volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_064.py
+alpha101_065:
+  id: alpha101_065
+  theme: [volume]
+  formula: (rank(correlation(0.008*open+0.992*vwap, sum(adv60,9), 6)) < rank(open-ts_min(open,14))) * -1
+  columns_required: [open, volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 65
+  params:
+    window:
+      default: 9
+      range: [4, 36]
+      description: 'window parameter (original: 9)'
+    window_1:
+      default: 14
+      range: [7, 56]
+      description: 'window parameter (original: 14)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 9-period sum
+    of adv60, with further adjustment via 14-period extremum of open price, cross-sectional rank applied to normalize output
+    across assets. The signal uses a 5-period estimation window. Uses close price, open price, volume, VWAP data. Best suited
+    for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_065.py
+alpha101_066:
+  id: alpha101_066
+  theme: [momentum]
+  formula: (rank(decay_linear(delta(vwap,4), 7)) + Ts_Rank(decay_linear(((0.966*low+0.034*low - vwap)/(open-(high+low)/2)),
+    11), 7)) * -1
+  columns_required: [open, high, low, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 18
+  params:
+    window_2:
+      default: 7
+      range: [3, 28]
+      description: 'window parameter (original: 7)'
+    window_3:
+      default: 7
+      range: [3, 28]
+      description: 'window parameter (original: 7)'
+    decay:
+      default: 4
+      range: [2, 16]
+      description: 'decay parameter (original: 4)'
+    decay_1:
+      default: 11
+      range: [5, 44]
+      description: 'decay parameter (original: 11)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 4-period change in VWAP,
+    with further adjustment via cross-sectional rank of cross-sectional rank of decay linear(((0.966 multiplied by low price
+    multiplied by low price relative to VWAP. The signal uses a 5-period estimation window. Uses close price, open price,
+    high price, low price, VWAP data. Best suited for trend following.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Works best in trending markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_066.py
+alpha101_067:
+  id: alpha101_067
+  theme: [volume]
+  formula: (rank(high-ts_min(high,2))^rank(correlation(IndNeutralize(vwap,sector), IndNeutralize(adv20,subindustry), 6)))
+    * -1
+  columns_required: [high, volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 25
+  params:
+    window:
+      default: 2
+      range: [1, 8]
+      description: 'window parameter (original: 2)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 2-period extremum
+    of high price, with further adjustment via cross-sectional rank applied to normalize output across assets. The signal
+    uses a 5-period estimation window. Uses close price, high price, volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_067.py
+alpha101_068:
+  id: alpha101_068
+  theme: [volume]
+  formula: (Ts_Rank(correlation(rank(high), rank(adv15), 9), 14) < rank(delta(0.518*close+0.482*low, 1))) * -1
+  columns_required: [high, low, close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 36
+  params:
+    window:
+      default: 9
+      range: [4, 36]
+      description: 'window parameter (original: 9)'
+    window_1:
+      default: 1
+      range: [1, 4]
+      description: 'window parameter (original: 1)'
+    lag:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+  description: Ranks securities by their closing price position within the recent trading range. It computes the 1-period
+    change in 0.518 multiplied by close price multiplied by low price, with further adjustment via cross-sectional rank applied
+    to normalize output across assets. The signal uses a 5-period estimation window. Values near 1 = close at range top (strength).
+    Values near 0 = close at range bottom (weakness). Cross-sectional rank makes this relative across assets. Uses close price,
+    high price, low price, volume data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_068.py
+alpha101_069:
+  id: alpha101_069
+  theme: [volume]
+  formula: (rank(ts_max(delta(IndNeutralize(vwap, industry), 3), 5))^Ts_Rank(correlation(0.49*close+0.51*vwap, adv20, 5),
+    9)) * -1
+  columns_required: [close, volume, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 32
+  params:
+    window:
+      default: 3
+      range: [1, 12]
+      description: 'window parameter (original: 3)'
+    window_1:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 3-period change in VWAP,
+    with further adjustment via 3-period extremum of VWAP. The signal uses a 5-period estimation window. Uses close price,
+    volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_069.py
+alpha101_070:
+  id: alpha101_070
+  theme: [momentum, volume]
+  formula: (rank(delta(vwap,1))^Ts_Rank(correlation(IndNeutralize(close,industry), adv50, 18), 18)) * -1
+  columns_required: [close, volume, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 84
+  params:
+    window:
+      default: 1
+      range: [1, 4]
+      description: 'window parameter (original: 1)'
+    lag:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 1-period change in VWAP.
+    The signal uses a 5-period estimation window. Uses close price, volume, VWAP data. Best suited for trend following.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Works best in trending
+    markets. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_070.py
+alpha101_071:
+  id: alpha101_071
+  theme: [volume, reversal]
+  formula: max(Ts_Rank(decay_linear(correlation(Ts_Rank(close,3), Ts_Rank(adv180,12), 18), 4), 16), Ts_Rank(decay_linear((rank((low+open)-(2*vwap))^2,
+    16), 4))
+  columns_required: [open, low, close, volume, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 226
+  params:
+    window_1:
+      default: 12
+      range: [6, 48]
+      description: 'window parameter (original: 12)'
+    window_2:
+      default: 16
+      range: [8, 64]
+      description: 'window parameter (original: 16)'
+    window_3:
+      default: 18
+      range: [9, 72]
+      description: 'window parameter (original: 18)'
+    window_4:
+      default: 4
+      range: [2, 16]
+      description: 'window parameter (original: 4)'
+    decay:
+      default: 3
+      range: [1, 12]
+      description: 'decay parameter (original: 3)'
+    decay_1:
+      default: 16
+      range: [8, 64]
+      description: 'decay parameter (original: 16)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the cross-sectional
+    rank of cross-sectional rank of cross-sectional rank of adv180,12), 18), 4), 16 raised to power 2. The signal uses a 5-period
+    estimation window. Uses close price, open price, low price, volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Best used near price
+    extremes for contrarian entries. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_071.py
+alpha101_072:
+  id: alpha101_072
+  theme: [volume]
+  formula: rank(decay_linear(correlation((high+low)/2, adv40, 9), 10)) / rank(decay_linear(correlation(Ts_Rank(vwap,4), Ts_Rank(volume,19),
+    7), 3))
+  columns_required: [high, low, volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 57
+  params:
+    window_1:
+      default: 19
+      range: [9, 76]
+      description: 'window parameter (original: 19)'
+    window_2:
+      default: 9
+      range: [4, 36]
+      description: 'window parameter (original: 9)'
+    window_3:
+      default: 7
+      range: [3, 28]
+      description: 'window parameter (original: 7)'
+    decay:
+      default: 4
+      range: [2, 16]
+      description: 'decay parameter (original: 4)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the cross-sectional
+    rank applied to normalize output across assets. The signal uses a 5-period estimation window. Uses close price, high price,
+    low price, volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_072.py
+alpha101_073:
+  id: alpha101_073
+  theme: [volume]
+  formula: max(rank(decay_linear(delta(vwap,5), 3)), Ts_Rank(decay_linear(-1*(delta(0.147*open+0.853*low,2)/(0.147*open+0.853*low)),
+    3), 17)) * -1
+  columns_required: [open, low, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 21
+  params:
+    window_2:
+      default: 3
+      range: [1, 12]
+      description: 'window parameter (original: 3)'
+    window_3:
+      default: 3
+      range: [1, 12]
+      description: 'window parameter (original: 3)'
+    decay:
+      default: 5
+      range: [2, 20]
+      description: 'decay parameter (original: 5)'
+    decay_1:
+      default: 2
+      range: [1, 8]
+      description: 'decay parameter (original: 2)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 5-period change in VWAP,
+    with further adjustment via 2-period change in 0.147 multiplied by open price multiplied by low price, cross-sectional
+    rank of cross-sectional rank of decay linear(-1 multiplied by delta(0.147 multiplied by open price multiplied by low price.
+    The signal uses a 5-period estimation window. Uses close price, open price, low price, VWAP data. Best suited for volume
+    analysis.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_073.py
+alpha101_074:
+  id: alpha101_074
+  theme: [volume]
+  formula: (rank(correlation(close, sum(adv30,37), 15)) < rank(correlation(rank(0.026*high+0.974*vwap), rank(volume), 11)))
+    * -1
+  columns_required: [high, close, volume, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 60
+  params:
+    window:
+      default: 37
+      range: [18, 148]
+      description: 'window parameter (original: 37)'
+    window_1:
+      default: 11
+      range: [5, 44]
+      description: 'window parameter (original: 11)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 37-period sum
+    of adv30, with further adjustment via cross-sectional rank applied to normalize output across assets. The signal uses
+    a 5-period estimation window. Uses close price, high price, volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_074.py
+alpha101_075:
+  id: alpha101_075
+  theme: [volume]
+  formula: rank(correlation(vwap, volume, 4)) < rank(correlation(rank(low), rank(adv50), 12))
+  columns_required: [low, volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 61
+  params:
+    window:
+      default: 12
+      range: [6, 48]
+      description: 'window parameter (original: 12)'
+    window_1:
+      default: 4
+      range: [2, 16]
+      description: 'window parameter (original: 4)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the cross-sectional
+    rank applied to normalize output across assets. The signal uses a 5-period estimation window. Uses close price, low price,
+    volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_075.py
+alpha101_076:
+  id: alpha101_076
+  theme: [volume]
+  formula: max(rank(decay_linear(delta(vwap,1),12)), Ts_Rank(decay_linear(Ts_Rank(correlation(IndNeutralize(low, sector),
+    adv81, 8), 20), 17), 19)) * -1
+  columns_required: [low, volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 141
+  params:
+    window_1:
+      default: 12
+      range: [6, 48]
+      description: 'window parameter (original: 12)'
+    lag:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+    decay:
+      default: 1
+      range: [1, 4]
+      description: 'decay parameter (original: 1)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 1-period change in VWAP.
+    The signal uses a 5-period estimation window. Uses close price, low price, volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_076.py
+alpha101_077:
+  id: alpha101_077
+  theme: [volume]
+  formula: min(rank(decay_linear((high+low)/2 + high - (vwap+high), 20)), rank(decay_linear(correlation((high+low)/2, adv40,
+    3), 6)))
+  columns_required: [high, low, volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 47
+  params:
+    window_1:
+      default: 3
+      range: [1, 12]
+      description: 'window parameter (original: 3)'
+    decay:
+      default: 20
+      range: [10, 80]
+      description: 'decay parameter (original: 20)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the cross-sectional
+    rank applied to normalize output across assets. The signal uses a 5-period estimation window. Uses close price, high price,
+    low price, volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_077.py
+alpha101_078:
+  id: alpha101_078
+  theme: [volume]
+  formula: rank(correlation(sum(0.352*low+0.648*vwap, 20), sum(adv40,20), 7))^rank(correlation(rank(vwap), rank(volume), 6))
+  columns_required: [low, volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 46
+  params:
+    window:
+      default: 20
+      range: [10, 80]
+      description: 'window parameter (original: 20)'
+    window_1:
+      default: 20
+      range: [10, 80]
+      description: 'window parameter (original: 20)'
+    window_2:
+      default: 6
+      range: [3, 24]
+      description: 'window parameter (original: 6)'
+    window_3:
+      default: 7
+      range: [3, 28]
+      description: 'window parameter (original: 7)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 20-period sum
+    of 0.352 multiplied by low price multiplied by VWAP, with further adjustment via 20-period sum of adv40, cross-sectional
+    rank applied to normalize output across assets. The signal uses a 5-period estimation window. Uses close price, low price,
+    volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_078.py
+alpha101_079:
+  id: alpha101_079
+  theme: [volume, momentum]
+  formula: rank(delta(IndNeutralize(0.607*close+0.393*open, sector), 1)) < rank(correlation(Ts_Rank(vwap,4), Ts_Rank(adv150,9),
+    15))
+  columns_required: [open, close, volume, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 172
+  params:
+    window:
+      default: 4
+      range: [2, 16]
+      description: 'window parameter (original: 4)'
+    window_1:
+      default: 9
+      range: [4, 36]
+      description: 'window parameter (original: 9)'
+    window_2:
+      default: 1
+      range: [1, 4]
+      description: 'window parameter (original: 1)'
+    window_3:
+      default: 15
+      range: [7, 60]
+      description: 'window parameter (original: 15)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 1-period change in indneutralize(0.607
+    multiplied by close price multiplied by open price, with further adjustment via cross-sectional rank applied to normalize
+    output across assets. The signal uses a 5-period estimation window. Uses close price, open price, volume, VWAP data. Best
+    suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Works best in trending
+    markets. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_079.py
+alpha101_080:
+  id: alpha101_080
+  theme: [momentum, volume]
+  formula: (rank(Sign(delta(IndNeutralize(0.868*open+0.132*high, subindustry),4)))^Ts_Rank(correlation(high,adv10,5),6)) *
+    -1
+  columns_required: [open, high, volume, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 19
+  params:
+    window:
+      default: 4
+      range: [2, 16]
+      description: 'window parameter (original: 4)'
+    window_1:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 4-period change in indneutralize(0.868
+    multiplied by open price multiplied by high price. The signal uses a 5-period estimation window. Uses close price, open
+    price, high price, volume data. Best suited for trend following.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Works best in trending
+    markets. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_080.py
+alpha101_081:
+  id: alpha101_081
+  theme: [volume]
+  formula: (rank(Log(product(rank((rank(correlation(vwap, sum(adv10,50), 8))^4)), 15))) < rank(correlation(rank(vwap), rank(volume),
+    5))) * -1
+  columns_required: [volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 70
+  params:
+    window:
+      default: 50
+      range: [25, 200]
+      description: 'window parameter (original: 50)'
+    window_1:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 50-period sum
+    of adv10, with further adjustment via cross-sectional rank applied to normalize output across assets. The signal uses
+    a 5-period estimation window. Uses close price, volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_081.py
+alpha101_082:
+  id: alpha101_082
+  theme: [volume]
+  formula: min(rank(decay_linear(delta(open,1),15)), Ts_Rank(decay_linear(correlation(IndNeutralize(volume, sector), 0.634*open+0.366*open,
+    17), 7), 13)) * -1
+  columns_required: [open, volume, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 35
+  params:
+    window:
+      default: 1
+      range: [1, 4]
+      description: 'window parameter (original: 1)'
+    window_1:
+      default: 15
+      range: [7, 60]
+      description: 'window parameter (original: 15)'
+    lag:
+      default: 1
+      range: [1, 4]
+      description: 'lag parameter (original: 1)'
+    decay:
+      default: 1
+      range: [1, 4]
+      description: 'decay parameter (original: 1)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 1-period change in open
+    price. The signal uses a 5-period estimation window. Uses close price, open price, volume data. Best suited for volume
+    analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_082.py
+alpha101_083:
+  id: alpha101_083
+  theme: [volume, volatility]
+  formula: (rank(delay((high-low)/(sum(close,5)/5), 2)) * rank(rank(volume))) / (((high-low)/(sum(close,5)/5)) / (vwap-close))
+  columns_required: [high, low, close, volume, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 7
+  params:
+    window:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    window_2:
+      default: 2
+      range: [1, 8]
+      description: 'window parameter (original: 2)'
+    lag:
+      default: 5
+      range: [2, 20]
+      description: 'lag parameter (original: 5)'
+  description: Ranks securities by their closing price position within the recent trading range. It computes the 5-period
+    sum of close price, with further adjustment via cross-sectional rank of high price relative to low price divided by close
+    price, cross-sectional rank of volume divided by high price relative to low price, close price divided by 5) divided by
+    VWAP relative to close price, cross-sectional rank applied to normalize output across assets. The signal uses a 5-period
+    estimation window. Values near 1 = close at range top (strength). Values near 0 = close at range bottom (weakness). Cross-sectional
+    rank makes this relative across assets. Uses close price, high price, low price, volume, VWAP data. Best suited for volume
+    analysis.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Rises during market stress, falls during calm periods. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volatility_breakout, options_trading, risk_management, volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_083.py
+alpha101_084:
+  id: alpha101_084
+  theme: [momentum]
+  formula: SignedPower(Ts_Rank(vwap-ts_max(vwap,15), 21), delta(close,5))
+  columns_required: [close, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 35
+  params:
+    window:
+      default: 15
+      range: [7, 60]
+      description: 'window parameter (original: 15)'
+    window_1:
+      default: 21
+      range: [10, 84]
+      description: 'window parameter (original: 21)'
+    lag:
+      default: 5
+      range: [2, 20]
+      description: 'lag parameter (original: 5)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 5-period change in close
+    price, with further adjustment via 15-period extremum of VWAP. The signal uses a 5-period estimation window. Uses close
+    price, VWAP data. Best suited for trend following.
+  interpretation: Cross-sectional rank [0, 1]. Values near 1 = strong factor exposure. Values near 0 = weak or negative exposure..
+    Works best in trending markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_084.py
+alpha101_085:
+  id: alpha101_085
+  theme: [volume]
+  formula: rank(correlation(0.877*high+0.123*close, adv30, 10))^rank(correlation(Ts_Rank((high+low)/2,4), Ts_Rank(volume,10),
+    7))
+  columns_required: [high, low, close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 39
+  params:
+    window:
+      default: 4
+      range: [2, 16]
+      description: 'window parameter (original: 4)'
+    window_1:
+      default: 10
+      range: [5, 40]
+      description: 'window parameter (original: 10)'
+    window_2:
+      default: 10
+      range: [5, 40]
+      description: 'window parameter (original: 10)'
+    window_3:
+      default: 7
+      range: [3, 28]
+      description: 'window parameter (original: 7)'
+  description: Ranks securities by their closing price position within the recent trading range. It computes the cross-sectional
+    rank applied to normalize output across assets. The signal uses a 5-period estimation window. Values near 1 = close at
+    range top (strength). Values near 0 = close at range bottom (weakness). Cross-sectional rank makes this relative across
+    assets. Uses close price, high price, low price, volume data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_085.py
+alpha101_086:
+  id: alpha101_086
+  theme: [volume]
+  formula: (Ts_Rank(correlation(close, sum(adv20,15), 6), 20) < rank((open+close) - (vwap+open))) * -1
+  columns_required: [open, close, volume, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 44
+  params:
+    window:
+      default: 15
+      range: [7, 60]
+      description: 'window parameter (original: 15)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 15-period sum
+    of adv20. The signal uses a 5-period estimation window. Positive = bullish intraday session. Negative = bearish intraday
+    session. Uses close price, open price, volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_086.py
+alpha101_087:
+  id: alpha101_087
+  theme: [momentum]
+  formula: max(rank(decay_linear(delta(0.37*close+0.63*vwap, 2), 3)), Ts_Rank(decay_linear(abs(correlation(IndNeutralize(adv81,
+    industry), close, 13)), 5), 14)) * -1
+  columns_required: [close, vwap, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 110
+  params:
+    window_1:
+      default: 3
+      range: [1, 12]
+      description: 'window parameter (original: 3)'
+    decay:
+      default: 2
+      range: [1, 8]
+      description: 'decay parameter (original: 2)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 2-period change in 0.37
+    multiplied by close price multiplied by VWAP. The signal uses a 5-period estimation window. Uses close price, volume,
+    VWAP data. Best suited for trend following.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Works best in trending
+    markets
+  when_to_use: trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_087.py
+alpha101_088:
+  id: alpha101_088
+  theme: [volume]
+  formula: min(rank(decay_linear((rank(open)+rank(low))-(rank(high)+rank(close)),8)), Ts_Rank(decay_linear(correlation(Ts_Rank(close,8),Ts_Rank(adv60,20),8),7),3))
+  columns_required: [open, high, low, close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 94
+  params:
+    window:
+      default: 8
+      range: [4, 32]
+      description: 'window parameter (original: 8)'
+    window_2:
+      default: 20
+      range: [10, 80]
+      description: 'window parameter (original: 20)'
+    decay:
+      default: 8
+      range: [4, 32]
+      description: 'decay parameter (original: 8)'
+    decay_1:
+      default: 8
+      range: [4, 32]
+      description: 'decay parameter (original: 8)'
+  description: Ranks securities by their closing price position within the recent trading range. It computes the cross-sectional
+    rank applied to normalize output across assets. The signal uses a 5-period estimation window. Values near 1 = close at
+    range top (strength). Values near 0 = close at range bottom (weakness). Cross-sectional rank makes this relative across
+    assets. Uses close price, open price, high price, low price, volume data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_088.py
+alpha101_089:
+  id: alpha101_089
+  theme: [volume, momentum]
+  formula: Ts_Rank(decay_linear(correlation(low, adv10, 7), 6), 4) - Ts_Rank(decay_linear(delta(IndNeutralize(vwap, industry),3),10),15)
+  columns_required: [low, volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 30
+  params:
+    window:
+      default: 7
+      range: [3, 28]
+      description: 'window parameter (original: 7)'
+    window_1:
+      default: 3
+      range: [1, 12]
+      description: 'window parameter (original: 3)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 3-period change in VWAP.
+    The signal uses a 5-period estimation window. Uses close price, low price, volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Works best in trending
+    markets. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_089.py
+alpha101_090:
+  id: alpha101_090
+  theme: [volume]
+  formula: (rank(close-ts_max(close,5))^Ts_Rank(correlation(IndNeutralize(adv40, subindustry), low, 5), 3)) * -1
+  columns_required: [low, close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 46
+  params:
+    window:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 5-period extremum
+    of close price. The signal uses a 5-period estimation window. Uses close price, low price, volume data. Best suited for
+    volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_090.py
+alpha101_091:
+  id: alpha101_091
+  theme: [volume]
+  formula: (Ts_Rank(decay_linear(decay_linear(correlation(IndNeutralize(close, industry), volume, 10), 16), 4), 5) - rank(decay_linear(correlation(vwap,
+    adv30, 4), 3))) * -1
+  columns_required: [close, volume, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 35
+  params:
+    window:
+      default: 4
+      range: [2, 16]
+      description: 'window parameter (original: 4)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the cross-sectional
+    rank of cross-sectional rank of VWAP. The signal uses a 5-period estimation window. Uses close price, volume, VWAP data.
+    Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_091.py
+alpha101_092:
+  id: alpha101_092
+  theme: [volume]
+  formula: min(Ts_Rank(decay_linear(((high+low)/2 + close < low+open), 15), 19), Ts_Rank(decay_linear(correlation(rank(low),
+    rank(adv30), 8), 7), 7))
+  columns_required: [open, high, low, close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 49
+  params:
+    window_1:
+      default: 8
+      range: [4, 32]
+      description: 'window parameter (original: 8)'
+    window_2:
+      default: 19
+      range: [9, 76]
+      description: 'window parameter (original: 19)'
+    decay:
+      default: 15
+      range: [7, 60]
+      description: 'decay parameter (original: 15)'
+  description: Ranks securities by their closing price position within the recent trading range. It computes the cross-sectional
+    rank applied to normalize output across assets. The signal uses a 5-period estimation window. Values near 1 = close at
+    range top (strength). Values near 0 = close at range bottom (weakness). Cross-sectional rank makes this relative across
+    assets. Uses close price, open price, high price, low price, volume data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_092.py
+alpha101_093:
+  id: alpha101_093
+  theme: [volume]
+  formula: Ts_Rank(decay_linear(correlation(IndNeutralize(vwap, industry), adv81, 17), 20), 8) / rank(decay_linear(delta(0.524*close+0.476*vwap,
+    3), 16))
+  columns_required: [close, volume, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 123
+  params:
+    window_1:
+      default: 16
+      range: [8, 64]
+      description: 'window parameter (original: 16)'
+    decay:
+      default: 3
+      range: [1, 12]
+      description: 'decay parameter (original: 3)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 3-period change in 0.524
+    multiplied by close price multiplied by VWAP. The signal uses a 5-period estimation window. Uses close price, volume,
+    VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_093.py
+alpha101_094:
+  id: alpha101_094
+  theme: [volume]
+  formula: (rank(vwap-ts_min(vwap,12))^Ts_Rank(correlation(Ts_Rank(vwap,20), Ts_Rank(adv60,4), 18), 3)) * -1
+  columns_required: [volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 82
+  params:
+    window:
+      default: 12
+      range: [6, 48]
+      description: 'window parameter (original: 12)'
+    window_1:
+      default: 20
+      range: [10, 80]
+      description: 'window parameter (original: 20)'
+    window_2:
+      default: 4
+      range: [2, 16]
+      description: 'window parameter (original: 4)'
+    window_4:
+      default: 18
+      range: [9, 72]
+      description: 'window parameter (original: 18)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 12-period extremum
+    of VWAP. The signal uses a 5-period estimation window. Uses close price, volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_094.py
+alpha101_095:
+  id: alpha101_095
+  theme: [volume]
+  formula: rank(open-ts_min(open,13)) < Ts_Rank((rank(correlation(sum((high+low)/2,19), sum(adv40,19),13))^5), 12)
+  columns_required: [open, high, low, volume, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 63
+  params:
+    window:
+      default: 13
+      range: [6, 52]
+      description: 'window parameter (original: 13)'
+    window_1:
+      default: 19
+      range: [9, 76]
+      description: 'window parameter (original: 19)'
+    window_2:
+      default: 19
+      range: [9, 76]
+      description: 'window parameter (original: 19)'
+    window_4:
+      default: 13
+      range: [6, 52]
+      description: 'window parameter (original: 13)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 19-period sum
+    of high price and low price divided by 2, with further adjustment via 19-period sum of adv40, 13-period extremum of open
+    price, cross-sectional rank applied to normalize output across assets. The signal uses a 5-period estimation window. Uses
+    close price, open price, high price, low price, volume data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_095.py
+alpha101_096:
+  id: alpha101_096
+  theme: [volume]
+  formula: max(Ts_Rank(decay_linear(correlation(rank(vwap), rank(volume), 4), 4), 8), Ts_Rank(decay_linear(Ts_ArgMax(correlation(Ts_Rank(close,7),
+    Ts_Rank(adv60,4), 4), 13), 14), 13)) * -1
+  columns_required: [close, volume, vwap]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 103
+  params:
+    window:
+      default: 4
+      range: [2, 16]
+      description: 'window parameter (original: 4)'
+    window_2:
+      default: 4
+      range: [2, 16]
+      description: 'window parameter (original: 4)'
+    window_3:
+      default: 4
+      range: [2, 16]
+      description: 'window parameter (original: 4)'
+    window_4:
+      default: 4
+      range: [2, 16]
+      description: 'window parameter (original: 4)'
+    decay:
+      default: 7
+      range: [3, 28]
+      description: 'decay parameter (original: 7)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the cross-sectional
+    rank applied to normalize output across assets. The signal uses a 5-period estimation window. High correlation = volume
+    confirms price trend. Low correlation = divergence warns of reversal. Uses close price, volume, VWAP data. Best suited
+    for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_096.py
+alpha101_097:
+  id: alpha101_097
+  theme: [volume]
+  formula: (rank(decay_linear(delta(IndNeutralize(0.721*low+0.279*vwap, industry),3),20)) - Ts_Rank(decay_linear(Ts_Rank(correlation(Ts_Rank(low,8),
+    Ts_Rank(adv60,17), 5), 19), 16),16)) * -1
+  columns_required: [low, volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 128
+  params:
+    window_1:
+      default: 17
+      range: [8, 68]
+      description: 'window parameter (original: 17)'
+    window_2:
+      default: 3
+      range: [1, 12]
+      description: 'window parameter (original: 3)'
+    window_3:
+      default: 5
+      range: [2, 20]
+      description: 'window parameter (original: 5)'
+    decay:
+      default: 8
+      range: [4, 32]
+      description: 'decay parameter (original: 8)'
+  description: Captures momentum-adjusted price changes relative to market activity. It computes the 3-period change in indneutralize(0.721
+    multiplied by low price multiplied by VWAP. The signal uses a 5-period estimation window. Uses close price, low price,
+    volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_097.py
+alpha101_098:
+  id: alpha101_098
+  theme: [volume]
+  formula: rank(decay_linear(correlation(vwap, sum(adv5,26), 5), 7)) - rank(decay_linear(Ts_Rank(Ts_ArgMin(correlation(rank(open),
+    rank(adv15), 21), 9), 7), 8))
+  columns_required: [open, volume, vwap, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 56
+  params:
+    window:
+      default: 26
+      range: [13, 104]
+      description: 'window parameter (original: 26)'
+    window_1:
+      default: 21
+      range: [10, 84]
+      description: 'window parameter (original: 21)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 26-period sum
+    of adv5, with further adjustment via cross-sectional rank applied to normalize output across assets. The signal uses a
+    5-period estimation window. Uses close price, open price, volume, VWAP data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_098.py
+alpha101_099:
+  id: alpha101_099
+  theme: [volume]
+  formula: (rank(correlation(sum((high+low)/2, 20), sum(adv60, 20), 9)) < rank(correlation(low, volume, 6))) * -1
+  columns_required: [high, low, volume, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 68
+  params:
+    window:
+      default: 20
+      range: [10, 80]
+      description: 'window parameter (original: 20)'
+    window_1:
+      default: 20
+      range: [10, 80]
+      description: 'window parameter (original: 20)'
+    window_2:
+      default: 9
+      range: [4, 36]
+      description: 'window parameter (original: 9)'
+    window_3:
+      default: 6
+      range: [3, 24]
+      description: 'window parameter (original: 6)'
+  description: Analyzes trading volume patterns and their relationship with price movements. It computes the 20-period sum
+    of high price and low price divided by 2, with further adjustment via 20-period sum of adv60, cross-sectional rank applied
+    to normalize output across assets. The signal uses a 5-period estimation window. Uses close price, high price, low price,
+    volume data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Volume spikes indicate
+    institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution
+  source: factors/singles/alpha101/alpha_099.py
+alpha101_100:
+  id: alpha101_100
+  theme: [volume, momentum]
+  formula: 0 - 1*((1.5*scale(IN(IN(rank(((close-low)-(high-close))/(high-low)*volume), subind), subind)) - scale(IN(correlation(close,
+    rank(adv20), 5) - rank(ts_argmin(close,30)), subind))) * (volume/adv20))
+  columns_required: [high, low, close, volume]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 30
+  params:
+    window:
+      default: 1.5
+      range: [1, 30]
+      description: 'window parameter (original: 1.5)'
+    window_1:
+      default: 30
+      range: [15, 120]
+      description: 'window parameter (original: 30)'
+  description: Ranks securities by their closing price position within the recent trading range. It computes the cross-sectional
+    rank of close price, low price, high price, close price divided by high price relative to low price, with further adjustment
+    via cross-sectional rank applied to normalize output across assets. The signal uses a 5-period estimation window. Values
+    near 1 = close at range top (strength). Values near 0 = close at range bottom (weakness). Cross-sectional rank makes this
+    relative across assets. Uses close price, high price, low price, volume data. Best suited for volume analysis.
+  interpretation: Range [-1, 1]. High positive = factors move together. High negative = factors diverge.. Works best in trending
+    markets. Volume spikes indicate institutional activity or unusual interest
+  when_to_use: volume_analysis, liquidity_screening, accumulation_distribution, trend_following, breakout_trading, factor_investing
+  source: factors/singles/alpha101/alpha_100.py
+alpha101_101:
+  id: alpha101_101
+  theme: [reversal]
+  formula: (close - open) / ((high - low) + 0.001)
+  columns_required: [open, high, low, close]
+  universe: [equity_us, equity_in]
+  frequency: [1D]
+  decay_horizon: 5
+  min_warmup_bars: 1
+  description: Detects potential price reversals by identifying overextended moves or divergences. It computes the close price
+    minus open relative to high price minus low price. The signal uses a 5-period estimation window. Values near 1 = close
+    at range top (strength). Values near 0 = close at range bottom (weakness). Cross-sectional rank makes this relative across
+    assets. Uses close price, open price, high price, low price data. Best suited for mean reversion.
+  interpretation: Higher values indicate stronger factor exposure.. Best used near price extremes for contrarian entries
+  when_to_use: mean_reversion, contrarian_trading, exhaustion_detection
+  source: factors/singles/alpha101/alpha_101.py

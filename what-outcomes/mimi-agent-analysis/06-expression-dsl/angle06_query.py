@@ -16,7 +16,7 @@ def log(label, elapsed, status, detail=''):
     print(json.dumps(j))
 
 # ── Local backtest (min_assets=2 for 4 tickers) ──
-from vinu_features.compute.factor_backtest import _compute_metrics, FactorBacktestResult
+from vinu_tools.compute.factor_backtest import _compute_metrics, FactorBacktestResult
 
 def bt_factor(fv, fr, ws='rank', min_assets=2):
     common = fv.index.intersection(fr.index)
@@ -86,7 +86,7 @@ fwd_ret = panel['returns'].shift(-1)
 
 # ── Section 1: compute_expression() — 11 Functions ──
 print("\n=== 1: compute_expression() 11 Functions ===")
-from vinu_features.compute.factor_expressions import compute_expression, list_expression_variables
+from vinu_tools.compute.factor_expressions import compute_expression, list_expression_variables
 
 # 1a: Simple ref
 v = compute_expression('alpha101_001', panel)
@@ -136,7 +136,7 @@ except Exception as e: log('err_unknown_func', 0, 'PASS', str(e)[:80])
 # ── Section 2: QLib Evaluator ──
 print("\n=== 2: QLib Evaluator ===")
 try:
-    from vinu_features.compute.bigger_recipe._alpha_expr.evaluator import evaluate_expression as qlib_eval
+    from vinu_tools.compute.bigger_recipe._alpha_expr.evaluator import evaluate_expression as qlib_eval
     arr = {c: panel[c].values for c in ['open','high','low','close','volume']}
 
     for name, e in [('close','$close'),('close-open','$close-$open'),

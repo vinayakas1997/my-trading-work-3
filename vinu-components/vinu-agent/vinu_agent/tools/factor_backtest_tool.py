@@ -80,7 +80,7 @@ max drawdown, win rate, profit factor)."""
         }
 
         # Compute factor via expression engine
-        from vinu_features.compute.factor_expressions import compute_expression
+        from vinu_tools.compute.factor_expressions import compute_expression
         try:
             factor_values = compute_expression(factor_expr, panel)
         except Exception as e:
@@ -90,7 +90,7 @@ max drawdown, win rate, profit factor)."""
         fwd_ret = returns.shift(-1).loc[factor_values.index[:-1]]
         factor_values = factor_values.iloc[:-1]
 
-        from vinu_features.compute.factor_backtest import backtest_factor
+        from vinu_tools.compute.factor_backtest import backtest_factor
         try:
             result = backtest_factor(factor_values, fwd_ret, weight_scheme=weight_scheme, long_quantile=long_quantile, freq=freq, compute_turnover=True)
         except Exception as e:

@@ -17,7 +17,7 @@ class CorrelationTool(BaseTool):
 
     def execute(self, **kwargs) -> str:
         import httpx
-        url = self._services_config.get("vinu_correlation", "http://localhost:8083")
+        url = self._services_config.get("vinu_initial_analysis", "http://localhost:8083")
         resp = httpx.post(
             f"{url}/correlation/compute",
             json={

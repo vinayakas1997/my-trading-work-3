@@ -3,7 +3,7 @@ import sys, numpy as np
 sys.path.insert(0, r'C:\Users\vinay\Desktop\my-trading-work-3\vinu-components')
 
 print("=== QLib Evaluator ===")
-from vinu_features.compute.bigger_recipe._alpha_expr.evaluator import evaluate as qlib_eval
+from vinu_tools.compute.bigger_recipe._alpha_expr.evaluator import evaluate as qlib_eval
 
 close = np.random.randn(100).cumsum() + 100
 high = close + np.abs(np.random.randn(100) * 0.5)

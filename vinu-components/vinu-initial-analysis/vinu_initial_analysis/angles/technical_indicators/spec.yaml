@@ -1,0 +1,13 @@
+title: Technical Indicator Landscape
+purpose: Compute and evaluate 24 technical indicators across trend, momentum, volatility,
+  volume, and price action
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: Angle-specific results

@@ -1,0 +1,16 @@
+title: Backtesting Metrics
+purpose: Compute 44+ portfolio metrics — Sharpe, Sortino, MaxDD, WinRate, CAGR, VaR,
+  CVaR, tail ratio
+time_formats:
+- 1D
+- 1W
+- 1M
+- 6M
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: Angle-specific results

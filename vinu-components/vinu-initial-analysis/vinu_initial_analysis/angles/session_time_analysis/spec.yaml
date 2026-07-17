@@ -1,0 +1,14 @@
+title: Session / Time-of-Day Analysis
+purpose: Session classification (pre-market, regular, after-hours), news baseline
+  per session, premarket gap analysis
+time_formats:
+- 15min
+- 1H
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: Angle-specific results

@@ -28,7 +28,7 @@ class ResearchTools:
             timeout=120.0, max_retries=2, circuit_breaker_threshold=3,
         )
         self._correlation_client = ResilientClient(
-            self._config.correlation_api_url, "vinu-correlation",
+            self._config.correlation_api_url, "vinu-initial-analysis",
             timeout=60.0, max_retries=3, circuit_breaker_threshold=3,
         )
         self._stock_client = ResilientClient(

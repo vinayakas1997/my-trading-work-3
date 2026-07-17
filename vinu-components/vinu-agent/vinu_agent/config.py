@@ -33,9 +33,9 @@ class AgentConfig:
     memory_dir: str = ""
     services: dict = field(default_factory=lambda: {
         "vinu_simulator": os.environ.get("VINU_SIMULATOR_API_URL", "http://localhost:8085"),
-        "vinu_features": os.environ.get("VINU_FEATURES_API_URL", "http://localhost:8082"),
+        "vinu_tools": os.environ.get("VINU_TOOLS_API_URL", "http://localhost:8082"),
         "vinu_news": os.environ.get("VINU_NEWS_API_URL", "http://localhost:8080"),
-        "vinu_correlation": os.environ.get("VINU_CORRELATION_API_URL", "http://localhost:8083"),
+        "vinu_initial_analysis": os.environ.get("VINU_INITIAL_ANALYSIS_API_URL", "http://localhost:8083"),
         "vinu_stock_price": os.environ.get("VINU_STOCK_PRICE_API_URL", "http://localhost:8081"),
         "vinu_strategy": os.environ.get("VINU_STRATEGY_API_URL", "http://localhost:8084"),
         "vinu_research": os.environ.get("VINU_RESEARCH_API_URL", "http://localhost:8086"),

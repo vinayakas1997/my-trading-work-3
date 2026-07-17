@@ -1,2 +1,0 @@
-[console_scripts]
-vinu-features = vinu_features.cli:main

@@ -1,0 +1,14 @@
+title: Portfolio Analysis
+purpose: Pairwise correlation, rolling beta, beta-hedged Sharpe, multi-timeframe correlation
+time_formats:
+- 1D
+- 1W
+- 1M
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: Angle-specific results

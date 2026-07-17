@@ -41,7 +41,7 @@ print('Panel close tail:\n', panel['close'].tail())
 print('\nReturns head:\n', panel['returns'].head())
 
 # Compute factor
-from vinu_features.compute.factor_expressions import compute_expression
+from vinu_tools.compute.factor_expressions import compute_expression
 fv = compute_expression('alpha101_001', panel)
 print('\nFactor values head:\n', fv.head())
 print('Factor values tail:\n', fv.tail())
@@ -64,7 +64,7 @@ print('\nLast 5 rows of fwd_ret:\n', fwd_ret2.tail())
 print('\nLast 5 rows of fv:\n', fv2.tail())
 
 # Run backtest
-from vinu_features.compute.factor_backtest import backtest_factor
+from vinu_tools.compute.factor_backtest import backtest_factor
 res = backtest_factor(fv2, fwd_ret2, weight_scheme='rank',
                       long_quantile=0.25, short_quantile=0.25,
                       freq='1d', compute_turnover=True)

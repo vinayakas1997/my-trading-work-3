@@ -1,0 +1,290 @@
+angles:
+- id: backtesting_44_metrics
+  title: Backtesting Metrics
+  purpose: Compute 44+ portfolio metrics — Sharpe, Sortino, MaxDD, WinRate, CAGR,
+    VaR, CVaR, tail ratio
+  time_formats:
+  - 1D
+  - 1W
+  - 1M
+  - 6M
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: benchmark_comparison
+  title: Benchmark Comparison
+  purpose: Alpha, beta, tracking error, information ratio, up/down capture vs benchmark
+  time_formats:
+  - 1D
+  - 1W
+  - 1M
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: decay_monitoring
+  title: Decay Monitoring
+  purpose: Rolling IC, information ratio half-life, 4-level health score, decay curve
+  time_formats:
+  - 1D
+  - 1W
+  - 1M
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: deflated_sharpe_ratio
+  title: Deflated Sharpe Ratio
+  purpose: Full Bailey & López de Prado DSR formula with skew/kurt adjustment, variable
+    trials
+  time_formats:
+  - 1D
+  - 1W
+  - 1M
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: drawdown_deep_dive
+  title: Drawdown Deep-Dive
+  purpose: Drawdown detection, news attribution, max drawdown duration, recovery time
+    across multi-timeframe
+  time_formats:
+  - 15min
+  - 1H
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: event_study_methodology
+  title: Event Study Methodology
+  purpose: Abnormal return, cumulative abnormal return (CAR), t-test significance
+    classification
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: factor_backtesting
+  title: Factor Backtesting
+  purpose: Cross-sectional long/short factor backtest with 7 factors × 4 weight schemes,
+    10 portfolio metrics
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: fundamentals
+  title: Fundamentals
+  purpose: PE/ROE/FCF/margins from yfinance, Alpaca corporate actions integration
+  time_formats:
+  - 1M
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: ml_model_pipeline
+  title: ML Model Pipeline
+  purpose: Train/evaluate 9 ML models, OOS IC, auto-selection, CUDA detection
+  time_formats:
+  - 1D
+  - 1W
+  - 1M
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: news_first_analysis
+  title: News First Analysis
+  purpose: Categorize and quantify the news landscape — sentiment, categories, priority,
+    threads, and basic stats
+  time_formats:
+  - 15min
+  - 1H
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: news_price_causality
+  title: News-Price Causality
+  purpose: Statistical proof of news impact on price — Granger causality, Pearson
+    correlation, lag analysis, event study
+  time_formats:
+  - 15min
+  - 1H
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: pairs_cointegration
+  title: Pairs Cointegration
+  purpose: Engle-Granger and Johansen cointegration tests, z-score trading signals,
+    half-life mean reversion
+  time_formats:
+  - 1D
+  - 1W
+  - 1M
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: pnl_attribution
+  title: PnL Attribution
+  purpose: Core/noise/large trade decomposition, exit timing analysis, exit reason
+    attribution
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: portfolio_analysis
+  title: Portfolio Analysis
+  purpose: Pairwise correlation, rolling beta, beta-hedged Sharpe, multi-timeframe
+    correlation
+  time_formats:
+  - 1D
+  - 1W
+  - 1M
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: regime_analysis
+  title: Regime Analysis
+  purpose: 4-regime classifier (bull/bear/high_vol/sideways), transition matrix, per-regime
+    Sharpe ratio
+  time_formats:
+  - 1D
+  - 1W
+  - 1M
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: session_time_analysis
+  title: Session / Time-of-Day Analysis
+  purpose: Session classification (pre-market, regular, after-hours), news baseline
+    per session, premarket gap analysis
+  time_formats:
+  - 15min
+  - 1H
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: shadow_trading
+  title: Shadow Trading
+  purpose: K-Means clustering of trading patterns, silhouette score, FIFO roundtrip
+    pairing
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: technical_indicators
+  title: Technical Indicator Landscape
+  purpose: Compute and evaluate 24 technical indicators across trend, momentum, volatility,
+    volume, and price action
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: validation_overfitting
+  title: Validation & Overfitting
+  purpose: Monte Carlo permutation test, bootstrap confidence intervals, walk-forward
+    validation, deflated Sharpe
+  time_formats:
+  - 1D
+  - 1W
+  - 1M
+  - 6M
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
