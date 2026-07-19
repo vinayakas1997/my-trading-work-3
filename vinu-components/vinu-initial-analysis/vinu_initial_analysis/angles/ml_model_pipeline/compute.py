@@ -68,7 +68,6 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": datetime.now(timezone.utc).isoformat(),
-            "time_format": time_format,
             "angle": "ml_model_pipeline",
             "status": "no_data",
         }])
@@ -80,7 +79,6 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "ml_model_pipeline",
             "status": "insufficient_data",
             "n_observations": len(close),
@@ -108,7 +106,6 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "ml_model_pipeline",
             "status": "insufficient_data_after_features",
             "n_observations": len(combined),
@@ -126,7 +123,6 @@ def compute(
     rows.append({
         "symbol": symbol,
         "analysis_at": analysis_at,
-        "time_format": time_format,
         "angle": "ml_model_pipeline",
         "metric": "data_prep",
         "n_features": len(feature_cols),
@@ -138,7 +134,6 @@ def compute(
         return pd.DataFrame(rows + [{
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "ml_model_pipeline",
             "metric": "error",
             "status": "scipy_not_available",
@@ -153,7 +148,6 @@ def compute(
             row = {
                 "symbol": symbol,
                 "analysis_at": analysis_at,
-                "time_format": time_format,
                 "angle": "ml_model_pipeline",
                 "metric": "model_result",
                 "model": name,
@@ -167,7 +161,6 @@ def compute(
         rows.append({
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "ml_model_pipeline",
             "metric": "best_model",
             "model": best,
@@ -177,7 +170,6 @@ def compute(
             rows.append({
                 "symbol": symbol,
                 "analysis_at": analysis_at,
-                "time_format": time_format,
                 "angle": "ml_model_pipeline",
                 "metric": "model_ranking",
                 "rank": rank,

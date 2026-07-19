@@ -41,13 +41,14 @@ def test_attribute_drawdown_no_events():
 
 def test_attribute_drawdown_with_events():
     events = [
-        {"symbol": "AAPL", "ts": 500, "headline": "Bad news",
+        {"symbol": "AAPL", "ts": 1200, "headline": "Bad news",
          "sentiment": "BEARISH", "impact_label": "high_bearish",
          "price_change_30m": -2.5},
-        {"symbol": "AAPL", "ts": 600, "headline": "More bad news",
+        {"symbol": "AAPL", "ts": 1500, "headline": "More bad news",
          "sentiment": "BEARISH", "impact_label": "medium",
          "price_change_30m": -1.0},
     ]
     result = attribute_drawdown("AAPL", 1000, 2000, events)
     assert result["attribution"]["news_driven_pct"] > 0
     assert len(result["attribution"]["contributing_events"]) == 2
+

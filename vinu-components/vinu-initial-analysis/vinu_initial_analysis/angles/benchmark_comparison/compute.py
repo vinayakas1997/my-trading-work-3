@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
 
+from vinu_initial_analysis.angles._helpers import periods_per_year
+
 
 def compute(
     symbol: str,
@@ -20,7 +22,6 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": datetime.now(timezone.utc).isoformat(),
-            "time_format": time_format,
             "angle": "benchmark_comparison",
             "status": "no_data",
         }])
@@ -33,7 +34,6 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "benchmark_comparison",
             "status": "insufficient_data",
             "n_observations": len(returns),
@@ -51,6 +51,8 @@ def compute(
     if len(combined) < 5:
         r_b = returns.mean()
         r_s = returns - r_b
+        r_s_flat = r_s.values if hasattr(r_s, 'values') else np.array(r_s)
+        r_b_flat = np.full_like(r_s_flat, r_b)
         beta = 0.0
         alpha = float(returns.mean())
         te = float(returns.std())
@@ -64,11 +66,14 @@ def compute(
     else:
         r_s = combined["strat"].values
         r_b = combined["bench"].values
+        r_s_flat = r_s
+        r_b_flat = r_b
         beta = float(np.cov(r_s, r_b)[0, 1] / np.var(r_b)) if np.var(r_b) > 0 else 0.0
         alpha = float(np.mean(r_s) - beta * np.mean(r_b))
         te = float(np.std(r_s - beta * r_b))
         ir = alpha / te if te > 0 else 0.0
-        excess_cagr = float((1 + r_s).prod() ** (252 / len(r_s)) - 1 - ((1 + r_b).prod() ** (252 / len(r_b)) - 1))
+        ppy = periods_per_year(time_format)
+        excess_cagr = float((1 + r_s).prod() ** (ppy / len(r_s)) - 1 - ((1 + r_b).prod() ** (ppy / len(r_b)) - 1))
         up_days = r_b > 0
         down_days = r_b < 0
         up_capture = float(np.mean(r_s[up_days]) / np.mean(r_b[up_days])) if up_days.any() and np.mean(r_b[up_days]) != 0 else np.nan
@@ -82,7 +87,6 @@ def compute(
     rows.append({
         "symbol": symbol,
         "analysis_at": analysis_at,
-        "time_format": time_format,
         "angle": "benchmark_comparison",
         "metric": "benchmark_relative",
         "benchmark": "trailing_mean",
@@ -104,7 +108,6 @@ def compute(
         row = {
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "benchmark_comparison",
             "metric": f"rolling_{window}d",
             "benchmark": "trailing_mean",

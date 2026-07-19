@@ -19,7 +19,7 @@ def create_app(service: InitialAnalysisService | None = None):
     async def lifespan(_app):
         yield
         if owns_service:
-            await app_service.close()
+            app_service.close()
 
     def _get_service():
         return app_service

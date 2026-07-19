@@ -87,24 +87,34 @@ Ready to feed data to Research-Simulations.
 
 ---
 
-## 3. Research-Simulations (next to build)
+## 3. Research-Simulations (exists — integration in progress)
 
 **Package:** `vinu-research` (LLM-driven strategy research)
 
 ### Purpose
 Takes outputs from Initial-Analysis and uses LLM agents to research, generate, backtest, and refine trading strategies. This is the only environment where LLMs are invoked.
 
-### Planned Scope
-- **Multi-agent research loop**: quant coder → backtest → risk critic → refine → approve
-- **Expression DSL**: combine factors into custom alphas using 35+ operators
-- **Strategy YAML**: load/store strategies in a declarative format
-- **RL training environment**: Gym env for reinforcement learning allocation
-- **Scheduled cron research**: periodic automated research tasks
+### Audit findings (2026-07-20)
+A substantial `vinu-research` package already exists from a prior iteration and is worth reusing, NOT rebuilding:
+- The loop in `loop.py` already implements quant coder → backtest → risk critic → refine → approve, with strong anti-overfitting machinery: static AST verification, walk-forward (default on), a true holdout slice with PASS-downgrade on failure, min-30-trades floor, weight-holding verification.
+- Strategy-evaluation machinery (decay, benchmark, walk-forward, comparison) already lives here — confirming the Initial-Analysis angle trim: `decay_monitoring`, `benchmark_comparison`, `validation_overfitting`, `backtesting_44_metrics`, `factor_backtesting`, `ml_model_pipeline`, `shadow_trading`, `portfolio_analysis` are earmarked for removal from vinu-initial-analysis (their job belongs here, applied to strategies, not raw stocks). Keep in Initial-Analysis: trend_lifecycle, trend_session_structure, news_first_analysis, news_price_causality (+ regime_analysis recommended; technical_indicators / event_study_methodology / fundamentals / pairs_cointegration borderline; pnl_attribution dormant until Live-Trading).
+- Consumes services over HTTP: stock-price :8081, features :8082 (dead client, unused), initial-analysis :8083 (legacy `/story` `/drawdown` `/correlation` endpoints), simulator :8085. LLM is provider-agnostic (OpenAI-compatible base URL, default local Ollama, off by default).
+- `vinu-strategy` (YAML strategy engine + web UI) is standalone — the natural "approved strategy" representation for Live-Trading. Open design decision: research emits Python strategy code today; the approve→live handoff (Python vs YAML) must be decided before Live-Trading.
+
+### Fixed 2026-07-20
+- Windows portability: removed Unix-only `fcntl` lock in `hypothesis_registry.py` (lock was on a private temp file — atomicity comes from `os.replace`). Unblocked 7 test modules.
+- `sqlite_backend.py`: newest-first ordering tie-break (`ORDER BY created_at DESC, id DESC`) and monotonic `updated_at` on coarse clocks.
+- **Angle integration (step 1)**: new `angle_context.py` compacts `/angle/{name}/{ticker}` output (latest run, time-format filtered, NaN-cleaned) from `trend_lifecycle`, `trend_session_structure`, `news_price_causality` into `story["angles"]`; the rule-based risk critic and the LLM risk-critic prompt now consume it (suggestions only — verdicts unchanged). Test suite: 349 passed on Windows.
+
+### Remaining integration work
+- LLM strategy *generator* prompt (`llm_generator.py`) does not yet receive angle context — only the risk critic does.
+- Legacy `/story` shape mismatch: `correlations.by_session` and `baseline_anomalies` expected by the prompt are never populated by the current initial-analysis endpoint.
+- Decide Python-code vs strategy-YAML handoff for approved strategies.
 
 ### Key Design Principle
 All strategies produced here must be fully deterministic when replayed. The LLM is used for *generation* and *refinement*, not for live decision-making. Once a strategy is approved, it becomes a static config consumed by Live-Trading.
 
-### Status: NOT STARTED
+### Status: EXISTS (prior iteration) — angle integration started 2026-07-20
 
 ---
 
@@ -136,4 +146,6 @@ Zero LLM calls during market hours. Every decision is a deterministic function o
 3. **Data pipeline**: Runner receives real price + news clients, loops over time formats, passes data to each angle's compute().
 4. **API layer**: FastAPI routes for all 19 angles + backward compat for old CorrelationAPI consumers.
 5. **Web UI removed**: Deleted old React dashboard — will be rebuilt fresh.
-6. **Next**: Research-Simulations environment (LLM-driven strategy research loop).
+6. **trend_lifecycle overhaul + trend_session_structure** (2026-07-19/20): fixed ATR threshold inversion, outcome-maturity recapture, walk-forward KNN matching with session soft-filter; added the session-structure angle (16 angles total).
+7. **vinu-research audit + integration start** (2026-07-20): reuse-not-rebuild verdict; Windows portability fixed (349 tests green); risk critic + LLM prompt now consume trend_lifecycle / session-structure / news-causality angle context via `story["angles"]`.
+8. **Next**: feed angle context into the LLM strategy generator; run the loop end-to-end against real angle data; decide the Python-vs-YAML approved-strategy handoff.

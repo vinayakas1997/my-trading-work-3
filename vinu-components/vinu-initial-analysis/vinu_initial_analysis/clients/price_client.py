@@ -17,6 +17,7 @@ class PriceClient:
         symbol: str,
         from_ts: int | None = None,
         to_ts: int | None = None,
+        interval: str | None = None,
         limit: int = 5000,
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {}
@@ -24,6 +25,8 @@ class PriceClient:
             params["from"] = from_ts
         if to_ts is not None:
             params["to"] = to_ts
+        if interval is not None:
+            params["interval"] = interval
         if limit is not None:
             params["limit"] = limit
         resp = request("GET", f"{self._base}/candles/{symbol.upper()}", params=params)

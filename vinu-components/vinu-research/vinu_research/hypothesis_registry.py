@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
 import os
@@ -39,12 +38,13 @@ class HypothesisRegistry:
                 prefix="hypotheses_",
                 dir=str(self._path.parent),
             )
+            # No file lock needed: the temp file is private to this process and
+            # atomicity comes from os.replace below. (The previous fcntl.flock
+            # was Unix-only and locked only the private temp file anyway.)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                fcntl.flock(f, fcntl.LOCK_EX)
                 json.dump(data, f, indent=2, default=str)
                 f.flush()
                 os.fsync(fd)
-                fcntl.flock(f, fcntl.LOCK_UN)
             os.replace(tmp, str(self._path))
         except Exception as exc:
             LOG.error("Failed to write hypotheses to %s: %s", self._path, exc)

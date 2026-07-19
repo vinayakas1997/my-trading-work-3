@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
 
+from vinu_initial_analysis.angles._helpers import periods_per_year, ann_factor
+
 
 def compute(
     symbol: str,
@@ -20,7 +22,6 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": datetime.now(timezone.utc).isoformat(),
-            "time_format": time_format,
             "angle": "backtesting_44_metrics",
             "status": "no_data",
         }])
@@ -34,20 +35,20 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "backtesting_44_metrics",
             "status": "insufficient_data",
             "n_observations": len(rets),
         }])
 
     n = len(rets)
-    ann_factor = np.sqrt(252)
+    af = ann_factor(time_format)
+    ppy = periods_per_year(time_format)
 
     total_return = float((1 + rets).prod() - 1)
-    cagr = float((1 + total_return) ** (252 / n) - 1) if n > 0 else 0.0
-    ann_vol = float(rets.std() * ann_factor)
+    cagr = float((1 + total_return) ** (ppy / n) - 1) if n > 0 else 0.0
+    ann_vol = float(rets.std() * af)
     sharpe = cagr / ann_vol if ann_vol > 0 else 0.0
-    sortino_ratio = cagr / (rets[rets < 0].std() * ann_factor) if (rets[rets < 0].std() * ann_factor) > 0 else 0.0
+    sortino_ratio = cagr / (rets[rets < 0].std() * af) if (rets[rets < 0].std() * af) > 0 else 0.0
 
     cum = (1 + rets).cumprod()
     running_max = np.maximum.accumulate(cum)
@@ -73,7 +74,6 @@ def compute(
     rows.append({
         "symbol": symbol,
         "analysis_at": analysis_at,
-        "time_format": time_format,
         "angle": "backtesting_44_metrics",
         "total_return": round(total_return, 6),
         "cagr": round(cagr, 6),

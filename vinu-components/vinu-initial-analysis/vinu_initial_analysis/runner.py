@@ -36,6 +36,7 @@ class AngleRunner:
         self._news_client = news_client
         self._price_client = price_client
         self._angles: list[dict[str, Any]] = []
+        self._bar_cache: dict[tuple[str, str], pd.DataFrame] = {}
         self._discover()
 
     # -- discovery ----------------------------------------------------------
@@ -85,6 +86,7 @@ class AngleRunner:
 
         Returns a summary dict keyed by angle_name.
         """
+        self._bar_cache.clear()
         results: dict[str, Any] = {}
         to_run = [a for a in self._angles if angle_names is None or a["name"] in angle_names]
 
@@ -114,12 +116,14 @@ class AngleRunner:
             raise ImportError(f"Could not import compute for {angle['name']}")
 
         time_formats = angle["spec"].get("time_formats", DEFAULT_TIME_FORMATS)
+        needs_bars = angle["spec"].get("needs_bars", True)
         run_id = uuid4().hex[:12]
         all_dfs: list[pd.DataFrame] = []
 
+        news = self._fetch_news(symbol, from_ts, to_ts)
+
         for tf in time_formats:
-            bars = self._fetch_bars(symbol, tf, from_ts, to_ts)
-            news = self._fetch_news(symbol, from_ts, to_ts)
+            bars = self._fetch_bars(symbol, tf, from_ts, to_ts) if needs_bars else pd.DataFrame()
             df = module.compute(
                 symbol, bars=bars, news=news,
                 from_ts=from_ts, to_ts=to_ts, time_format=tf,
@@ -129,6 +133,8 @@ class AngleRunner:
                 continue
 
             df = df.copy()
+            if "time_format" in df.columns:
+                df = df.drop(columns=["time_format"])
             df["time_format"] = tf
             all_dfs.append(df)
 
@@ -162,15 +168,20 @@ class AngleRunner:
         to_ts: int | None,
     ) -> pd.DataFrame:
         """Fetch OHLCV bars at the given time_format for the symbol."""
+        key = (symbol, time_format)
+        cached = self._bar_cache.get(key)
+        if cached is not None:
+            return cached
         if self._price_client is None:
             return pd.DataFrame()
         try:
-            candles = self._price_client.get_candles(symbol, from_ts=from_ts, to_ts=to_ts)
+            candles = self._price_client.get_candles(symbol, from_ts=from_ts, to_ts=to_ts, interval=time_format)
             if not candles:
                 return pd.DataFrame()
             df = pd.DataFrame(candles)
             if "bar_ts" in df.columns:
                 df["bar_ts"] = df["bar_ts"].astype(int)
+            self._bar_cache[key] = df
             return df
         except Exception:
             LOG.exception("Failed to fetch bars for %s at %s", symbol, time_format)

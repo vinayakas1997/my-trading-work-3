@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
 
+from vinu_initial_analysis.angles._helpers import ann_factor
+
 
 def classify_regime(ret: float, vol: float, vol_thresh: float) -> str:
     if vol > vol_thresh:
@@ -30,7 +32,6 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": datetime.now(timezone.utc).isoformat(),
-            "time_format": time_format,
             "angle": "regime_analysis",
             "status": "no_data",
         }])
@@ -43,23 +44,22 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "regime_analysis",
             "status": "insufficient_data",
             "n_observations": len(returns),
         }])
 
-    vol = returns.rolling(21).std() * np.sqrt(252)
+    af = ann_factor(time_format)
+    vol = returns.rolling(21).std() * af
     vol_thresh = vol.quantile(0.7)
     rf = pd.DataFrame({"ret": returns, "vol": vol}).dropna()
     rf["regime"] = rf.apply(lambda r: classify_regime(r["ret"], r["vol"], vol_thresh), axis=1)
 
     for rg, grp in rf.groupby("regime"):
-        sr = (grp["ret"].mean() / grp["ret"].std() * np.sqrt(252)) if grp["ret"].std() > 0 else 0.0
+        sr = (grp["ret"].mean() / grp["ret"].std() * af) if grp["ret"].std() > 0 else 0.0
         rows.append({
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "regime_analysis",
             "metric": "regime_stats",
             "regime": rg,
@@ -76,7 +76,6 @@ def compute(
     rows.append({
         "symbol": symbol,
         "analysis_at": analysis_at,
-        "time_format": time_format,
         "angle": "regime_analysis",
         "metric": "regime_transitions",
         "regime": "all",
@@ -93,7 +92,6 @@ def compute(
         rows.append({
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "regime_analysis",
             "metric": "transition",
             "regime_from": from_r,

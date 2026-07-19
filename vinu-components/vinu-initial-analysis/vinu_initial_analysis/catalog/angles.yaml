@@ -106,19 +106,6 @@ angles:
   - column: angle_data
     type: dict
     description: Angle-specific results
-- id: fundamentals
-  title: Fundamentals
-  purpose: PE/ROE/FCF/margins from yfinance, Alpaca corporate actions integration
-  time_formats:
-  - 1M
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: Angle-specific results
 - id: ml_model_pipeline
   title: ML Model Pipeline
   purpose: Train/evaluate 9 ML models, OOS IC, auto-selection, CUDA detection
@@ -166,36 +153,6 @@ angles:
   - column: angle_data
     type: dict
     description: Angle-specific results
-- id: pairs_cointegration
-  title: Pairs Cointegration
-  purpose: Engle-Granger and Johansen cointegration tests, z-score trading signals,
-    half-life mean reversion
-  time_formats:
-  - 1D
-  - 1W
-  - 1M
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: Angle-specific results
-- id: pnl_attribution
-  title: PnL Attribution
-  purpose: Core/noise/large trade decomposition, exit timing analysis, exit reason
-    attribution
-  time_formats:
-  - 1D
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: Angle-specific results
 - id: portfolio_analysis
   title: Portfolio Analysis
   purpose: Pairwise correlation, rolling beta, beta-hedged Sharpe, multi-timeframe
@@ -228,41 +185,46 @@ angles:
   - column: angle_data
     type: dict
     description: Angle-specific results
-- id: session_time_analysis
-  title: Session / Time-of-Day Analysis
-  purpose: Session classification (pre-market, regular, after-hours), news baseline
-    per session, premarket gap analysis
-  time_formats:
-  - 15min
-  - 1H
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: Angle-specific results
-- id: shadow_trading
-  title: Shadow Trading
-  purpose: K-Means clustering of trading patterns, silhouette score, FIFO roundtrip
-    pairing
-  time_formats:
-  - 1D
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: Angle-specific results
 - id: technical_indicators
   title: Technical Indicator Landscape
   purpose: Compute and evaluate 24 technical indicators across trend, momentum, volatility,
     volume, and price action
   time_formats:
   - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: trend_lifecycle
+  title: Trend Lifecycle
+  purpose: Peak/trough pattern library, KNN similarity matching, trend stage classification,
+    reversal signals with percentage exit thresholds
+  time_formats:
+  - 15min
+  - 1H
+  - 4H
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Angle-specific results
+- id: trend_session_structure
+  title: Trend Session Structure
+  purpose: Session-level analysis of trend_lifecycle peaks/troughs — which trading
+    session (premarket/regular/afterhours) produces reliable tops, with per-session
+    drawdown, recovery, and match-similarity statistics
+  time_formats:
+  - 15min
+  - 1H
+  - 4H
   inputs:
     symbol: str
     from_ts: int | None

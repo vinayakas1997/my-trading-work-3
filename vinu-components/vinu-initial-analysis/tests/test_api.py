@@ -22,8 +22,11 @@ def test_api_instantiation():
     with TemporaryDirectory() as tmp:
         config = _make_test_config(tmp)
         api = CorrelationAPI(config)
-        assert api._config is config
-        assert api._cache is not None
+        try:
+            assert api._config is config
+            assert api._cache is not None
+        finally:
+            api.close()
 
 
 @pytest.mark.skip(reason="Requires running vinu-news and vinu-stock-price services")
@@ -50,8 +53,12 @@ def test_cache_hits_no_services():
     with TemporaryDirectory() as tmp:
         config = _make_test_config(tmp)
         api = CorrelationAPI(config)
-        from unittest.mock import patch
-        with patch.object(api._news_client, "get_ticker_news", return_value=[]):
-            r1 = api.get_impact("AAPL")
-            r2 = api.get_impact("AAPL")
-            assert r1 == r2
+        try:
+            from unittest.mock import patch
+            with patch.object(api._news_client, "get_ticker_news", return_value=[]):
+                r1 = api.get_impact("AAPL")
+                r2 = api.get_impact("AAPL")
+                assert r1 == r2
+        finally:
+            api.close()
+

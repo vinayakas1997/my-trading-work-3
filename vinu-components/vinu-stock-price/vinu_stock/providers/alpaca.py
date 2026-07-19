@@ -45,7 +45,7 @@ class AlpacaProvider:
         start_iso = datetime.fromtimestamp(start_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         end_iso = datetime.fromtimestamp(end_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         url = f"{self._config.alpaca_data_base_url.rstrip('/')}/v2/stocks/bars"
-        params: dict[str, str] = {
+        base_params: dict[str, str] = {
             "symbols": sym,
             "timeframe": "1Min",
             "start": start_iso,
@@ -57,6 +57,7 @@ class AlpacaProvider:
             all_bars: list[BarRecord] = []
             page_token: str | None = None
             while True:
+                params = dict(base_params)
                 if page_token:
                     params["page_token"] = page_token
                 resp = http_get_with_retry(

@@ -1,0 +1,17 @@
+title: Trend Session Structure
+purpose: Session-level analysis of trend_lifecycle peaks/troughs — which trading
+  session (premarket/regular/afterhours) produces reliable tops, with per-session
+  drawdown, recovery, and match-similarity statistics
+time_formats:
+- 15min
+- 1H
+- 4H
+needs_bars: false
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: Angle-specific results

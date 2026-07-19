@@ -5,6 +5,9 @@ import numpy as np
 from scipy import stats as scipy_stats
 from datetime import datetime, timezone
 
+from vinu_initial_analysis.angles._helpers import ann_factor
+from vinu_initial_analysis.angles.deflated_sharpe_ratio.compute import deflated_sharpe
+
 
 def compute(
     symbol: str,
@@ -21,7 +24,6 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": datetime.now(timezone.utc).isoformat(),
-            "time_format": time_format,
             "angle": "validation_overfitting",
             "status": "no_data",
         }])
@@ -34,19 +36,18 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "validation_overfitting",
             "status": "insufficient_data",
             "n_observations": len(rets),
         }])
 
     n = len(rets)
-    obs_sr = float(rets.mean() / rets.std() * np.sqrt(252)) if rets.std() > 0 else 0.0
+    af = ann_factor(time_format)
+    obs_sr = float(rets.mean() / rets.std() * af) if rets.std() > 0 else 0.0
 
     rows.append({
         "symbol": symbol,
         "analysis_at": analysis_at,
-        "time_format": time_format,
         "angle": "validation_overfitting",
         "test": "observed_sharpe",
         "value": round(obs_sr, 4),
@@ -58,7 +59,7 @@ def compute(
     perm_srs = []
     for _ in range(n_perm):
         p = np.random.permutation(rets)
-        sr = p.mean() / p.std() * np.sqrt(252) if p.std() > 0 else 0.0
+        sr = p.mean() / p.std() * af if p.std() > 0 else 0.0
         perm_srs.append(sr)
     p_value = float((sum(1 for s in perm_srs if s >= obs_sr) + 1) / (n_perm + 1))
     perm_mean = float(np.mean(perm_srs))
@@ -67,7 +68,6 @@ def compute(
     rows.append({
         "symbol": symbol,
         "analysis_at": analysis_at,
-        "time_format": time_format,
         "angle": "validation_overfitting",
         "test": "mc_permutation",
         "n_permutations": n_perm,
@@ -81,7 +81,7 @@ def compute(
     bs_srs = []
     for _ in range(n_bs):
         b = np.random.choice(rets, n)
-        sr = b.mean() / b.std() * np.sqrt(252) if b.std() > 0 else 0.0
+        sr = b.mean() / b.std() * af if b.std() > 0 else 0.0
         bs_srs.append(sr)
     ci_low = float(np.percentile(bs_srs, 2.5))
     ci_high = float(np.percentile(bs_srs, 97.5))
@@ -90,7 +90,6 @@ def compute(
     rows.append({
         "symbol": symbol,
         "analysis_at": analysis_at,
-        "time_format": time_format,
         "angle": "validation_overfitting",
         "test": "bootstrap_ci",
         "n_bootstrap": n_bs,
@@ -106,12 +105,11 @@ def compute(
         start = i * window_size
         end = min((i + 1) * window_size, n)
         w = rets[start:end]
-        sr = float(w.mean() / w.std() * np.sqrt(252)) if w.std() > 0 else 0.0
+        sr = float(w.mean() / w.std() * af) if w.std() > 0 else 0.0
         wf_srs.append(sr)
         rows.append({
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "validation_overfitting",
             "test": "walk_forward",
             "window": i + 1,
@@ -130,7 +128,6 @@ def compute(
     rows.append({
         "symbol": symbol,
         "analysis_at": analysis_at,
-        "time_format": time_format,
         "angle": "validation_overfitting",
         "test": "overfitting_verdict",
         "sharpe_gap": round(gap, 4),
@@ -140,21 +137,15 @@ def compute(
     })
 
     for n_trials in [1, 5, 10, 30, 50, 100]:
-        if n_trials <= 1:
-            e_max = 0
-        else:
-            euler = 0.5772156649
-            e_max = (1 - euler) * scipy_stats.norm.ppf(1 - 1 / n_trials) + euler * scipy_stats.norm.ppf(1 - 1 / n_trials * np.exp(-1))
-        dsr = float(scipy_stats.norm.cdf((obs_sr - e_max) * np.sqrt(n - 1)))
+        dsr_val, e_max = deflated_sharpe(obs_sr, n_trials, n)
         rows.append({
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "validation_overfitting",
             "test": "deflated_sharpe",
             "n_trials": n_trials,
             "e_max": round(e_max, 4),
-            "dsr": round(dsr, 4),
+            "dsr": round(dsr_val, 4),
         })
 
     return pd.DataFrame(rows)

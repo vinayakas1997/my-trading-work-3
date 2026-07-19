@@ -49,7 +49,7 @@ class TestImpact:
         text = "Tesla quarterly results miss estimates, profits drop"
         sent = score_sentiment(text)
         priority = classify_priority(text)
-        assert classify_impact(priority, sent["sentiment_score"]) == "LOW"
+        assert classify_impact(priority, sent["sentiment_score"]) == "MEDIUM"
 
 
 class TestCategory:

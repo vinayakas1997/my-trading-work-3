@@ -115,8 +115,7 @@ def compute_lag_analysis(
     lag_results = {}
     for lag_min in lags_minutes:
         shifted = news_hourly.copy()
-        shift_hours = lag_min / 60
-        shifted["hour_ts"] = shifted["hour_ts"] - shift_hours * 3600
+        shifted["hour_ts"] = ((shifted["hour_ts"] + lag_min * 60) // 3600) * 3600
         merged = pd.merge(shifted, returns_hourly, on="hour_ts", how="inner")
         if len(merged) < 3:
             continue

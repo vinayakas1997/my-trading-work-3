@@ -37,8 +37,14 @@ def compute_abnormal_return(
     abnormal_returns = [r - expected_return for r in event_returns]
     car = sum(abnormal_returns)
 
-    if len(abnormal_returns) > 1:
-        t_stat, p_value = stats.ttest_1samp(abnormal_returns, 0)
+    pre_abnormal = [r - expected_return for r in pre_returns]
+    estimation_std = float(np.std(pre_abnormal)) if len(pre_abnormal) > 1 else 0.0
+    n_event = len(abnormal_returns)
+
+    if n_event > 0 and estimation_std > 0:
+        car_std = estimation_std * np.sqrt(n_event)
+        t_stat = car / car_std
+        p_value = float(2 * stats.t.sf(abs(t_stat), df=len(pre_abnormal) - 1))
     else:
         t_stat, p_value = 0.0, 1.0
 

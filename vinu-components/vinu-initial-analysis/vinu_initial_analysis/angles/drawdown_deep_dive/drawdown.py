@@ -27,34 +27,69 @@ def get_drawdowns(
     if len(sorted_c) < 2:
         return []
 
-    peaks: list[dict] = []
-    i = 0
-    while i < len(sorted_c):
-        if i == 0 or sorted_c[i].get("high", 0) >= sorted_c[i - 1].get("high", 0):
-            peak_price = sorted_c[i].get("high", 0)
-            if not peaks or peak_price > peaks[-1]["price"]:
-                peaks.append({"index": i, "ts": sorted_c[i]["bar_ts"], "price": peak_price})
-        i += 1
-
     drawdowns = []
-    for peak in peaks:
-        peak_idx = peak["index"]
-        trough_idx = peak_idx + 1
-        while trough_idx < len(sorted_c):
-            drop = (sorted_c[trough_idx].get("close", 0) - peak["price"]) / peak["price"] * 100
+    in_drawdown = False
+    peak_idx = 0
+    trough_data: dict = {}
+
+    for i in range(1, len(sorted_c)):
+        if not in_drawdown:
+            close_t = sorted_c[i].get("close", 0)
+            peak_candidate_idx = peak_idx
+            for j in range(peak_idx, i + 1):
+                if sorted_c[j].get("high", 0) >= sorted_c[peak_candidate_idx].get("high", 0):
+                    peak_candidate_idx = j
+            if peak_candidate_idx > peak_idx:
+                peak_idx = peak_candidate_idx
+            peak_price = sorted_c[peak_idx].get("high", 0)
+            drop = (close_t - peak_price) / peak_price * 100
             if drop <= drop_threshold_pct:
-                ts_lookback = peak["ts"] - lookback_hours * 3600
+                in_drawdown = True
+                trough_data = {
+                    "symbol": symbol,
+                    "peak_ts": sorted_c[peak_idx]["bar_ts"],
+                    "peak_price": peak_price,
+                    "peak_idx": peak_idx,
+                    "trough_ts": sorted_c[i]["bar_ts"],
+                    "trough_price": close_t,
+                    "drop_pct": round(drop, 2),
+                    "trough_idx": i,
+                }
+        else:
+            close_t = sorted_c[i].get("close", 0)
+            current_drop = (close_t - trough_data["peak_price"]) / trough_data["peak_price"] * 100
+            if current_drop < trough_data["drop_pct"]:
+                trough_data["drop_pct"] = round(current_drop, 2)
+                trough_data["trough_price"] = close_t
+                trough_data["trough_ts"] = sorted_c[i]["bar_ts"]
+                trough_data["trough_idx"] = i
+            peak_price = sorted_c[i].get("high", 0)
+            if peak_price > trough_data["peak_price"]:
+                ts_lookback = trough_data["peak_ts"] - lookback_hours * 3600
                 drawdowns.append({
                     "symbol": symbol,
-                    "peak_ts": peak["ts"],
-                    "trough_ts": sorted_c[trough_idx]["bar_ts"],
-                    "drop_pct": round(drop, 2),
-                    "peak_price": peak["price"],
-                    "trough_price": sorted_c[trough_idx]["close"],
+                    "peak_ts": trough_data["peak_ts"],
+                    "trough_ts": trough_data["trough_ts"],
+                    "drop_pct": trough_data["drop_pct"],
+                    "peak_price": trough_data["peak_price"],
+                    "trough_price": trough_data["trough_price"],
                     "lookback_from_ts": ts_lookback,
                 })
-                break
-            trough_idx += 1
+                in_drawdown = False
+                peak_idx = i
+                trough_data = {}
+
+    if in_drawdown:
+        ts_lookback = trough_data["peak_ts"] - lookback_hours * 3600
+        drawdowns.append({
+            "symbol": symbol,
+            "peak_ts": trough_data["peak_ts"],
+            "trough_ts": trough_data["trough_ts"],
+            "drop_pct": trough_data["drop_pct"],
+            "peak_price": trough_data["peak_price"],
+            "trough_price": trough_data["trough_price"],
+            "lookback_from_ts": ts_lookback,
+        })
 
     return drawdowns
 
@@ -73,12 +108,12 @@ def attribute_drawdown(
     events: list[dict],
     market_returns: list[dict] | None = None,
 ) -> dict[str, Any]:
-    from vinu_initial_analysis.angles.session_time_analysis.market_hours import IMPACT_WINDOWS
+    from vinu_initial_analysis.angles._market_hours import IMPACT_WINDOWS
 
     relevant_events = [
         e for e in events
         if e.get("symbol", "").upper() == symbol.upper()
-        and e.get("ts", 0) <= peak_ts
+        and peak_ts <= e.get("ts", 0) <= trough_ts
     ]
 
     n_events = len(relevant_events)

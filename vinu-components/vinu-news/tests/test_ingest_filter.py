@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -92,7 +92,10 @@ def test_ticker_mode_persist_filter(service: NewsService):
     assert result.leads_after_filter == 1
     assert result.inserted == 1
     assert service.storage.article_count() == 1
-    rows = service.get_ticker_news("AAPL")
-    assert len(rows) == 1
-    rows_msft = service.get_ticker_news("MSFT")
-    assert len(rows_msft) == 0
+
+    with patch.object(NewsService, "_stock_client") as mock_stock:
+        mock_stock.return_value = MagicMock()
+        rows = service.get_ticker_news("AAPL")
+        assert len(rows) == 1
+        rows_msft = service.get_ticker_news("MSFT")
+        assert len(rows_msft) == 0

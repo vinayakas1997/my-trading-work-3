@@ -221,7 +221,6 @@ FINANCIAL_LEXICON: dict[str, int] = {
     "production halt": -2,
     "recall": -2,
     "inventory glut": -1,
-    "shortage": -1,
     "surplus": 0,
     # Technology / Industry specific
     "fda approval": 3,
@@ -259,6 +258,8 @@ def score_sentiment(combined_text: str) -> dict:
                 pos += weight
             elif weight < 0:
                 neg += abs(weight)
+            # Replace matched phrase to avoid double-counting individual words
+            lower = lower.replace(phrase, " " * len(phrase))
 
     # Phase 2: Individual sentiment words (longest first)
     all_words = sorted(

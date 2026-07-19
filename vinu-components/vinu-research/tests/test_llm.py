@@ -68,6 +68,41 @@ def test_build_risk_critic_prompt(sample_result, sample_story):
     assert "Drawdown events: 2" in prompt
 
 
+def test_build_risk_critic_prompt_renders_angle_context(sample_result, sample_story):
+    sample_story["angles"] = {
+        "trend_lifecycle": {
+            "stage": "topping", "risk": "high", "dominant_signal": "book_profits",
+            "signal": {
+                "signal_type": "book_profits", "confidence": 0.85,
+                "suggested_action": "Set trailing stop at -4% from peak",
+                "avg_drawdown_pct": -0.08, "exit_threshold_pct": -4.0,
+            },
+        },
+        "session_structure": {
+            "time_format": "1H", "best_session": "regular",
+            "worst_session": "premarket", "n_qualifying_sessions": 2,
+            "sessions": [
+                {"session": "regular", "n_peaks": 12, "n_mature_peaks": 12,
+                 "meets_floor": True, "avg_drawdown_pct": -0.05, "recovery_rate": 0.8},
+            ],
+        },
+        "news_causality": {
+            "granger_causes_prices": True, "best_lag_minutes": 30,
+            "p_value": 0.01, "news_return_corr": 0.22,
+        },
+    }
+    rules = CriticFeedback(verdict="REFINE", reasoning="r", suggestions=[])
+    prompt = _build_risk_critic_prompt(
+        "idea", "AAPL", "2024-01-01", "2024-12-31",
+        sample_result, rules, sample_story,
+    )
+    assert "Deterministic Angle Analysis:" in prompt
+    assert "stage=topping" in prompt
+    assert "Set trailing stop at -4% from peak" in prompt
+    assert "worst=premarket" in prompt
+    assert "granger=True" in prompt
+
+
 def test_build_risk_critic_prompt_no_story(sample_result):
     rules = CriticFeedback(verdict="REFINE", reasoning="test", suggestions=["Fix it"])
     prompt = _build_risk_critic_prompt(

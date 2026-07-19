@@ -20,6 +20,7 @@ from vinu_stock.service import StockService
 router = APIRouter(tags=["config"])
 
 _background_jobs: dict[str, dict[str, Any]] = {}
+_jobs_lock = threading.Lock()
 _backfill_lock = threading.Lock()
 _ingest_lock = threading.Lock()
 
@@ -82,27 +83,30 @@ def trigger_backfill() -> TriggerResponse:
     if not _backfill_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Backfill already running")
     job_id = uuid.uuid4().hex[:12]
-    _background_jobs[job_id] = {"type": "backfill", "status": "running", "summary": {}}
+    with _jobs_lock:
+        _background_jobs[job_id] = {"type": "backfill", "status": "running", "summary": {}}
 
     def _run() -> None:
         try:
             result = get_service().run_backfill()
-            _background_jobs[job_id] = {
-                "type": "backfill",
-                "status": "done",
-                "summary": {
-                    "years_ok": result.summary.years_ok,
-                    "years_failed": result.summary.years_failed,
-                    "total_rows": result.summary.total_rows,
-                },
-            }
+            with _jobs_lock:
+                _background_jobs[job_id] = {
+                    "type": "backfill",
+                    "status": "done",
+                    "summary": {
+                        "years_ok": result.summary.years_ok,
+                        "years_failed": result.summary.years_failed,
+                        "total_rows": result.summary.total_rows,
+                    },
+                }
         except Exception as exc:
-            _background_jobs[job_id] = {
-                "type": "backfill",
-                "status": "failed",
-                "summary": {},
-                "error": str(exc),
-            }
+            with _jobs_lock:
+                _background_jobs[job_id] = {
+                    "type": "backfill",
+                    "status": "failed",
+                    "summary": {},
+                    "error": str(exc),
+                }
         finally:
             _backfill_lock.release()
 
@@ -112,7 +116,8 @@ def trigger_backfill() -> TriggerResponse:
 
 @router.get("/backfill/status/{job_id}")
 def backfill_status(job_id: str) -> dict:
-    job = _background_jobs.get(job_id)
+    with _jobs_lock:
+        job = _background_jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
@@ -123,27 +128,30 @@ def trigger_ingest() -> TriggerResponse:
     if not _ingest_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Ingest already running")
     job_id = uuid.uuid4().hex[:12]
-    _background_jobs[job_id] = {"type": "ingest", "status": "running", "summary": {}}
+    with _jobs_lock:
+        _background_jobs[job_id] = {"type": "ingest", "status": "running", "summary": {}}
 
     def _run() -> None:
         try:
             result = get_service().run_live_cycle()
-            _background_jobs[job_id] = {
-                "type": "ingest",
-                "status": "done",
-                "summary": {
-                    "bars_added": result.summary.bars_added,
-                    "symbols_polled": result.summary.symbols_polled,
-                    "watchlist_size": result.watchlist_size,
-                },
-            }
+            with _jobs_lock:
+                _background_jobs[job_id] = {
+                    "type": "ingest",
+                    "status": "done",
+                    "summary": {
+                        "bars_added": result.summary.bars_added,
+                        "symbols_polled": result.summary.symbols_polled,
+                        "watchlist_size": result.watchlist_size,
+                    },
+                }
         except Exception as exc:
-            _background_jobs[job_id] = {
-                "type": "ingest",
-                "status": "failed",
-                "summary": {},
-                "error": str(exc),
-            }
+            with _jobs_lock:
+                _background_jobs[job_id] = {
+                    "type": "ingest",
+                    "status": "failed",
+                    "summary": {},
+                    "error": str(exc),
+                }
         finally:
             _ingest_lock.release()
 

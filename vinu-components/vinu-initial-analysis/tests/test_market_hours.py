@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from vinu_initial_analysis.angles.session_time_analysis.market_hours import (
+from vinu_initial_analysis.angles._market_hours import (
     IMPACT_WINDOWS,
     classify_session,
     impact_window_within_session,
@@ -21,9 +21,10 @@ def test_classify_session_london():
 
 
 def test_classify_session_ny_premarket():
-    dt = datetime(2026, 7, 6, 13, 30, 0, tzinfo=timezone.utc)
+    dt = datetime(2026, 7, 6, 13, 15, 0, tzinfo=timezone.utc)
     session = classify_session(int(dt.timestamp()))
     assert session.name == "ny_premarket"
+
 
 
 def test_classify_session_ny_afterhours():

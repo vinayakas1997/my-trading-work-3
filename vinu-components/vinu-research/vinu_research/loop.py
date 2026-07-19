@@ -239,7 +239,14 @@ class StrategyResearchLoop:
                     story = await self._tools.get_story(
                         symbol,
                         *timestamps_from_dates(research_from, research_to),
+                    ) or {}
+                    # Enrich with the deterministic angle context (trend_lifecycle,
+                    # session structure, news causality) for the critic and LLM
+                    angles = await self._tools.get_angle_context(
+                        symbol, self._config.interval,
                     )
+                    if angles:
+                        story["angles"] = angles
                     self._story_cache.set(cache_key, story)
 
                 drawdowns = self._drawdown_cache.get(cache_key)
@@ -774,6 +781,40 @@ class StrategyResearchLoop:
             ]
             if len(london_dd) >= 2:
                 suggestions.append("Multiple drawdowns in London session — add London session exclusion filter")
+
+            # Deterministic angle context (suggestions only — never changes verdicts)
+            angles = story.get("angles") or {}
+            tl = angles.get("trend_lifecycle") or {}
+            sig = tl.get("signal") or {}
+            if tl.get("risk") == "high" or sig.get("signal_type") == "book_profits":
+                exit_pct = sig.get("exit_threshold_pct")
+                hint = f" (pattern library suggests exit at {exit_pct}% from peak)" if exit_pct is not None else ""
+                suggestions.append(
+                    f"trend_lifecycle flags '{tl.get('stage', 'unknown')}' stage with "
+                    f"{tl.get('risk', 'unknown')} reversal risk — consider a trailing stop "
+                    f"or profit-taking rule{hint}"
+                )
+            nc = angles.get("news_causality") or {}
+            granger = nc.get("granger_causes_prices")
+            p_value = nc.get("p_value")
+            if granger and (p_value is None or p_value < 0.05):
+                lag = nc.get("best_lag_minutes")
+                suggestions.append(
+                    f"News Granger-causes price moves (lag ~{lag} min, p={p_value}) — "
+                    "news-based entry/exit filters may add edge"
+                )
+            elif granger is False:
+                suggestions.append(
+                    "No news→price causality detected for this symbol — "
+                    "avoid news-driven entry conditions"
+                )
+            ss = angles.get("session_structure") or {}
+            if ss.get("worst_session"):
+                suggestions.append(
+                    f"Session structure ({ss.get('time_format')}): drawdowns after peaks are "
+                    f"deepest in the {ss['worst_session']} session (shallowest: "
+                    f"{ss.get('best_session')}) — consider a session filter"
+                )
 
         if m.cvar_95 < -0.03:
             suggestions.append(

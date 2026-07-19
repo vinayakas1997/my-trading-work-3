@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
 
+from vinu_initial_analysis.angles._helpers import periods_per_year, ann_factor
+
 
 def compute(
     symbol: str,
@@ -20,7 +22,6 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": datetime.now(timezone.utc).isoformat(),
-            "time_format": time_format,
             "angle": "portfolio_analysis",
             "status": "no_data",
         }])
@@ -33,7 +34,6 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "portfolio_analysis",
             "status": "insufficient_data",
             "n_observations": len(returns),
@@ -41,16 +41,16 @@ def compute(
 
     rets = returns.values
     n = len(rets)
-    ann_factor = np.sqrt(252)
+    af = ann_factor(time_format)
+    ppy = periods_per_year(time_format)
 
-    raw_sharpe = float(rets.mean() / rets.std() * ann_factor) if rets.std() > 0 else 0.0
-    ann_vol = float(rets.std() * ann_factor)
-    ann_ret = float(rets.mean() * 252)
+    raw_sharpe = float(rets.mean() / rets.std() * af) if rets.std() > 0 else 0.0
+    ann_vol = float(rets.std() * af)
+    ann_ret = float(rets.mean() * ppy)
 
     rows.append({
         "symbol": symbol,
         "analysis_at": analysis_at,
-        "time_format": time_format,
         "angle": "portfolio_analysis",
         "metric": "summary",
         "ann_return": round(ann_ret, 6),
@@ -60,13 +60,12 @@ def compute(
     })
 
     for window in [21, 63, 126]:
-        roll_ret = returns.rolling(window).mean() * 252
-        roll_vol = returns.rolling(window).std() * ann_factor
+        roll_ret = returns.rolling(window).mean() * ppy
+        roll_vol = returns.rolling(window).std() * af
         roll_sr = roll_ret / roll_vol
         row = {
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "portfolio_analysis",
             "metric": f"rolling_{window}d",
             "rolling_return_mean": float(roll_ret.mean()),
@@ -87,19 +86,18 @@ def compute(
         smooth = common["smooth"].values
         beta = float(np.cov(raw, smooth)[0, 1] / np.var(smooth)) if np.var(smooth) > 0 else 0.0
         hedged = raw - beta * smooth
-        hedged_sharpe = float(hedged.mean() / hedged.std() * ann_factor) if hedged.std() > 0 else 0.0
+        hedged_sharpe = float(hedged.mean() / hedged.std() * af) if hedged.std() > 0 else 0.0
 
         rows.append({
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "portfolio_analysis",
             "metric": "beta_hedged",
             "beta_to_smooth": round(beta, 4),
             "raw_sharpe": round(raw_sharpe, 4),
             "hedged_sharpe": round(hedged_sharpe, 4),
-            "hedged_return": round(float(hedged.mean() * 252), 6),
-            "hedged_vol": round(float(hedged.std() * ann_factor), 6),
+            "hedged_return": round(float(hedged.mean() * ppy), 6),
+            "hedged_vol": round(float(hedged.std() * af), 6),
             "n_observations": len(common),
         })
 
@@ -108,7 +106,6 @@ def compute(
         rows.append({
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "portfolio_analysis",
             "metric": "rolling_beta_60d",
             "rolling_beta_mean": float(roll_beta.mean()),

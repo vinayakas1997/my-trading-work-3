@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from vinu_initial_analysis.clients.price_client import PriceClient
-from vinu_initial_analysis.angles.session_time_analysis.market_hours import (
+from vinu_initial_analysis.angles._market_hours import (
     IMPACT_WINDOWS,
     classify_session,
     impact_window_within_session,
@@ -49,11 +49,15 @@ def compute_impact_for_article(
     all_tickers = [primary_ticker] + secondary_tickers
     weights = [1.0] + [0.5] * len(secondary_tickers)
 
+    max_window = max(windows) + 3600
+    to_ts = ts + max_window
+    ticker_candles: dict[str, list[dict]] = {}
+    for ticker in all_tickers:
+        ticker_candles[ticker] = price_client.get_candles(ticker, from_ts=ts, to_ts=to_ts)
+
     results = []
     for ticker, weight in zip(all_tickers, weights):
-        max_window = max(windows) + 3600
-        to_ts = ts + max_window
-        candles = price_client.get_candles(ticker, from_ts=ts, to_ts=to_ts)
+        candles = ticker_candles[ticker]
 
         price_changes: dict[str, float | None] = {}
         for win_name, win_sec in IMPACT_WINDOWS.items():
@@ -133,7 +137,7 @@ def _classify_impact(
 def aggregate_by_thread(
     events: list[dict],
     min_thread_articles: int = 2,
-) -> list[dict]:
+) -> dict[str, Any]:
     from collections import defaultdict
     threads: dict[str, list[dict]] = defaultdict(list)
     standalone = []

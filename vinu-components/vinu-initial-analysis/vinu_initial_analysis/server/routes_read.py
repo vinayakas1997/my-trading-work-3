@@ -41,12 +41,6 @@ async def get_drawdown(ticker: str, from_ts: int | None = Query(None), to_ts: in
     return svc.get_drawdown(ticker.upper(), from_ts, to_ts)
 
 
-@router.get("/baseline/{ticker}")
-async def get_baseline(ticker: str):
-    svc = _get_svc()
-    return svc.get_baseline(ticker.upper())
-
-
 @router.get("/story/{ticker}")
 async def get_story(ticker: str, from_ts: int | None = Query(None), to_ts: int | None = Query(None)):
     svc = _get_svc()
@@ -58,12 +52,6 @@ async def get_batch(symbols: str, from_ts: int | None = Query(None), to_ts: int 
     svc = _get_svc()
     sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
     return svc.get_batch(sym_list, from_ts, to_ts)
-
-
-@router.get("/gap/{ticker}")
-async def get_gap(ticker: str, date: str | None = Query(None)):
-    svc = _get_svc()
-    return svc.get_gap(ticker.upper(), date)
 
 
 # -- new initial-analysis endpoints ----------------------------------------

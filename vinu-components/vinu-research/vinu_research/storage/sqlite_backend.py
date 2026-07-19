@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -108,7 +108,7 @@ class ResearchStorage:
             params.append(status)
         params.append(limit)
         rows = conn.execute(
-            f"SELECT * FROM research_runs WHERE {' AND '.join(conditions)} ORDER BY created_at DESC LIMIT ?",
+            f"SELECT * FROM research_runs WHERE {' AND '.join(conditions)} ORDER BY created_at DESC, id DESC LIMIT ?",
             params,
         ).fetchall()
         return [self._row_to_record(r) for r in rows]
@@ -116,6 +116,14 @@ class ResearchStorage:
     def update_run(self, record: ResearchRunRecord) -> ResearchRunRecord | None:
         conn = self._get_conn()
         now = datetime.now(timezone.utc).isoformat()
+        # Coarse clocks (Windows) can return the same tick as the insert; nudge
+        # forward so updated_at always advances past the previous value.
+        if record.updated_at and now <= record.updated_at:
+            try:
+                prev_dt = datetime.fromisoformat(record.updated_at)
+                now = (prev_dt + timedelta(microseconds=1)).isoformat()
+            except ValueError:
+                pass
         conn.execute(
             """UPDATE research_runs SET
                 status = ?, total_iterations = ?, best_iteration = ?,

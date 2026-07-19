@@ -5,6 +5,8 @@ import numpy as np
 from scipy import stats
 from datetime import datetime, timezone
 
+from vinu_initial_analysis.angles._helpers import ann_factor
+
 
 def deflated_sharpe(obs_sharpe: float, n_trials: int, n_obs: int, skew: float = 0, kurt: float = 0):
     if n_trials <= 1:
@@ -19,7 +21,7 @@ def deflated_sharpe(obs_sharpe: float, n_trials: int, n_obs: int, skew: float = 
     if skew != 0 or kurt != 0:
         var_sr = (1 + 0.5 * obs_sharpe**2 - skew * obs_sharpe + (kurt - 3) / 4 * obs_sharpe**2) / (n_obs - 1)
 
-    dsr = float(stats.norm.cdf((obs_sharpe - e_max) / np.sqrt(max(var_sr, 1e-10))))
+    dsr = float(stats.norm.cdf(obs_sharpe / np.sqrt(max(var_sr, 1e-10)) - e_max))
     return dsr, e_max
 
 
@@ -38,7 +40,6 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": datetime.now(timezone.utc).isoformat(),
-            "time_format": time_format,
             "angle": "deflated_sharpe_ratio",
             "status": "no_data",
         }])
@@ -51,13 +52,12 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "deflated_sharpe_ratio",
             "status": "insufficient_data",
             "n_observations": len(rets_np),
         }])
 
-    obs_sr = float(rets_np.mean() / rets_np.std() * np.sqrt(252)) if rets_np.std() > 0 else 0.0
+    obs_sr = float(rets_np.mean() / rets_np.std() * ann_factor(time_format)) if rets_np.std() > 0 else 0.0
     n_obs = len(rets_np)
     skewness = float(pd.Series(rets_np).skew())
     kurtosis = float(pd.Series(rets_np).kurtosis())
@@ -65,7 +65,6 @@ def compute(
     rows.append({
         "symbol": symbol,
         "analysis_at": analysis_at,
-        "time_format": time_format,
         "angle": "deflated_sharpe_ratio",
         "metric": "observed_sharpe",
         "sharpe_ratio": round(obs_sr, 4),
@@ -85,7 +84,6 @@ def compute(
         rows.append({
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "deflated_sharpe_ratio",
             "metric": "basic_dsr",
             "n_trials": n_trials,
@@ -100,7 +98,6 @@ def compute(
         rows.append({
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "deflated_sharpe_ratio",
             "metric": "dsr_varying_sharpe",
             "hypothetical_sr": sr_input,
@@ -121,7 +118,6 @@ def compute(
         rows.append({
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "deflated_sharpe_ratio",
             "metric": "dsr_skew_kurt_adjusted",
             "config": name,
@@ -137,7 +133,6 @@ def compute(
         rows.append({
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "deflated_sharpe_ratio",
             "metric": "dsr_varying_n",
             "hypothetical_n": n,
@@ -150,7 +145,6 @@ def compute(
     rows.append({
         "symbol": symbol,
         "analysis_at": analysis_at,
-        "time_format": time_format,
         "angle": "deflated_sharpe_ratio",
         "metric": "dsr_actual_adjusted",
         "n_trials": n_trials,

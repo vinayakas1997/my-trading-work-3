@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
 
+from vinu_initial_analysis.angles._helpers import ann_factor
+
 
 def _compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     delta = series.diff()
@@ -38,7 +40,6 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": datetime.now(timezone.utc).isoformat(),
-            "time_format": time_format,
             "angle": "technical_indicators",
             "status": "no_data",
         }])
@@ -60,7 +61,7 @@ def compute(
         "rsi_7": _compute_rsi(close, 7),
         "adx_14": pd.Series(np.nan, index=close.index),
         "atr_14": (high - low).rolling(14).mean(),
-        "volatility_20d": close.pct_change().rolling(20).std() * np.sqrt(252),
+        "volatility_20d": close.pct_change().rolling(20).std() * ann_factor(time_format),
         "obv": (volume * ((close.diff() > 0).astype(int) * 2 - 1)).cumsum(),
         "daily_return": close.pct_change(),
         "high_low_spread": (high - low) / close,
@@ -89,7 +90,6 @@ def compute(
         rows.append({
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "technical_indicators",
             "indicator": name,
             "value": last_val,

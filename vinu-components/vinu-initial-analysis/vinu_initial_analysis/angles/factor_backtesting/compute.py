@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
 
+from vinu_initial_analysis.angles._helpers import periods_per_year, ann_factor
+
 
 def compute(
     symbol: str,
@@ -20,7 +22,6 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": datetime.now(timezone.utc).isoformat(),
-            "time_format": time_format,
             "angle": "factor_backtesting",
             "status": "no_data",
         }])
@@ -35,7 +36,6 @@ def compute(
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "factor_backtesting",
             "status": "insufficient_data",
             "n_observations": n,
@@ -46,8 +46,9 @@ def compute(
         if len(period_rets) < 5:
             continue
         total_ret = float((1 + period_rets).prod() - 1)
-        ann_ret = float((1 + total_ret) ** (252 / len(period_rets)) - 1) if len(period_rets) > 0 else 0.0
-        ann_vol = float(period_rets.std() * np.sqrt(252))
+        ppy = periods_per_year(time_format)
+        ann_ret = float((1 + total_ret) ** (ppy / len(period_rets)) - 1) if len(period_rets) > 0 else 0.0
+        ann_vol = float(period_rets.std() * ann_factor(time_format))
         sharpe = ann_ret / ann_vol if ann_vol > 0 else 0.0
         win_rate = float((period_rets > 0).mean())
         max_dd = float(np.minimum.accumulate((1 + period_rets).cumprod()).min())
@@ -55,7 +56,6 @@ def compute(
         rows.append({
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "factor_backtesting",
             "period": label,
             "total_return": round(total_ret, 6),
@@ -94,7 +94,6 @@ def compute(
         rows.append({
             "symbol": symbol,
             "analysis_at": analysis_at,
-            "time_format": time_format,
             "angle": "factor_backtesting",
             "period": f"factor_{fname}",
             "long_return": round(float(long_ret), 6),

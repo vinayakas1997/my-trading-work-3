@@ -3,6 +3,7 @@
 import pandas as pd
 from datetime import datetime, timezone
 
+from vinu_initial_analysis.angles._helpers import bars_to_candle_list
 from .impact import compute_impact_for_article, aggregate_by_thread
 from .correlation import (
     compute_correlation, compute_lag_analysis,
@@ -21,7 +22,7 @@ def compute(
 ) -> pd.DataFrame:
     now = datetime.now(timezone.utc).isoformat()
     articles = news or []
-    candles = _bars_to_candle_list(bars)
+    candles = bars_to_candle_list(bars)
     rows: list[dict] = []
 
     if not articles or not candles:
@@ -72,10 +73,4 @@ def compute(
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 
-def _bars_to_candle_list(bars: pd.DataFrame | None) -> list[dict]:
-    if bars is None or bars.empty:
-        return []
-    cols = bars.columns.tolist()
-    if "bar_ts" not in cols:
-        return []
-    return bars.to_dict("records")
+

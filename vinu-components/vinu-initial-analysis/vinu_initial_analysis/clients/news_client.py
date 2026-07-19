@@ -30,10 +30,12 @@ class NewsClient:
         to_ts: int | None = None,
         limit: int = 500,
     ) -> list[dict[str, Any]]:
+        import time
+
         params: dict[str, Any] = {"limit": limit}
-        if from_ts is not None and to_ts is not None:
+        if from_ts is not None:
             params["from"] = from_ts
-            params["to"] = to_ts
+            params["to"] = to_ts if to_ts is not None else int(time.time())
         else:
             params["days"] = days
         resp = request("GET", f"{self._base}/ticker/{symbol.upper()}", params=params)

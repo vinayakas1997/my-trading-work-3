@@ -9,6 +9,7 @@ from typing import Any
 
 class WatchlistStore:
     def __init__(self, conn: sqlite3.Connection) -> None:
+        conn.row_factory = sqlite3.Row
         self._conn = conn
 
     def init_schema(self, schema_sql: str) -> None:

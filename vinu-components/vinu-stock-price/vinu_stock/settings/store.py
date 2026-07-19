@@ -29,6 +29,7 @@ class SettingsView:
 
 class SettingsStore:
     def __init__(self, conn: sqlite3.Connection) -> None:
+        conn.row_factory = sqlite3.Row
         self._conn = conn
 
     def init_schema(self, schema_sql: str, *, env_defaults: dict[str, str] | None = None) -> None:

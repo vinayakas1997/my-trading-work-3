@@ -8,6 +8,7 @@ import httpx
 import pandas as pd
 
 from vinu_lib.client import ResilientClient
+from vinu_research.angle_context import build_angle_context
 from vinu_research.benchmark import compute_benchmark_comparison as _compute_benchmark_comparison
 from vinu_research.benchmark import compute_benchmark_returns_metrics as _compute_benchmark_returns_metrics
 from vinu_research.config import ResearchConfig, load_config
@@ -159,6 +160,33 @@ class ResearchTools:
         except Exception as e:
             LOG.warning("get_correlation(%s) failed: %s", symbol, e)
             return None
+
+    async def get_angle_rows(self, angle_name: str, symbol: str) -> list[dict[str, Any]]:
+        """Fetch all stored rows for one initial-analysis angle (read-only endpoint)."""
+        try:
+            resp = await self._correlation_client.get(
+                f"/angle/{angle_name}/{symbol.upper()}",
+            )
+            if isinstance(resp, dict):
+                data = resp.get("data")
+                return data if isinstance(data, list) else []
+        except Exception as e:
+            LOG.warning("get_angle_rows(%s, %s) failed: %s", angle_name, symbol, e)
+        return []
+
+    async def get_angle_context(self, symbol: str, interval: str = "1d") -> dict[str, Any]:
+        """Compact context from the deterministic angles for the risk critic / LLM.
+
+        Reads trend_lifecycle, trend_session_structure, and news_price_causality
+        and reduces them to a small dict (see angle_context.build_angle_context).
+        Returns {} when the angles have not been run for this symbol.
+        """
+        trend_rows, session_rows, causality_rows = await asyncio.gather(
+            self.get_angle_rows("trend_lifecycle", symbol),
+            self.get_angle_rows("trend_session_structure", symbol),
+            self.get_angle_rows("news_price_causality", symbol),
+        )
+        return build_angle_context(trend_rows, session_rows, causality_rows, interval=interval)
 
     async def get_benchmark_data(
         self,

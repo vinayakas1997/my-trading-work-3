@@ -155,9 +155,6 @@ def query_main(argv: list[str] | None = None) -> None:
     dd_parser.add_argument("--from", type=int, default=None, dest="from_ts")
     dd_parser.add_argument("--to", type=int, default=None, dest="to_ts")
 
-    base_parser = sub.add_parser("baseline")
-    base_parser.add_argument("ticker")
-
     args = parser.parse_args(argv)
     api = CorrelationAPI()
 
@@ -172,9 +169,6 @@ def query_main(argv: list[str] | None = None) -> None:
         print(json.dumps(result, indent=2, default=str))
     elif args.command == "drawdown":
         result = api.get_drawdown(args.ticker, from_ts=args.from_ts, to_ts=args.to_ts)
-        print(json.dumps(result, indent=2, default=str))
-    elif args.command == "baseline":
-        result = api.get_baseline(args.ticker)
         print(json.dumps(result, indent=2, default=str))
 
 

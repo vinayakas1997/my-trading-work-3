@@ -64,9 +64,10 @@ class AngleStorage:
         files = sorted(angle_dir.glob("*.parquet")) if angle_dir.exists() else []
         if not files:
             return pd.DataFrame()
-        tables = [pq.read_table(f) for f in files]
-        table = pa.concat_tables(tables)
-        return table.to_pandas()
+        dfs = [pq.read_table(f).to_pandas() for f in files]
+        if not dfs:
+            return pd.DataFrame()
+        return pd.concat(dfs, ignore_index=True, sort=False)
 
     def read_latest(self, symbol: str, angle_name: str) -> pd.DataFrame:
         """Read only the most recent run for a symbol+angle."""

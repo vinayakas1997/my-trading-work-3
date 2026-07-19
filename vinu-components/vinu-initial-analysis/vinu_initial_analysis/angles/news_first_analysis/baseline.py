@@ -9,7 +9,7 @@ def compute_baseline(
     window_days: int = 7,
     session_aware: bool = True,
 ) -> list[dict[str, Any]]:
-    from vinu_initial_analysis.angles.session_time_analysis.market_hours import classify_session
+    from vinu_initial_analysis.angles._market_hours import classify_session
 
     hourly_counts: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
@@ -24,25 +24,51 @@ def compute_baseline(
     if not hourly_counts:
         return []
 
-    min_ts = min(hourly_counts.keys())
+    sorted_hours = sorted(hourly_counts.items())
     window_sec = window_days * 86400
+    
+    all_sessions = set()
+    for hour_ts, sessions in hourly_counts.items():
+        all_sessions.update(sessions.keys())
+    all_sessions.update({"london", "ny_premarket", "ny_regular", "ny_afterhours"})
+
+    session_counts: dict[str, list[int]] = {}
+    session_accums: dict[str, int] = {}
+    for sn in all_sessions:
+        session_counts[sn] = []
+        session_accums[sn] = 0
+
+
+    hour_keys = [h for h, _ in sorted_hours]
+    left = 0
 
     baselines = []
-    for hour_ts, sessions in sorted(hourly_counts.items()):
+    for hour_ts, sessions in sorted_hours:
         window_start = hour_ts - window_sec
-        for session_name in set(sessions.keys()) | {"london", "ny_premarket", "ny_regular", "ny_afterhours"}:
-            counts_in_window = [
-                sc.get(session_name, 0)
-                for ht, sc in hourly_counts.items()
-                if window_start <= ht < hour_ts
-            ]
+
+        while left < len(hour_keys) and hour_keys[left] < window_start:
+            for sn in all_sessions:
+                session_accums[sn] -= session_counts[sn][left]
+            left += 1
+
+        for sn in all_sessions:
+            session_counts[sn].append(sessions.get(sn, 0))
+            session_accums[sn] += sessions.get(sn, 0)
+
+        for session_name in set(sessions.keys()) | all_sessions:
             current_count = sessions.get(session_name, 0)
-            if not counts_in_window:
+            n_in_window = len(session_counts[session_name]) - left
+            total_in_window = session_accums[session_name]
+
+            if n_in_window <= 1:
                 mean = float(current_count)
                 stddev = 1.0
             else:
-                mean = sum(counts_in_window) / len(counts_in_window)
-                variance = sum((c - mean) ** 2 for c in counts_in_window) / len(counts_in_window)
+                mean = total_in_window / n_in_window
+                sq_diff = 0.0
+                for i in range(left, len(session_counts[session_name]) - 1):
+                    sq_diff += (session_counts[session_name][i] - mean) ** 2
+                variance = sq_diff / n_in_window
                 stddev = variance ** 0.5 or 1.0
 
             z_score = (current_count - mean) / stddev
@@ -57,7 +83,7 @@ def compute_baseline(
                 "stddev": round(stddev, 4),
                 "z_score": round(z_score, 4),
                 "deviation_level": deviation_level,
-                "sample_size": len(counts_in_window),
+                "sample_size": n_in_window,
             })
 
     return baselines

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import duckdb
+
+LOG = logging.getLogger(__name__)
 from vinu_stock.backfill.orchestrator import BackfillSummary, run_backfill
 from vinu_stock.config import VinuStockConfig, load_config
 from vinu_stock.live.ingest_cycle import LiveIngestSummary, run_live_cycle
@@ -136,7 +139,7 @@ class StockService:
     def run_live_cycle(self, symbols: list[str] | None = None, dry_run: bool = False) -> LiveCycleResult:
         if dry_run:
             LOG.info("DRY RUN: run_live_cycle(%s) — skipping", symbols)
-            return LiveCycleResult(summary=LiveIngestSummary(bars_added=0, failures=0, symbols_polled=0), watchlist_size=0)
+            return LiveCycleResult(summary=LiveIngestSummary(bars_added=0, symbols_failed=0, symbols_polled=0), watchlist_size=0)
 
         syms = symbols or self.get_watchlist()
         summary = run_live_cycle(

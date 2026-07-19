@@ -122,16 +122,6 @@ class CorrelationAPI:
         self._cache.set_drawdown(symbol, from_ts, to_ts, result)
         return result
 
-    def get_baseline(self, symbol: str) -> dict[str, Any]:
-        df = self._storage.read(symbol, "session_time_analysis")
-        baseline_rows = [r for r in df.to_dict("records") if r.get("type") == "premarket_gap"] if not df.empty else []
-        return {
-            "symbol": symbol,
-            "mean_daily_articles": 0.0,
-            "sessions": {},
-            "raw": baseline_rows,
-        }
-
     def get_story(self, symbol: str, from_ts: int | None = None, to_ts: int | None = None) -> dict[str, Any]:
         impact = self.get_impact(symbol, from_ts, to_ts)
         corr = self.get_correlation(symbol, from_ts, to_ts)
@@ -153,7 +143,8 @@ class CorrelationAPI:
                 results[sym] = {"error": str(e)}
         return {"symbols": symbols, "results": results, "count": len(symbols)}
 
-    def get_gap(self, symbol: str, date: str | None = None) -> dict[str, Any]:
-        df = self._storage.read(symbol, "session_time_analysis")
-        gap_rows = [r for r in df.to_dict("records") if r.get("type") == "premarket_gap"] if not df.empty else []
-        return {"symbol": symbol, "gap_hours": None, "data": gap_rows}
+    def close(self) -> None:
+        """Close resources such as the database connection."""
+        if hasattr(self, "_run_log"):
+            self._run_log.close()
+

@@ -1,0 +1,16 @@
+title: Trend Lifecycle
+purpose: Peak/trough pattern library, KNN similarity matching, trend stage classification, reversal signals with percentage exit thresholds
+time_formats:
+- 15min
+- 1H
+- 4H
+- 1D
+needs_bars: true
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: Angle-specific results

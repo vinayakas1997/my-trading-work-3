@@ -247,14 +247,13 @@ def get_mappings_for_tickers(
         except Exception as exc:
             LOG.error("Failed to connect to SQLite in get_mappings_for_tickers: %s", exc)
             # Fallback to CSV
-            csv_alias_to_ticker, csv_ticker_to_aliases = _load_mappings_from_csv()
+            _, csv_ticker_to_aliases = _load_mappings_from_csv()
             for ticker in tickers:
                 ticker_upper = ticker.upper()
                 if ticker_upper in csv_ticker_to_aliases:
                     ticker_to_aliases[ticker_upper] = csv_ticker_to_aliases[ticker_upper]
-                    for alias, t in csv_alias_to_ticker.items():
-                        if t == ticker_upper:
-                            alias_to_ticker[alias] = ticker_upper
+                    for alias in csv_ticker_to_aliases[ticker_upper]:
+                        alias_to_ticker[alias.lower()] = ticker_upper
             return alias_to_ticker, ticker_to_aliases
 
     try:
@@ -287,14 +286,13 @@ def get_mappings_for_tickers(
             ticker_to_aliases[ticker_upper] = aliases_list
     except sqlite3.OperationalError as exc:
         LOG.warning("ticker_reference table not found, falling back to CSV: %s", exc)
-        csv_alias_to_ticker, csv_ticker_to_aliases = _load_mappings_from_csv()
+        _, csv_ticker_to_aliases = _load_mappings_from_csv()
         for ticker in tickers:
             ticker_upper = ticker.upper()
             if ticker_upper in csv_ticker_to_aliases:
                 ticker_to_aliases[ticker_upper] = csv_ticker_to_aliases[ticker_upper]
-                for alias, t in csv_alias_to_ticker.items():
-                    if t == ticker_upper:
-                        alias_to_ticker[alias] = ticker_upper
+                for alias in csv_ticker_to_aliases[ticker_upper]:
+                    alias_to_ticker[alias.lower()] = ticker_upper
     except Exception as exc:
         LOG.error("Error querying ticker mappings: %s", exc)
     finally:

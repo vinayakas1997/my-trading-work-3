@@ -3,6 +3,7 @@
 import pandas as pd
 from datetime import datetime, timezone
 
+from vinu_initial_analysis.angles._helpers import bars_to_candle_list
 from .event_study import compute_abnormal_return, classify_significance
 
 
@@ -15,7 +16,7 @@ def compute(
     time_format: str | None = None,
 ) -> pd.DataFrame:
     now = datetime.now(timezone.utc).isoformat()
-    candles = _bars_to_candle_list(bars)
+    candles = bars_to_candle_list(bars)
     articles = news or []
     rows: list[dict] = []
 
@@ -61,9 +62,4 @@ def compute(
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 
-def _bars_to_candle_list(bars: pd.DataFrame | None) -> list[dict]:
-    if bars is None or bars.empty:
-        return []
-    if "bar_ts" not in bars.columns:
-        return []
-    return bars.to_dict("records")
+
