@@ -1,0 +1,120 @@
+{
+  "run_id": "AAPL_20260720T221534Z",
+  "ticker": "AAPL",
+  "from_date": "2024-01-01",
+  "to_date": "2024-06-01",
+  "started_at": "2026-07-20T22:15:35.060109+00:00",
+  "finished_at": null,
+  "steps": [
+    {
+      "name": "vinu-stock-price",
+      "status": "ok",
+      "started_at": "2026-07-20T22:15:35.060109+00:00",
+      "finished_at": "2026-07-20T22:17:00.093727+00:00",
+      "duration_sec": 85.034,
+      "memory_start_mb": 88.96,
+      "memory_peak_mb": 190.3,
+      "memory_end_mb": 151.6,
+      "response_summary": {
+        "backfill": {
+          "type": "backfill",
+          "status": "done",
+          "summary": {
+            "years_ok": 4,
+            "years_failed": 0,
+            "total_rows": 387037
+          }
+        },
+        "ingest": {
+          "type": "ingest",
+          "status": "done",
+          "summary": {
+            "bars_added": 53909,
+            "symbols_polled": 1,
+            "watchlist_size": 1
+          }
+        }
+      },
+      "llm_calls": [],
+      "error": null
+    },
+    {
+      "name": "vinu-news",
+      "status": "error",
+      "started_at": "2026-07-20T22:17:00.348262+00:00",
+      "finished_at": "2026-07-20T22:18:04.469231+00:00",
+      "duration_sec": 64.119,
+      "memory_start_mb": 45.7,
+      "memory_peak_mb": 52.1,
+      "memory_end_mb": 52.1,
+      "response_summary": null,
+      "llm_calls": [],
+      "error": "HTTPConnectionPool(host='127.0.0.1', port=8080): Read timed out. (read timeout=60)"
+    },
+    {
+      "name": "vinu-tools (features)",
+      "status": "skipped",
+      "started_at": null,
+      "finished_at": null,
+      "duration_sec": null,
+      "memory_start_mb": null,
+      "memory_peak_mb": null,
+      "memory_end_mb": null,
+      "response_summary": null,
+      "llm_calls": [],
+      "error": null
+    },
+    {
+      "name": "vinu-initial-analysis",
+      "status": "skipped",
+      "started_at": null,
+      "finished_at": null,
+      "duration_sec": null,
+      "memory_start_mb": null,
+      "memory_peak_mb": null,
+      "memory_end_mb": null,
+      "response_summary": null,
+      "llm_calls": [],
+      "error": null
+    },
+    {
+      "name": "vinu-strategy",
+      "status": "skipped",
+      "started_at": null,
+      "finished_at": null,
+      "duration_sec": null,
+      "memory_start_mb": null,
+      "memory_peak_mb": null,
+      "memory_end_mb": null,
+      "response_summary": null,
+      "llm_calls": [],
+      "error": null
+    },
+    {
+      "name": "vinu-simulator",
+      "status": "skipped",
+      "started_at": null,
+      "finished_at": null,
+      "duration_sec": null,
+      "memory_start_mb": null,
+      "memory_peak_mb": null,
+      "memory_end_mb": null,
+      "response_summary": null,
+      "llm_calls": [],
+      "error": null
+    },
+    {
+      "name": "vinu-research",
+      "status": "skipped",
+      "started_at": null,
+      "finished_at": null,
+      "duration_sec": null,
+      "memory_start_mb": null,
+      "memory_peak_mb": null,
+      "memory_end_mb": null,
+      "response_summary": null,
+      "llm_calls": [],
+      "error": null
+    }
+  ]
+}

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -16,6 +18,37 @@ LOG = logging.getLogger(__name__)
 
 class LlmClientError(RuntimeError):
     pass
+
+
+def _log_llm_call(
+    config: VinuConfig,
+    system: str,
+    user: str,
+    duration_sec: float,
+    response: Any,
+    success: bool,
+    error: str | None,
+) -> None:
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "service": "vinu-news",
+        "event": "llm_call",
+        "model": config.llm_model,
+        "base_url": config.llm_base_url,
+        "system_prompt": system,
+        "user_prompt": user,
+        "response": response,
+        "duration_sec": round(duration_sec, 3),
+        "success": success,
+        "error": error,
+    }
+    try:
+        log_path = config.db_path.parent / "llm_calls.jsonl"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError as exc:
+        LOG.warning("Failed to write llm_calls.jsonl: %s", exc)
 
 
 class LlmClient:
@@ -41,14 +74,18 @@ class LlmClient:
             "temperature": 0.2,
             "max_tokens": self._config.llm_max_tokens,
         }
+        start = time.perf_counter()
         try:
             resp = http_request("POST", url, headers=headers, json=payload, timeout=300)
             resp.raise_for_status()
             data = resp.json()
             content = data["choices"][0]["message"]["content"]
-            return _parse_json_content(content)
+            parsed = _parse_json_content(content)
+            _log_llm_call(self._config, system, user, time.perf_counter() - start, parsed, True, None)
+            return parsed
         except (requests.RequestException, KeyError, json.JSONDecodeError) as exc:
             LOG.warning("LLM request failed: %s", exc)
+            _log_llm_call(self._config, system, user, time.perf_counter() - start, None, False, str(exc))
             raise LlmClientError(str(exc)) from exc
 
 

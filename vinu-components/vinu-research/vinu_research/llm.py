@@ -6,6 +6,7 @@ import logging
 import sqlite3
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -141,6 +142,40 @@ class LlmCache:
             self._local.conn = None
 
 
+def _log_llm_event(
+    data_root: Path,
+    event: str,
+    model: str,
+    base_url: str,
+    system: str,
+    user: str,
+    duration_sec: float,
+    response: Any,
+    success: bool,
+    error: str | None,
+) -> None:
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "service": "vinu-research",
+        "event": event,
+        "model": model,
+        "base_url": base_url,
+        "system_prompt": system,
+        "user_prompt": user,
+        "response": response,
+        "duration_sec": round(duration_sec, 3),
+        "success": success,
+        "error": error,
+    }
+    try:
+        log_path = data_root / "llm_calls.jsonl"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError as exc:
+        LOG.warning("Failed to write llm_calls.jsonl: %s", exc)
+
+
 class ResearchLlmClient:
     def __init__(self, config: ResearchConfig) -> None:
         self._config = config
@@ -204,15 +239,20 @@ class ResearchLlmClient:
             cached = self._cache.get(cache_key)
             if cached is not None:
                 LOG.debug("LLM cache hit for %s", cache_key[:8])
+                _log_llm_event(
+                    self._config.data_root, "cache_hit", self._config.llm_model, self._config.llm_base_url,
+                    system, user, 0.0, cached, True, None,
+                )
                 return cached
 
+        start = time.perf_counter()
         await self._limiter.wait_async()
-        
+
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
-        
+
         payload = self._chat_llm.build_request(
             messages=messages,
             temperature=0.2,
@@ -222,6 +262,10 @@ class ResearchLlmClient:
         data = await self._http.post("/chat/completions", json=payload)
         if data is None:
             LOG.warning("LLM returned no response (circuit open or timeout)")
+            _log_llm_event(
+                self._config.data_root, "llm_call", self._config.llm_model, self._config.llm_base_url,
+                system, user, time.perf_counter() - start, None, False, "no response (circuit open or timeout)",
+            )
             return None
 
         try:
@@ -229,11 +273,19 @@ class ResearchLlmClient:
             content = normalized.get("content", "")
         except Exception as e:
             LOG.warning("LLM response missing expected fields: %s", e)
+            _log_llm_event(
+                self._config.data_root, "llm_call", self._config.llm_model, self._config.llm_base_url,
+                system, user, time.perf_counter() - start, None, False, str(e),
+            )
             return None
 
         parsed = self._parse_json(content)
         if parsed is not None and self._config.llm_ttl_sec > 0:
             self._cache.set(cache_key, parsed)
+        _log_llm_event(
+            self._config.data_root, "llm_call", self._config.llm_model, self._config.llm_base_url,
+            system, user, time.perf_counter() - start, parsed, parsed is not None, None,
+        )
         return parsed
 
     async def close(self) -> None:
