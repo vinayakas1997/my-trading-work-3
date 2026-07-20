@@ -19,6 +19,8 @@ DEFAULT_LLM_BASE_URL = "http://127.0.0.1:11434/v1"
 DEFAULT_LLM_MODEL = "llama3.2"
 DEFAULT_LLM_TTL_SEC = 86400
 DEFAULT_LLM_MAX_TOKENS = 8000
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 8087
 
 _env_loaded = False
 
@@ -72,6 +74,10 @@ class ResearchConfig:
     walk_forward_step_size_days: int = 63
     stock_price_api_url: str = DEFAULT_STOCK_PRICE_API_URL
     benchmark_symbol: str = DEFAULT_BENCHMARK_SYMBOL
+    # "llm"/"hybrid": LLM drives every iteration (fresh generation on iteration 1,
+    # feedback-informed refinement on iteration 2+). "template": deterministic
+    # recipe + rule-based filter injection only, no LLM — kept as the --no-llm
+    # fallback but not being actively developed further for now.
     generator_mode: str = "hybrid"
     llm_candidates: int = 3
 
@@ -95,6 +101,33 @@ class ResearchConfig:
     portfolio_beta_hedge_max_ratio: float = 1.5
     target_sharpe_ratio: float = 1.5
     target_max_drawdown: float = -0.30
+
+    # BENCHING -> ACTIVE promotion bar. deflated_sharpe is the probability
+    # best_sharpe reflects genuine skill after correcting for the cumulative
+    # number of research trials run against the symbol (see deflated_sharpe_ratio);
+    # 0.95 is the standard multiple-testing-corrected significance threshold.
+    # holdout_required additionally demands the strategy passed the true
+    # out-of-sample holdout check (if one could be computed for the run).
+    promotion_deflated_sharpe_threshold: float = 0.95
+    promotion_holdout_required: bool = True
+    promotion_stress_test_required: bool = True
+
+    # Fixed historical crisis windows the winning strategy is replayed through
+    # once, after the refinement loop finishes — never used to pick or tune
+    # the strategy, unlike walk-forward/holdout windows carved from the
+    # researched range itself. (name, from_date, to_date).
+    stress_test_enabled: bool = True
+    stress_test_windows: list[tuple[str, str, str]] = field(default_factory=lambda: [
+        ("2020_covid_crash", "2020-02-15", "2020-04-15"),
+        ("2022_rate_hike_drawdown", "2022-01-01", "2022-10-15"),
+    ])
+    # A window "fails" if max_drawdown during it breaches this (e.g. -50%) —
+    # deliberately lenient: crisis windows are *expected* to hurt, this is
+    # meant to catch catastrophic/leveraged blowups, not ordinary drawdown.
+    stress_test_max_drawdown_threshold: float = -0.50
+
+    host: str = DEFAULT_HOST
+    port: int = DEFAULT_PORT
 
 
 @dataclass(frozen=True)
@@ -163,4 +196,20 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         ),
         target_sharpe_ratio=float(os.environ.get("VINU_RESEARCH_TARGET_SHARPE", "1.5")),
         target_max_drawdown=float(os.environ.get("VINU_RESEARCH_TARGET_MAX_DRAWDOWN", "-0.30")),
+        promotion_deflated_sharpe_threshold=float(
+            os.environ.get("VINU_RESEARCH_PROMOTION_DSR_THRESHOLD", "0.95")
+        ),
+        promotion_holdout_required=os.environ.get(
+            "VINU_RESEARCH_PROMOTION_HOLDOUT_REQUIRED", "true"
+        ).lower() in ("1", "true", "yes"),
+        promotion_stress_test_required=os.environ.get(
+            "VINU_RESEARCH_PROMOTION_STRESS_TEST_REQUIRED", "true"
+        ).lower() in ("1", "true", "yes"),
+        stress_test_enabled=os.environ.get("VINU_RESEARCH_STRESS_TEST_ENABLED", "true").lower()
+        in ("1", "true", "yes"),
+        stress_test_max_drawdown_threshold=float(
+            os.environ.get("VINU_RESEARCH_STRESS_TEST_MAX_DD", "-0.50")
+        ),
+        host=os.environ.get("VINU_RESEARCH_HOST", DEFAULT_HOST),
+        port=int(os.environ.get("VINU_RESEARCH_PORT", str(DEFAULT_PORT))),
     )

@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vinu-live"
+version = "0.1.0"
+description = "Live execution engine — signal→order translation, TWAP/VWAP slicing, autonomous scheduling, reconciliation"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "pydantic>=2.0",
+  "python-dotenv>=1.0",
+  "httpx>=0.27",
+  "numpy>=1.24",
+  "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[project.scripts]
+vinu-live = "vinu_live.cli:main"
+vinu-live-worker = "vinu_live.cli:worker_main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vinu_live*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

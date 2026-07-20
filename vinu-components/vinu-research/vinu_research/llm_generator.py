@@ -9,7 +9,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from vinu_research.models import LlmCandidate
+from vinu_research.angle_context import format_angle_context_lines
+from vinu_research.models import BacktestResult, CriticFeedback, LlmCandidate
 
 LOG = logging.getLogger(__name__)
 
@@ -126,15 +127,38 @@ def validate_sandbox(code: str, sample_data: pd.DataFrame) -> bool:
         return False
 
 
+def _format_feature_lines(features: dict[str, Any] | None) -> list[str]:
+    """Render feature snapshot as compact prompt lines."""
+    lines: list[str] = []
+    if not features:
+        return lines
+    data = features.get("data") or features.get("features") or features
+    if isinstance(data, dict):
+        lines.append("")
+        lines.append("Computed Features (vinu-tools):")
+        keys = list(data.keys())[:15]
+        for k in keys:
+            v = data[k]
+            if isinstance(v, (int, float)):
+                lines.append(f"  {k}: {v:.4f}")
+            else:
+                lines.append(f"  {k}: {v}")
+        if len(data) > 15:
+            lines.append(f"  ... and {len(data) - 15} more features")
+    return lines
+
+
 def _build_generation_prompt(
     user_idea: str,
     symbol: str,
     from_date: str,
     to_date: str,
     indicators: list[str] | None = None,
+    angles: dict[str, Any] | None = None,
+    features: dict[str, Any] | None = None,
 ) -> str:
     ind_list = ", ".join(indicators) if indicators else "sma_20, sma_50, rsi_14"
-    return f"""Generate a trading strategy for:
+    prompt = f"""Generate a trading strategy for:
 
 User request: {user_idea}
 Symbol: {symbol}
@@ -143,11 +167,103 @@ Available indicators: {ind_list}
 
 The strategy must be a class UserStrategy(BaseStrategy) with generate_weights(self, data) method.
 Make it robust, parameterizable, and suitable for the described market conditions."""
+    angle_lines = format_angle_context_lines(angles or {})
+    if angle_lines:
+        prompt += "\n" + "\n".join(angle_lines)
+    feature_lines = _format_feature_lines(features)
+    if feature_lines:
+        prompt += "\n" + "\n".join(feature_lines)
+    return prompt
+
+
+def _build_refinement_prompt(
+    user_idea: str,
+    symbol: str,
+    from_date: str,
+    to_date: str,
+    previous_code: str,
+    last_result: BacktestResult,
+    last_critique: CriticFeedback,
+    indicators: list[str] | None = None,
+    angles: dict[str, Any] | None = None,
+    features: dict[str, Any] | None = None,
+) -> str:
+    m = last_result.metrics
+    ind_list = ", ".join(indicators) if indicators else "sma_20, sma_50, rsi_14"
+    lines = [
+        f"Refine a trading strategy for:",
+        f"User request: {user_idea}",
+        f"Symbol: {symbol}",
+        f"Period: {from_date} → {to_date}",
+        f"Available indicators: {ind_list}",
+        "",
+        "Previous strategy code:",
+        "```python",
+        previous_code,
+        "```",
+        "",
+        "Backtest results for the code above:",
+        f"- Sharpe: {m.sharpe_ratio:.2f}",
+        f"- MaxDD: {m.max_drawdown:.1%}",
+        f"- Win Rate: {m.win_rate:.0%}",
+        f"- Total Return: {m.total_return:.1%}",
+        f"- Trade Count: {last_result.trade_count}",
+        "",
+        f"Critic verdict: {last_critique.verdict}",
+        f"Critic reasoning: {last_critique.reasoning}",
+        "Critic suggestions to address:",
+    ]
+    if last_critique.suggestions:
+        for i, s in enumerate(last_critique.suggestions, 1):
+            lines.append(f"  {i}. {s}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+    lines.append(
+        "Return an improved version of the strategy that directly addresses the "
+        "critic's suggestions above. Keep what already works; change what doesn't."
+    )
+    angle_lines = format_angle_context_lines(angles or {})
+    if angle_lines:
+        lines.extend(angle_lines)
+    feature_lines = _format_feature_lines(features)
+    if feature_lines:
+        lines.extend(feature_lines)
+    return "\n".join(lines)
 
 
 class LlmStrategyGenerator:
     def __init__(self, llm_client: Any):
         self._llm = llm_client
+
+    async def propose_idea_from_angles(self, angles: dict[str, Any]) -> str:
+        """Propose a trading strategy idea based solely on angle context."""
+        angle_lines = format_angle_context_lines(angles)
+        prompt_parts = [
+            "Based on the following deterministic angle analysis, propose a specific "
+            "trading strategy idea for this symbol. Be concise but specific about the "
+            "market regime, entry/exit logic, and what indicators to use.",
+        ]
+        if angle_lines:
+            prompt_parts.extend(angle_lines)
+        prompt_parts.append(
+            'Return JSON with this exact schema: {"idea": "one paragraph describing the strategy idea"}'
+        )
+        prompt = "\n".join(prompt_parts)
+
+        sys_prompt = (
+            "You are a senior quantitative analyst. Propose a focused, testable trading "
+            "strategy idea based on the angle analysis data provided. "
+            "Respond with JSON containing a single 'idea' field."
+        )
+
+        response = await self._llm.chat_json(sys_prompt, prompt)
+        if response and isinstance(response, dict) and "idea" in response:
+            return str(response["idea"])
+        tl = angles.get("trend_lifecycle", {})
+        stage = tl.get("stage", "unknown")
+        risk = tl.get("risk", "unknown")
+        return f"Trend-following strategy for {stage} stage with {risk} risk regime"
 
     async def generate(
         self,
@@ -157,6 +273,7 @@ class LlmStrategyGenerator:
         to_date: str,
         indicators: list[str] | None = None,
         n_candidates: int = 3,
+        story: dict[str, Any] | None = None,
     ) -> list[LlmCandidate]:
         # Candidates are independent draws against the same prompt — nothing about
         # candidate i depends on candidate i-1's response, so generating them
@@ -164,9 +281,11 @@ class LlmStrategyGenerator:
         # into one long wait. Run them concurrently instead; the rate limiter and
         # circuit breaker inside the LLM client are already safe under concurrent
         # callers (TokenBucket uses a lock, CircuitBreaker uses an asyncio.Lock).
+        angles = (story or {}).get("angles")
+        features = (story or {}).get("features")
         results = await asyncio.gather(
             *[
-                self._generate_one(user_idea, symbol, from_date, to_date, indicators)
+                self._generate_one(user_idea, symbol, from_date, to_date, indicators, angles, features)
                 for _ in range(n_candidates)
             ],
             return_exceptions=True,
@@ -187,8 +306,10 @@ class LlmStrategyGenerator:
         from_date: str,
         to_date: str,
         indicators: list[str] | None = None,
+        angles: dict[str, Any] | None = None,
+        features: dict[str, Any] | None = None,
     ) -> LlmCandidate | None:
-        prompt = _build_generation_prompt(user_idea, symbol, from_date, to_date, indicators)
+        prompt = _build_generation_prompt(user_idea, symbol, from_date, to_date, indicators, angles, features)
         response = await self._llm.chat_json(LLM_GEN_SYSTEM_PROMPT, prompt)
         if response is None:
             return None
@@ -196,6 +317,74 @@ class LlmStrategyGenerator:
         code = response.get("strategy_code", "")
         if not code or not validate_code(code):
             LOG.warning("LLM generated code failed AST validation")
+            return None
+
+        return LlmCandidate(
+            code=code,
+            features_required=response.get("features_required", []),
+            reasoning=response.get("reasoning", ""),
+            params=response.get("params", {}),
+            validated=True,
+        )
+
+    async def refine(
+        self,
+        user_idea: str,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+        previous_code: str,
+        last_result: BacktestResult,
+        last_critique: CriticFeedback,
+        indicators: list[str] | None = None,
+        n_candidates: int = 1,
+        story: dict[str, Any] | None = None,
+    ) -> list[LlmCandidate]:
+        angles = (story or {}).get("angles")
+        features = (story or {}).get("features")
+        results = await asyncio.gather(
+            *[
+                self._refine_one(
+                    user_idea, symbol, from_date, to_date, previous_code,
+                    last_result, last_critique, indicators, angles, features,
+                )
+                for _ in range(n_candidates)
+            ],
+            return_exceptions=True,
+        )
+
+        candidates: list[LlmCandidate] = []
+        for i, r in enumerate(results):
+            if isinstance(r, Exception):
+                LOG.warning("LLM refinement candidate %d generation failed: %s", i + 1, r)
+            elif r is not None:
+                candidates.append(r)
+        return candidates
+
+    async def _refine_one(
+        self,
+        user_idea: str,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+        previous_code: str,
+        last_result: BacktestResult,
+        last_critique: CriticFeedback,
+        indicators: list[str] | None = None,
+        angles: dict[str, Any] | None = None,
+        features: dict[str, Any] | None = None,
+    ) -> LlmCandidate | None:
+        prompt = _build_refinement_prompt(
+            user_idea, symbol, from_date, to_date, previous_code,
+            last_result, last_critique, indicators, angles, features,
+        )
+        response = await self._llm.chat_json(LLM_GEN_SYSTEM_PROMPT, prompt)
+        if response is None:
+            return None
+
+        code = response.get("strategy_code", "")
+        if not code or not validate_code(code):
+            LOG.warning("LLM refined code failed AST validation")
             return None
 
         return LlmCandidate(

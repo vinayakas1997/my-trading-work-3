@@ -44,7 +44,7 @@ def candles(
     provider: str | None = None,
     limit: int = Query(default=5000, ge=1, le=50000),
     indicators: str | None = Query(default=None, description="Comma-separated indicator names"),
-    adjusted: bool = Query(default=False),
+    adjusted: bool = Query(default=True),
 ) -> DataResponse:
     service = get_service()
     try:

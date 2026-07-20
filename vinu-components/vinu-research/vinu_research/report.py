@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from vinu_research.models import BacktestResult, HoldoutResult, IterationRecord, WalkForwardResult
+from vinu_research.models import (
+    BacktestResult,
+    HoldoutResult,
+    IterationRecord,
+    StressTestResult,
+    WalkForwardResult,
+)
 from vinu_research.portfolio import PortfolioAnalysisResult
 
 
@@ -17,6 +23,7 @@ def generate_report(
     walk_forward: WalkForwardResult | None = None,
     holdout: HoldoutResult | None = None,
     portfolio: PortfolioAnalysisResult | None = None,
+    stress_test: StressTestResult | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("=== FINAL RESEARCH REPORT ===")
@@ -173,6 +180,35 @@ def generate_report(
             lines.append(
                 "This strategy was NOT approved as PASS on the strength of in-sample "
                 "metrics alone; treat any in-sample-only numbers above with caution."
+            )
+        lines.append("")
+
+    if stress_test is not None and stress_test.windows:
+        lines.append("=== STRESS TEST (historical crisis windows) ===")
+        lines.append(
+            f"  {'Window':<28} {'Period':<24} {'Max DD':<10} {'Return':<10} {'Trades':<8} {'Result'}"
+        )
+        lines.append("  " + "-" * 90)
+        for w in stress_test.windows:
+            period = f"{w.from_date} → {w.to_date}"
+            if w.passed is None:
+                dd = ret = trades = "n/a"
+                verdict = f"SKIPPED ({w.note})" if w.note else "SKIPPED"
+            else:
+                dd = f"{w.max_drawdown:.1%}"
+                ret = f"{w.total_return:.1%}"
+                trades = str(w.trade_count)
+                verdict = "PASS" if w.passed else f"FAIL ({w.note})"
+            lines.append(f"  {w.name:<28} {period:<24} {dd:<10} {ret:<10} {trades:<8} {verdict}")
+        lines.append("")
+        if stress_test.passed is None:
+            lines.append("Verdict: stress test inconclusive — no window had usable price data.")
+        elif stress_test.passed:
+            lines.append("Verdict: PASSED all evaluated stress windows.")
+        else:
+            lines.append(
+                "Verdict: FAILED at least one stress window — this strategy would have "
+                "drawn down beyond the configured threshold during a known historical shock."
             )
         lines.append("")
 

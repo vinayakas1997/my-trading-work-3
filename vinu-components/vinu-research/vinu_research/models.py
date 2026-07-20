@@ -75,6 +75,22 @@ class Artifact:
     exit_rules: str = ""
     created_at: str = ""
     updated_at: str = ""
+    # Populated when the artifact originates from an approved vinu-research run
+    # (type == "strategy") — the executable code and the run it came from, so a
+    # strategy can be re-backtested later without re-running the research loop.
+    strategy_code: str = ""
+    source_run_id: int | None = None
+    initial_sharpe: float = 0.0
+    initial_max_dd: float = 0.0
+    # Probability initial_sharpe reflects genuine skill after correcting for the
+    # cumulative number of research trials run against this symbol (deflated
+    # Sharpe ratio, Bailey & Lopez de Prado 2014) — not just this run's trials.
+    deflated_sharpe: float = 0.0
+    # None when the date range was too short to carve a holdout at all;
+    # True/False otherwise, from HoldoutResult.passed.
+    holdout_passed: bool | None = None
+    # None when no stress window had usable price data, from StressTestResult.passed.
+    stress_test_passed: bool | None = None
 
     @classmethod
     def create(cls, type_: str, name: str, universe: list[str] | None = None) -> Artifact:
@@ -259,6 +275,39 @@ class HoldoutResult:
 
 
 @dataclass
+class StressWindowResult:
+    name: str
+    from_date: str
+    to_date: str
+    max_drawdown: float | None = None
+    total_return: float | None = None
+    trade_count: int = 0
+    passed: bool | None = None
+    note: str = ""
+
+
+@dataclass
+class StressTestResult:
+    """
+    Replays the winning strategy's actual code through fixed historical crisis
+    windows (e.g. the 2020-03 COVID crash) it was never tuned or refined
+    against, unlike WalkForwardResult/HoldoutResult whose windows are carved
+    from the researched range itself. Answers "what does this do in a shock,"
+    not "does its historical edge hold up statistically."
+    """
+    windows: list[StressWindowResult] = field(default_factory=list)
+
+    @property
+    def passed(self) -> bool | None:
+        """None if no window could be evaluated (e.g. no price data for the
+        period); otherwise True only if every evaluated window passed."""
+        evaluated = [w for w in self.windows if w.passed is not None]
+        if not evaluated:
+            return None
+        return all(w.passed for w in evaluated)
+
+
+@dataclass
 class LlmCandidate:
     code: str
     features_required: list[str] = field(default_factory=list)
@@ -281,3 +330,4 @@ class ResearchResult:
     walk_forward: WalkForwardResult | None = None
     holdout: HoldoutResult | None = None
     portfolio: PortfolioAnalysisResult | None = None
+    stress_test: StressTestResult | None = None

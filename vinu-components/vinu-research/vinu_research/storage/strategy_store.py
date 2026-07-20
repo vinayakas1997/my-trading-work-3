@@ -20,7 +20,14 @@ CREATE TABLE IF NOT EXISTS artifacts (
     entry_rules TEXT NOT NULL DEFAULT '',
     exit_rules TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    strategy_code TEXT NOT NULL DEFAULT '',
+    source_run_id INTEGER,
+    initial_sharpe REAL NOT NULL DEFAULT 0.0,
+    initial_max_dd REAL NOT NULL DEFAULT 0.0,
+    deflated_sharpe REAL NOT NULL DEFAULT 0.0,
+    holdout_passed INTEGER,
+    stress_test_passed INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS bench_history (
@@ -68,8 +75,30 @@ class SqliteStrategyStore:
             conn.execute("PRAGMA foreign_keys=ON")
             conn.row_factory = sqlite3.Row
             conn.executescript(_SCHEMA)
+            self._migrate_schema(conn)
             self._local.conn = conn
         return conn
+
+    @staticmethod
+    def _migrate_schema(conn: sqlite3.Connection) -> None:
+        """Add columns to an artifacts table created before they existed."""
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(artifacts)")}
+        migrations = [
+            ("strategy_code", "TEXT NOT NULL DEFAULT ''"),
+            ("source_run_id", "INTEGER"),
+            ("initial_sharpe", "REAL NOT NULL DEFAULT 0.0"),
+            ("initial_max_dd", "REAL NOT NULL DEFAULT 0.0"),
+            ("deflated_sharpe", "REAL NOT NULL DEFAULT 0.0"),
+            ("holdout_passed", "INTEGER"),
+            ("stress_test_passed", "INTEGER"),
+        ]
+        for name, typedef in migrations:
+            if name not in cols:
+                try:
+                    conn.execute(f"ALTER TABLE artifacts ADD COLUMN {name} {typedef}")
+                except sqlite3.OperationalError:
+                    pass
+        conn.commit()
 
     def close(self) -> None:
         conn = getattr(self._local, "conn", None)
@@ -90,8 +119,10 @@ class SqliteStrategyStore:
         conn.execute(
             """INSERT OR REPLACE INTO artifacts
                (artifact_id, type, name, universe, status, decay_horizon,
-                signal_definition, entry_rules, exit_rules, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                signal_definition, entry_rules, exit_rules, created_at, updated_at,
+                strategy_code, source_run_id, initial_sharpe, initial_max_dd, deflated_sharpe,
+                holdout_passed, stress_test_passed)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 artifact.artifact_id,
                 artifact.type,
@@ -104,6 +135,13 @@ class SqliteStrategyStore:
                 artifact.exit_rules,
                 artifact.created_at or now,
                 now,
+                artifact.strategy_code,
+                artifact.source_run_id,
+                artifact.initial_sharpe,
+                artifact.initial_max_dd,
+                artifact.deflated_sharpe,
+                None if artifact.holdout_passed is None else int(artifact.holdout_passed),
+                None if artifact.stress_test_passed is None else int(artifact.stress_test_passed),
             ),
         )
         conn.commit()
@@ -128,6 +166,52 @@ class SqliteStrategyStore:
         if status is not None:
             conditions.append("status = ?")
             params.append(status.value)
+        if type_ is not None:
+            conditions.append("type = ?")
+            params.append(type_)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = conn.execute(
+            f"SELECT * FROM artifacts {where} ORDER BY created_at DESC", params
+        ).fetchall()
+        return [self._row_to_artifact(r) for r in rows]
+
+    def list_artifacts_for_symbol(
+        self,
+        symbol: str,
+        statuses: list[ArtifactStatus] | None = None,
+    ) -> list[Artifact]:
+        """Artifacts whose universe includes `symbol`, optionally filtered by status.
+
+        Filters in Python rather than SQL — `universe` is stored as a JSON text
+        column and the artifact count per symbol is small, so a JSON1 query
+        isn't worth the added dependency risk.
+        """
+        symbol = symbol.upper()
+        wanted = {s.value for s in statuses} if statuses else None
+        return [
+            a for a in self.list_artifacts()
+            if symbol in {u.upper() for u in a.universe}
+            and (wanted is None or a.status.value in wanted)
+        ]
+
+    def list_artifacts_by_statuses(
+        self,
+        statuses: list[ArtifactStatus] | None = None,
+        type_: str | None = None,
+    ) -> list[Artifact]:
+        """List artifacts matching any of the given statuses.
+
+        Unlike `list_artifacts` which accepts a single status, this allows
+        querying across multiple statuses (e.g. ACTIVE + MONITORING) in one
+        query. Returns all artifacts when statuses is None or empty.
+        """
+        conn = self._get_conn()
+        conditions: list[str] = []
+        params: list[Any] = []
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            conditions.append(f"status IN ({placeholders})")
+            params.extend(s.value for s in statuses)
         if type_ is not None:
             conditions.append("type = ?")
             params.append(type_)
@@ -217,6 +301,19 @@ class SqliteStrategyStore:
             exit_rules=row["exit_rules"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            strategy_code=row["strategy_code"] if "strategy_code" in row.keys() else "",
+            source_run_id=row["source_run_id"] if "source_run_id" in row.keys() else None,
+            initial_sharpe=row["initial_sharpe"] if "initial_sharpe" in row.keys() else 0.0,
+            initial_max_dd=row["initial_max_dd"] if "initial_max_dd" in row.keys() else 0.0,
+            deflated_sharpe=row["deflated_sharpe"] if "deflated_sharpe" in row.keys() else 0.0,
+            holdout_passed=(
+                None if "holdout_passed" not in row.keys() or row["holdout_passed"] is None
+                else bool(row["holdout_passed"])
+            ),
+            stress_test_passed=(
+                None if "stress_test_passed" not in row.keys() or row["stress_test_passed"] is None
+                else bool(row["stress_test_passed"])
+            ),
         )
 
     @staticmethod

@@ -93,10 +93,20 @@ class StockService:
         return self._backend.get_watchlist()
 
     def add_watchlist_tickers(self, tickers: list[str]) -> list[str]:
-        return self._backend.add_watchlist_tickers(tickers)
+        added = self._backend.add_watchlist_tickers(tickers)
+        self._export_watchlist_to_shared()
+        return added
 
     def remove_watchlist_ticker(self, ticker: str) -> bool:
         return self._backend.remove_watchlist_ticker(ticker)
+
+    def _export_watchlist_to_shared(self) -> None:
+        path = self._config.shared_watchlist_path
+        if path is None:
+            return
+        from vinu_stock.watchlist.shared import write_shared
+
+        write_shared(path, self.get_watchlist())
 
     def sync_watchlist_from_shared(self) -> dict[str, object]:
         path = self._config.shared_watchlist_path
@@ -106,6 +116,15 @@ class StockService:
 
         added = sync_from_shared(self._backend.watchlist, path)
         return {"ok": True, "added": added, "tickers": self.get_watchlist()}
+
+    def get_pending_backfill_symbols(self) -> list[str]:
+        """Watchlist symbols with no catalog entry yet, or an incomplete backfill."""
+        pending = []
+        for sym in self.get_watchlist():
+            entry = self._backend.catalog.get_symbol(sym)
+            if entry is None or entry.backfill_status != "complete":
+                pending.append(sym)
+        return pending
 
     def get_catalog(self, symbol: str | None = None) -> list[dict[str, Any]]:
         if symbol:
@@ -161,7 +180,7 @@ class StockService:
         provider: str | None = None,
         limit: int = 5000,
         indicators: list[str] | None = None,
-        adjusted: bool = False,
+        adjusted: bool = True,
     ) -> list[dict[str, Any]]:
         end_ts = to_ts
         start_ts = from_ts

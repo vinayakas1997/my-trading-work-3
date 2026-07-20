@@ -317,7 +317,16 @@ class NewsService:
         added = self._storage.add_watchlist_tickers(tickers)
         for t in added:
             self.ensure_ticker_backfill(t)
+        self._export_watchlist_to_shared()
         return added
+
+    def _export_watchlist_to_shared(self) -> None:
+        path = self._config.shared_watchlist_path
+        if path is None:
+            return
+        from vinu_news.watchlist.shared import write_shared
+
+        write_shared(path, self.get_watchlist())
 
     def remove_watchlist_ticker(self, ticker: str) -> bool:
         return self._storage.remove_watchlist_ticker(ticker)
@@ -337,6 +346,8 @@ class NewsService:
         if path is None:
             return {"ok": False, "message": "VINU_SHARED_WATCHLIST_PATH not set", "added": []}
         added = self._storage.sync_watchlist_from_shared(path)
+        for t in added:
+            self.ensure_ticker_backfill(t)
         return {"ok": True, "added": added, "tickers": self.get_watchlist()}
 
     def get_backfill_status(self) -> list[dict]:

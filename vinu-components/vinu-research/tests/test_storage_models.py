@@ -66,4 +66,5 @@ def test_to_dict():
     assert d["approved_at"] == ""
     assert d["created_at"] == "2024-01-01T00:00:00"
     assert d["updated_at"] == "2024-01-02T00:00:00"
-    assert len(d) == 16
+    assert d["strategy_code"] == ""
+    assert len(d) == 20

@@ -18,6 +18,8 @@ from vinu_research.models import (
     HoldoutResult,
     IterationRecord,
     ResearchResult,
+    StressTestResult,
+    StressWindowResult,
     WalkForwardResult,
 )
 from vinu_research.report import generate_report
@@ -169,6 +171,19 @@ class StrategyResearchLoop:
         # injecting the filter would just run against a fake constant column.
         self._indicators = indicators or []
 
+        # Fetched once up front (depends only on symbol + interval, not on research
+        # dates or iteration state) so the strategy generator sees the same
+        # deterministic angle signals as the risk critic, from iteration 1 onward.
+        self._angle_context = await self._tools.get_angle_context(
+            symbol, self._config.interval,
+        )
+
+        # Feature/factor snapshot from vinu-tools — includes Alpha101/191,
+        # ML pipeline outputs, and recipe bundles. Fetched alongside angle
+        # context so the LLM generator sees richer signals than just the 3
+        # hardcoded indicators (sma_20, sma_50, rsi_14).
+        self._feature_snapshot = await self._tools.get_feature_snapshot(symbol)
+
         benchmark_symbol = self._config.benchmark_symbol
         bench_cache_key = f"{benchmark_symbol}:{research_from}:{research_to}"
 
@@ -181,7 +196,7 @@ class StrategyResearchLoop:
                 else:
                     last = history[-1]
                     strategy_code = await self._quant_coder(
-                        user_idea, iteration, last.result, last.critique
+                        user_idea, iteration, last.result, last.critique, last.strategy_code
                     )
 
                 # 1. Static AST Verification Check
@@ -241,12 +256,10 @@ class StrategyResearchLoop:
                         *timestamps_from_dates(research_from, research_to),
                     ) or {}
                     # Enrich with the deterministic angle context (trend_lifecycle,
-                    # session structure, news causality) for the critic and LLM
-                    angles = await self._tools.get_angle_context(
-                        symbol, self._config.interval,
-                    )
-                    if angles:
-                        story["angles"] = angles
+                    # session structure, news causality) for the critic and LLM;
+                    # already fetched once up front, before the loop.
+                    if self._angle_context:
+                        story["angles"] = self._angle_context
                     self._story_cache.set(cache_key, story)
 
                 drawdowns = self._drawdown_cache.get(cache_key)
@@ -356,6 +369,16 @@ class StrategyResearchLoop:
                 initial_capital=initial_capital,
             )
 
+        stress_test_result: StressTestResult | None = None
+        if best_result and best_rec:
+            stress_test_result = await self._run_stress_test(
+                strategy_code=best_rec.strategy_code,
+                symbol=symbol,
+                indicators=indicators,
+                initial_capital=initial_capital,
+                symbols=backtest_symbols,
+            )
+
         equity_rets = None
         if best_result and self._benchmark_returns is not None and len(self._benchmark_returns) >= 20:
             equity_rets = await self._tools.fetch_equity_returns(best_result.run_id)
@@ -392,6 +415,7 @@ class StrategyResearchLoop:
             walk_forward=walk_forward_result,
             holdout=holdout_result,
             portfolio=portfolio_result,
+            stress_test=stress_test_result,
         )
 
         return ResearchResult(
@@ -407,6 +431,7 @@ class StrategyResearchLoop:
             walk_forward=walk_forward_result,
             holdout=holdout_result,
             portfolio=portfolio_result,
+            stress_test=stress_test_result,
         )
 
     async def _run_backtest(
@@ -598,6 +623,67 @@ class StrategyResearchLoop:
             method=self._config.walk_forward_method,
         )
 
+    async def _run_stress_test(
+        self,
+        strategy_code: str,
+        symbol: str,
+        indicators: list[str] | None = None,
+        initial_capital: float | None = None,
+        symbols: list[str] | None = None,
+    ) -> StressTestResult | None:
+        """Replay the winning strategy through fixed historical crisis windows.
+
+        Unlike walk-forward/holdout, these windows are never used to pick or
+        tune the strategy — they're only ever run once, after refinement is
+        already done, purely to answer "what does this do in a known shock."
+        """
+        if not self._config.stress_test_enabled or not self._config.stress_test_windows:
+            return None
+
+        results: list[StressWindowResult] = []
+        for name, w_from, w_to in self._config.stress_test_windows:
+            try:
+                bt = await self._run_backtest(
+                    strategy_code, symbol, w_from, w_to,
+                    indicators=indicators, initial_capital=initial_capital,
+                    symbols=symbols,
+                )
+            except Exception as e:
+                LOG.warning("Stress window %s failed: %s", name, e)
+                results.append(StressWindowResult(
+                    name=name, from_date=w_from, to_date=w_to,
+                    note=f"backtest failed: {e}",
+                ))
+                continue
+
+            if bt is None or bt.trade_count == 0:
+                # No price data for this symbol over this window (e.g. it IPO'd
+                # after 2020), or the strategy never traded — not a failure,
+                # just not evaluable, so it's excluded from the pass/fail roll-up
+                # rather than counted against the strategy.
+                results.append(StressWindowResult(
+                    name=name, from_date=w_from, to_date=w_to,
+                    note="no data or no trades in this window",
+                ))
+                continue
+
+            passed = bt.metrics.max_drawdown >= self._config.stress_test_max_drawdown_threshold
+            results.append(StressWindowResult(
+                name=name, from_date=w_from, to_date=w_to,
+                max_drawdown=bt.metrics.max_drawdown,
+                total_return=bt.metrics.total_return,
+                trade_count=bt.trade_count,
+                passed=passed,
+                note="" if passed else (
+                    f"max_drawdown {bt.metrics.max_drawdown:.1%} breached threshold "
+                    f"{self._config.stress_test_max_drawdown_threshold:.1%}"
+                ),
+            ))
+
+        if not results:
+            return None
+        return StressTestResult(windows=results)
+
     def _is_improving(self, history: list[IterationRecord]) -> bool:
         if len(history) < 2:
             return True
@@ -611,43 +697,85 @@ class StrategyResearchLoop:
         iteration: int,
         last_result: BacktestResult | None,
         last_critique: CriticFeedback | None,
+        previous_code: str | None = None,
     ) -> str:
-        recipe = find_recipe(user_idea)
+        llm_available = (
+            self._llm and self._llm.is_configured()
+            and self._config.generator_mode in ("llm", "hybrid")
+        )
+        story: dict[str, Any] | None = None
+        if getattr(self, "_angle_context", None):
+            story = {"angles": self._angle_context}
+            feat = getattr(self, "_feature_snapshot", None)
+            if feat:
+                story["features"] = feat
+        indicators = ["sma_20", "sma_50", "rsi_14"]
+        symbol = self._symbol if hasattr(self, "_symbol") else ""
+        from_date = self._from_date if hasattr(self, "_from_date") else ""
+        to_date = self._to_date if hasattr(self, "_to_date") else ""
 
-        template_code = generate_strategy(recipe=recipe, user_description=user_idea)
+        if iteration == 1:
+            llm_code: str | None = None
+            if llm_available:
+                llm_gen = LlmStrategyGenerator(self._llm)
+                candidates = await llm_gen.generate(
+                    user_idea=user_idea,
+                    symbol=symbol,
+                    from_date=from_date,
+                    to_date=to_date,
+                    indicators=indicators,
+                    n_candidates=self._config.llm_candidates,
+                    story=story,
+                )
+                if candidates:
+                    # Rank by complexity penalty (no backtest results available yet
+                    # at generation time) rather than blindly taking the first
+                    # candidate the LLM happened to return first.
+                    ranked = rank_candidates(candidates)
+                    best = ranked[0].candidate
+                    llm_code = best.code
+                    LOG.info(
+                        "LLM generated strategy (ranked best of %d candidates, score=%.1f): %s",
+                        len(candidates), ranked[0].score, best.reasoning[:100],
+                    )
+            if llm_code:
+                return llm_code
+            recipe = find_recipe(user_idea)
+            return generate_strategy(recipe=recipe, user_description=user_idea)
 
-        llm_code: str | None = None
-        if self._llm and self._llm.is_configured() and self._config.generator_mode in ("llm", "hybrid"):
+        # Iteration 2+: LLM refinement is the primary path — it sees the previous
+        # code, the actual backtest metrics, and the critic's suggestions, and can
+        # rewrite the strategy directly instead of only splicing fixed filters.
+        # The template + rule-based filter injection below is kept only as the
+        # fallback for `--no-llm`/generator_mode="template" or if the LLM call
+        # fails; it is not being actively developed further for now.
+        if llm_available and previous_code and last_result is not None and last_critique is not None:
             llm_gen = LlmStrategyGenerator(self._llm)
-            indicators = ["sma_20", "sma_50", "rsi_14"]
-            candidates = await llm_gen.generate(
+            candidates = await llm_gen.refine(
                 user_idea=user_idea,
-                symbol=self._symbol if hasattr(self, "_symbol") else "",
-                from_date=self._from_date if hasattr(self, "_from_date") else "",
-                to_date=self._to_date if hasattr(self, "_to_date") else "",
+                symbol=symbol,
+                from_date=from_date,
+                to_date=to_date,
+                previous_code=previous_code,
+                last_result=last_result,
+                last_critique=last_critique,
                 indicators=indicators,
                 n_candidates=self._config.llm_candidates,
+                story=story,
             )
             if candidates:
-                # Rank by complexity penalty (no backtest results available yet at
-                # generation time) rather than blindly taking the first candidate the
-                # LLM happened to return first.
                 ranked = rank_candidates(candidates)
                 best = ranked[0].candidate
-                llm_code = best.code
                 LOG.info(
-                    "LLM generated strategy (ranked best of %d candidates, score=%.1f): %s",
+                    "LLM refined strategy (ranked best of %d candidates, score=%.1f): %s",
                     len(candidates), ranked[0].score, best.reasoning[:100],
                 )
+                return best.code
 
-        if iteration == 1 and llm_code:
-            code = llm_code
-        elif iteration == 1:
-            code = template_code
-        else:
-            code = template_code
+        recipe = find_recipe(user_idea)
+        code = generate_strategy(recipe=recipe, user_description=user_idea)
 
-        if iteration > 1 and last_critique is not None:
+        if last_critique is not None:
             lines = code.split("\n")
             def_line = None
             for i, line in enumerate(lines):

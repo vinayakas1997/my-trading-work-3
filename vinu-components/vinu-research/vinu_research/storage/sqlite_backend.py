@@ -26,7 +26,11 @@ CREATE TABLE IF NOT EXISTS research_runs (
     approved INTEGER NOT NULL DEFAULT 0,
     approved_at TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    strategy_code TEXT NOT NULL DEFAULT '',
+    deflated_sharpe REAL NOT NULL DEFAULT 0.0,
+    holdout_passed INTEGER,
+    stress_test_passed INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_research_status ON research_runs(status);
 CREATE INDEX IF NOT EXISTS idx_research_symbol ON research_runs(symbol);
@@ -47,8 +51,37 @@ class ResearchStorage:
             conn.execute("PRAGMA busy_timeout=5000")
             conn.row_factory = sqlite3.Row
             conn.executescript(_SCHEMA)
+            self._migrate_schema(conn)
             self._local.conn = conn
         return conn
+
+    @staticmethod
+    def _migrate_schema(conn: sqlite3.Connection) -> None:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(research_runs)")}
+        if "strategy_code" not in cols:
+            try:
+                conn.execute("ALTER TABLE research_runs ADD COLUMN strategy_code TEXT NOT NULL DEFAULT ''")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
+        if "deflated_sharpe" not in cols:
+            try:
+                conn.execute("ALTER TABLE research_runs ADD COLUMN deflated_sharpe REAL NOT NULL DEFAULT 0.0")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
+        if "holdout_passed" not in cols:
+            try:
+                conn.execute("ALTER TABLE research_runs ADD COLUMN holdout_passed INTEGER")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
+        if "stress_test_passed" not in cols:
+            try:
+                conn.execute("ALTER TABLE research_runs ADD COLUMN stress_test_passed INTEGER")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
 
     def close(self) -> None:
         conn = getattr(self._local, "conn", None)
@@ -69,13 +102,17 @@ class ResearchStorage:
             """INSERT INTO research_runs
                 (user_idea, symbol, from_date, to_date, status, total_iterations,
                  best_iteration, best_sharpe, best_max_dd, report_md, error_message,
-                 approved, approved_at, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 approved, approved_at, created_at, updated_at, strategy_code, deflated_sharpe,
+                 holdout_passed, stress_test_passed)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 record.user_idea, record.symbol, record.from_date, record.to_date,
                 record.status, record.total_iterations, record.best_iteration,
                 record.best_sharpe, record.best_max_dd, record.report_md,
-                record.error_message, 0, "", now, now,
+                record.error_message, 0, "", now, now, record.strategy_code,
+                record.deflated_sharpe,
+                None if record.holdout_passed is None else int(record.holdout_passed),
+                None if record.stress_test_passed is None else int(record.stress_test_passed),
             ),
         )
         conn.commit()
@@ -83,6 +120,24 @@ class ResearchStorage:
         record.created_at = now
         record.updated_at = now
         return record
+
+    def cumulative_trial_count(self, symbol: str) -> int:
+        """Sum of `total_iterations` across every past run for this symbol.
+
+        Each iteration inside a research loop backtests one candidate against
+        the same historical window, so this is the true number of "shots on
+        goal" taken against that symbol's data — not just the count from the
+        current run — for deflated-Sharpe multiple-comparisons correction.
+        Excludes deleted runs; the run currently in progress isn't in the
+        table yet, so callers add its own iteration count on top of this.
+        """
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT COALESCE(SUM(total_iterations), 0) FROM research_runs "
+            "WHERE symbol = ? AND status != ?",
+            (symbol.upper(), STATUS_DELETED),
+        ).fetchone()
+        return int(row[0]) if row else 0
 
     def get_run(self, run_id: int) -> ResearchRunRecord | None:
         conn = self._get_conn()
@@ -128,12 +183,17 @@ class ResearchStorage:
             """UPDATE research_runs SET
                 status = ?, total_iterations = ?, best_iteration = ?,
                 best_sharpe = ?, best_max_dd = ?, report_md = ?,
-                error_message = ?, updated_at = ?
+                error_message = ?, updated_at = ?, strategy_code = ?, deflated_sharpe = ?,
+                holdout_passed = ?, stress_test_passed = ?
                WHERE id = ?""",
             (
                 record.status, record.total_iterations, record.best_iteration,
                 record.best_sharpe, record.best_max_dd, record.report_md,
-                record.error_message, now, record.id,
+                record.error_message, now, record.strategy_code,
+                record.deflated_sharpe,
+                None if record.holdout_passed is None else int(record.holdout_passed),
+                None if record.stress_test_passed is None else int(record.stress_test_passed),
+                record.id,
             ),
         )
         conn.commit()
@@ -196,4 +256,14 @@ class ResearchStorage:
             approved_at=row["approved_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            strategy_code=row["strategy_code"] if "strategy_code" in row.keys() else "",
+            deflated_sharpe=row["deflated_sharpe"] if "deflated_sharpe" in row.keys() else 0.0,
+            holdout_passed=(
+                None if "holdout_passed" not in row.keys() or row["holdout_passed"] is None
+                else bool(row["holdout_passed"])
+            ),
+            stress_test_passed=(
+                None if "stress_test_passed" not in row.keys() or row["stress_test_passed"] is None
+                else bool(row["stress_test_passed"])
+            ),
         )

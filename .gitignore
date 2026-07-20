@@ -48,3 +48,6 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 *.parquet
+
+# --- Kilo ---
+.kilo

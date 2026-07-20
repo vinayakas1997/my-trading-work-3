@@ -186,6 +186,8 @@ class WeightSimulator:
                         if shares_to_sell <= 1e-12:
                             continue
                         vol = float(volumes[idx]) if volumes is not None else None
+                        if vol is not None and vol > 0 and config.max_pct_of_volume < 1.0:
+                            shares_to_sell = min(shares_to_sell, vol * config.max_pct_of_volume)
                         proceeds = self._cost_model.sell_proceeds(
                             float(prices[idx]), float(shares_to_sell), volume=vol
                         )
@@ -220,6 +222,8 @@ class WeightSimulator:
                         if shares_to_buy <= 1e-12:
                             continue
                         vol = float(volumes[idx]) if volumes is not None else None
+                        if vol is not None and vol > 0 and config.max_pct_of_volume < 1.0:
+                            shares_to_buy = min(shares_to_buy, vol * config.max_pct_of_volume)
                         cost = self._cost_model.buy_cost(
                             float(prices[idx]), float(shares_to_buy), volume=vol
                         )

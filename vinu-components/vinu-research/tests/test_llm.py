@@ -112,6 +112,51 @@ def test_build_risk_critic_prompt_no_story(sample_result):
     assert "Story Blocks:" not in prompt
 
 
+def test_format_angle_context_lines_matches_risk_critic_rendering(sample_result, sample_story):
+    """format_angle_context_lines was extracted verbatim from the risk-critic
+    prompt builder — confirm both consumers still render identical angle text."""
+    from vinu_research.angle_context import format_angle_context_lines
+
+    angles = {
+        "trend_lifecycle": {
+            "stage": "topping", "risk": "high", "dominant_signal": "book_profits",
+            "signal": {
+                "signal_type": "book_profits", "confidence": 0.85,
+                "suggested_action": "Set trailing stop at -4% from peak",
+                "avg_drawdown_pct": -0.08, "exit_threshold_pct": -4.0,
+            },
+        },
+        "session_structure": {
+            "time_format": "1H", "best_session": "regular",
+            "worst_session": "premarket", "n_qualifying_sessions": 2,
+            "sessions": [
+                {"session": "regular", "n_peaks": 12, "n_mature_peaks": 12,
+                 "meets_floor": True, "avg_drawdown_pct": -0.05, "recovery_rate": 0.8},
+            ],
+        },
+        "news_causality": {
+            "granger_causes_prices": True, "best_lag_minutes": 30,
+            "p_value": 0.01, "news_return_corr": 0.22,
+        },
+    }
+    sample_story["angles"] = angles
+    rules = CriticFeedback(verdict="REFINE", reasoning="r", suggestions=[])
+    critic_prompt = _build_risk_critic_prompt(
+        "idea", "AAPL", "2024-01-01", "2024-12-31",
+        sample_result, rules, sample_story,
+    )
+    angle_lines = format_angle_context_lines(angles)
+    for line in angle_lines:
+        assert line in critic_prompt or line == ""
+
+
+def test_format_angle_context_lines_empty():
+    from vinu_research.angle_context import format_angle_context_lines
+
+    assert format_angle_context_lines({}) == []
+    assert format_angle_context_lines(None) == []
+
+
 class TestLlmCache:
     def test_cache_miss(self, tmp_path):
         cache = LlmCache(tmp_path / "test_cache.db", 3600)

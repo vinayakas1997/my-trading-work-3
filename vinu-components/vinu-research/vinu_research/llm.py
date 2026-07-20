@@ -11,6 +11,7 @@ from typing import Any
 
 from vinu_lib.client import ResilientClient
 from vinu_lib.rate_limit import TokenBucket
+from vinu_research.angle_context import format_angle_context_lines
 from vinu_research.config import ResearchConfig
 from vinu_research.models import BacktestResult, CriticFeedback
 
@@ -79,42 +80,7 @@ def _build_risk_critic_prompt(
             lines.append(f"  Baseline anomalies: {len(anomalies)}")
 
         angles = story.get("angles") or {}
-        if angles:
-            lines.append("")
-            lines.append("Deterministic Angle Analysis:")
-            tl = angles.get("trend_lifecycle")
-            if tl:
-                lines.append(
-                    f"  Trend lifecycle: stage={tl.get('stage')}, risk={tl.get('risk')}, "
-                    f"dominant_signal={tl.get('dominant_signal')}"
-                )
-                sig = tl.get("signal") or {}
-                if sig:
-                    lines.append(
-                        f"    Latest peak signal: {sig.get('signal_type')} "
-                        f"(confidence {sig.get('confidence')}): {sig.get('suggested_action')}"
-                    )
-            ss = angles.get("session_structure")
-            if ss:
-                lines.append(
-                    f"  Session structure ({ss.get('time_format')}): "
-                    f"best={ss.get('best_session')}, worst={ss.get('worst_session')}, "
-                    f"qualifying sessions={ss.get('n_qualifying_sessions')}"
-                )
-                for s in (ss.get("sessions") or [])[:4]:
-                    if s.get("meets_floor"):
-                        lines.append(
-                            f"    {s.get('session')}: {s.get('n_peaks')} peaks, "
-                            f"avg drawdown {s.get('avg_drawdown_pct')}, "
-                            f"recovery rate {s.get('recovery_rate')}"
-                        )
-            nc = angles.get("news_causality")
-            if nc:
-                lines.append(
-                    f"  News causality: granger={nc.get('granger_causes_prices')}, "
-                    f"lag={nc.get('best_lag_minutes')}min, p={nc.get('p_value')}, "
-                    f"news-return corr={nc.get('news_return_corr')}"
-                )
+        lines.extend(format_angle_context_lines(angles))
 
     return "\n".join(lines)
 

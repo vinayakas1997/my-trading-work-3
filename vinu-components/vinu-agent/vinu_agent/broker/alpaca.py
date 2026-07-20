@@ -157,7 +157,16 @@ class AlpacaBroker:
         limit_price: float | None = None,
         stop_price: float | None = None,
         time_in_force: str = "day",
+        take_profit_price: float | None = None,
+        stop_loss_price: float | None = None,
+        stop_loss_limit_price: float | None = None,
     ) -> dict:
+        """Submit an order. Passing take_profit_price and/or stop_loss_price
+        attaches Alpaca's native bracket-order legs (order_class "bracket" when
+        both are given, "oto" when only one is — see Alpaca's order-class docs),
+        so the exit is a real resting order placed at entry time, not something
+        that has to be watched and submitted manually later.
+        """
         payload: dict[str, object] = {
             "symbol": symbol.upper(),
             "qty": str(qty),
@@ -169,7 +178,30 @@ class AlpacaBroker:
             payload["limit_price"] = str(limit_price)
         if stop_price is not None:
             payload["stop_price"] = str(stop_price)
+
+        if take_profit_price is not None and stop_loss_price is not None:
+            payload["order_class"] = "bracket"
+            payload["take_profit"] = {"limit_price": str(take_profit_price)}
+            payload["stop_loss"] = self._stop_loss_leg(stop_loss_price, stop_loss_limit_price)
+        elif take_profit_price is not None:
+            payload["order_class"] = "oto"
+            payload["take_profit"] = {"limit_price": str(take_profit_price)}
+        elif stop_loss_price is not None:
+            payload["order_class"] = "oto"
+            payload["stop_loss"] = self._stop_loss_leg(stop_loss_price, stop_loss_limit_price)
+
         return self._post("/v2/orders", payload)
+
+    @staticmethod
+    def _stop_loss_leg(stop_price: float, limit_price: float | None) -> dict[str, str]:
+        leg: dict[str, str] = {"stop_price": str(stop_price)}
+        if limit_price is not None:
+            leg["limit_price"] = str(limit_price)
+        return leg
+
+    def get_clock(self) -> dict:
+        """Alpaca's market clock — {is_open, timestamp, next_open, next_close}."""
+        return self._get("/v2/clock")
 
     def cancel_order(self, order_id: str) -> dict:
         return self._delete(f"/v2/orders/{order_id}")

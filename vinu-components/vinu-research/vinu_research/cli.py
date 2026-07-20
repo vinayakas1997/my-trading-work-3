@@ -6,6 +6,7 @@ from datetime import datetime
 import logging
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,16 @@ _KNOWN_NON_TICKERS = frozenset({
     "ETF", "IPO", "ROI", "PE", "EPS", "PEG", "PB", "ROE", "YTD",
     "HIGH", "LOW",
 })
+
+
+def serve_main(args: argparse.Namespace) -> None:
+    import uvicorn
+    from vinu_research.server.app import create_app
+
+    config = load_config()
+    host = args.host or config.host
+    port = args.port or config.port
+    uvicorn.run(create_app(), host=host, port=port)
 
 
 def _print_separator(char: str = "\u2500") -> None:
@@ -76,8 +87,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    serve_p = sub.add_parser("serve", help="Start HTTP API server")
+    serve_p.add_argument("--host", default=None)
+    serve_p.add_argument("--port", type=int, default=None)
+    serve_p.set_defaults(func=serve_main)
+
     run_p = sub.add_parser("run", help="Run the strategy research loop")
-    run_p.add_argument("idea", help="Strategy idea (e.g. 'test SMA20/SMA50 crossover on AAPL')")
+    run_p.add_argument("idea", nargs="?", default=None, help="Strategy idea (e.g. 'test SMA20/SMA50 crossover on AAPL'). Auto-proposed from angles if not set.")
     run_p.add_argument("--symbol", default=None, help="Ticker symbol (extracted from idea if not set)")
     run_p.add_argument(
         "--universe", default=None,
@@ -91,8 +107,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     run_p.add_argument("--indicators", default=None, help="Comma-separated indicator kinds")
     run_p.add_argument("--capital", type=float, default=None, help="Initial capital")
     run_p.add_argument("--approve", action="store_true", help="Approve strategy automatically (non-interactive)")
-    run_p.add_argument("--llm", action="store_true", help="Enable LLM-enhanced risk analysis")
-    run_p.add_argument("--no-llm", action="store_true", help="Disable LLM-enhanced risk analysis")
+    run_p.add_argument("--llm", action="store_true", help="Enable LLM usage (risk analysis + strategy generation/refinement)")
+    run_p.add_argument(
+        "--no-llm", action="store_true",
+        help="Disable all LLM usage (risk analysis + strategy refinement); falls back to the "
+             "deterministic template/filter path (not actively developed further for now)",
+    )
     run_p.add_argument("--walk-forward", action="store_true", help="Enable walk-forward validation")
     run_p.add_argument("--wf-method", default=None, help="Walk-forward method: expanding or sliding")
     run_p.add_argument("--wf-windows", type=int, default=None, help="Number of walk-forward windows")
@@ -117,9 +137,33 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     link_p.set_defaults(func=link_autopilot_main)
 
     decay_p = sub.add_parser("decay-scan", help="Run decay scan on ACTIVE/MONITORING artifacts")
-    decay_p.add_argument("--db", default=None, help="Path to strategy store database")
+    decay_p.add_argument("--db", default=None, help="Path to strategy store database (default: <data_root>/strategy_store.db)")
     decay_p.add_argument("--dry-run", action="store_true", help="Show transitions without persisting")
     decay_p.set_defaults(func=decay_scan_main)
+
+    sched_decay_p = sub.add_parser("schedule-decay", help="Run decay-scan on a repeating interval")
+    sched_decay_p.add_argument("--db", default=None, help="Path to strategy store database (default: <data_root>/strategy_store.db)")
+    sched_decay_p.add_argument("--dry-run", action="store_true", help="Show transitions without persisting")
+    sched_decay_p.add_argument("--interval-hours", type=int, default=24, help="Hours between scans (default: 24)")
+    sched_decay_p.set_defaults(func=schedule_decay_main)
+
+    promote_p = sub.add_parser(
+        "promote-scan",
+        help="List BENCHING artifacts and promote those clearing the deflated-Sharpe/holdout bar",
+    )
+    promote_p.add_argument("--db", default=None, help="Path to strategy store database (default: <data_root>/strategy_store.db)")
+    promote_p.add_argument("--dry-run", action="store_true", help="Show which artifacts would be promoted without persisting")
+    promote_p.set_defaults(func=promote_scan_main)
+
+    ensure_p = sub.add_parser(
+        "ensure",
+        help="Run research for a ticker only if it has no ACTIVE/MONITORING strategy yet",
+    )
+    ensure_p.add_argument("idea", nargs="?", default=None, help="Strategy idea to use if research is triggered. Auto-proposed from angles if not set.")
+    ensure_p.add_argument("--symbol", required=True, help="Ticker symbol")
+    ensure_p.add_argument("--from", dest="from_date", default=None, help="Start date (YYYY-MM-DD)")
+    ensure_p.add_argument("--to", dest="to_date", default=None, help="End date (YYYY-MM-DD)")
+    ensure_p.set_defaults(func=ensure_main)
 
     return parser.parse_args(argv)
 
@@ -163,7 +207,14 @@ def run_main(args: argparse.Namespace) -> None:
     if overrides:
         config = ResearchConfig(**{**config.__dict__, **overrides})
 
-    symbol = args.symbol or _extract_symbol(args.idea) or "AAPL"
+    user_idea: str | None = args.idea
+    if user_idea is not None and not args.symbol:
+        symbol = _extract_symbol(user_idea) or "AAPL"
+    elif args.symbol:
+        symbol = args.symbol
+    else:
+        print("[vinu-research] Error: --symbol is required when no idea is provided")
+        sys.exit(1)
     symbol = symbol.upper()
 
     from_date = _validate_date(args.from_date, "--from") or "2024-01-01"
@@ -177,6 +228,31 @@ def run_main(args: argparse.Namespace) -> None:
     if getattr(args, "universe", None):
         universe = [t.strip().upper() for t in args.universe.split(",") if t.strip()]
 
+    if user_idea is None:
+        print(f"[vinu-research] No idea provided — proposing from angle context for {symbol}...")
+        tools_tmp = ResearchTools(config)
+        try:
+            angles = asyncio.run(tools_tmp.get_angle_context(symbol, config.interval))
+        finally:
+            asyncio.run(tools_tmp.close())
+        if angles and config.llm_enabled:
+            from vinu_research.llm import ResearchLlmClient
+            from vinu_research.llm_generator import LlmStrategyGenerator
+            llm = ResearchLlmClient(config)
+            try:
+                gen = LlmStrategyGenerator(llm)
+                user_idea = asyncio.run(gen.propose_idea_from_angles(angles))
+            finally:
+                asyncio.run(llm.close())
+        elif angles:
+            tl = angles.get("trend_lifecycle", {})
+            stage = tl.get("stage", "unknown")
+            risk = tl.get("risk", "unknown")
+            user_idea = f"Trend-following strategy for {stage} stage with {risk} risk regime"
+        else:
+            user_idea = f"Strategy for {symbol}"
+        print(f"[vinu-research] Auto-proposed idea: {user_idea}")
+
     tools = ResearchTools(config)
 
     on_iteration = None if args.quiet else _on_iteration
@@ -186,7 +262,7 @@ def run_main(args: argparse.Namespace) -> None:
         on_iteration=on_iteration,
     )
 
-    print(f"[vinu-research] Strategy: {args.idea}")
+    print(f"[vinu-research] Strategy: {user_idea}")
     print(f"[vinu-research] Ticker: {symbol}")
     print(f"[vinu-research] Period: {from_date} \u2192 {to_date}")
     print(f"[vinu-research] Max iterations: {config.max_iterations}")
@@ -201,7 +277,7 @@ def run_main(args: argparse.Namespace) -> None:
     async def _run_and_close():
         try:
             return await loop.run(
-                user_idea=args.idea,
+                user_idea=user_idea,
                 symbol=symbol,
                 from_date=from_date,
                 to_date=to_date,
@@ -322,27 +398,59 @@ def link_autopilot_main(args: argparse.Namespace) -> None:
         print(f"[link-autopilot] Run card will be linked when found")
 
 
-def decay_scan_main(args: argparse.Namespace) -> None:
+def _decay_db_path(args: argparse.Namespace) -> "Path":
     from pathlib import Path as _Path
-    from vinu_research.config import DecayThresholds
-    from vinu_research.decay import compute_decay_snapshot, transition_status
+    if args.db:
+        return _Path(args.db)
+    return load_config().data_root / "strategy_store.db"
+
+
+def _trigger_re_research(symbol: str) -> None:
+    """Re-run research for a decayed strategy's symbol (sync → async bridge).
+
+    Called synchronously from _run_decay_scan when an artifact transitions to
+    DECAYED. Uses the newly-autonomous ensure_strategy (A1) with user_idea=None
+    so the idea is auto-proposed from the symbol's angle context.
+    """
+    from vinu_research.service import ResearchService
+    config = load_config()
+    async def _run() -> None:
+        async with ResearchService(config) as svc:
+            await svc.ensure_strategy(
+                user_idea=None,
+                symbol=symbol,
+                from_date="",
+                to_date="",
+            )
+    try:
+        asyncio.run(_run())
+        LOG.info("Re-research triggered for decayed strategy on %s", symbol)
+    except Exception as e:
+        LOG.warning("Re-research for %s failed: %s", symbol, e)
+
+
+def _run_decay_scan(store, thresholds, *, dry_run: bool) -> int:
+    """Scan ACTIVE/MONITORING artifacts and transition status on decay.
+
+    Branches by artifact.type: "strategy" artifacts (from an approved research
+    run) only ever have Sharpe in their bench history, so they're evaluated on
+    rolling-Sharpe-vs-baseline alone; everything else uses the original IC/IR
+    factor-decay path. Returns the number of artifacts scanned.
+    """
+    from vinu_research.decay import (
+        compute_decay_snapshot,
+        compute_strategy_decay_snapshot,
+        transition_status,
+    )
     from vinu_research.models import ArtifactStatus
-    from vinu_research.storage.strategy_store import SqliteStrategyStore
 
-    db_path = _Path(args.db) if args.db else _Path("data") / "strategy_store.db"
-    store = SqliteStrategyStore(db_path)
-
-    artifacts = store.list_artifacts(
-        status=ArtifactStatus.ACTIVE,
-    ) + store.list_artifacts(
+    artifacts = store.list_artifacts(status=ArtifactStatus.ACTIVE) + store.list_artifacts(
         status=ArtifactStatus.MONITORING,
     )
-
     if not artifacts:
         print("[decay-scan] No ACTIVE or MONITORING artifacts found")
-        return
+        return 0
 
-    thresholds = DecayThresholds()
     print(f"[decay-scan] Scanning {len(artifacts)} artifacts (thresholds: IC>={thresholds.ic_ratio_healthy}, IR>={thresholds.ir_healthy})")
     print()
 
@@ -352,9 +460,16 @@ def decay_scan_main(args: argparse.Namespace) -> None:
             print(f"  SKIP {art.artifact_id} ({art.name}): only {len(history)} bench entries (need >= 2)")
             continue
 
-        snapshot = compute_decay_snapshot(art.artifact_id, history, thresholds)
+        if art.type == "strategy":
+            snapshot = compute_strategy_decay_snapshot(art.artifact_id, history, thresholds)
+        else:
+            snapshot = compute_decay_snapshot(art.artifact_id, history, thresholds)
+
+        # get_snapshots() returns newest-first; transition_status needs
+        # oldest-to-newest with the just-computed snapshot last, or
+        # _n_consecutive's "last N" check reads the wrong end of the history.
         previous_snapshots = store.get_snapshots(art.artifact_id)
-        eval_history = [s.evaluation for s in previous_snapshots] + [snapshot.evaluation]
+        eval_history = [s.evaluation for s in reversed(previous_snapshots)] + [snapshot.evaluation]
 
         new_status = transition_status(art.status, eval_history)
         changed = new_status != art.status
@@ -368,16 +483,113 @@ def decay_scan_main(args: argparse.Namespace) -> None:
 
         print(f"  {art.artifact_id} ({art.name})")
         print(f"    Status: {art.status.value} \u2192 {new_status.value if changed else '(unchanged)'}")
-        print(f"    Eval: {status_icon} {snapshot.evaluation}  IC_ratio={snapshot.ic_ratio:.2f}  IR={snapshot.rolling_ir:.2f}  IC_pos={snapshot.ic_positive_ratio:.2f}  Sharpe={snapshot.rolling_sharpe:.2f}")
+        if art.type == "strategy":
+            print(f"    Eval: {status_icon} {snapshot.evaluation}  Sharpe_ratio={snapshot.ic_ratio:.2f}  Rolling_Sharpe={snapshot.rolling_sharpe:.2f}")
+        else:
+            print(f"    Eval: {status_icon} {snapshot.evaluation}  IC_ratio={snapshot.ic_ratio:.2f}  IR={snapshot.rolling_ir:.2f}  IC_pos={snapshot.ic_positive_ratio:.2f}  Sharpe={snapshot.rolling_sharpe:.2f}")
         print()
 
-        if not args.dry_run:
+        if not dry_run:
             store.save_snapshot(snapshot)
             if changed:
                 art.status = new_status
                 store.upsert_artifact(art)
+                if new_status == ArtifactStatus.DECAYED and art.universe:
+                    symbol = art.universe[0]
+                    LOG.info("Strategy %s decayed — triggering re-research for %s", art.artifact_id, symbol)
+                    _trigger_re_research(symbol)
 
-    store.close()
+    return len(artifacts)
+
+
+def decay_scan_main(args: argparse.Namespace) -> None:
+    from vinu_research.config import DecayThresholds
+    from vinu_research.storage.strategy_store import SqliteStrategyStore
+
+    store = SqliteStrategyStore(_decay_db_path(args))
+    try:
+        _run_decay_scan(store, DecayThresholds(), dry_run=args.dry_run)
+    finally:
+        store.close()
+
+
+def schedule_decay_main(args: argparse.Namespace) -> None:
+    from vinu_research.config import DecayThresholds
+    from vinu_research.storage.strategy_store import SqliteStrategyStore
+
+    store = SqliteStrategyStore(_decay_db_path(args))
+    thresholds = DecayThresholds()
+    interval_sec = max(1, args.interval_hours) * 3600
+    print(f"[schedule-decay] Running every {args.interval_hours}h. Press Ctrl+C to stop.\n")
+    try:
+        while True:
+            _run_decay_scan(store, thresholds, dry_run=args.dry_run)
+            time.sleep(interval_sec)
+    except KeyboardInterrupt:
+        print("\n[schedule-decay] Stopped.")
+    finally:
+        store.close()
+
+
+def promote_scan_main(args: argparse.Namespace) -> None:
+    """List BENCHING artifacts and promote those clearing the promotion bar.
+
+    Deliberately not a `while True` scheduled worker like decay-scan/schedule-
+    decay — auto-promoting a strategy to ACTIVE (where it starts influencing
+    portfolio-api's weight computation) is a bigger consequence than auto-
+    triggering more research, so this stays a command a human or agent
+    invokes on purpose rather than a silent background loop.
+    """
+    from vinu_research.models import ArtifactStatus
+    from vinu_research.promotion import meets_promotion_bar
+    from vinu_research.storage.strategy_store import SqliteStrategyStore
+
+    config = load_config()
+    store = SqliteStrategyStore(_decay_db_path(args))
+    try:
+        benching = store.list_artifacts_by_statuses(statuses=[ArtifactStatus.BENCHING])
+        if not benching:
+            print("[promote-scan] No BENCHING artifacts found")
+            return
+
+        print(f"[promote-scan] Checking {len(benching)} BENCHING artifact(s) "
+              f"(deflated_sharpe >= {config.promotion_deflated_sharpe_threshold:.2f}, "
+              f"holdout_required={config.promotion_holdout_required})\n")
+        for artifact in benching:
+            verdict = meets_promotion_bar(artifact, config)
+            print(f"  {artifact.artifact_id} ({artifact.name})")
+            print(f"    deflated_sharpe={artifact.deflated_sharpe:.3f}  holdout_passed={artifact.holdout_passed}  "
+                  f"stress_test_passed={artifact.stress_test_passed}")
+            if verdict.eligible:
+                print(f"    -> PROMOTE" + (" (dry-run, not persisted)" if args.dry_run else ""))
+                if not args.dry_run:
+                    artifact.status = ArtifactStatus.ACTIVE
+                    store.upsert_artifact(artifact)
+            else:
+                print(f"    -> hold: {'; '.join(verdict.reasons)}")
+            print()
+    finally:
+        store.close()
+
+
+def ensure_main(args: argparse.Namespace) -> None:
+    from vinu_research.service import ResearchService
+
+    symbol = args.symbol.upper()
+    from_date = _validate_date(args.from_date, "--from") or "2024-01-01"
+    to_date = _validate_date(args.to_date, "--to") or "2024-12-31"
+    idea: str | None = args.idea
+
+    async def _run() -> dict:
+        async with ResearchService() as svc:
+            return await svc.ensure_strategy(idea, symbol, from_date, to_date)
+
+    result = asyncio.run(_run())
+    if result.get("skipped"):
+        print(f"[ensure] {symbol} already has an active strategy — skipped ({result.get('reason')})")
+    else:
+        print(f"[ensure] Ran research for {symbol}: status={result.get('status')}, "
+              f"best_sharpe={result.get('best_sharpe')}, best_max_dd={result.get('best_max_dd')}")
 
 
 def recipes_main(args: argparse.Namespace) -> None:

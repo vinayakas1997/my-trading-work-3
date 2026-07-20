@@ -29,6 +29,17 @@ class ResearchRunRecord:
     approved_at: str = ""
     created_at: str = ""
     updated_at: str = ""
+    # The winning candidate's executable code, captured so approving a run can
+    # persist a strategy artifact without re-running the research loop.
+    strategy_code: str = ""
+    # Deflated Sharpe ratio (probability the best_sharpe reflects genuine skill,
+    # not the luckiest of many trials) — n_trials for this is cumulative across
+    # every past research run for the symbol, not just this run's iterations.
+    deflated_sharpe: float = 0.0
+    # None when the date range was too short to carve a holdout at all.
+    holdout_passed: bool | None = None
+    # None when no stress window had usable price data.
+    stress_test_passed: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -48,4 +59,8 @@ class ResearchRunRecord:
             "approved_at": self.approved_at,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "strategy_code": self.strategy_code,
+            "deflated_sharpe": self.deflated_sharpe,
+            "holdout_passed": self.holdout_passed,
+            "stress_test_passed": self.stress_test_passed,
         }

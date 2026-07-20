@@ -26,6 +26,7 @@ class PriceClient(BaseClient):
                 "interval": resolution,
                 "from": from_ts,
                 "to": to_ts,
+                "adjusted": True,
             }
             if indicators:
                 params["indicators"] = ",".join(indicators)
@@ -81,6 +82,7 @@ class PriceClient(BaseClient):
                 "interval": resolution,
                 "from": from_ts,
                 "to": to_ts,
+                "adjusted": True,
             }
             try:
                 resp = self.get(f"/candles/{sym}", params)

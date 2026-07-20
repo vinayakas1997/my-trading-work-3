@@ -65,24 +65,32 @@ def compute_main(argv: list[str] | None = None) -> None:
     runner = AngleRunner(storage, run_log, news_client=news_client, price_client=price_client)
     logging.basicConfig(level=logging.INFO)
 
-    tickers = args.tickers
-    if args.all:
+    def _resolve_tickers() -> list[str]:
+        if args.tickers:
+            return args.tickers
+        if not args.all:
+            return []
         try:
             import requests
             r = requests.get(f"{config.stock_api_url}/watchlist/tickers", timeout=5)
-            if r.status_code == 200:
-                tickers = r.json().get("tickers", [])
-            else:
-                tickers = []
+            tickers = r.json().get("tickers", []) if r.status_code == 200 else []
         except Exception:
             tickers = []
         if not tickers:
-            LOG.warning("No watchlist tickers from stock API, using defaults")
+            # KNOWN, ACCEPTED LIMITATION (see status-4.md / status-4-fix-plan.md
+            # Priority 2): this fallback is 7 mega-cap survivors. Every strategy
+            # validated against this universe has only ever seen names that
+            # survived and thrived — no delisted/bankrupt/round-tripped names.
+            # Deliberately not expanded for now; revisit before trading real
+            # capital on anything beyond these 7 names. Prefer configuring a
+            # real watchlist via POST /watchlist/tickers on vinu-stock-price
+            # over relying on this fallback.
+            LOG.warning(
+                "No watchlist tickers from stock API, using survivorship-biased "
+                "defaults (7 mega-caps) — see status-4.md Priority 2"
+            )
             tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA"]
-
-    if not tickers:
-        parser.print_help()
-        return
+        return tickers
 
     def _compute_batch(tickers: list[str], incremental: bool, backfill: bool = False):
         for symbol in tickers:
@@ -99,12 +107,23 @@ def compute_main(argv: list[str] | None = None) -> None:
             LOG.info("Done %s", symbol)
 
     if args.continuous:
+        # Re-resolve the watchlist every cycle (not just once at startup) so a
+        # ticker added mid-run is picked up without restarting the container,
+        # and so an empty/unreachable watchlist at boot doesn't exit for good.
         LOG.info("Starting continuous compute loop (interval=%ss)", args.interval)
         while True:
-            _compute_batch(tickers, incremental=args.incremental or not args.force, backfill=args.backfill)
+            tickers = _resolve_tickers()
+            if tickers:
+                _compute_batch(tickers, incremental=args.incremental or not args.force, backfill=args.backfill)
+            else:
+                LOG.warning("No tickers to analyze this cycle (empty watchlist)")
             LOG.info("Sleeping %ss...", args.interval)
             time.sleep(args.interval)
     else:
+        tickers = _resolve_tickers()
+        if not tickers:
+            parser.print_help()
+            return
         _compute_batch(tickers, incremental=args.incremental or not args.force, backfill=args.backfill)
 
 

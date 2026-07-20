@@ -22,7 +22,7 @@ def fetch_candles(
     provider: str | None = None,
     limit: int = 5000,
     indicators: list[str] | None = None,
-    adjusted: bool = False,
+    adjusted: bool = True,
     connection: duckdb.DuckDBPyConnection | None = None,
 ) -> list[dict]:
     patterns = parquet_globs_by_range(data_root, symbol, from_ts=from_ts, to_ts=to_ts)

@@ -87,11 +87,26 @@ def ingest_main(argv: list[str] | None = None) -> None:
         with StockService() as service:
             print(service.run_live_cycle().format_report())
 
+    def sync_and_backfill() -> None:
+        with StockService() as service:
+            sync_result = service.sync_watchlist_from_shared()
+            if sync_result.get("added"):
+                logging.info(
+                    "Synced new ticker(s) from shared watchlist: %s",
+                    ", ".join(sync_result["added"]),
+                )
+            pending = service.get_pending_backfill_symbols()
+            if pending:
+                logging.info("Running backfill for pending symbol(s): %s", ", ".join(pending))
+                result = service.run_backfill(pending)
+                print(result.format_report())
+
     if args.once or interval is None:
         run_cycle()
         return
 
     while True:
+        sync_and_backfill()
         run_cycle()
         with StockService() as service:
             sleep_sec = service.get_settings().poll_interval_sec

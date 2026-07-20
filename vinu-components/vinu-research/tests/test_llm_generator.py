@@ -8,8 +8,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from vinu_research.llm_generator import LlmStrategyGenerator, _complexity_penalty, validate_code, validate_sandbox
-from vinu_research.models import LlmCandidate
+from vinu_research.llm_generator import (
+    LlmStrategyGenerator,
+    _build_generation_prompt,
+    _build_refinement_prompt,
+    _complexity_penalty,
+    validate_code,
+    validate_sandbox,
+)
+from vinu_research.models import BacktestMetrics, BacktestResult, CriticFeedback, LlmCandidate
 
 _VALID_STRATEGY = """from __future__ import annotations
 
@@ -68,6 +75,141 @@ class TestValidateCode:
 
     def test_empty_code_fails(self):
         assert validate_code("") is False
+
+
+class TestBuildGenerationPrompt:
+    def test_renders_angle_context(self):
+        angles = {
+            "trend_lifecycle": {
+                "stage": "topping", "risk": "high", "dominant_signal": "book_profits",
+                "signal": {
+                    "signal_type": "book_profits", "confidence": 0.85,
+                    "suggested_action": "Set trailing stop at -4% from peak",
+                    "avg_drawdown_pct": -0.08, "exit_threshold_pct": -4.0,
+                },
+            },
+            "session_structure": {
+                "time_format": "1H", "best_session": "regular",
+                "worst_session": "premarket", "n_qualifying_sessions": 2,
+                "sessions": [
+                    {"session": "regular", "n_peaks": 12, "n_mature_peaks": 12,
+                     "meets_floor": True, "avg_drawdown_pct": -0.05, "recovery_rate": 0.8},
+                ],
+            },
+            "news_causality": {
+                "granger_causes_prices": True, "best_lag_minutes": 30,
+                "p_value": 0.01, "news_return_corr": 0.22,
+            },
+        }
+        prompt = _build_generation_prompt(
+            "trend-following idea", "AAPL", "2024-01-01", "2024-12-31",
+            indicators=["sma_20"], angles=angles,
+        )
+        assert "trend-following idea" in prompt
+        assert "Deterministic Angle Analysis:" in prompt
+        assert "stage=topping" in prompt
+        assert "worst=premarket" in prompt
+        assert "granger=True" in prompt
+
+    def test_no_angles_omits_section(self):
+        prompt = _build_generation_prompt(
+            "idea", "AAPL", "2024-01-01", "2024-12-31",
+        )
+        assert "Deterministic Angle Analysis:" not in prompt
+
+
+class TestBuildRefinementPrompt:
+    def _make_result(self) -> BacktestResult:
+        metrics = BacktestMetrics(sharpe_ratio=0.8, max_drawdown=-0.12, win_rate=0.45, total_return=0.1)
+        return BacktestResult(
+            run_id="r1", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=25, equity_points=100,
+        )
+
+    def _make_critique(self) -> CriticFeedback:
+        return CriticFeedback(
+            verdict="REFINE", reasoning="Sharpe too low",
+            suggestions=["Add ADX filter to avoid choppy markets"],
+        )
+
+    def test_renders_previous_code_and_feedback(self):
+        prompt = _build_refinement_prompt(
+            "trend idea", "AAPL", "2024-01-01", "2024-12-31",
+            previous_code="class UserStrategy(BaseStrategy): pass",
+            last_result=self._make_result(),
+            last_critique=self._make_critique(),
+        )
+        assert "class UserStrategy(BaseStrategy): pass" in prompt
+        assert "Sharpe: 0.80" in prompt
+        assert "Add ADX filter to avoid choppy markets" in prompt
+        assert "REFINE" in prompt
+        assert "Sharpe too low" in prompt
+
+    def test_renders_angle_context(self):
+        angles = {
+            "trend_lifecycle": {
+                "stage": "topping", "risk": "high", "dominant_signal": "book_profits",
+                "signal": {
+                    "signal_type": "book_profits", "confidence": 0.85,
+                    "suggested_action": "Set trailing stop at -4% from peak",
+                    "avg_drawdown_pct": -0.08, "exit_threshold_pct": -4.0,
+                },
+            },
+        }
+        prompt = _build_refinement_prompt(
+            "trend idea", "AAPL", "2024-01-01", "2024-12-31",
+            previous_code="class UserStrategy: pass",
+            last_result=self._make_result(),
+            last_critique=self._make_critique(),
+            angles=angles,
+        )
+        assert "Deterministic Angle Analysis:" in prompt
+        assert "stage=topping" in prompt
+
+
+class TestLlmStrategyGeneratorRefine:
+    def _make_result(self) -> BacktestResult:
+        metrics = BacktestMetrics(sharpe_ratio=0.8, max_drawdown=-0.12, win_rate=0.45)
+        return BacktestResult(
+            run_id="r1", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=25, equity_points=100,
+        )
+
+    def _make_critique(self) -> CriticFeedback:
+        return CriticFeedback(verdict="REFINE", reasoning="test", suggestions=["improve"])
+
+    async def test_refine_happy_path(self):
+        client = _SlowFakeLlmClient(delay=0.0)
+        gen = LlmStrategyGenerator(client)
+        candidates = await gen.refine(
+            user_idea="SMA crossover", symbol="AAPL",
+            from_date="2024-01-01", to_date="2024-12-31",
+            previous_code="class UserStrategy: pass",
+            last_result=self._make_result(),
+            last_critique=self._make_critique(),
+            n_candidates=1,
+        )
+        assert len(candidates) == 1
+        assert candidates[0].code == _VALID_STRATEGY
+
+    async def test_refine_returns_empty_on_llm_failure(self):
+        class _NullClient:
+            def is_configured(self) -> bool:
+                return True
+
+            async def chat_json(self, system: str, user: str):
+                return None
+
+        gen = LlmStrategyGenerator(_NullClient())
+        candidates = await gen.refine(
+            user_idea="SMA crossover", symbol="AAPL",
+            from_date="2024-01-01", to_date="2024-12-31",
+            previous_code="class UserStrategy: pass",
+            last_result=self._make_result(),
+            last_critique=self._make_critique(),
+            n_candidates=1,
+        )
+        assert candidates == []
 
 
 class TestValidateSandbox:

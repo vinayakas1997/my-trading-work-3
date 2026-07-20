@@ -91,10 +91,23 @@ def ingest_main(argv: list[str] | None = None) -> None:
         run_ticker_cycle()
         return
 
+    def sync_and_backfill() -> None:
+        with NewsService() as service:
+            sync_result = service.sync_watchlist_from_shared()
+            if sync_result.get("added"):
+                logging.info(
+                    "Synced new ticker(s) from shared watchlist: %s",
+                    ", ".join(sync_result["added"]),
+                )
+            backfill_results = service.run_backfill_all()
+            if backfill_results:
+                logging.info("Ran %d pending backfill(s)", len(backfill_results))
+
     tick_sec = 2
     while True:
         run_rss_cycle()
         run_ticker_cycle()
+        sync_and_backfill()
 
         elapsed = 0
         while True:

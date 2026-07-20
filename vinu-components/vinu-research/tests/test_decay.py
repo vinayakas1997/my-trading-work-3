@@ -7,7 +7,9 @@ from vinu_research.config import DecayThresholds
 from vinu_research.decay import (
     compute_decay_metrics,
     compute_decay_snapshot,
+    compute_strategy_decay_metrics,
     evaluate_health,
+    evaluate_strategy_health,
     transition_status,
 )
 from vinu_research.models import Artifact, ArtifactStatus, BenchEntry, DecaySnapshot
@@ -281,3 +283,104 @@ class TestSqliteStrategyStore:
         new_status = transition_status(a.status, eval_history)
 
         assert new_status in (ArtifactStatus.ACTIVE, ArtifactStatus.MONITORING)
+
+    def test_strategy_artifact_round_trips_new_fields(self):
+        store, _ = self._make_store()
+        a = Artifact.create("strategy", "AAPL_1")
+        a.strategy_code = "class UserStrategy: pass"
+        a.source_run_id = 7
+        a.initial_sharpe = 1.4
+        a.initial_max_dd = -0.2
+        store.upsert_artifact(a)
+        loaded = store.get_artifact(a.artifact_id)
+        assert loaded.strategy_code == "class UserStrategy: pass"
+        assert loaded.source_run_id == 7
+        assert loaded.initial_sharpe == 1.4
+        assert loaded.initial_max_dd == -0.2
+
+    def test_list_artifacts_for_symbol(self):
+        store, _ = self._make_store()
+        a1 = Artifact.create("strategy", "AAPL_1", universe=["AAPL"])
+        a1.status = ArtifactStatus.ACTIVE
+        a2 = Artifact.create("strategy", "MSFT_1", universe=["MSFT"])
+        a2.status = ArtifactStatus.ACTIVE
+        a3 = Artifact.create("strategy", "AAPL_2", universe=["AAPL"])
+        a3.status = ArtifactStatus.DISABLED
+        store.upsert_artifact(a1)
+        store.upsert_artifact(a2)
+        store.upsert_artifact(a3)
+
+        result = store.list_artifacts_for_symbol("aapl")
+        assert {a.artifact_id for a in result} == {a1.artifact_id, a3.artifact_id}
+
+        active_only = store.list_artifacts_for_symbol("AAPL", [ArtifactStatus.ACTIVE])
+        assert [a.artifact_id for a in active_only] == [a1.artifact_id]
+
+        assert store.list_artifacts_for_symbol("GOOGL") == []
+
+
+class TestStrategyDecay:
+    def test_sharpe_holding_steady_is_healthy(self):
+        entries = [
+            BenchEntry(artifact_id="s1", date=f"2024-01-{d:02d}", sharpe=1.5)
+            for d in range(1, 11)
+        ]
+        metrics = compute_strategy_decay_metrics(entries)
+        assert evaluate_strategy_health(metrics) == "HEALTHY"
+
+    def test_sharpe_collapsing_is_critical(self):
+        entries = [
+            BenchEntry(artifact_id="s1", date=f"2024-01-{d:02d}", sharpe=1.5)
+            for d in range(1, 6)
+        ] + [
+            BenchEntry(artifact_id="s1", date=f"2024-02-{d:02d}", sharpe=0.0)
+            for d in range(1, 21)
+        ]
+        metrics = compute_strategy_decay_metrics(entries)
+        assert evaluate_strategy_health(metrics) == "CRITICAL"
+
+    def test_insufficient_entries_defaults_healthy(self):
+        metrics = compute_strategy_decay_metrics([BenchEntry(artifact_id="s1", date="2024-01-01", sharpe=1.0)])
+        assert evaluate_strategy_health(metrics) == "HEALTHY"
+
+    def test_ic_ir_fields_do_not_penalize_strategy_artifacts(self):
+        """Regression guard: a strategy artifact's bench entries never carry
+        real ic/ir (only sharpe), so evaluate_health() — the factor-decay path
+        — would always score them CRITICAL. evaluate_strategy_health() must be
+        used instead and must not be dragged down by the always-zero ic/ir."""
+        entries = [
+            BenchEntry(artifact_id="s1", date=f"2024-01-{d:02d}", ic=0.0, ir=0.0, ic_positive=False, sharpe=2.0)
+            for d in range(1, 11)
+        ]
+        factor_metrics = compute_decay_metrics(entries)
+        assert evaluate_health(factor_metrics) != "HEALTHY"  # structurally-zero ic/ir misreads a fine strategy as decaying
+
+        strategy_metrics = compute_strategy_decay_metrics(entries)
+        assert evaluate_strategy_health(strategy_metrics) == "HEALTHY"
+
+
+class TestEvalHistoryOrdering:
+    def test_get_snapshots_reversed_matches_chronological_order(self):
+        """get_snapshots() returns newest-first; decay_scan_main must reverse
+        it before appending the current evaluation, or transition_status sees
+        the oldest entries where it expects the most recent ones."""
+        store, _ = TestSqliteStrategyStore._make_store()
+        a = Artifact.create("strategy", "Order Test")
+        store.upsert_artifact(a)
+
+        evaluations = ["HEALTHY", "WARNING", "WARNING"]
+        for i, ev in enumerate(evaluations):
+            store.save_snapshot(DecaySnapshot(
+                artifact_id=a.artifact_id, evaluation=ev,
+                timestamp=f"2024-01-{i + 1:02d}T00:00:00",
+            ))
+
+        previous_snapshots = store.get_snapshots(a.artifact_id)
+        assert [s.evaluation for s in previous_snapshots] == list(reversed(evaluations))
+
+        correctly_ordered = [s.evaluation for s in reversed(previous_snapshots)] + ["DECAYED"]
+        assert correctly_ordered == ["HEALTHY", "WARNING", "WARNING", "DECAYED"]
+        # The buggy (unreversed) construction would instead put the oldest
+        # snapshot right before "DECAYED", silently misreading the trend.
+        buggy_ordered = [s.evaluation for s in previous_snapshots] + ["DECAYED"]
+        assert buggy_ordered != correctly_ordered

@@ -44,6 +44,52 @@ class TestApprove:
         result = await service.approve_run(r.id)
         assert result is None
 
+    async def test_approve_run_creates_artifact(self, service, storage, sample_record):
+        """Approving a done run must bridge into the strategy_store — this is
+        the fix for the previously-disconnected approve/artifact systems."""
+        sample_record.status = "done"
+        sample_record.best_sharpe = 1.8
+        sample_record.best_max_dd = -0.12
+        sample_record.strategy_code = "class UserStrategy: pass"
+        r = storage.insert_run(sample_record)
+
+        result = await service.approve_run(r.id)
+        assert "artifact_id" in result
+
+        from vinu_research.models import ArtifactStatus
+        artifacts = service.strategy_store.list_artifacts_for_symbol(
+            sample_record.symbol, [ArtifactStatus.ACTIVE],
+        )
+        assert len(artifacts) == 1
+        art = artifacts[0]
+        assert art.artifact_id == result["artifact_id"]
+        assert art.strategy_code == "class UserStrategy: pass"
+        assert art.source_run_id == r.id
+        assert art.initial_sharpe == 1.8
+        assert art.initial_max_dd == -0.12
+
+        history = service.strategy_store.get_bench_history(art.artifact_id)
+        assert len(history) == 1
+        assert history[0].sharpe == 1.8
+
+
+class TestEnsureStrategy:
+    async def test_runs_when_no_existing_strategy(self, service, storage, sample_record):
+        assert await service.has_active_strategy(sample_record.symbol) is False
+
+    async def test_skips_when_active_strategy_exists(self, service, storage, sample_record):
+        sample_record.status = "done"
+        sample_record.strategy_code = "class UserStrategy: pass"
+        r = storage.insert_run(sample_record)
+        await service.approve_run(r.id)
+
+        assert await service.has_active_strategy(sample_record.symbol) is True
+
+        result = await service.ensure_strategy(
+            "any idea", sample_record.symbol, sample_record.from_date, sample_record.to_date,
+        )
+        assert result["skipped"] is True
+
 
 class TestHealth:
     async def test_health_returns_service_info(self, service):
@@ -60,10 +106,10 @@ class TestHealth:
 
 
 class TestContextManager:
-    async def test_async_context_manager(self, storage):
+    async def test_async_context_manager(self, storage, tmp_path):
         from vinu_research.config import ResearchConfig
         from vinu_research.service import ResearchService
-        cfg = ResearchConfig()
+        cfg = ResearchConfig(data_root=tmp_path)
         async with ResearchService(config=cfg, storage=storage) as svc:
             runs = await svc.list_runs()
             assert runs == []

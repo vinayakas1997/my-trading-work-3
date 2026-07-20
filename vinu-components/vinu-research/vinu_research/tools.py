@@ -188,6 +188,28 @@ class ResearchTools:
         )
         return build_angle_context(trend_rows, session_rows, causality_rows, interval=interval)
 
+    async def get_feature_snapshot(
+        self,
+        symbol: str,
+        recipe: str = "alpha158",
+    ) -> dict[str, Any] | None:
+        """Fetch a snapshot of computed features for a symbol from vinu-tools.
+
+        Calls the features-api /features/{symbol} endpoint (the same one
+        vinu-strategy's WeightPipeline uses). Returns the raw response dict
+        (column names and latest values) or None if unavailable.
+        """
+        try:
+            resp = await self._features_client.get(
+                f"/features/{symbol.upper()}",
+                params={"indicators": recipe},
+            )
+            if isinstance(resp, dict):
+                return resp
+        except Exception as e:
+            LOG.warning("get_feature_snapshot(%s, recipe=%s) failed: %s", symbol, recipe, e)
+        return None
+
     async def get_benchmark_data(
         self,
         symbol: str,
@@ -200,7 +222,7 @@ class ResearchTools:
         try:
             data = await self._stock_client.get(
                 f"/candles/{symbol.upper()}",
-                params={"from": from_ts, "to": to_ts, "interval": "1d"},
+                params={"from": from_ts, "to": to_ts, "interval": "1d", "adjusted": True},
             )
         except Exception as e:
             LOG.warning("get_benchmark_data(%s) failed: %s", symbol, e)

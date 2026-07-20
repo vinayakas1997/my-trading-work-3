@@ -38,7 +38,8 @@ class AgentConfig:
         "vinu_initial_analysis": os.environ.get("VINU_INITIAL_ANALYSIS_API_URL", "http://localhost:8083"),
         "vinu_stock_price": os.environ.get("VINU_STOCK_PRICE_API_URL", "http://localhost:8081"),
         "vinu_strategy": os.environ.get("VINU_STRATEGY_API_URL", "http://localhost:8084"),
-        "vinu_research": os.environ.get("VINU_RESEARCH_API_URL", "http://localhost:8086"),
+        "vinu_research": os.environ.get("VINU_RESEARCH_API_URL", "http://localhost:8087"),
+        "vinu_portfolio": os.environ.get("VINU_PORTFOLIO_API_URL", "http://localhost:8090"),
     })
 
 

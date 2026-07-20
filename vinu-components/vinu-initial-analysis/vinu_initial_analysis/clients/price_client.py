@@ -20,7 +20,7 @@ class PriceClient:
         interval: str | None = None,
         limit: int = 5000,
     ) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {}
+        params: dict[str, Any] = {"adjusted": True}
         if from_ts is not None:
             params["from"] = from_ts
         if to_ts is not None:

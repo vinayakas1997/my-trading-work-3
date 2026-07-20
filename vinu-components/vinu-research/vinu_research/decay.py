@@ -103,16 +103,88 @@ def compute_decay_snapshot(
     )
 
 
+def compute_strategy_decay_metrics(
+    bench_history: list[BenchEntry],
+) -> dict[str, float]:
+    """Sharpe-only decay signal for single-strategy artifacts (as opposed to
+    factor artifacts, whose bench entries carry real ic/ir). A strategy's
+    bench_history is a series of re-backtest Sharpe ratios over time; decay is
+    "current Sharpe vs. the Sharpe it was approved with," not a cross-sectional
+    IC/IR — those fields don't apply here and are always 0.0 on this artifact
+    type, so evaluate_health()'s ic/ir/ic_positive scoring would always read
+    CRITICAL and disable every approved strategy within a handful of scans."""
+    if len(bench_history) < 2:
+        return {"sharpe_ratio": 0.0, "rolling_sharpe": 0.0, "n_entries": len(bench_history)}
+
+    baseline = bench_history[:5] if len(bench_history) >= 5 else bench_history[:]
+    baseline_sharpe = statistics.mean(e.sharpe for e in baseline) if baseline else 0.0
+    rolling_sharpe = statistics.mean(e.sharpe for e in bench_history)
+    sharpe_ratio = (
+        rolling_sharpe / baseline_sharpe if abs(baseline_sharpe) > 1e-10 else 0.0
+    )
+    return {
+        "sharpe_ratio": sharpe_ratio,
+        "rolling_sharpe": rolling_sharpe,
+        "n_entries": len(bench_history),
+    }
+
+
+def evaluate_strategy_health(
+    metrics: dict[str, float],
+    thresholds: DecayThresholds | None = None,
+) -> str:
+    """Health verdict from rolling-Sharpe-vs-baseline-Sharpe ratio alone,
+    reusing DecayThresholds.ic_ratio_* bands (same "ratio of current to
+    baseline" semantics, just applied to Sharpe instead of IC)."""
+    t = thresholds or DecayThresholds()
+    ratio = metrics.get("sharpe_ratio", 0.0)
+    if metrics.get("n_entries", 0) < 2:
+        return "HEALTHY"
+    if ratio >= t.ic_ratio_healthy:
+        return "HEALTHY"
+    if ratio >= t.ic_ratio_warning:
+        return "WARNING"
+    if ratio >= t.ic_ratio_critical:
+        return "DECAYED"
+    return "CRITICAL"
+
+
+def compute_strategy_decay_snapshot(
+    artifact_id: str,
+    bench_history: list[BenchEntry],
+    thresholds: DecayThresholds | None = None,
+) -> DecaySnapshot:
+    metrics = compute_strategy_decay_metrics(bench_history)
+    evaluation = evaluate_strategy_health(metrics, thresholds)
+    from datetime import datetime, timezone
+    return DecaySnapshot(
+        artifact_id=artifact_id,
+        evaluation=evaluation,
+        ic_ratio=metrics["sharpe_ratio"],
+        rolling_sharpe=metrics["rolling_sharpe"],
+        n_entries=metrics["n_entries"],
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+
+
 def transition_status(
     current: ArtifactStatus,
     evaluation_history: list[str],
+    live_sharpe: float | None = None,
+    backtest_sharpe: float | None = None,
 ) -> ArtifactStatus:
     if not evaluation_history:
         return current
 
     last = evaluation_history[-1]
 
-    if current == ArtifactStatus.ACTIVE:
+    if current == ArtifactStatus.BENCHING:
+        if live_sharpe is not None and backtest_sharpe is not None and backtest_sharpe != 0:
+            degradation = (backtest_sharpe - live_sharpe) / abs(backtest_sharpe)
+            if live_sharpe > 0 and degradation <= 0.5:
+                return ArtifactStatus.ACTIVE
+
+    elif current == ArtifactStatus.ACTIVE:
         if _n_consecutive(evaluation_history, {"WARNING", "DECAYED", "CRITICAL"}, 3):
             return ArtifactStatus.MONITORING
 

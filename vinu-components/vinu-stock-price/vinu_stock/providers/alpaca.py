@@ -52,6 +52,10 @@ class AlpacaProvider:
             "end": end_iso,
             "limit": "10000",
             "feed": "iex",
+            # Without this, Alpaca returns raw prices: a split shows up as a
+            # cliff in the OHLC series. "all" applies both split and dividend
+            # adjustments server-side, so adj_factor can stay 1.0 downstream.
+            "adjustment": "all",
         }
         try:
             all_bars: list[BarRecord] = []

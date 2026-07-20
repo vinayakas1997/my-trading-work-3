@@ -38,6 +38,15 @@ class SimulationConfig:
     kelly_lookback_days: int = 60
     max_leverage: float = 1.0
 
+    # Caps a single day's order for one symbol at this fraction of that day's
+    # traded volume — independent of the Almgren-Chriss cost model, which
+    # prices market impact but never refuses to fill an order regardless of
+    # size. 1.0 (default) preserves prior behavior (no cap). A strategy that
+    # only clears its backtest Sharpe by assuming it can trade an unrealistic
+    # fraction of ADV will show it here as unfilled/reduced size, not silently
+    # in the cost alone.
+    max_pct_of_volume: float = 1.0
+
 
 @dataclass
 class TradeRecord:

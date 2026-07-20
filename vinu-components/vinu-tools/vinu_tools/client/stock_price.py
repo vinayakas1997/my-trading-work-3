@@ -47,7 +47,7 @@ class StockPriceClient:
         limit: int = 50000,
         retries: int = 3,
     ) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {"interval": interval, "limit": limit}
+        params: dict[str, Any] = {"interval": interval, "limit": limit, "adjusted": True}
         if from_ts is not None:
             params["from"] = from_ts
         if to_ts is not None:

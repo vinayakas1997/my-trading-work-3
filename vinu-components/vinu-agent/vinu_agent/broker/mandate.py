@@ -22,6 +22,29 @@ class TradingMandate:
     max_order_value: float = 50000.0
     max_daily_orders: int = 10
     max_daily_trade_volume: float = 200000.0
+    # Cap on total capital deployed across ALL open positions combined, as a
+    # fraction of account equity — distinct from max_position_pct, which only
+    # caps a single order/position. e.g. 0.60 means at most 60% of equity may
+    # ever be in open positions at once, leaving 40% as an untouched buffer.
+    # 1.0 (default) means no restriction.
+    max_capital_utilization_pct: float = 1.0
+    # When True, an order is only allowed if the symbol has a strategy artifact
+    # in vinu-research with status ACTIVE (i.e. it cleared the promotion gate —
+    # deflated Sharpe, holdout, stress test). False disables the check entirely,
+    # for deliberate manual/discretionary trades outside the research pipeline.
+    require_active_artifact: bool = True
+    # Reject orders while the market is closed. Alpaca will happily queue
+    # many order types (e.g. "opg") for next open, so this is a deliberate
+    # safety default, not a hard technical requirement — set False for
+    # strategies that intentionally queue orders outside market hours.
+    require_market_open: bool = True
+    # Portfolio-level checks, independent of max_position_pct (which only
+    # reasons about this one order). Re-checked against vinu-portfolio's
+    # current target weights and correlation matrix at order time, so target
+    # weights computed upstream can't silently drift from what's actually
+    # enforced when an order fires. 1.0 (default) = no restriction.
+    max_symbol_concentration_pct: float = 1.0
+    max_pairwise_correlation: float = 1.0
     require_confirmation: bool = True
     allow_short: bool = False
     allow_margin: bool = False
@@ -43,6 +66,11 @@ class TradingMandate:
                 max_order_value=float(raw.get("max_order_value", 50000.0)),
                 max_daily_orders=int(raw.get("max_daily_orders", 10)),
                 max_daily_trade_volume=float(raw.get("max_daily_trade_volume", 200000.0)),
+                max_capital_utilization_pct=float(raw.get("max_capital_utilization_pct", 1.0)),
+                require_active_artifact=bool(raw.get("require_active_artifact", True)),
+                require_market_open=bool(raw.get("require_market_open", True)),
+                max_symbol_concentration_pct=float(raw.get("max_symbol_concentration_pct", 1.0)),
+                max_pairwise_correlation=float(raw.get("max_pairwise_correlation", 1.0)),
                 require_confirmation=bool(raw.get("require_confirmation", True)),
                 allow_short=bool(raw.get("allow_short", False)),
                 allow_margin=bool(raw.get("allow_margin", False)),
@@ -59,6 +87,11 @@ class TradingMandate:
             "max_order_value": self.max_order_value,
             "max_daily_orders": self.max_daily_orders,
             "max_daily_trade_volume": self.max_daily_trade_volume,
+            "max_capital_utilization_pct": self.max_capital_utilization_pct,
+            "require_active_artifact": self.require_active_artifact,
+            "require_market_open": self.require_market_open,
+            "max_symbol_concentration_pct": self.max_symbol_concentration_pct,
+            "max_pairwise_correlation": self.max_pairwise_correlation,
             "require_confirmation": self.require_confirmation,
             "allow_short": self.allow_short,
             "allow_margin": self.allow_margin,

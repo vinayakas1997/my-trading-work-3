@@ -5,7 +5,7 @@ import pandas as pd
 
 from vinu_research.config import ResearchConfig
 from vinu_research.loop import StrategyResearchLoop, _LRUCache, _split_research_and_holdout
-from vinu_research.models import BacktestMetrics, BacktestResult, CriticFeedback, IterationRecord
+from vinu_research.models import BacktestMetrics, BacktestResult, CriticFeedback, IterationRecord, LlmCandidate
 
 
 class TestLRUCache:
@@ -528,4 +528,109 @@ class MyStrategy(BaseStrategy):
         errors = await loop._verify_weights_holding("run1")
         assert len(errors) == 1
         assert "crossover state bug" in errors[0]
+
+
+class _FakeConfiguredLlm:
+    def is_configured(self) -> bool:
+        return True
+
+
+class TestDefaultQuantCoderRefinement:
+    """Iteration 2+ should route through LLM refinement (feedback-informed,
+    using the previous code + backtest + critique) rather than always falling
+    back to template + rule-based filter injection, when the LLM is available
+    and generator_mode allows it."""
+
+    def _make_result(self, sharpe: float = 0.8) -> BacktestResult:
+        metrics = BacktestMetrics(sharpe_ratio=sharpe, max_drawdown=-0.1, win_rate=0.5)
+        return BacktestResult(
+            run_id="r1", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=30, equity_points=100,
+        )
+
+    def _make_critique(self) -> CriticFeedback:
+        return CriticFeedback(
+            verdict="REFINE", reasoning="needs work",
+            suggestions=["Sharpe below 0.5 — add ADX filter to avoid choppy markets"],
+        )
+
+    async def test_iteration2_uses_llm_refine_when_available(self, monkeypatch):
+        import vinu_research.loop as loop_module
+
+        refine_calls = []
+
+        class _FakeGenerator:
+            def __init__(self, llm_client):
+                pass
+
+            async def refine(self, **kwargs):
+                refine_calls.append(kwargs)
+                return [LlmCandidate(code="class UserStrategy: REFINED", validated=True)]
+
+        monkeypatch.setattr(loop_module, "LlmStrategyGenerator", _FakeGenerator)
+
+        loop = StrategyResearchLoop(config=ResearchConfig(generator_mode="llm"))
+        loop._llm = _FakeConfiguredLlm()
+        loop._symbol = "AAPL"
+        loop._from_date = "2024-01-01"
+        loop._to_date = "2024-12-31"
+
+        code = await loop._default_quant_coder(
+            "SMA crossover", 2, self._make_result(), self._make_critique(),
+            previous_code="class UserStrategy: PREVIOUS",
+        )
+
+        assert code == "class UserStrategy: REFINED"
+        assert len(refine_calls) == 1
+        assert refine_calls[0]["previous_code"] == "class UserStrategy: PREVIOUS"
+
+    async def test_iteration2_falls_back_to_template_when_refine_returns_nothing(self, monkeypatch):
+        import vinu_research.loop as loop_module
+
+        class _FakeGenerator:
+            def __init__(self, llm_client):
+                pass
+
+            async def refine(self, **kwargs):
+                return []
+
+        monkeypatch.setattr(loop_module, "LlmStrategyGenerator", _FakeGenerator)
+
+        loop = StrategyResearchLoop(config=ResearchConfig(generator_mode="llm"))
+        loop._llm = _FakeConfiguredLlm()
+        loop._indicators = ["adx_14"]
+
+        code = await loop._default_quant_coder(
+            "SMA crossover", 2, self._make_result(), self._make_critique(),
+            previous_code="class UserStrategy: PREVIOUS",
+        )
+
+        # Falls back to the deterministic template + rule-based filter splice —
+        # same behavior as generator_mode="template" (TestGenerateFiltersDataAvailability).
+        assert "PREVIOUS" not in code
+        assert "adx" in code.lower()
+
+    async def test_generator_mode_template_bypasses_refinement_entirely(self, monkeypatch):
+        import vinu_research.loop as loop_module
+
+        class _ExplodingGenerator:
+            def __init__(self, llm_client):
+                pass
+
+            async def refine(self, **kwargs):
+                raise AssertionError("refine() must not be called in template mode")
+
+        monkeypatch.setattr(loop_module, "LlmStrategyGenerator", _ExplodingGenerator)
+
+        loop = StrategyResearchLoop(config=ResearchConfig(generator_mode="template"))
+        loop._llm = _FakeConfiguredLlm()
+        loop._indicators = ["adx_14"]
+
+        code = await loop._default_quant_coder(
+            "SMA crossover", 2, self._make_result(), self._make_critique(),
+            previous_code="class UserStrategy: PREVIOUS",
+        )
+
+        assert "PREVIOUS" not in code
+        assert "adx" in code.lower()
 
