@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -16,6 +17,7 @@ class MetaStorage:
         self._close_lock = threading.Lock()
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
+        self._ensure_config_hash_column()
 
     def _get_conn(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn") or self._local.conn is None:
@@ -44,6 +46,14 @@ class MetaStorage:
             CREATE INDEX IF NOT EXISTS idx_runs_timestamp ON simulation_runs(timestamp);
         """)
 
+    def _ensure_config_hash_column(self) -> None:
+        conn = self._get_conn()
+        cursor = conn.execute("PRAGMA table_info(simulation_runs)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "config_hash" not in columns:
+            conn.execute("ALTER TABLE simulation_runs ADD COLUMN config_hash TEXT NOT NULL DEFAULT ''")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_config_hash ON simulation_runs(config_hash)")
+
     def insert_run(
         self,
         run_id: str,
@@ -51,6 +61,8 @@ class MetaStorage:
         timestamp: datetime,
         config: dict[str, Any],
         metrics: dict[str, float],
+        *,
+        config_hash: str = "",
         benchmark_metrics: dict[str, dict[str, float]] | None = None,
         equity_points: int = 0,
         trade_count: int = 0,
@@ -58,8 +70,8 @@ class MetaStorage:
         conn = self._get_conn()
         conn.execute(
             """INSERT OR REPLACE INTO simulation_runs
-               (run_id, strategy_name, timestamp, config, metrics, benchmark_metrics, equity_points, trade_count)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (run_id, strategy_name, timestamp, config, metrics, benchmark_metrics, equity_points, trade_count, config_hash)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 run_id,
                 strategy_name,
@@ -69,6 +81,7 @@ class MetaStorage:
                 json.dumps(benchmark_metrics or {}, default=str),
                 equity_points,
                 trade_count,
+                config_hash,
             ),
         )
         conn.commit()
@@ -77,6 +90,20 @@ class MetaStorage:
         conn = self._get_conn()
         row = conn.execute(
             "SELECT * FROM simulation_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        r = dict(row)
+        r["config"] = json.loads(r["config"])
+        r["metrics"] = json.loads(r["metrics"])
+        r["benchmark_metrics"] = json.loads(r["benchmark_metrics"])
+        return r
+
+    def get_run_by_config_hash(self, config_hash: str) -> dict[str, Any] | None:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM simulation_runs WHERE config_hash = ? ORDER BY timestamp DESC LIMIT 1",
+            (config_hash,),
         ).fetchone()
         if row is None:
             return None

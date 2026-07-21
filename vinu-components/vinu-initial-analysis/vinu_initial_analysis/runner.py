@@ -111,6 +111,11 @@ class AngleRunner:
         to_ts: int | None,
     ) -> int:
         """Run an angle for each of its time_formats. Returns total row count."""
+        existing = self._run_log.has_existing_run(symbol, angle["name"], from_ts, to_ts)
+        if existing:
+            LOG.info("Skipping %s for %s — existing run found", angle["name"], symbol)
+            return 0
+
         module = self._import_compute(angle["name"])
         if module is None:
             raise ImportError(f"Could not import compute for {angle['name']}")

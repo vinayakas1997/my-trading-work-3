@@ -34,6 +34,14 @@ def _cleanup_old_jobs() -> None:
         del _background_jobs[oldest]
 
 
+def _get_running_job_id(job_type: str) -> str | None:
+    with _jobs_lock:
+        for jid, job in _background_jobs.items():
+            if job.get("type") == job_type and job.get("status") == "running":
+                return jid
+    return None
+
+
 def get_service() -> StockService:
     raise RuntimeError("StockService dependency not configured")
 
@@ -95,7 +103,11 @@ class BackfillRequest(BaseModel):
 @router.post("/backfill/trigger", response_model=TriggerResponse)
 def trigger_backfill(req: BackfillRequest = Body(default=None)) -> TriggerResponse:
     if not _backfill_lock.acquire(blocking=False):
-        raise HTTPException(status_code=409, detail="Backfill already running")
+        running_job_id = _get_running_job_id("backfill")
+        detail = "Backfill already running"
+        if running_job_id:
+            detail = f"Backfill already running (job_id={running_job_id})"
+        raise HTTPException(status_code=409, detail=detail)
     job_id = uuid.uuid4().hex[:12]
     with _jobs_lock:
         _background_jobs[job_id] = {"type": "backfill", "status": "running", "summary": {}}
@@ -148,7 +160,11 @@ def backfill_status(job_id: str) -> dict:
 @router.post("/ingest/trigger", response_model=TriggerResponse)
 def trigger_ingest() -> TriggerResponse:
     if not _ingest_lock.acquire(blocking=False):
-        raise HTTPException(status_code=409, detail="Ingest already running")
+        running_job_id = _get_running_job_id("ingest")
+        detail = "Ingest already running"
+        if running_job_id:
+            detail = f"Ingest already running (job_id={running_job_id})"
+        raise HTTPException(status_code=409, detail=detail)
     job_id = uuid.uuid4().hex[:12]
     with _jobs_lock:
         _background_jobs[job_id] = {"type": "ingest", "status": "running", "summary": {}}

@@ -58,13 +58,13 @@ class AngleStorage:
         df.to_parquet(path, index=False)
         return run_id
 
-    def read(self, symbol: str, angle_name: str) -> pd.DataFrame:
-        """Read all stored parquet files for a symbol+angle, concatenated."""
+    def read(self, symbol: str, angle_name: str, filters: Any = None) -> pd.DataFrame:
+        """Read stored parquet files for a symbol+angle, with optional PyArrow filter pushdown."""
         angle_dir = self._root / symbol / angle_name
         files = sorted(angle_dir.glob("*.parquet")) if angle_dir.exists() else []
         if not files:
             return pd.DataFrame()
-        dfs = [pq.read_table(f).to_pandas() for f in files]
+        dfs = [pq.read_table(f, filters=filters).to_pandas() for f in files]
         if not dfs:
             return pd.DataFrame()
         return pd.concat(dfs, ignore_index=True, sort=False)

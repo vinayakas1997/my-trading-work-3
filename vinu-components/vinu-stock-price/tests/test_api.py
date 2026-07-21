@@ -31,7 +31,7 @@ def client(tmp_path: Path) -> TestClient:
         for i in range(10)
     ]
     out = archive_year_path(data_root, "AAPL", 2024)
-    parquet.write_bars(out, bars)
+    parquet.write_bars(out, parquet.bars_to_table(bars))
 
     service = StockService()
     service._backend.catalog.upsert_symbol(

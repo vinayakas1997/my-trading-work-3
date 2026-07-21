@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +37,30 @@ class SimulatorService:
         self._price_client = PriceClient(self._config.stock_api_url)
         self._features_client = FeaturesClient(self._config.features_api_url)
 
+    @staticmethod
+    def _compute_config_hash(params: dict[str, Any]) -> str:
+        raw = json.dumps(params, sort_keys=True, default=str)
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    def _reconstruct_result(self, row: dict[str, Any]) -> SimulationResult:
+        """Build a SimulationResult from a cached MetaStorage row."""
+        portfolio_values = self._result_storage.load_equity(row["run_id"])
+        daily_returns = portfolio_values["daily_return"] if not portfolio_values.empty else pd.Series()
+        prices = portfolio_values["portfolio_value"] if not portfolio_values.empty else pd.Series()
+        trades = self._result_storage.load_trades(row["run_id"])
+        return SimulationResult(
+            run_id=row["run_id"],
+            strategy_name=row["strategy_name"],
+            timestamp=datetime.fromisoformat(row["timestamp"]),
+            config=SimulationConfig(**row["config"]),
+            metrics=row["metrics"],
+            benchmark_metrics=row["benchmark_metrics"],
+            portfolio_values=prices,
+            daily_returns=daily_returns,
+            weights_history=pd.DataFrame(),
+            trades=trades,
+        )
+
     def simulate(self, req: SimulateRequest) -> SimulationResult:
         if req.dry_run:
             LOG.info("DRY RUN: simulate(%s) — skipping execution", req.strategy_name)
@@ -48,6 +74,24 @@ class SimulatorService:
                 benchmark_metrics={},
             )
             return result
+
+        config_hash = self._compute_config_hash({
+            "strategy_name": req.strategy_name,
+            "start_date": req.start_date,
+            "end_date": req.end_date,
+            "initial_capital": req.initial_capital,
+            "transaction_cost_pct": req.transaction_cost_pct,
+            "slippage_pct": req.slippage_pct,
+            "slippage_model": req.slippage_model,
+            "benchmark_tickers": sorted(req.benchmark_tickers) if req.benchmark_tickers else None,
+            "allow_short": req.allow_short,
+            "deviation_threshold": req.deviation_threshold,
+            "full_metrics": req.full_metrics,
+        })
+        cached = self._meta_storage.get_run_by_config_hash(config_hash)
+        if cached is not None:
+            LOG.info("Cache hit for %s — returning cached result %s", req.strategy_name, cached["run_id"])
+            return self._reconstruct_result(cached)
 
         start_date = req.start_date or "2020-01-01"
         end_date = req.end_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -120,6 +164,7 @@ class SimulatorService:
             benchmark_metrics=benchmark_metrics,
             equity_points=len(result.portfolio_values),
             trade_count=len(result.trades),
+            config_hash=config_hash,
         )
 
         validation = None
@@ -152,6 +197,29 @@ class SimulatorService:
         violations = validate_strategy_code(req.strategy_code)
         if violations:
             raise ValueError(f"Strategy code failed security validation: {', '.join(violations)}")
+
+        config_hash = self._compute_config_hash({
+            "type": "custom",
+            "strategy_code": req.strategy_code,
+            "class_name": req.class_name,
+            "symbols": sorted(req.symbols),
+            "start_date": req.start_date,
+            "end_date": req.end_date,
+            "initial_capital": req.initial_capital,
+            "transaction_cost_pct": req.transaction_cost_pct,
+            "slippage_pct": req.slippage_pct,
+            "slippage_model": req.slippage_model,
+            "benchmark_tickers": sorted(req.benchmark_tickers) if req.benchmark_tickers else None,
+            "allow_short": req.allow_short,
+            "deviation_threshold": req.deviation_threshold,
+            "interval": req.interval,
+            "indicators": sorted(req.indicators) if req.indicators else None,
+            "full_metrics": req.full_metrics,
+        })
+        cached = self._meta_storage.get_run_by_config_hash(config_hash)
+        if cached is not None:
+            LOG.info("Cache hit for custom sim %s — returning cached result %s", req.class_name, cached["run_id"])
+            return self._reconstruct_result(cached)
 
         start_date = req.start_date
         end_date = req.end_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -252,6 +320,7 @@ class SimulatorService:
             benchmark_metrics=benchmark_metrics,
             equity_points=len(result.portfolio_values),
             trade_count=len(result.trades),
+            config_hash=config_hash,
         )
 
         validation = None
@@ -300,28 +369,16 @@ class SimulatorService:
             benchmark_metrics[ticker] = bm
         return benchmark_metrics
 
-    def get_result(self, run_id: str) -> dict[str, Any] | None:
+    def get_result(self, run_id: str, *, load_data: bool = True) -> dict[str, Any] | None:
         meta = self._meta_storage.get_run(run_id)
         if meta is None:
             return None
-        equity_df = self._result_storage.load_equity(run_id)
-        trades = self._result_storage.load_trades(run_id)
-        meta["equity"] = (
-            equity_df.to_dict(orient="records") if not equity_df.empty else []
-        )
-        meta["trades"] = [
-            {
-                "date": t.date.isoformat() if hasattr(t.date, "isoformat") else str(t.date),
-                "symbol": t.symbol,
-                "side": t.side,
-                "shares": t.shares,
-                "price": t.price,
-                "cost": t.cost,
-                "weight_before": t.weight_before,
-                "weight_after": t.weight_after,
-            }
-            for t in trades
-        ]
+        if load_data:
+            equity_df = self._result_storage.load_equity(run_id)
+            meta["equity"] = (
+                equity_df.to_dict(orient="records") if not equity_df.empty else []
+            )
+            meta["trades"] = self._result_storage._trades_to_dicts(run_id)
         return meta
 
     def get_equity(self, run_id: str) -> list[dict[str, Any]] | None:
@@ -351,20 +408,7 @@ class SimulatorService:
         meta = self._meta_storage.get_run(run_id)
         if meta is None:
             return None
-        trades = self._result_storage.load_trades(run_id)
-        return [
-            {
-                "date": t.date.isoformat() if hasattr(t.date, "isoformat") else str(t.date),
-                "symbol": t.symbol,
-                "side": t.side,
-                "shares": t.shares,
-                "price": t.price,
-                "cost": t.cost,
-                "weight_before": t.weight_before,
-                "weight_after": t.weight_after,
-            }
-            for t in trades
-        ]
+        return self._result_storage._trades_to_dicts(run_id)
 
     def list_runs(self, strategy_name: str | None = None) -> list[RunSummary]:
         runs = self._meta_storage.list_runs(strategy_name)

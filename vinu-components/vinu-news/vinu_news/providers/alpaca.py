@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import requests
 
 from vinu_lib.rate_limit import TokenBucket
+from vinu_news import net
 
 LOG = logging.getLogger(__name__)
 
@@ -58,8 +59,7 @@ class AlpacaTickerNewsProvider:
 
             try:
                 _RATE_LIMITER.wait()
-                resp = requests.get(url, headers=self._headers, params=params, timeout=TIMEOUT_SEC)
-                resp.raise_for_status()
+                resp = net.request("GET", url, headers=self._headers, params=params, timeout=TIMEOUT_SEC)
             except requests.RequestException as exc:
                 status = resp.status_code if hasattr(resp, 'status_code') else 'N/A'
                 body = resp.text[:200] if hasattr(resp, 'text') else 'N/A'

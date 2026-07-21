@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 from typing import Any
 
 import httpx
@@ -20,9 +21,9 @@ router = APIRouter()
 _get_service: Any = lambda: None
 
 
-async def _run_sync(callable: Any, *args: Any) -> Any:
+async def _run_sync(callable: Any, *args: Any, **kwargs: Any) -> Any:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, callable, *args)
+    return await loop.run_in_executor(None, partial(callable, *args, **kwargs))
 
 
 async def _check_service(base_url: str) -> bool:
@@ -89,7 +90,7 @@ async def get_run_result(run_id: str) -> dict[str, Any]:
 @router.get("/results/{run_id}/metrics")
 async def get_run_metrics(run_id: str) -> dict[str, Any]:
     svc = _get_service()
-    result = await _run_sync(svc.get_result, run_id)
+    result = await _run_sync(svc.get_result, run_id, load_data=False)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
     return {

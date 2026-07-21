@@ -25,10 +25,12 @@ _BAR_FIELDS = [
     ("adj_factor", pa.float64()),
 ]
 
+_empty_table = pa.table({name: pa.array([], type=typ) for name, typ in _BAR_FIELDS})
 
-def _bars_to_table(bars: list[BarRecord]) -> pa.Table:
+
+def bars_to_table(bars: list[BarRecord]) -> pa.Table:
     if not bars:
-        return pa.table({name: pa.array([], type=typ) for name, typ in _BAR_FIELDS})
+        return _empty_table
     data = {
         name: pa.array([getattr(b, name) for b in bars], type=typ)
         for name, typ in _BAR_FIELDS
@@ -36,31 +38,37 @@ def _bars_to_table(bars: list[BarRecord]) -> pa.Table:
     return pa.table(data)
 
 
-def _dedupe_bars(bars: list[BarRecord]) -> list[BarRecord]:
-    seen: dict[tuple[str, str, int], BarRecord] = {}
-    for bar in bars:
-        key = (bar.symbol, bar.provider, bar.bar_ts)
-        seen[key] = bar
-    return sorted(seen.values(), key=lambda b: b.bar_ts)
+def _dedupe_table(table: pa.Table) -> pa.Table:
+    if table.num_rows <= 1:
+        return table.sort_by("bar_ts")
+    keys = list(zip(
+        table.column("symbol").to_pylist(),
+        table.column("provider").to_pylist(),
+        table.column("bar_ts").to_pylist(),
+    ))
+    seen: dict[tuple[str, str, int], int] = {}
+    for i, key in enumerate(keys):
+        seen[key] = i
+    if len(seen) == table.num_rows:
+        return table.sort_by("bar_ts")
+    keep = sorted(seen.values())
+    return table.take(keep).sort_by("bar_ts")
 
 
-def _read_existing(path: Path) -> list[BarRecord]:
+def _read_existing(path: Path) -> pa.Table:
     if not path.is_file():
-        return []
-    table = pq.read_table(path)
-    rows = table.to_pylist()
-    return [BarRecord.from_dict(row) for row in rows]
+        return _empty_table
+    return pq.read_table(path)
 
 
-def write_bars(path: Path, bars: list[BarRecord], *, merge: bool = True) -> int:
+def write_bars(path: Path, table: pa.Table, *, merge: bool = True) -> int:
     """Write bars to parquet; merge+dedupe with existing file if merge=True."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    combined = list(bars)
     if merge and path.is_file():
-        combined = _read_existing(path) + combined
-    combined = _dedupe_bars(combined)
-    pq.write_table(_bars_to_table(combined), path, compression="zstd")
-    return len(combined)
+        existing = _read_existing(path)
+        table = _dedupe_table(pa.concat_tables([existing, table]))
+    pq.write_table(table, path, compression="zstd")
+    return table.num_rows
 
 
 def append_bars(path: Path, bars: list[BarRecord]) -> int:
@@ -81,22 +89,25 @@ def append_bars(path: Path, bars: list[BarRecord]) -> int:
     total = 0
     for day_key, day_bars in by_day.items():
         day_path = path.parent / f"{path.stem}_{day_key}.parquet"
-        pq.write_table(_bars_to_table(day_bars), day_path, compression="zstd")
+        pq.write_table(bars_to_table(day_bars), day_path, compression="zstd")
         total += len(day_bars)
 
     return total
 
 
-def read_bars(path: Path) -> list[BarRecord]:
+def read_bars(path: Path) -> pa.Table:
     """Read bars, including any daily incremental files created by append_bars."""
-    all_bars: list[BarRecord] = []
+    tables: list[pa.Table] = []
     if path.is_file():
-        all_bars.extend(_read_existing(path))
+        tables.append(_read_existing(path))
     stem = path.stem
     for sibling in sorted(path.parent.glob(f"{stem}_*.parquet")):
         if sibling.name != path.name:
-            all_bars.extend(_read_existing(sibling))
-    return _dedupe_bars(all_bars)
+            tables.append(_read_existing(sibling))
+    if not tables:
+        return _empty_table
+    combined = pa.concat_tables(tables)
+    return _dedupe_table(combined)
 
 
 def consolidate_live_shards(live_path: Path) -> int:
@@ -116,11 +127,11 @@ def consolidate_live_shards(live_path: Path) -> int:
     if not shards and not live_path.is_file():
         return 0
 
-    rows = read_bars(live_path)
-    if not rows:
+    table = read_bars(live_path)
+    if table.num_rows == 0:
         return 0
 
-    write_bars(live_path, rows, merge=False)
+    pq.write_table(table, live_path, compression="zstd")
 
     for shard in shards:
         try:
@@ -128,4 +139,4 @@ def consolidate_live_shards(live_path: Path) -> int:
         except OSError:
             pass
 
-    return len(rows)
+    return table.num_rows

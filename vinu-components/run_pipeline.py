@@ -22,7 +22,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
+import re
 import subprocess
 import threading
 import time
@@ -175,6 +177,28 @@ def wait_for_ready(url: str, timeout: float = 30.0) -> None:
     raise RuntimeError(f"Service not ready at {url} after {timeout}s: {last_exc}")
 
 
+def _retry(fn: Callable[[], requests.Response], retries: int = 3, base_delay: float = 1.0) -> requests.Response:
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        try:
+            return fn()
+        except (requests.ConnectionError, requests.Timeout) as e:
+            last_exc = e
+            if attempt == retries - 1:
+                break
+            delay = base_delay * 2 ** attempt
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code < 500:
+                raise
+            last_exc = e
+            if attempt == retries - 1:
+                break
+            delay = base_delay * 2 ** attempt
+        _log("⟳", f"retry {attempt+1}/{retries} after {delay:.1f}s: {last_exc}")
+        time.sleep(delay)
+    raise last_exc  # type: ignore[misc]
+
+
 def _date_to_epoch(date_str: str) -> int:
     return int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
 
@@ -182,7 +206,7 @@ def _date_to_epoch(date_str: str) -> int:
 def _poll_job(base_url: str, job_id: str, timeout: float = 180.0) -> dict:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        resp = requests.get(f"{base_url}/backfill/status/{job_id}", timeout=10)
+        resp = _retry(lambda: requests.get(f"{base_url}/backfill/status/{job_id}", timeout=10))
         resp.raise_for_status()
         data = resp.json()
         if data.get("status") in ("done", "completed", "finished", "error", "failed"):
@@ -202,14 +226,13 @@ def _log(marker: str, msg: str, *args: Any) -> None:
 def _req(method: str, url: str, **kwargs: Any) -> requests.Response:
     start = time.perf_counter()
     try:
-        resp = requests.request(method, url, **kwargs)
+        resp = _retry(lambda: requests.request(method, url, **kwargs))
         elapsed = time.perf_counter() - start
         icon = "✓" if resp.status_code < 400 else "✗"
         if _VERBOSE:
             _log(icon, f"{method} {url} ({resp.status_code}, {elapsed:.1f}s)")
-        resp.raise_for_status()
         return resp
-    except requests.RequestException:
+    except (requests.ConnectionError, requests.Timeout, requests.HTTPError):
         elapsed = time.perf_counter() - start
         if _VERBOSE:
             _log("✗", f"{method} {url} ({elapsed:.1f}s) — FAILED")
@@ -267,20 +290,31 @@ def run_step(name: str, service_key: str, probe_path: str, work_fn: Callable[[],
 
 def step_stock_price(ticker: str, force: bool = False) -> dict:
     base = SERVICES["stock_price"]["base_url"]
-    requests.post(f"{base}/watchlist/tickers", json={"tickers": [ticker]}, timeout=30).raise_for_status()
+    _req("POST", f"{base}/watchlist/tickers", json={"tickers": [ticker]}, timeout=30)
 
     body = {"symbols": [ticker]}
     if force:
         body["force"] = True
-    resp = requests.post(f"{base}/backfill/trigger", json=body, timeout=30)
-    resp.raise_for_status()
-    job_id = resp.json().get("summary", {}).get("job_id")
-    backfill_result = _poll_job(base, job_id) if job_id else None
 
-    resp = requests.post(f"{base}/ingest/trigger", timeout=30)
-    resp.raise_for_status()
-    job_id = resp.json().get("summary", {}).get("job_id")
-    ingest_result = _poll_job(base, job_id) if job_id else None
+    def _trigger_and_poll(endpoint: str, label: str) -> dict | None:
+        resp = _req("POST", f"{base}/{endpoint}/trigger", json=body if endpoint == "backfill" else None, timeout=30)
+
+        if resp.status_code == 409:
+            detail = resp.json().get("detail", "")
+            m = re.search(r"job_id=(\w+)", detail)
+            if m:
+                job_id = m.group(1)
+                _log("⟳", f"{label} already running — polling existing job {job_id}")
+                return _poll_job(base, job_id)
+            raise RuntimeError(f"{label} already running but no job_id in response: {detail}")
+
+        job_id = resp.json().get("summary", {}).get("job_id")
+        if not job_id:
+            raise RuntimeError(f"{endpoint}/trigger returned no job_id")
+        return _poll_job(base, job_id)
+
+    backfill_result = _trigger_and_poll("backfill", "Backfill")
+    ingest_result = _trigger_and_poll("ingest", "Ingest")
 
     return {"backfill": backfill_result, "ingest": ingest_result}
 
@@ -292,26 +326,32 @@ def step_news(ticker: str, article_count: int, wait_sec: float = 180.0) -> dict:
     # calling /backfill/trigger here too would just block on that same slow work a
     # second time. Poll for articles instead, with a bounded wait, and proceed with
     # whatever's arrived so far rather than requiring the full historical sweep to finish.
-    requests.post(f"{base}/backfill/{ticker}/toggle", json={"enabled": True}, timeout=30).raise_for_status()
+    _req("POST", f"{base}/backfill/{ticker}/toggle", json={"enabled": True}, timeout=30)
 
     articles: list[dict] = []
     deadline = time.monotonic() + wait_sec
     while time.monotonic() < deadline:
-        resp = requests.get(f"{base}/ticker/{ticker}", params={"days": 7, "limit": article_count}, timeout=30)
-        resp.raise_for_status()
+        resp = _req("GET", f"{base}/ticker/{ticker}", params={"days": 7, "limit": article_count}, timeout=30)
         articles = resp.json().get("data", [])
         if articles:
             break
         time.sleep(5)
 
-    analyzed = 0
-    for article in articles[:article_count]:
+    def _analyze_one(article: dict) -> bool:
         url_or_id = article.get("url") or article.get("id")
         if not url_or_id:
-            continue
-        r = requests.post(f"{base}/news/analyze", json={"url_or_id": url_or_id}, timeout=300)
-        if r.status_code == 200:
-            analyzed += 1
+            return False
+        try:
+            _req("POST", f"{base}/news/analyze", json={"url_or_id": url_or_id}, timeout=300)
+            return True
+        except requests.RequestException:
+            _log("✗", f"news/analyze failed for {url_or_id}")
+            return False
+
+    targets = [a for a in articles[:article_count] if a.get("url") or a.get("id")]
+    with ThreadPoolExecutor(max_workers=min(5, len(targets))) as pool:
+        results = list(pool.map(_analyze_one, targets))
+    analyzed = sum(1 for r in results if r)
 
     return {"articles_found": len(articles), "articles_analyzed": analyzed}
 
@@ -335,25 +375,20 @@ def step_initial_analysis(ticker: str, from_ts: int, to_ts: int) -> dict:
     # Computing all 25 deterministic angles for one ticker is genuinely slow
     # (observed ~8 minutes end to end) — not a hang, just a lot of work.
     base = SERVICES["initial_analysis"]["base_url"]
-    resp = requests.post(f"{base}/run/{ticker}", params={"from_ts": from_ts, "to_ts": to_ts}, timeout=900)
-    resp.raise_for_status()
+    resp = _req("POST", f"{base}/run/{ticker}", params={"from_ts": from_ts, "to_ts": to_ts}, timeout=900)
     return resp.json()
 
 
 def step_strategy(ticker: str, strategy_name: str | None, holder: dict) -> dict:
     base = SERVICES["strategy"]["base_url"]
     if not strategy_name:
-        resp = requests.get(f"{base}/strategies", timeout=30)
-        resp.raise_for_status()
+        resp = _req("GET", f"{base}/strategies", timeout=30)
         names = resp.json()
         if not names:
             raise RuntimeError("No strategies available from GET /strategies")
         strategy_name = names[0]["name"] if isinstance(names[0], dict) else names[0]
 
-    resp = requests.post(
-        f"{base}/strategies/{strategy_name}/evaluate", params={"symbols": ticker}, timeout=120
-    )
-    resp.raise_for_status()
+    resp = _req("POST", f"{base}/strategies/{strategy_name}/evaluate", params={"symbols": ticker}, timeout=120)
     holder["strategy_name"] = strategy_name
     return resp.json()
 

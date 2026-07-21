@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from functools import partial
 from typing import Any
 
@@ -12,6 +13,10 @@ from fastapi import APIRouter, HTTPException, Query
 from vinu_tools.compute.feature_catalog import format_help, get_indicator, indicator_meta_to_dict, list_indicators
 from vinu_tools.server.schemas import FeatureCatalogResponse, IndicatorMetaOut
 from vinu_tools.server.routes_requests import get_service
+
+LOG = logging.getLogger(__name__)
+_REATTEMPTS = 3
+_BACKOFF = 1.5
 
 router = APIRouter(tags=["catalog"])
 
@@ -67,36 +72,54 @@ async def get_feature_or_symbol(symbol_or_kind: str, indicators: str | None = No
         if indicators:
             params["indicators"] = indicators
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, params=params, timeout=10.0)
-            resp.raise_for_status()
-            data = resp.json()
-            candles = data.get("data", [])
-            if not candles:
-                return {"symbol": symbol_or_kind, "values": {}, "signal": 0.0}
-            
-            # Get the latest candle
-            latest = candles[-1]
-            
-            # Extract indicators
-            ind_names = [i.strip().lower() for i in indicators.split(",")] if indicators else []
-            values = {}
-            for name in ind_names:
-                values[name] = latest.get(name, 0.0)
-            
-            signal = latest.get("signal", 0.0)
-            return {
-                "symbol": symbol_or_kind,
-                "values": values,
-                "signal": signal
-            }
+            delay = 1.0
+            last_exc: Exception | None = None
+            for attempt in range(_REATTEMPTS):
+                try:
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.get(url, params=params, timeout=10.0)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    candles = data.get("data", [])
+                    break
+                except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as e:
+                    last_exc = e
+                    if isinstance(e, httpx.HTTPStatusError) and e.response.status_code not in (429, 500, 502, 503, 504):
+                        raise
+                    if attempt == _REATTEMPTS - 1:
+                        raise
+                    LOG.warning("Transient error on GET %s (attempt %s/%s): %s",
+                                url, attempt + 1, _REATTEMPTS, e)
+                    await asyncio.sleep(delay)
+                    delay *= _BACKOFF
+                    continue
+            if last_exc:
+                raise last_exc
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).error("Failed to fetch features from stock-api: %s", exc)
+            LOG.error("Failed to fetch features from stock-api: %s", exc)
             raise HTTPException(
                 status_code=502,
                 detail=f"Upstream stock-api error for {symbol_or_kind}: {exc}",
             ) from exc
+
+        if not candles:
+            return {"symbol": symbol_or_kind, "values": {}, "signal": 0.0}
+
+        # Get the latest candle
+        latest = candles[-1]
+
+        # Extract indicators
+        ind_names = [i.strip().lower() for i in indicators.split(",")] if indicators else []
+        values = {}
+        for name in ind_names:
+            values[name] = latest.get(name, 0.0)
+
+        signal = latest.get("signal", 0.0)
+        return {
+            "symbol": symbol_or_kind,
+            "values": values,
+            "signal": signal
+        }
 
 
 # ── Alpha Factor endpoints ─────────────────────────────────────

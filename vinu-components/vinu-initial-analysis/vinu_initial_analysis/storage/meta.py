@@ -100,5 +100,25 @@ class RunLog:
         columns = [desc[0] for desc in cursor.description]
         return dict(zip(columns, rows[0]))
 
+    def has_existing_run(
+        self,
+        symbol: str,
+        angle_name: str,
+        analysis_from: int | None = None,
+        analysis_until: int | None = None,
+    ) -> bool:
+        """Check if a completed run exists for the given params."""
+        query = "SELECT 1 FROM runs WHERE symbol = ? AND angle_name = ? AND status = 'completed'"
+        params: list[Any] = [symbol, angle_name]
+        if analysis_from is not None:
+            query += " AND analysis_from = ?"
+            params.append(datetime.fromtimestamp(analysis_from, tz=timezone.utc).isoformat())
+        if analysis_until is not None:
+            query += " AND analysis_until = ?"
+            params.append(datetime.fromtimestamp(analysis_until, tz=timezone.utc).isoformat())
+        query += " LIMIT 1"
+        cursor = self._conn.execute(query, params)
+        return cursor.fetchone() is not None
+
     def close(self) -> None:
         self._conn.close()

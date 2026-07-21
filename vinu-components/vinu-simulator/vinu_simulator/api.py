@@ -56,8 +56,8 @@ class SimulatorAPI:
     def list_runs(self, strategy_name: str | None = None) -> list[dict[str, Any]]:
         return [r.model_dump() for r in self._get_service().list_runs(strategy_name)]
 
-    def get_result(self, run_id: str) -> dict[str, Any] | None:
-        return self._get_service().get_result(run_id)
+    def get_result(self, run_id: str, *, load_data: bool = True) -> dict[str, Any] | None:
+        return self._get_service().get_result(run_id, load_data=load_data)
 
     def delete_run(self, run_id: str) -> bool:
         return self._get_service().delete_run(run_id)

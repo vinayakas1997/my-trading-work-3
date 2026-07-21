@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import math
-from collections import deque
 from typing import Sequence
+
+import warnings
+
+import numpy as np
 
 SUPPORTED_INDICATORS = frozenset(
     {
@@ -40,12 +42,15 @@ def parse_indicator_names(raw: str | None) -> list[str]:
     return names
 
 
+def _nan_to_none(v: float) -> float | None:
+    return None if np.isnan(v) else v
+
+
 def apply_indicators(rows: list[dict], names: Sequence[str]) -> list[dict]:
     if not rows or not names:
         return rows
 
     closes = [float(r["close"]) for r in rows]
-    n = len(closes)
     out = [dict(r) for r in rows]
 
     for name in names:
@@ -79,109 +84,96 @@ def apply_indicators(rows: list[dict], names: Sequence[str]) -> list[dict]:
 
 
 def _sma(values: list[float], period: int) -> list[float | None]:
-    result: list[float | None] = [None] * len(values)
-    if period <= 0:
-        return result
-    window_sum = 0.0
-    for i, v in enumerate(values):
-        window_sum += v
-        if i >= period:
-            window_sum -= values[i - period]
-        if i >= period - 1:
-            result[i] = window_sum / period
-    return result
+    n = len(values)
+    if n < period or period <= 0:
+        return [None] * n
+    arr = np.array(values, dtype=float)
+    cum = np.empty(n + 1)
+    cum[0] = 0.0
+    np.cumsum(arr, out=cum[1:])
+    result = np.full(n, np.nan)
+    result[period - 1:] = (cum[period:] - cum[:-period]) / period
+    return [_nan_to_none(v) for v in result.tolist()]
 
 
 def _rsi(values: list[float], period: int) -> list[float | None]:
-    result: list[float | None] = [None] * len(values)
-    if len(values) < period + 1:
-        return result
-    gains = [0.0] * len(values)
-    losses = [0.0] * len(values)
-    for i in range(1, len(values)):
-        delta = values[i] - values[i - 1]
-        gains[i] = max(delta, 0.0)
-        losses[i] = max(-delta, 0.0)
-    avg_gain = sum(gains[1 : period + 1]) / period
-    avg_loss = sum(losses[1 : period + 1]) / period
-    for i in range(period, len(values)):
-        if i > period:
-            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-        if avg_loss == 0:
-            result[i] = 100.0
-        else:
-            rs = avg_gain / avg_loss
-            result[i] = 100.0 - (100.0 / (1.0 + rs))
-    return result
+    n = len(values)
+    if n < period + 1:
+        return [None] * n
+    arr = np.array(values, dtype=float)
+    changes = np.diff(arr)
+    gains = np.where(changes > 0, changes, 0.0)
+    losses = np.where(changes < 0, -changes, 0.0)
+
+    # Wilder smoothing: EMA with alpha = 1/period
+    alpha = 1.0 / period
+    avg_gain = np.full(n, np.nan)
+    avg_loss = np.full(n, np.nan)
+    avg_gain[period] = gains[:period].mean()
+    avg_loss[period] = losses[:period].mean()
+    for i in range(period + 1, n):
+        avg_gain[i] = avg_gain[i - 1] * (1 - alpha) + gains[i - 1] * alpha
+        avg_loss[i] = avg_loss[i - 1] * (1 - alpha) + losses[i - 1] * alpha
+
+    rs = np.where(avg_loss == 0, np.nan, avg_gain / avg_loss)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        rsi_vals = 100.0 - 100.0 / (1.0 + rs)
+    result = np.where(np.isnan(rs), 100.0, rsi_vals)
+    return [_nan_to_none(v) for v in result.tolist()]
 
 
-def _ema(values: list[float], span: int) -> list[float]:
+def _ema(values: list[float], span: int) -> np.ndarray:
+    arr = np.array(values, dtype=float)
     alpha = 2.0 / (span + 1)
-    out: list[float] = []
-    ema = values[0]
-    for v in values:
-        ema = alpha * v + (1 - alpha) * ema
-        out.append(ema)
+    out = np.empty(len(arr))
+    out[0] = arr[0]
+    for i in range(1, len(arr)):
+        out[i] = alpha * arr[i] + (1 - alpha) * out[i - 1]
     return out
 
 
 def _macd(values: list[float]) -> tuple[list[float | None], list[float | None]]:
-    if not values:
-        return [], []
+    n = len(values)
+    if n < 34:
+        return [None] * n, [None] * n
     ema12 = _ema(values, 12)
     ema26 = _ema(values, 26)
-    macd_line = [e12 - e26 for e12, e26 in zip(ema12, ema26)]
-    signal_raw = _ema(macd_line, 9)
-    macd_out: list[float | None] = [None] * len(values)
-    signal_out: list[float | None] = [None] * len(values)
-    for i in range(25, len(values)):
+    macd_line = ema12 - ema26
+    signal_raw = _ema(macd_line.tolist(), 9)
+    macd_out: list[float | None] = [None] * n
+    signal_out: list[float | None] = [None] * n
+    for i in range(25, n):
         macd_out[i] = macd_line[i]
-    for i in range(33, len(values)):
+    for i in range(33, n):
         signal_out[i] = signal_raw[i]
     return macd_out, signal_out
 
 
 def _daily_return(values: list[float]) -> list[float | None]:
-    result: list[float | None] = [None] * len(values)
-    for i in range(1, len(values)):
-        prev = values[i - 1]
-        if prev == 0:
-            result[i] = None
-        else:
-            result[i] = (values[i] - prev) / prev
-    return result
+    n = len(values)
+    if n < 2:
+        return [None] * n
+    arr = np.array(values, dtype=float)
+    result = np.full(n, np.nan)
+    result[1:] = (arr[1:] - arr[:-1]) / np.where(arr[:-1] == 0, np.nan, arr[:-1])
+    return [_nan_to_none(v) for v in result.tolist()]
 
 
 def _rolling_std(values: list[float | None], period: int) -> list[float | None]:
-    result: list[float | None] = [None] * len(values)
-    if len(values) < period:
-        return result
-    cnt = 0
-    total = 0.0
-    total_sq = 0.0
-    window: deque[float | None] = deque()
-    for i, v in enumerate(values):
-        if i >= period:
-            old = window.popleft()
-            if old is not None:
-                cnt -= 1
-                total -= old
-                total_sq -= old * old
-        window.append(v)
-        if v is not None:
-            cnt += 1
-            total += v
-            total_sq += v * v
-        if i >= period - 1 and cnt == period:
-            mean = total / period
-            var = total_sq / period - mean * mean
-            result[i] = math.sqrt(max(var, 0.0))
-    return result
+    n = len(values)
+    if n < period:
+        return [None] * n
+    arr = np.array(values, dtype=float)
+    result = np.full(n, np.nan)
+    for i in range(period - 1, n):
+        window = arr[i - period + 1 : i + 1]
+        if not np.any(np.isnan(window)):
+            result[i] = np.std(window, ddof=0)
+    return [_nan_to_none(v) for v in result.tolist()]
 
 
 def apply_adjusted_prices(rows: list[dict]) -> list[dict]:
-    """Scale OHLC by adj_factor when present (TASK-S02)."""
     out: list[dict] = []
     for row in rows:
         rec = dict(row)

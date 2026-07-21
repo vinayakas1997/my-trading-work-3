@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import pandas as pd
@@ -20,31 +21,41 @@ class PriceClient(BaseClient):
         from_ts = int(pd.Timestamp(from_date).timestamp())
         to_ts = int(pd.Timestamp(to_date).timestamp())
 
+        params_template: dict[str, Any] = {
+            "interval": resolution,
+            "from": from_ts,
+            "to": to_ts,
+            "adjusted": True,
+        }
+        if indicators:
+            params_template["indicators"] = ",".join(indicators)
+
         result: dict[str, pd.DataFrame] = {}
-        for sym in symbols:
-            params: dict[str, Any] = {
-                "interval": resolution,
-                "from": from_ts,
-                "to": to_ts,
-                "adjusted": True,
-            }
-            if indicators:
-                params["indicators"] = ",".join(indicators)
+        max_workers = min(len(symbols), 8)
+
+        def _fetch(sym: str) -> tuple[str, pd.DataFrame | None]:
             try:
-                resp = self.get(f"/candles/{sym}", params)
+                resp = self.get(f"/candles/{sym}", dict(params_template))
             except Exception:
-                continue
+                return sym, None
             if not resp or "data" not in resp:
-                continue
+                return sym, None
             records = resp["data"]
             if not records:
-                continue
+                return sym, None
             df = pd.DataFrame(records)
             df["date"] = pd.to_datetime(df["bar_ts"], unit="s")
             df = df.set_index("date").sort_index()
             keep = ["open", "high", "low", "close", "volume"] + (indicators or [])
             keep = [c for c in keep if c in df.columns]
-            result[sym] = df[keep]
+            return sym, df[keep]
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_fetch, sym): sym for sym in symbols}
+            for future in as_completed(futures):
+                sym, df = future.result()
+                if df is not None:
+                    result[sym] = df
         return result
 
     def get_prices(
@@ -76,27 +87,37 @@ class PriceClient(BaseClient):
         from_ts = int(pd.Timestamp(from_date).timestamp())
         to_ts = int(pd.Timestamp(to_date).timestamp())
 
+        params_template: dict[str, Any] = {
+            "interval": resolution,
+            "from": from_ts,
+            "to": to_ts,
+            "adjusted": True,
+        }
+
         all_dfs: list[pd.DataFrame] = []
-        for sym in symbols:
-            params: dict[str, Any] = {
-                "interval": resolution,
-                "from": from_ts,
-                "to": to_ts,
-                "adjusted": True,
-            }
+        max_workers = min(len(symbols), 8)
+
+        def _fetch(sym: str) -> pd.DataFrame | None:
             try:
-                resp = self.get(f"/candles/{sym}", params)
+                resp = self.get(f"/candles/{sym}", dict(params_template))
             except Exception:
-                continue
+                return None
             if not resp or "data" not in resp:
-                continue
+                return None
             records = resp["data"]
             if not records:
-                continue
+                return None
             df = pd.DataFrame(records)
             df["date"] = pd.to_datetime(df["bar_ts"], unit="s")
             df["symbol"] = sym
-            all_dfs.append(df)
+            return df
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_fetch, sym): sym for sym in symbols}
+            for future in as_completed(futures):
+                df = future.result()
+                if df is not None:
+                    all_dfs.append(df)
 
         if not all_dfs:
             raise ValueError(

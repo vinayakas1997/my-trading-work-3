@@ -67,7 +67,7 @@ def list_main(args: argparse.Namespace) -> None:
 
 def metrics_main(args: argparse.Namespace) -> None:
     api = SimulatorAPI()
-    result = api.get_result(args.run_id)
+    result = api.get_result(args.run_id, load_data=False)
     if result is None:
         print(f"Run '{args.run_id}' not found.")
         return

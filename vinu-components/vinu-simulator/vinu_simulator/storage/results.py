@@ -114,6 +114,25 @@ class ResultStorage:
             for row in df.itertuples()
         ]
 
+    def _trades_to_dicts(self, run_id: str) -> list[dict[str, Any]]:
+        """Load trades directly as dicts, skipping intermediate TradeRecord objects."""
+        p = self._result_path(run_id) / "trades.parquet"
+        if not p.exists():
+            return []
+        df = pd.read_parquet(p)
+        if df.empty:
+            return []
+        records = df.to_dict(orient="records")
+        for rec in records:
+            dt = rec.get("date")
+            if isinstance(dt, pd.Timestamp):
+                rec["date"] = dt.isoformat()
+            elif hasattr(dt, "isoformat"):
+                rec["date"] = dt.isoformat()
+            else:
+                rec["date"] = str(dt)
+        return records
+
     def load_meta(self, run_id: str) -> dict[str, Any] | None:
         p = self._result_path(run_id) / "meta.json"
         if not p.exists():

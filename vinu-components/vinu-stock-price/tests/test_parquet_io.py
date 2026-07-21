@@ -14,7 +14,7 @@ def test_write_and_read_dedupe(tmp_path: Path) -> None:
         BarRecord("AAPL", "test", 1000, 1, 2, 0.5, 1.5, 100),
         BarRecord("AAPL", "test", 1060, 1.5, 2.5, 1.0, 2.0, 200),
     ]
-    parquet.write_bars(path, bars)
+    parquet.write_bars(path, parquet.bars_to_table(bars))
     assert len(parquet.read_bars(path)) == 2
 
     overlap = [
@@ -24,5 +24,6 @@ def test_write_and_read_dedupe(tmp_path: Path) -> None:
     parquet.append_bars(path, overlap)
     read = parquet.read_bars(path)
     assert len(read) == 3
-    by_ts = {b.bar_ts: b for b in read}
-    assert by_ts[1000].close == 1.6
+    rows = read.to_pylist()
+    by_ts = {r["bar_ts"]: r for r in rows}
+    assert by_ts[1000]["close"] == 1.6

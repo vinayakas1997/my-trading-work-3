@@ -94,16 +94,15 @@ class CorrelationAPI:
         cached = self._cache.get_correlation(symbol, from_ts, to_ts)
         if cached is not None:
             return cached
-        df = self._storage.read(symbol, "news_price_causality")
+        df = self._storage.read(symbol, "news_price_causality", filters=[("type", "=", "correlation")])
         if df.empty:
             result = {"symbol": symbol, "news_return_corr": None, "sample_size": 0}
         else:
             records = df.to_dict("records")
-            corr_records = [r for r in records if r.get("type") == "correlation"]
             result = {
                 "symbol": symbol,
-                "news_return_corr": corr_records[-1].get("news_return_corr") if corr_records else None,
-                "sample_size": corr_records[-1].get("sample_size", 0) if corr_records else 0,
+                "news_return_corr": records[-1].get("news_return_corr"),
+                "sample_size": records[-1].get("sample_size", 0),
             }
         self._cache.set_correlation(symbol, from_ts, to_ts, result)
         return result

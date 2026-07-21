@@ -251,11 +251,17 @@ class FeatureService:
         info["data_dir"] = str(self.config.data_dir)
         info["stock_api_url"] = self.config.stock_api_url
         import httpx
-        try:
-            res = httpx.get(f"{self.config.stock_api_url}/health", timeout=2.0)
-            info["stock_api_healthy"] = res.status_code == 200
-        except Exception:
-            info["stock_api_healthy"] = False
+        import time
+        for attempt in range(3):
+            try:
+                res = httpx.get(f"{self.config.stock_api_url}/health", timeout=2.0)
+                info["stock_api_healthy"] = res.status_code == 200
+                break
+            except Exception:
+                if attempt < 2:
+                    time.sleep(1.5 ** attempt)
+                else:
+                    info["stock_api_healthy"] = False
         from vinu_tools.compute.feature_catalog import list_indicators
         from vinu_tools.presets.registry import list_presets
         info["catalog_count"] = len(list_indicators())

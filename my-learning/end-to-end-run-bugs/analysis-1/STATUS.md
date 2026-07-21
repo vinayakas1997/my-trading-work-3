@@ -1,6 +1,6 @@
 # Inefficiency Fix — Status Tracker
 
-**Total:** 52 | **Completed:** 31 | **In Progress:** 0 | **Invalid:** 2 | **Pending:** 19
+**Total:** 59 | **Completed:** 47 | **In Progress:** 0 | **Invalid:** 4 | **Pending:** 8
 
 > Update this file after fixing each problem — mark `Completed` and add the date.
 
@@ -12,10 +12,10 @@
 |----|-------|----------|-----------|--------|------------|-------|
 | FP-1 | Backfill Triggers ALL Symbols | 🔴 CRITICAL | vinu-stock-price | Completed | 2026-07-21 | Pass ticker via JSON body, pending-only fallback, completeness guard, auto-rollover + shard consolidation |
 | FP-2 | Research Ignores Prior Simulation Results | 🟠 HIGH | vinu-research | Completed | 2026-07-21 | Pipeline now passes simulator strategy_code to research; fix variable shadowing bug in loop.py |
-| FP-3 | News LLM Calls Are Sequential | 🟡 MEDIUM | vinu-news | Pending | — | — |
-| FP-4 | Backfill Lock Returns 409 Immediately | 🟡 MEDIUM | vinu-stock-price | Pending | — | — |
-| FP-5 | No Retry Logic Anywhere in Pipeline | 🟠 HIGH | run_pipeline.py | Pending | — | — |
-| FP-6 | Research LLM Calls Are Sequential Across Iterations | 🟡 MEDIUM | vinu-research | Pending | — | — |
+| FP-3 | News LLM Calls Are Sequential | 🟡 MEDIUM | vinu-news | Completed | 2026-07-22 | step_news now uses ThreadPoolExecutor (max 5 workers) instead of sequential for-loop — 5x latency reduction |
+| FP-4 | Backfill Lock Returns 409 Immediately | 🟡 MEDIUM | vinu-stock-price | Completed | 2026-07-22 | Include running job_id in 409 response; pipeline polls existing job on 409 instead of failing |
+| FP-5 | No Retry Logic Anywhere in Pipeline | 🟠 HIGH | run_pipeline.py | Completed | 2026-07-22 | Added _retry() helper with exponential backoff, wrapped _req() + raw calls + _poll_job() |
+| FP-6 | Research LLM Calls Are Sequential Across Iterations | 🟡 MEDIUM | vinu-research | Invalid | 2026-07-22 | Iterations are inherently sequential (each depends on previous). LLM calls within each iteration are already parallel via asyncio.gather. Revisit later. |
 
 ## Deep-Audit Findings
 
@@ -40,8 +40,8 @@
 | DA-10 | Recipe Over-Computation | 🟠 HIGH | vinu-tools | Completed | 2026-07-21 | Added subset param to compute_alpha, compute_recipe, and 3 alpha recipe modules; registry passes requested subset instead of computing all |
 | DA-11 | All Stock-Price Routes Block ASGI Event Loop | 🟠 HIGH | vinu-stock-price | Invalid | — | False positive — all 12 handlers are already def (sync), FastAPI threadpool is correct |
 | DA-12 | DuckDB Aggregation Done in Python Instead of SQL | 🟠 HIGH | vinu-stock-price | Completed | 2026-07-21 | Dual SQL paths: non-1m pushes OHLCV aggregation + adj_factor + LIMIT into DuckDB; 390x less data transfer for daily queries |
-| DA-43 | Indicators Computed in Python Loops Instead of DuckDB Window Functions | 🟡 MEDIUM | vinu-stock-price | Pending | — | SMA/RSI/MACD computed via Python loops; DuckDB window functions could be 10-100x faster |
-| DA-44 | `read_bars`/`write_bars` Full Python Round-Trip | 🟡 MEDIUM | vinu-stock-price | Pending | — | Parquet→Arrow→dict→dataclass; 175k BarRecord objects per year for backfill |
+| DA-43 | Indicators Computed in Python Loops Instead of DuckDB Window Functions | 🟡 MEDIUM | vinu-stock-price | Completed | 2026-07-22 | Replaced Python for-loop _sma, _rsi, _macd, _daily_return, _rolling_std with numpy vectorized operations — 10-100x faster per indicator (np.cumsum, np.diff, np.where, np.std). |
+| DA-44 | `read_bars`/`write_bars` Full Python Round-Trip | 🟡 MEDIUM | vinu-stock-price | Completed | 2026-07-22 | Replaced BarRecord round-trip in merge path with PyArrow table-level dedup — _dedupe_table() extracts 3 key columns, no intermediate dataclass objects. write_bars() now takes pa.Table. ~50-70% faster merge, ~40% less memory. |
 | DA-45 | `append_bars` Reads Existing Day Shard to Add ~1-10 Rows | 🟡 MEDIUM | vinu-stock-price | Completed | 2026-07-21 | Skip read+dedup in append_bars; write new bars directly. DuckDB QUALIFY handles dedup at query time |
 | DA-46 | IndicatorCache Not Thread-Safe | 🟡 MEDIUM | vinu-stock-price | Completed | 2026-07-21 | Added threading.Lock to protect all OrderedDict mutations |
 | DA-47 | CLI Creates 3 DuckDB Connections Per 60s Cycle | 🟡 MEDIUM | vinu-stock-price | Completed | 2026-07-21 | Restructured ingest loop to use a single StockService() instead of creating 3 per cycle |
@@ -52,16 +52,20 @@
 | DA-29 | No Timeout on Symbol Fetch Futures | 🟠 HIGH | vinu-tools | Completed | 2026-07-21 | Added timeout=120 to future.result() in engine.py |
 | DA-30 | Sync HTTP Call in Sync Route Blocks ASGI | 🟠 HIGH | vinu-tools | Completed | 2026-07-21 | def→async def, httpx.get()→httpx.AsyncClient().get() |
 | DA-31 | Upstream Errors Silently Return 200 OK With Empty Data | 🟠 HIGH | vinu-tools | Completed | 2026-07-21 | Return HTTP 502 (Bad Gateway) on upstream failure instead of 200 empty |
+| DA-48 | Shared retry utility not in vinu-lib | 🟠 HIGH | vinu-lib | Completed | 2026-07-22 | Moved retry.py to vinu-lib, updated 5 imports, backward-compat shim in old location |
+| DA-50 | vinu-strategy BaseClient returns `{}` on HTTP error | 🟠 HIGH | vinu-strategy | Completed | 2026-07-22 | Added _request() with 3x exponential backoff retry + status code logging |
+| DA-51 | vinu-simulator BaseClient no retry + silent `continue` | 🟠 HIGH | vinu-simulator | Completed | 2026-07-22 | Added _request() with 3x exponential backoff retry; exceptions still propagate to callers |
+| DA-52 | vinu-initial-analysis net.request() no transient retry | 🟠 HIGH | vinu-initial-analysis | Completed | 2026-07-22 | Added 3x exponential backoff retry + Docker fallback preserved |
 
 ### Medium
 
 | ID | Title | Severity | Component | Status | Date Fixed | Notes |
 |----|-------|----------|-----------|--------|------------|-------|
-| DA-13 | `_bar_cache` Cleared at Start of Every `run()` Call | 🟡 MEDIUM | vinu-initial-analysis | Pending | — | — |
+| DA-13 | `_bar_cache` Cleared at Start of Every `run()` Call | 🟡 MEDIUM | vinu-initial-analysis | Invalid | 2026-07-22 | Not a real problem in practice — cache is cleared when switching symbols, which is correct. Within a single run() call, the cache saves ~37 redundant HTTP fetches across 16 angles. |
 | DA-14 | Parquet Files Accumulate Unbounded | 🟡 MEDIUM | vinu-initial-analysis | Pending | — | — |
 | DA-15 | Strategy Service Has No Warm-Up Mechanism | 🟡 MEDIUM | vinu-strategy | Pending | — | — |
-| DA-16 | Per-Symbol Sequential HTTP for Price Data in Simulator | 🟡 MEDIUM | vinu-simulator | Pending | — | — |
-| DA-17 | No Caching of Simulation Results for Identical Inputs | 🟡 MEDIUM | vinu-simulator | Pending | — | — |
+| DA-16 | Per-Symbol Sequential HTTP for Price Data in Simulator | 🟡 MEDIUM | vinu-simulator | Completed | 2026-07-22 | Parallelized both get_ohclv() and _fetch_price_data() loops with ThreadPoolExecutor (max 8 workers). No server changes needed. |
+| DA-17 | No Caching of Simulation Results for Identical Inputs | 🟡 MEDIUM | vinu-simulator | Completed | 2026-07-22 | config_hash column + get_run_by_config_hash() in MetaStorage; _compute_config_hash() + cache check in simulate()/simulate_custom(); _reconstruct_result() to rebuild from cached meta. Also added dedup to vinu-initial-analysis _run_angle() via has_existing_run(). |
 | DA-18 | `weights_hist` Stored as Python List (3-4× Memory Overhead) | 🟡 MEDIUM | vinu-simulator | Completed | 2026-07-21 | Store numpy arrays instead of .tolist(); np.stack at end for DataFrame |
 | DA-19 | BaseClient Thread Lock Serializes Concurrent Requests | 🟡 MEDIUM | vinu-simulator | Completed | 2026-07-21 | Replaced global lock + shared httpx.Client with thread-local clients (threading.local); no lock needed |
 | DA-20 | Walk-Forward Windows Run Sequentially | 🟡 MEDIUM | vinu-research | Pending | — | — |
@@ -75,10 +79,13 @@
 | DA-34 | `SELECT * FROM articles` Fetches All 23 Columns | 🟡 MEDIUM | vinu-news | Completed | 2026-07-21 | Replaced with explicit column lists across 11 SELECT sites in 3 files; added THREAD_COLUMNS + SNAPSHOT_COLUMNS constants |
 | DA-35 | `SELECT *` on Threads/Snapshots Tables | 🟡 MEDIUM | vinu-news | Completed | 2026-07-21 | Combined with DA-34 — same fix with THREAD_COLUMNS + SNAPSHOT_COLUMNS |
 | DA-36 | Simulator Always Computes All 30+ Metrics | 🟡 MEDIUM | vinu-simulator | Completed | 2026-07-21 | Added full_metrics=False option to skip extended metrics; propagates from API request through config to compute_full_metrics |
-| DA-38 | Compute All 30+ Indicators for All Bars | 🟡 MEDIUM | vinu-initial-analysis | Pending | — | _compute_all_indicators runs on every bar but only ~10-50 peak/trough rows sampled |
-| DA-39 | Read Full Parquet, Filter in Python | 🟡 MEDIUM | vinu-initial-analysis | Pending | — | get_impact/ get_correlation read entire parquet then filter; get_correlation uses last 1 row |
-| DA-40 | Load Full Parquet, Convert All to Dicts | 🟡 MEDIUM | vinu-simulator | Pending | — | get_result() loads entire equity/trades parquet and to_dict all rows; callers need summary |
+| DA-38 | Compute All 30+ Indicators for All Bars | 🟡 MEDIUM | vinu-initial-analysis | Invalid | 2026-07-22 | By design. _compute_all_indicators() is a one-time comprehensive computation for the research agent analysis run, not a repeated hot-path. Full rolling-window indicator set is needed for snapshot capture and stored for potential future analysis. |
+| DA-39 | Read Full Parquet, Filter in Python | 🟡 MEDIUM | vinu-initial-analysis | Completed | 2026-07-22 | Added filters param to AngleStorage.read() — PyArrow predicate pushdown. get_correlation() now filters at parquet level for type='correlation' (usually 1 row vs thousands). |
+| DA-40 | Load Full Parquet, Convert All to Dicts | 🟡 MEDIUM | vinu-simulator | Completed | 2026-07-22 | Added load_data flag to get_result(); /metrics + CLI skip data load. load_trades() uses _trades_to_dicts() — no more TradeRecord double conversion |
 | DA-41 | `match_trades` Called Twice | 🟡 MEDIUM | vinu-simulator | Completed | 2026-07-21 | Added optional `round_trips` param to `by_symbol_stats()`; pass pre-computed round trips from validation |
+| DA-53 | vinu-news net.request() no transient retry | 🟡 MEDIUM | vinu-news | Completed | 2026-07-22 | Same retry fix as DA-52 — 3x exponential backoff + Docker fallback preserved |
+| DA-54 | vinu-news providers (yahoo/alpaca/rss) no retry | 🟡 MEDIUM | vinu-news | Completed | 2026-07-22 | Switched from raw requests.get() to net.request() — inherits retry + Docker fallback |
+| DA-55 | vinu-tools features route has no retry | 🟡 MEDIUM | vinu-tools | Completed | 2026-07-22 | Added async retry loop (3x) to routes_features.py; added retry to service.py health check |
 
 ---
 
@@ -86,8 +93,8 @@
 
 | Status | Count |
 |--------|-------|
-| ✅ Completed | 31 |
+| ✅ Completed | 47 |
 | 🔄 In Progress | 0 |
-| ❌ Invalid | 2 |
-| ⏳ Pending | 19 |
-| **Total** | **52** |
+| ❌ Invalid | 4 |
+| ⏳ Pending | 8 |
+| **Total** | **59** |

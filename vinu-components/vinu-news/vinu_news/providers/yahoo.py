@@ -9,6 +9,8 @@ from email.utils import parsedate_to_datetime
 import feedparser
 import requests
 
+from vinu_news import net
+
 LOG = logging.getLogger(__name__)
 USER_AGENT = "vinu-news/1.0"
 TIMEOUT_SEC = 10
@@ -30,8 +32,7 @@ class YahooTickerNewsProvider:
         url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={sym}&region=US&lang=en-US"
         headers = {"User-Agent": USER_AGENT}
         try:
-            resp = requests.get(url, headers=headers, timeout=TIMEOUT_SEC)
-            resp.raise_for_status()
+            resp = net.request("GET", url, headers=headers, timeout=TIMEOUT_SEC)
             parsed = feedparser.parse(resp.content)
         except requests.RequestException as exc:
             LOG.warning("Yahoo ticker news fetch failed for %s: %s", sym, exc)
