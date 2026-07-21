@@ -33,3 +33,20 @@ def test_sync_from_shared_merges(watchlist_store: WatchlistStore, tmp_path: Path
     added = sync_from_shared(watchlist_store, path)
     assert set(added) == {"NVDA"}
     assert set(watchlist_store.list_tickers()) == {"AAPL", "NVDA"}
+
+
+def test_atomic_write_cleans_tmp(tmp_path: Path):
+    path = tmp_path / "watchlist.json"
+    write_shared(path, ["AAPL"])
+    assert path.is_file()
+    assert not path.with_suffix(".tmp").exists()
+
+
+def test_read_corrupted_json_returns_empty(tmp_path: Path):
+    path = tmp_path / "watchlist.json"
+    path.write_text("{corrupted", encoding="utf-8")
+    assert read_shared(path) == []
+
+
+def test_read_missing_file_returns_empty(tmp_path: Path):
+    assert read_shared(tmp_path / "nonexistent.json") == []

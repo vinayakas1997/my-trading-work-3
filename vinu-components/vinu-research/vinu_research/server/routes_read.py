@@ -19,6 +19,10 @@ class RunResearchRequest(BaseModel):
         default=None, min_length=1,
         description="Strategy idea. If None, auto-proposed from angle context.",
     )
+    strategy_code: str | None = Field(
+        default=None,
+        description="Pre-written strategy code. If provided, skips code generation and uses this as the starting point. user_idea is used as refinement context.",
+    )
     symbol: str = Field(..., min_length=1, max_length=10)
     from_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
     to_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
@@ -46,6 +50,7 @@ async def run_research(body: RunResearchRequest) -> dict[str, Any]:
     try:
         result = await _service.run_research(
             user_idea=body.user_idea,
+            strategy_code=body.strategy_code,
             symbol=body.symbol,
             from_date=body.from_date,
             to_date=body.to_date,

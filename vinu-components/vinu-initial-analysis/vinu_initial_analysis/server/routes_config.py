@@ -18,14 +18,14 @@ def _get_svc() -> InitialAnalysisService:
     return svc
 
 
-    @router.get("/health")
-    async def health():
-        svc = _get_svc()
-        return svc.health()
+@router.get("/health")
+def health():
+    svc = _get_svc()
+    return svc.health()
 
 
 @router.get("/settings")
-async def settings():
+def settings():
     svc = _get_svc()
     cfg = svc.config
     return {

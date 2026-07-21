@@ -74,8 +74,10 @@ def list_all_presets() -> list[dict]:
     return out
 
 
-def compute_recipe(rows: list[dict], name: str) -> dict[str, list[float | None]]:
+def compute_recipe(rows: list[dict], name: str, subset: set[str] | None = None) -> dict[str, list[float | None]]:
     key = name.strip().lower()
     if key not in _RECIPES:
         raise ValueError(f"Unknown recipe: {name}")
+    if subset is not None:
+        return _RECIPES[key].compute(rows, subset=subset)
     return _RECIPES[key].compute(rows)

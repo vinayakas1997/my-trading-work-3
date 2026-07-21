@@ -1,0 +1,54 @@
+{
+  "openai": {
+    "base_url": "https://api.openai.com/v1",
+    "api_key_env": "OPENAI_API_KEY"
+  },
+  "anthropic": {
+    "base_url": "https://api.anthropic.com/v1",
+    "api_key_env": "ANTHROPIC_API_KEY"
+  },
+  "deepseek": {
+    "base_url": "https://api.deepseek.com/v1",
+    "api_key_env": "DEEPSEEK_API_KEY"
+  },
+  "gemini": {
+    "base_url": "https://generativelanguage.googleapis.com/v1beta",
+    "api_key_env": "GEMINI_API_KEY"
+  },
+  "kimi": {
+    "base_url": "https://api.moonshot.cn/v1",
+    "api_key_env": "KIMI_API_KEY"
+  },
+  "qwen": {
+    "base_url": "http://127.0.0.1:8009/v1",
+    "api_key_env": ""
+  },
+  "ollama": {
+    "base_url": "http://127.0.0.1:11434/v1",
+    "api_key_env": ""
+  },
+  "mistral": {
+    "base_url": "https://api.mistral.ai/v1",
+    "api_key_env": "MISTRAL_API_KEY"
+  },
+  "groq": {
+    "base_url": "https://api.groq.com/openai/v1",
+    "api_key_env": "GROQ_API_KEY"
+  },
+  "together": {
+    "base_url": "https://api.together.xyz/v1",
+    "api_key_env": "TOGETHER_API_KEY"
+  },
+  "perplexity": {
+    "base_url": "https://api.perplexity.ai",
+    "api_key_env": "PERPLEXITY_API_KEY"
+  },
+  "cohere": {
+    "base_url": "https://api.cohere.ai/v1",
+    "api_key_env": "COHERE_API_KEY"
+  },
+  "azure_openai": {
+    "base_url": "https://YOUR_RESOURCE.openai.azure.com",
+    "api_key_env": "AZURE_OPENAI_API_KEY"
+  }
+}

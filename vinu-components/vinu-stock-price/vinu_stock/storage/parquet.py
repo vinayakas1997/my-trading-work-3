@@ -81,10 +81,8 @@ def append_bars(path: Path, bars: list[BarRecord]) -> int:
     total = 0
     for day_key, day_bars in by_day.items():
         day_path = path.parent / f"{path.stem}_{day_key}.parquet"
-        existing = _read_existing(day_path) if day_path.is_file() else []
-        combined = _dedupe_bars(existing + day_bars)
-        pq.write_table(_bars_to_table(combined), day_path, compression="zstd")
-        total += len(combined)
+        pq.write_table(_bars_to_table(day_bars), day_path, compression="zstd")
+        total += len(day_bars)
 
     return total
 
@@ -99,3 +97,35 @@ def read_bars(path: Path) -> list[BarRecord]:
         if sibling.name != path.name:
             all_bars.extend(_read_existing(sibling))
     return _dedupe_bars(all_bars)
+
+
+def consolidate_live_shards(live_path: Path) -> int:
+    """Consolidate daily shard files into the base live file.
+
+    Reads the base file + all ``{stem}_*.parquet`` daily shards, deduplicates,
+    writes everything back to the base file, and removes the shard files.
+
+    Returns the number of rows written to the consolidated file, or 0 if no
+    data existed.
+    """
+    parent = live_path.parent
+    if not parent.is_dir():
+        return 0
+
+    shards = sorted(parent.glob(f"{live_path.stem}_*.parquet"))
+    if not shards and not live_path.is_file():
+        return 0
+
+    rows = read_bars(live_path)
+    if not rows:
+        return 0
+
+    write_bars(live_path, rows, merge=False)
+
+    for shard in shards:
+        try:
+            shard.unlink()
+        except OSError:
+            pass
+
+    return len(rows)

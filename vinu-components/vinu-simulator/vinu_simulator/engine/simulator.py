@@ -122,7 +122,7 @@ class WeightSimulator:
 
         equity_curve: list[float] = []
         daily_ret: list[float] = []
-        weights_hist: list[list[float]] = []
+        weights_hist: list[np.ndarray] = []
         trades: list[TradeRecord] = []
 
         # Pre-extract to numpy once, outside the loop. price_data / volume_data /
@@ -264,12 +264,12 @@ class WeightSimulator:
             prev_value = nav_after
 
             w = np.where(nav_after > 0, holdings * prices / nav_after, 0.0)
-            weights_hist.append(w.tolist())
+            weights_hist.append(w)
 
         portfolio_values_s = pd.Series(equity_curve, index=total_calendar, name="portfolio_value")
         daily_returns_s = pd.Series(daily_ret, index=total_calendar[1:], name="daily_return")
         weights_history_df = pd.DataFrame(
-            weights_hist,
+            np.stack(weights_hist),
             index=total_calendar,
             columns=common_tickers,
         )
@@ -279,6 +279,7 @@ class WeightSimulator:
             trades=trades,
             risk_free_rate=config.risk_free_rate_annual,
             periods_per_year=periods_per_year_for_interval(config.interval),
+            full=config.full_metrics,
         )
 
         run_id = str(uuid.uuid4())
@@ -318,7 +319,7 @@ class SimulatorEnv:
         self.portfolio_value = config.initial_capital
         self._prev_value = config.initial_capital
         self._equity_curve: list[float] = [config.initial_capital]
-        self._weights_history: list[list[float]] = []
+        self._weights_history: list[np.ndarray] = []
 
     def reset(self, seed: int | None = None) -> np.ndarray:
         self._step_idx = 0
@@ -431,7 +432,7 @@ class SimulatorEnv:
             self.holdings * next_prices / self.portfolio_value,
             0.0,
         )
-        self._weights_history.append(w.tolist())
+        self._weights_history.append(w)
 
         done = self._step_idx >= len(self.dates) - 1
         return self._state(), float(reward), done, {}

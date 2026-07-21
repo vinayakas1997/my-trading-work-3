@@ -1,4 +1,4 @@
-"""Shared watchlist JSON file read/write (TASK-X01)."""
+"""Shared watchlist JSON file read/write with atomic writes and file locking (TASK-X01)."""
 
 from __future__ import annotations
 
@@ -7,14 +7,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from filelock import FileLock
+
 if TYPE_CHECKING:
     from vinu_news.watchlist.store import WatchlistStore
+
+
+def _lock_path(path: Path) -> Path:
+    return path.with_suffix(path.suffix + ".lock")
 
 
 def read_shared(path: Path) -> list[str]:
     if not path.is_file():
         return []
-    data = json.loads(path.read_text(encoding="utf-8"))
+    lock = FileLock(str(_lock_path(path)))
+    with lock:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return []
     tickers = data.get("tickers") or []
     return [str(t).strip().upper() for t in tickers if str(t).strip()]
 
@@ -25,7 +36,11 @@ def write_shared(path: Path, tickers: list[str]) -> None:
         "tickers": sorted({t.strip().upper() for t in tickers if t.strip()}),
         "updated_at": int(datetime.now(timezone.utc).timestamp()),
     }
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    lock = FileLock(str(_lock_path(path)))
+    with lock:
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp.replace(path)
 
 
 def sync_from_shared(store: WatchlistStore, path: Path) -> list[str]:

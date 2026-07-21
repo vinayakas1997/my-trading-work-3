@@ -20,6 +20,8 @@ class SimulateRequest(BaseModel):
     allow_short: bool = True
     deviation_threshold: float | None = None
     dry_run: bool = False
+    run_validation: bool = Field(default=False, description="Run full validation suite (Monte Carlo, bootstrap, walk-forward, attribution). Results go to run_card on disk — not returned in API response.")
+    full_metrics: bool = Field(default=True, description="Compute extended metrics (VaR, CVaR, drawdown, win/loss ratios, Sharpe CI, turnover). When False, only basic metrics are returned.")
 
 
 class SimulateResponse(BaseModel):
@@ -79,6 +81,8 @@ class CustomSimulateRequest(BaseModel):
     deviation_threshold: float | None = None
     interval: Literal["1m", "5m", "15m", "30m", "1h", "4h", "1d"] = "1d"
     indicators: list[str] | None = None
+    run_validation: bool = Field(default=False, description="Run full validation suite (Monte Carlo, bootstrap, walk-forward, attribution). Results go to run_card on disk — not returned in API response.")
+    full_metrics: bool = Field(default=True, description="Compute extended metrics (VaR, CVaR, drawdown, win/loss ratios, Sharpe CI, turnover). When False, only basic metrics are returned.")
 
 
 class CustomSimulateResponse(BaseModel):

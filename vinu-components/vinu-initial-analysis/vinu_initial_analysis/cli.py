@@ -49,7 +49,6 @@ def compute_main(argv: list[str] | None = None) -> None:
     parser.add_argument("--all", action="store_true", help="Analyze all watchlist tickers")
     parser.add_argument("--from-year", type=int, default=None)
     parser.add_argument("--to-year", type=int, default=None)
-    parser.add_argument("--incremental", action="store_true", help="Only process new data since last compute")
     parser.add_argument("--force", action="store_true", help="Full recompute from scratch")
     parser.add_argument("--backfill", action="store_true", help="Backfill year-by-year from 2023")
     parser.add_argument("--continuous", action="store_true", help="Run in continuous loop with --interval")
@@ -92,7 +91,7 @@ def compute_main(argv: list[str] | None = None) -> None:
             tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA"]
         return tickers
 
-    def _compute_batch(tickers: list[str], incremental: bool, backfill: bool = False):
+    def _compute_batch(tickers: list[str], backfill: bool = False):
         for symbol in tickers:
             if backfill:
                 LOG.info("Backfill analyzing %s year-by-year...", symbol)
@@ -102,7 +101,7 @@ def compute_main(argv: list[str] | None = None) -> None:
                     LOG.info("  %s -> %s", datetime.fromtimestamp(from_ts), datetime.fromtimestamp(to_ts))
                     runner.run(symbol, from_ts=from_ts, to_ts=to_ts)
             else:
-                LOG.info("Analyzing %s (incremental=%s)...", symbol, incremental)
+                LOG.info("Analyzing %s...", symbol)
                 runner.run(symbol)
             LOG.info("Done %s", symbol)
 
@@ -114,7 +113,7 @@ def compute_main(argv: list[str] | None = None) -> None:
         while True:
             tickers = _resolve_tickers()
             if tickers:
-                _compute_batch(tickers, incremental=args.incremental or not args.force, backfill=args.backfill)
+                _compute_batch(tickers, backfill=args.backfill)
             else:
                 LOG.warning("No tickers to analyze this cycle (empty watchlist)")
             LOG.info("Sleeping %ss...", args.interval)
@@ -124,7 +123,7 @@ def compute_main(argv: list[str] | None = None) -> None:
         if not tickers:
             parser.print_help()
             return
-        _compute_batch(tickers, incremental=args.incremental or not args.force, backfill=args.backfill)
+        _compute_batch(tickers, backfill=args.backfill)
 
 
 def compact_main(argv: list[str] | None = None) -> None:

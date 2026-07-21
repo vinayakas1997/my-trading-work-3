@@ -47,6 +47,12 @@ class SimulationConfig:
     # in the cost alone.
     max_pct_of_volume: float = 1.0
 
+    # Compute extended metrics (VaR, CVaR, drawdown duration, win/loss ratios,
+    # benchmark metrics, Sharpe CI, turnover). When False, only basic metrics
+    # (total_return, cagr, sharpe, sortino, max_drawdown, calmar, win_rate,
+    # skewness, kurtosis, annual_volatility) are returned.
+    full_metrics: bool = True
+
 
 @dataclass
 class TradeRecord:

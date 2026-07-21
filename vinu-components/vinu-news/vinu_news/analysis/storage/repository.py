@@ -23,6 +23,22 @@ ARTICLE_COLUMNS = (
     "entities_json", "cluster_id", "is_lead", "thread_id",
 )
 
+THREAD_COLUMNS = (
+    "thread_id", "first_seen_at", "last_seen_at", "article_count",
+    "lead_headline", "dominant_ticker", "entities_json", "category",
+    "last_article_id", "norm_text",
+)
+
+SNAPSHOT_COLUMNS = (
+    "thread_id", "date", "article_count", "bullish_count",
+    "bearish_count", "neutral_count", "flash_count",
+)
+
+_ARTICLE_COLS = ", ".join(ARTICLE_COLUMNS)
+_ARTICLE_COLS_A = "a." + ", a.".join(ARTICLE_COLUMNS)
+_THREAD_COLS = ", ".join(THREAD_COLUMNS)
+_SNAPSHOT_COLS = ", ".join(SNAPSHOT_COLUMNS)
+
 _MIGRATION_COLUMNS = (
     ("entities_json", "TEXT NOT NULL DEFAULT '{}'"),
     ("cluster_id", "TEXT"),
@@ -150,8 +166,8 @@ class NewsRepository:
 
     def get_active_threads(self, since_ts: int, limit: int = 200) -> list[dict[str, Any]]:
         rows = self.conn.execute(
-            """
-            SELECT * FROM story_threads
+            f"""
+            SELECT {_THREAD_COLS} FROM story_threads
             WHERE last_seen_at >= ?
             ORDER BY last_seen_at DESC
             LIMIT ?
@@ -162,7 +178,7 @@ class NewsRepository:
 
     def get_thread(self, thread_id: str) -> dict[str, Any] | None:
         row = self.conn.execute(
-            "SELECT * FROM story_threads WHERE thread_id = ?",
+            f"SELECT {_THREAD_COLS} FROM story_threads WHERE thread_id = ?",
             (thread_id,),
         ).fetchone()
         return dict(row) if row else None
@@ -171,8 +187,8 @@ class NewsRepository:
         self, thread_id: str, limit: int = 50
     ) -> list[dict[str, Any]]:
         rows = self.conn.execute(
-            """
-            SELECT * FROM articles
+            f"""
+            SELECT {_ARTICLE_COLS} FROM articles
             WHERE thread_id = ?
             ORDER BY sort_ts DESC
             LIMIT ?
@@ -183,8 +199,8 @@ class NewsRepository:
 
     def get_thread_timeline(self, thread_id: str) -> list[dict[str, Any]]:
         rows = self.conn.execute(
-            """
-            SELECT * FROM thread_daily_snapshots
+            f"""
+            SELECT {_SNAPSHOT_COLS} FROM thread_daily_snapshots
             WHERE thread_id = ?
             ORDER BY date ASC
             """,
@@ -210,8 +226,8 @@ class NewsRepository:
 
     def search_articles(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
         rows = self.conn.execute(
-            """
-            SELECT a.*, n.analysis_json AS llm_analysis
+            f"""
+            SELECT {_ARTICLE_COLS_A}, n.analysis_json AS llm_analysis
             FROM articles a
             JOIN articles_fts ON a.rowid = articles_fts.rowid
             LEFT JOIN news_analysis n ON a.link = n.url
@@ -230,8 +246,8 @@ class NewsRepository:
         end_ts: int | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        query = """
-            SELECT a.*, m.ticker AS mention_ticker, m.dominance, m.is_primary, n.analysis_json AS llm_analysis
+        query = f"""
+            SELECT {_ARTICLE_COLS_A}, m.ticker AS mention_ticker, m.dominance, m.is_primary, n.analysis_json AS llm_analysis
             FROM article_ticker_mentions m
             JOIN articles a ON a.id = m.article_id
             LEFT JOIN news_analysis n ON a.link = n.url
@@ -260,8 +276,8 @@ class NewsRepository:
         end_ts_int = int(end_ts.timestamp())
 
         rows = self.conn.execute(
-            """
-            SELECT * FROM articles
+            f"""
+            SELECT {_ARTICLE_COLS} FROM articles
             WHERE sort_ts >= ? AND sort_ts <= ?
             ORDER BY sort_ts DESC
             LIMIT ?
@@ -276,8 +292,8 @@ class NewsRepository:
         sentiment: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        query = """
-            SELECT * FROM articles
+        query = f"""
+            SELECT {_ARTICLE_COLS} FROM articles
             WHERE impact = 'HIGH' AND sort_ts >= ?
         """
         params: list[Any] = [since_ts]

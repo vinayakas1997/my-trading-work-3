@@ -111,8 +111,13 @@ def match_trades(trades: list[Any]) -> list[dict[str, Any]]:
     return round_trips
 
 
-def by_symbol_stats(trades: list[Any]) -> dict[str, dict[str, float]]:
-    round_trips = match_trades(trades)
+def by_symbol_stats(
+    trades: list[Any],
+    *,
+    round_trips: list[dict[str, Any]] | None = None,
+) -> dict[str, dict[str, float]]:
+    if round_trips is None:
+        round_trips = match_trades(trades)
     symbols: dict[str, list[float]] = {}
     for rt in round_trips:
         sym = rt["symbol"]

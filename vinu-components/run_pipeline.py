@@ -191,10 +191,35 @@ def _poll_job(base_url: str, job_id: str, timeout: float = 180.0) -> dict:
     raise TimeoutError(f"Job {job_id} on {base_url} did not finish within {timeout}s")
 
 
+_VERBOSE = False
+
+
+def _log(marker: str, msg: str, *args: Any) -> None:
+    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    print(f"[{ts}] {marker} {msg}")
+
+
+def _req(method: str, url: str, **kwargs: Any) -> requests.Response:
+    start = time.perf_counter()
+    try:
+        resp = requests.request(method, url, **kwargs)
+        elapsed = time.perf_counter() - start
+        icon = "✓" if resp.status_code < 400 else "✗"
+        if _VERBOSE:
+            _log(icon, f"{method} {url} ({resp.status_code}, {elapsed:.1f}s)")
+        resp.raise_for_status()
+        return resp
+    except requests.RequestException:
+        elapsed = time.perf_counter() - start
+        if _VERBOSE:
+            _log("✗", f"{method} {url} ({elapsed:.1f}s) — FAILED")
+        raise
+
+
 def run_step(name: str, service_key: str, probe_path: str, work_fn: Callable[[], Any]) -> StepResult:
     svc = SERVICES[service_key]
     result = StepResult(name=name)
-    print(f"\n=== {name} ===")
+    _log("▶", f"=== {name} ===")
 
     container_id = resolve_container_id(svc["compose_service"])
     sampler = MemorySampler(container_id)
@@ -218,24 +243,36 @@ def run_step(name: str, service_key: str, probe_path: str, work_fn: Callable[[],
         result.memory_end_mb = sampler.end_mb
         result.llm_calls = collect_llm_calls(svc["data_subdir"], result.started_at, result.finished_at)
 
-    icon = "OK" if result.status == "ok" else "FAILED"
-    print(
-        f"[{icon}] {name}: {result.duration_sec}s, "
+    icon = "✓" if result.status == "ok" else "✗"
+    _log(icon, f"{name}: {result.duration_sec}s, "
         f"mem {result.memory_start_mb}->{result.memory_peak_mb}->{result.memory_end_mb} MiB, "
-        f"{len(result.llm_calls)} llm call(s)"
-    )
+        f"{len(result.llm_calls)} llm call(s)")
     if result.error:
-        print(f"  error: {result.error}")
+        _log("✗", f"  error: {result.error}")
+
+    if _VERBOSE and result.llm_calls:
+        for c in result.llm_calls:
+            print(f"  LLM [{c.get('model','?')}] {c.get('duration_sec',0):.1f}s "
+                  f"{'✓' if c.get('success') else '✗'}")
+            print(f"    system: {c.get('system_prompt','')[:120]}...")
+            print(f"    user:   {c.get('user_prompt','')[:120]}...")
+            if c.get('response'):
+                print(f"    resp:   {json.dumps(c['response'], ensure_ascii=False)[:200]}")
+            if c.get('error'):
+                print(f"    error:  {c['error'][:200]}")
     return result
 
 
 # --- stage implementations --------------------------------------------------
 
-def step_stock_price(ticker: str) -> dict:
+def step_stock_price(ticker: str, force: bool = False) -> dict:
     base = SERVICES["stock_price"]["base_url"]
     requests.post(f"{base}/watchlist/tickers", json={"tickers": [ticker]}, timeout=30).raise_for_status()
 
-    resp = requests.post(f"{base}/backfill/trigger", timeout=30)
+    body = {"symbols": [ticker]}
+    if force:
+        body["force"] = True
+    resp = requests.post(f"{base}/backfill/trigger", json=body, timeout=30)
     resp.raise_for_status()
     job_id = resp.json().get("summary", {}).get("job_id")
     backfill_result = _poll_job(base, job_id) if job_id else None
@@ -279,19 +316,18 @@ def step_news(ticker: str, article_count: int, wait_sec: float = 180.0) -> dict:
     return {"articles_found": len(articles), "articles_analyzed": analyzed}
 
 
-def step_features(ticker: str, from_ts: int, to_ts: int, features: list[str]) -> dict:
+def step_features(ticker: str, from_ts: int, to_ts: int, features: list[str], timeframe: str = "1d") -> dict:
     base = SERVICES["features"]["base_url"]
     body = {
         "title": f"pipeline-run-{ticker}",
         "symbols": [ticker],
         "from_ts": from_ts,
         "to_ts": to_ts,
-        "interval": "1d",
+        "interval": timeframe,
         "features": features,
         "run_immediately": True,
     }
-    resp = requests.post(f"{base}/requests", json=body, timeout=180)
-    resp.raise_for_status()
+    resp = _req("POST", f"{base}/requests", json=body, timeout=180)
     return resp.json()
 
 
@@ -334,13 +370,7 @@ class SmaCrossover(BaseStrategy):
 """
 
 
-def step_simulator(ticker: str, from_date: str, to_date: str) -> dict:
-    # /simulate reads pre-accumulated historical weight data from repeated daily
-    # `evaluate` calls (production strategies get "warmed up" over weeks of real
-    # runs) — a freshly-evaluated symbol has none, so it 422s with "No weight data
-    # found". /simulate/custom instead computes weights on the fly for any date
-    # range from an ad-hoc BaseStrategy subclass, which is what an on-demand run
-    # like this needs. Mirrors vinu-strategy's built-in "ma_crossover" (9/21 SMA).
+def step_simulator(ticker: str, from_date: str, to_date: str, timeframe: str = "1d") -> dict:
     base = SERVICES["simulator"]["base_url"]
     body = {
         "symbols": [ticker],
@@ -348,17 +378,24 @@ def step_simulator(ticker: str, from_date: str, to_date: str) -> dict:
         "class_name": "SmaCrossover",
         "start_date": from_date,
         "end_date": to_date,
+        "interval": timeframe,
     }
-    resp = requests.post(f"{base}/simulate/custom", json=body, timeout=300)
-    resp.raise_for_status()
+    resp = _req("POST", f"{base}/simulate/custom", json=body, timeout=300)
     return resp.json()
 
 
-def step_research(ticker: str, from_date: str, to_date: str) -> dict:
+def step_research(ticker: str, from_date: str, to_date: str, model: str | None = None, strategy_code: str | None = None) -> dict:
     base = SERVICES["research"]["base_url"]
-    body = {"symbol": ticker, "from_date": from_date, "to_date": to_date, "dry_run": False}
-    resp = requests.post(f"{base}/research/run", json=body, timeout=1800)
-    resp.raise_for_status()
+    body = {
+        "symbol": ticker,
+        "from_date": from_date,
+        "to_date": to_date,
+        "dry_run": False,
+        "user_idea": "Pipeline auto-run — SMA crossover baseline",
+    }
+    if strategy_code:
+        body["strategy_code"] = strategy_code
+    resp = _req("POST", f"{base}/research/run", json=body, timeout=1800)
     return resp.json()
 
 
@@ -376,8 +413,16 @@ def main() -> None:
     parser.add_argument("--strategy-name", default=None, help="Defaults to the first strategy returned by GET /strategies")
     parser.add_argument("--news-articles", type=int, default=5, help="How many recent articles to run LLM analysis on")
     parser.add_argument("--features", default="sma_20,rsi_14", help="Comma-separated feature kinds to compute")
-    parser.add_argument("--verbose", action="store_true", help="Print each LLM call's prompt/response")
+    parser.add_argument("--timeframe", default="1d", choices=["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+                        help="Bar interval for analysis (default: 1d)")
+    parser.add_argument("--model", default=None, help="LLM model to use (e.g., qwen36-35B)")
+    parser.add_argument("--verbose", action="store_true", help="Print each API call and LLM call in real time")
+    parser.add_argument("--force", action="store_true", help="Force re-backfill even if symbol already complete")
     args = parser.parse_args()
+
+    global _VERBOSE
+    _VERBOSE = args.verbose
+    tf = args.timeframe
 
     ticker = args.ticker.upper()
     from_ts = _date_to_epoch(args.from_date)
@@ -390,7 +435,7 @@ def main() -> None:
     def prev_ok() -> bool:
         return bool(steps) and steps[-1].status == "ok"
 
-    steps.append(run_step("vinu-stock-price", "stock_price", "/health", lambda: step_stock_price(ticker)))
+    steps.append(run_step("vinu-stock-price", "stock_price", "/health", lambda: step_stock_price(ticker, force=args.force)))
 
     if prev_ok():
         steps.append(run_step("vinu-news", "news", "/health", lambda: step_news(ticker, args.news_articles)))
@@ -400,7 +445,7 @@ def main() -> None:
     if prev_ok():
         steps.append(run_step(
             "vinu-tools (features)", "features", "/health",
-            lambda: step_features(ticker, from_ts, to_ts, feature_list),
+            lambda: step_features(ticker, from_ts, to_ts, feature_list, timeframe=tf),
         ))
     else:
         steps.append(StepResult(name="vinu-tools (features)", status="skipped"))
@@ -424,7 +469,7 @@ def main() -> None:
     if prev_ok():
         steps.append(run_step(
             "vinu-simulator", "simulator", "/health",
-            lambda: step_simulator(ticker, args.from_date, args.to_date),
+            lambda: step_simulator(ticker, args.from_date, args.to_date, timeframe=tf),
         ))
     else:
         steps.append(StepResult(name="vinu-simulator", status="skipped"))
@@ -432,7 +477,7 @@ def main() -> None:
     if prev_ok():
         steps.append(run_step(
             "vinu-research", "research", "/health",
-            lambda: step_research(ticker, args.from_date, args.to_date),
+            lambda: step_research(ticker, args.from_date, args.to_date, model=args.model, strategy_code=_CUSTOM_STRATEGY_CODE),
         ))
     else:
         steps.append(StepResult(name="vinu-research", status="skipped"))

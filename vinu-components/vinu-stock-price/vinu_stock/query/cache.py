@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import OrderedDict
 from typing import Any
@@ -27,6 +28,7 @@ class IndicatorCache:
     def __init__(self, maxsize: int = _MAX_CACHE_SIZE, ttl: int = _CACHE_TTL_SEC) -> None:
         self._maxsize = maxsize
         self._ttl = ttl
+        self._lock = threading.Lock()
         self._cache: OrderedDict[str, tuple[float, list[dict[str, Any]]]] = OrderedDict()
 
     def get(
@@ -39,14 +41,15 @@ class IndicatorCache:
         adjusted: bool,
     ) -> list[dict[str, Any]] | None:
         key = _make_cache_key(symbol, interval, from_ts, to_ts, indicators, adjusted)
-        entry = self._cache.get(key)
-        if entry is None:
-            return None
-        ts, data = entry
-        if time.monotonic() - ts > self._ttl:
-            del self._cache[key]
-            return None
-        self._cache.move_to_end(key)
+        with self._lock:
+            entry = self._cache.get(key)
+            if entry is None:
+                return None
+            ts, data = entry
+            if time.monotonic() - ts > self._ttl:
+                del self._cache[key]
+                return None
+            self._cache.move_to_end(key)
         return data
 
     def set(
@@ -60,18 +63,20 @@ class IndicatorCache:
         data: list[dict[str, Any]],
     ) -> None:
         key = _make_cache_key(symbol, interval, from_ts, to_ts, indicators, adjusted)
-        while len(self._cache) >= self._maxsize:
-            self._cache.popitem(last=False)
-        self._cache[key] = (time.monotonic(), data)
+        with self._lock:
+            while len(self._cache) >= self._maxsize:
+                self._cache.popitem(last=False)
+            self._cache[key] = (time.monotonic(), data)
 
     def invalidate(self, symbol: str | None = None) -> None:
-        if symbol is None:
-            self._cache.clear()
-        else:
-            prefix = f"{symbol}|"
-            keys_to_del = [k for k in self._cache if k.startswith(prefix)]
-            for k in keys_to_del:
-                del self._cache[k]
+        with self._lock:
+            if symbol is None:
+                self._cache.clear()
+            else:
+                prefix = f"{symbol}|"
+                keys_to_del = [k for k in self._cache if k.startswith(prefix)]
+                for k in keys_to_del:
+                    del self._cache[k]
 
 
 _cache = IndicatorCache()

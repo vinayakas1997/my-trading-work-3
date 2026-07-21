@@ -187,6 +187,16 @@ class CatalogStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_job_status(
+        self, symbol: str, year: int
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM backfill_jobs WHERE symbol = ? AND year = ?",
+                (symbol.strip().upper(), year),
+            ).fetchone()
+        return dict(row) if row else None
+
     def set_job_status(
         self,
         symbol: str,

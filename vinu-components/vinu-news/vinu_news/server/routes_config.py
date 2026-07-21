@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from vinu_news.server.schemas import (
+    AnalysisBackfillRequest,
     SettingsPatchRequest,
     SettingsResponse,
     ToggleEnabledRequest,
@@ -208,3 +209,11 @@ def trigger_backfill(ticker: str | None = None) -> dict:
     else:
         result = service.run_backfill_all()
     return {"results": result if isinstance(result, list) else [result]}
+
+
+@router.post("/news/analyze/backfill")
+def trigger_analysis_backfill(body: AnalysisBackfillRequest = AnalysisBackfillRequest()) -> dict:
+    """Submit all unanalyzed articles to the LLM analysis queue."""
+    service = get_service()
+    result = service.backfill_analysis(limit=body.limit)
+    return result

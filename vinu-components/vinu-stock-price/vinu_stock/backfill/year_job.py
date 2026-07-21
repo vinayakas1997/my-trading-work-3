@@ -48,7 +48,6 @@ def run_year_job(
         sym,
         provider=provider_id,
         archive_through=str(year),
-        backfill_status="partial",
         has_adj_data=has_adj,
         gap_count=gap_count,
         last_validation_at=now,

@@ -605,10 +605,8 @@ class TestDefaultQuantCoderRefinement:
             previous_code="class UserStrategy: PREVIOUS",
         )
 
-        # Falls back to the deterministic template + rule-based filter splice —
-        # same behavior as generator_mode="template" (TestGenerateFiltersDataAvailability).
-        assert "PREVIOUS" not in code
-        assert "adx" in code.lower()
+        # Falls back to previous_code instead of generating a fresh template
+        assert "PREVIOUS" in code
 
     async def test_generator_mode_template_bypasses_refinement_entirely(self, monkeypatch):
         import vinu_research.loop as loop_module

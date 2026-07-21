@@ -54,9 +54,9 @@ class InitialAnalysisService:
     def get_batch(self, symbols: list[str], from_ts: int | None = None, to_ts: int | None = None) -> dict[str, Any]:
         return self._api.get_batch(symbols, from_ts, to_ts)
 
-    def compute(self, symbol: str, incremental: bool = True, dry_run: bool = False):
+    def compute(self, symbol: str, dry_run: bool = False):
         if dry_run:
-            LOG.info("DRY RUN: compute(%s, incremental=%s) — skipping persist", symbol, incremental)
+            LOG.info("DRY RUN: compute(%s) — skipping persist", symbol)
             return
         self._api.compute_and_store(symbol)
 

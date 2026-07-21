@@ -13,6 +13,7 @@ from vinu_research.generator import find_recipe, generate_strategy
 from vinu_research.llm import LLM_SYSTEM_PROMPT, ResearchLlmClient, _build_risk_critic_prompt
 from vinu_research.llm_generator import LlmStrategyGenerator
 from vinu_research.models import (
+    BacktestMetrics,
     BacktestResult,
     CriticFeedback,
     HoldoutResult,
@@ -126,6 +127,7 @@ class StrategyResearchLoop:
         symbol: str,
         from_date: str,
         to_date: str,
+        strategy_code: str | None = None,
         indicators: list[str] | None = None,
         initial_capital: float | None = None,
         universe: list[str] | None = None,
@@ -143,7 +145,7 @@ class StrategyResearchLoop:
         best_result: BacktestResult | None = None
         best_iteration = -1
         history: list[IterationRecord] = []
-        strategy_code = ""
+        strategy_code = strategy_code or ""
         holdout_result: HoldoutResult | None = None
 
         backtest_symbols = list(dict.fromkeys(universe)) if universe and len(set(universe)) > 1 else [symbol]
@@ -189,11 +191,11 @@ class StrategyResearchLoop:
 
         for iteration in range(1, self._config.max_iterations + 1):
             try:
-                if iteration == 1:
+                if iteration == 1 and not strategy_code:
                     strategy_code = await self._quant_coder(
                         user_idea, iteration, None, None
                     )
-                else:
+                elif iteration > 1:
                     last = history[-1]
                     strategy_code = await self._quant_coder(
                         user_idea, iteration, last.result, last.critique, last.strategy_code
@@ -772,8 +774,15 @@ class StrategyResearchLoop:
                 )
                 return best.code
 
-        recipe = find_recipe(user_idea)
-        code = generate_strategy(recipe=recipe, user_description=user_idea)
+        if llm_available and previous_code:
+            LOG.warning(
+                "LLM refinement returned no candidates for iteration %d, "
+                "reusing previous iteration's code", iteration,
+            )
+            code = previous_code
+        else:
+            recipe = find_recipe(user_idea)
+            code = generate_strategy(recipe=recipe, user_description=user_idea)
 
         if last_critique is not None:
             lines = code.split("\n")

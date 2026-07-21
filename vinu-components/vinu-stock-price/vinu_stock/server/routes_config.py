@@ -6,7 +6,8 @@ import threading
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
+from pydantic import BaseModel
 
 from vinu_stock.server.schemas import (
     SettingsPatchRequest,
@@ -23,6 +24,14 @@ _background_jobs: dict[str, dict[str, Any]] = {}
 _jobs_lock = threading.Lock()
 _backfill_lock = threading.Lock()
 _ingest_lock = threading.Lock()
+_JOBS_MAX = 50
+
+
+def _cleanup_old_jobs() -> None:
+    """Remove oldest entries when dict exceeds max size (caller must hold _jobs_lock)."""
+    while len(_background_jobs) > _JOBS_MAX:
+        oldest = next(iter(_background_jobs))
+        del _background_jobs[oldest]
 
 
 def get_service() -> StockService:
@@ -78,17 +87,26 @@ def sync_watchlist() -> dict:
     return result
 
 
+class BackfillRequest(BaseModel):
+    symbols: list[str] | None = None
+    force: bool = False
+
+
 @router.post("/backfill/trigger", response_model=TriggerResponse)
-def trigger_backfill() -> TriggerResponse:
+def trigger_backfill(req: BackfillRequest = Body(default=None)) -> TriggerResponse:
     if not _backfill_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Backfill already running")
     job_id = uuid.uuid4().hex[:12]
     with _jobs_lock:
         _background_jobs[job_id] = {"type": "backfill", "status": "running", "summary": {}}
+        _cleanup_old_jobs()
 
     def _run() -> None:
         try:
-            result = get_service().run_backfill()
+            symbols = req.symbols if req is not None else None
+            force = req.force if req is not None else False
+            from_year = 2022 if force else None
+            result = get_service().run_backfill(symbols=symbols, from_year=from_year)
             with _jobs_lock:
                 _background_jobs[job_id] = {
                     "type": "backfill",
@@ -97,8 +115,11 @@ def trigger_backfill() -> TriggerResponse:
                         "years_ok": result.summary.years_ok,
                         "years_failed": result.summary.years_failed,
                         "total_rows": result.summary.total_rows,
+                        "symbols_skipped": result.summary.symbols_skipped,
+                        "rows_rolled": result.summary.rows_rolled,
                     },
                 }
+                _cleanup_old_jobs()
         except Exception as exc:
             with _jobs_lock:
                 _background_jobs[job_id] = {
@@ -107,6 +128,7 @@ def trigger_backfill() -> TriggerResponse:
                     "summary": {},
                     "error": str(exc),
                 }
+                _cleanup_old_jobs()
         finally:
             _backfill_lock.release()
 
@@ -130,6 +152,7 @@ def trigger_ingest() -> TriggerResponse:
     job_id = uuid.uuid4().hex[:12]
     with _jobs_lock:
         _background_jobs[job_id] = {"type": "ingest", "status": "running", "summary": {}}
+        _cleanup_old_jobs()
 
     def _run() -> None:
         try:
@@ -144,6 +167,7 @@ def trigger_ingest() -> TriggerResponse:
                         "watchlist_size": result.watchlist_size,
                     },
                 }
+                _cleanup_old_jobs()
         except Exception as exc:
             with _jobs_lock:
                 _background_jobs[job_id] = {
@@ -152,6 +176,7 @@ def trigger_ingest() -> TriggerResponse:
                     "summary": {},
                     "error": str(exc),
                 }
+                _cleanup_old_jobs()
         finally:
             _ingest_lock.release()
 

@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from vinu_lib.client import ResilientClient
-from vinu_lib.rate_limit import TokenBucket
+from vinu_lib.llm import AsyncLlmClient as SharedAsyncLlmClient, LlmConfig
 from vinu_research.angle_context import format_angle_context_lines
 from vinu_research.config import ResearchConfig
 from vinu_research.models import BacktestResult, CriticFeedback
@@ -87,6 +84,8 @@ def _build_risk_critic_prompt(
 
 
 class LlmCache:
+    """Kept for backward compatibility with tests. New code uses vinu_lib.llm.cache.LlmCache."""
+
     def __init__(self, cache_path: str | Path, ttl_sec: int = 86400) -> None:
         self._path = Path(cache_path)
         self._ttl = ttl_sec
@@ -142,165 +141,27 @@ class LlmCache:
             self._local.conn = None
 
 
-def _log_llm_event(
-    data_root: Path,
-    event: str,
-    model: str,
-    base_url: str,
-    system: str,
-    user: str,
-    duration_sec: float,
-    response: Any,
-    success: bool,
-    error: str | None,
-) -> None:
-    entry = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "service": "vinu-research",
-        "event": event,
-        "model": model,
-        "base_url": base_url,
-        "system_prompt": system,
-        "user_prompt": user,
-        "response": response,
-        "duration_sec": round(duration_sec, 3),
-        "success": success,
-        "error": error,
-    }
-    try:
-        log_path = data_root / "llm_calls.jsonl"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
-    except OSError as exc:
-        LOG.warning("Failed to write llm_calls.jsonl: %s", exc)
-
-
 class ResearchLlmClient:
     def __init__(self, config: ResearchConfig) -> None:
         self._config = config
-        cache_path = config.llm_cache_path or str(config.data_root / "llm_cache.db")
-        
-        provider = self._resolve_provider(config.llm_model, config.llm_base_url)
-        from vinu_research.llm_capabilities.client import ChatLLM
-        self._chat_llm = ChatLLM(
-            provider=provider,
-            model=config.llm_model,
+        llm_cfg = LlmConfig(
             base_url=config.llm_base_url,
+            model=config.llm_model,
             api_key=config.llm_api_key,
+            max_tokens=config.llm_max_tokens,
+            timeout_sec=config.llm_timeout_sec,
+            ttl_sec=config.llm_ttl_sec,
+            data_root=str(config.data_root),
+            rate_limit=10,
+            rate_period_sec=60.0,
         )
-
-        self._http = ResilientClient(
-            config.llm_base_url.rstrip("/"),
-            "llm",
-            timeout=config.llm_timeout_sec,
-            max_retries=2,
-            circuit_breaker_threshold=3,
-            allow_local=True,
-            headers=self._chat_llm.get_headers(),
-        )
-        self._cache = LlmCache(cache_path, ttl_sec=config.llm_ttl_sec)
-        self._limiter = TokenBucket(rate=10, per=60)
-
-    @staticmethod
-    def _resolve_provider(model: str, base_url: str) -> str:
-        m = model.lower()
-        url = base_url.lower()
-        if "deepseek" in m or "deepseek" in url:
-            return "deepseek"
-        if "openai" in m or "openai" in url:
-            return "openai"
-        if "anthropic" in m or "claude" in m or "anthropic" in url:
-            return "anthropic"
-        if "gemini" in m or "gemini" in url:
-            return "gemini"
-        if "mistral" in m or "mistral" in url:
-            return "mistral"
-        if "groq" in m or "groq" in url:
-            return "groq"
-        if "together" in m or "together" in url:
-            return "together"
-        if "perplexity" in m or "perplexity" in url:
-            return "perplexity"
-        if "cohere" in m or "cohere" in url:
-            return "cohere"
-        if "qwen" in m or "qwen" in url:
-            return "qwen"
-        if "ollama" in m or "ollama" in url or "11434" in url:
-            return "ollama"
-        return "ollama"
+        self._client = SharedAsyncLlmClient(llm_cfg, service="vinu-research")
 
     def is_configured(self) -> bool:
         return bool(self._config.llm_base_url and self._config.llm_model)
 
     async def chat_json(self, system: str, user: str) -> dict[str, Any] | None:
-        cache_key = hashlib.md5((system + user).encode()).hexdigest()
-        if self._config.llm_ttl_sec > 0:
-            cached = self._cache.get(cache_key)
-            if cached is not None:
-                LOG.debug("LLM cache hit for %s", cache_key[:8])
-                _log_llm_event(
-                    self._config.data_root, "cache_hit", self._config.llm_model, self._config.llm_base_url,
-                    system, user, 0.0, cached, True, None,
-                )
-                return cached
-
-        start = time.perf_counter()
-        await self._limiter.wait_async()
-
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ]
-
-        payload = self._chat_llm.build_request(
-            messages=messages,
-            temperature=0.2,
-            max_tokens=self._config.llm_max_tokens,
-        )
-
-        data = await self._http.post("/chat/completions", json=payload)
-        if data is None:
-            LOG.warning("LLM returned no response (circuit open or timeout)")
-            _log_llm_event(
-                self._config.data_root, "llm_call", self._config.llm_model, self._config.llm_base_url,
-                system, user, time.perf_counter() - start, None, False, "no response (circuit open or timeout)",
-            )
-            return None
-
-        try:
-            normalized = self._chat_llm.normalize_response(data)
-            content = normalized.get("content", "")
-        except Exception as e:
-            LOG.warning("LLM response missing expected fields: %s", e)
-            _log_llm_event(
-                self._config.data_root, "llm_call", self._config.llm_model, self._config.llm_base_url,
-                system, user, time.perf_counter() - start, None, False, str(e),
-            )
-            return None
-
-        parsed = self._parse_json(content)
-        if parsed is not None and self._config.llm_ttl_sec > 0:
-            self._cache.set(cache_key, parsed)
-        _log_llm_event(
-            self._config.data_root, "llm_call", self._config.llm_model, self._config.llm_base_url,
-            system, user, time.perf_counter() - start, parsed, parsed is not None, None,
-        )
-        return parsed
+        return await self._client.chat_json(system, user)
 
     async def close(self) -> None:
-        await self._http.close()
-        self._cache.close()
-
-    @staticmethod
-    def _parse_json(content: str) -> dict[str, Any] | None:
-        content = content.strip()
-        if content.startswith("```"):
-            end = content.find("```", 3)
-            if end != -1:
-                content = content[content.index("\n", 3) + 1 : end].strip()
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError as e:
-            LOG.warning("Failed to parse LLM response as JSON: %s", e)
-            return None
+        await self._client.close()

@@ -71,8 +71,10 @@ def parquet_globs_by_range(
 
     live = base / "live"
     if live.is_dir():
+        import glob as _glob
         for year in range(start_year, end_year + 1):
-            patterns.append(str(live / f"{year}*.parquet"))
+            if _glob.glob(str(live / f"{year}*.parquet")):
+                patterns.append(str(live / f"{year}*.parquet"))
 
     if not patterns:
         return parquet_globs(data_root, symbol)

@@ -60,6 +60,7 @@ class ResearchService:
         symbol: str,
         from_date: str,
         to_date: str,
+        strategy_code: str | None = None,
         indicators: list[str] | None = None,
         initial_capital: float | None = None,
         dry_run: bool = False,
@@ -103,6 +104,7 @@ class ResearchService:
             )
             result = await loop.run(
                 user_idea=user_idea,
+                strategy_code=strategy_code,
                 symbol=symbol,
                 from_date=from_date,
                 to_date=to_date,

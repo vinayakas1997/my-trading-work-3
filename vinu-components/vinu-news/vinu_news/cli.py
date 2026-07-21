@@ -220,6 +220,9 @@ def query_main(argv: list[str] | None = None) -> None:
     watch.add_argument("action", choices=["show", "add", "remove"])
     watch.add_argument("tickers", nargs="*", help="Ticker symbols")
 
+    backfill_llm = sub.add_parser("backfill-analysis", help="Analyze articles missing LLM analysis")
+    backfill_llm.add_argument("--limit", type=int, default=500)
+
     _parse_common_db_args(parser)
     args = parser.parse_args(argv)
 
@@ -260,6 +263,9 @@ def query_main(argv: list[str] | None = None) -> None:
                 for symbol in args.tickers:
                     service.remove_watchlist_ticker(symbol)
                 print(json.dumps({"tickers": service.get_watchlist()}, indent=2))
+        elif args.command == "backfill-analysis":
+            result = service.backfill_analysis(limit=args.limit)
+            print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":

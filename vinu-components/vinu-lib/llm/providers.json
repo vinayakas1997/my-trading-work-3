@@ -1,0 +1,132 @@
+{
+  "openai": {
+    "name": "openai",
+    "capture_reasoning": false,
+    "send_reasoning_content": false,
+    "temperature_override": null,
+    "normalize_assistant_content": false,
+    "supports_streaming": true,
+    "max_tokens_default": 4096,
+    "requires_api_key": true
+  },
+  "anthropic": {
+    "name": "anthropic",
+    "capture_reasoning": false,
+    "send_reasoning_content": false,
+    "temperature_override": null,
+    "normalize_assistant_content": true,
+    "supports_streaming": true,
+    "max_tokens_default": 4096,
+    "requires_api_key": true
+  },
+  "deepseek": {
+    "name": "deepseek",
+    "capture_reasoning": true,
+    "send_reasoning_content": true,
+    "temperature_override": null,
+    "normalize_assistant_content": false,
+    "supports_streaming": true,
+    "max_tokens_default": 8192,
+    "requires_api_key": true
+  },
+  "kimi": {
+    "name": "kimi",
+    "capture_reasoning": false,
+    "send_reasoning_content": false,
+    "temperature_override": 1.0,
+    "normalize_assistant_content": false,
+    "supports_streaming": true,
+    "max_tokens_default": 4096,
+    "requires_api_key": true
+  },
+  "gemini": {
+    "name": "gemini",
+    "capture_reasoning": true,
+    "send_reasoning_content": true,
+    "temperature_override": null,
+    "normalize_assistant_content": false,
+    "supports_streaming": true,
+    "max_tokens_default": 8192,
+    "requires_api_key": true
+  },
+  "ollama": {
+    "name": "ollama",
+    "capture_reasoning": false,
+    "send_reasoning_content": false,
+    "temperature_override": null,
+    "normalize_assistant_content": false,
+    "supports_streaming": true,
+    "max_tokens_default": 4096,
+    "requires_api_key": false
+  },
+  "qwen": {
+    "name": "qwen",
+    "capture_reasoning": false,
+    "send_reasoning_content": false,
+    "temperature_override": null,
+    "normalize_assistant_content": false,
+    "supports_streaming": true,
+    "max_tokens_default": 8192,
+    "requires_api_key": false
+  },
+  "mistral": {
+    "name": "mistral",
+    "capture_reasoning": false,
+    "send_reasoning_content": false,
+    "temperature_override": null,
+    "normalize_assistant_content": false,
+    "supports_streaming": true,
+    "max_tokens_default": 4096,
+    "requires_api_key": true
+  },
+  "groq": {
+    "name": "groq",
+    "capture_reasoning": false,
+    "send_reasoning_content": false,
+    "temperature_override": null,
+    "normalize_assistant_content": false,
+    "supports_streaming": true,
+    "max_tokens_default": 8192,
+    "requires_api_key": true
+  },
+  "together": {
+    "name": "together",
+    "capture_reasoning": false,
+    "send_reasoning_content": false,
+    "temperature_override": null,
+    "normalize_assistant_content": false,
+    "supports_streaming": true,
+    "max_tokens_default": 4096,
+    "requires_api_key": true
+  },
+  "perplexity": {
+    "name": "perplexity",
+    "capture_reasoning": false,
+    "send_reasoning_content": false,
+    "temperature_override": null,
+    "normalize_assistant_content": false,
+    "supports_streaming": true,
+    "max_tokens_default": 4096,
+    "requires_api_key": true
+  },
+  "cohere": {
+    "name": "cohere",
+    "capture_reasoning": false,
+    "send_reasoning_content": false,
+    "temperature_override": null,
+    "normalize_assistant_content": false,
+    "supports_streaming": true,
+    "max_tokens_default": 4096,
+    "requires_api_key": true
+  },
+  "azure_openai": {
+    "name": "azure_openai",
+    "capture_reasoning": false,
+    "send_reasoning_content": false,
+    "temperature_override": null,
+    "normalize_assistant_content": false,
+    "supports_streaming": true,
+    "max_tokens_default": 4096,
+    "requires_api_key": true
+  }
+}

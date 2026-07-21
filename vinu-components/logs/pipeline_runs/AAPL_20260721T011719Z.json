@@ -1,0 +1,101 @@
+{
+  "run_id": "AAPL_20260721T011719Z",
+  "ticker": "AAPL",
+  "from_date": "2025-01-01",
+  "to_date": "2025-04-01",
+  "started_at": "2026-07-21T01:17:19.073356+00:00",
+  "finished_at": null,
+  "steps": [
+    {
+      "name": "vinu-stock-price",
+      "status": "error",
+      "started_at": "2026-07-21T01:17:19.073356+00:00",
+      "finished_at": "2026-07-21T01:17:28.110393+00:00",
+      "duration_sec": 9.037,
+      "memory_start_mb": 979.5,
+      "memory_peak_mb": 987.5,
+      "memory_end_mb": 785.5,
+      "response_summary": null,
+      "llm_calls": [],
+      "error": "404 Client Error: Not Found for url: http://127.0.0.1:8081/backfill/status/4244958ca4e1"
+    },
+    {
+      "name": "vinu-news",
+      "status": "skipped",
+      "started_at": null,
+      "finished_at": null,
+      "duration_sec": null,
+      "memory_start_mb": null,
+      "memory_peak_mb": null,
+      "memory_end_mb": null,
+      "response_summary": null,
+      "llm_calls": [],
+      "error": null
+    },
+    {
+      "name": "vinu-tools (features)",
+      "status": "skipped",
+      "started_at": null,
+      "finished_at": null,
+      "duration_sec": null,
+      "memory_start_mb": null,
+      "memory_peak_mb": null,
+      "memory_end_mb": null,
+      "response_summary": null,
+      "llm_calls": [],
+      "error": null
+    },
+    {
+      "name": "vinu-initial-analysis",
+      "status": "skipped",
+      "started_at": null,
+      "finished_at": null,
+      "duration_sec": null,
+      "memory_start_mb": null,
+      "memory_peak_mb": null,
+      "memory_end_mb": null,
+      "response_summary": null,
+      "llm_calls": [],
+      "error": null
+    },
+    {
+      "name": "vinu-strategy",
+      "status": "skipped",
+      "started_at": null,
+      "finished_at": null,
+      "duration_sec": null,
+      "memory_start_mb": null,
+      "memory_peak_mb": null,
+      "memory_end_mb": null,
+      "response_summary": null,
+      "llm_calls": [],
+      "error": null
+    },
+    {
+      "name": "vinu-simulator",
+      "status": "skipped",
+      "started_at": null,
+      "finished_at": null,
+      "duration_sec": null,
+      "memory_start_mb": null,
+      "memory_peak_mb": null,
+      "memory_end_mb": null,
+      "response_summary": null,
+      "llm_calls": [],
+      "error": null
+    },
+    {
+      "name": "vinu-research",
+      "status": "skipped",
+      "started_at": null,
+      "finished_at": null,
+      "duration_sec": null,
+      "memory_start_mb": null,
+      "memory_peak_mb": null,
+      "memory_end_mb": null,
+      "response_summary": null,
+      "llm_calls": [],
+      "error": null
+    }
+  ]
+}

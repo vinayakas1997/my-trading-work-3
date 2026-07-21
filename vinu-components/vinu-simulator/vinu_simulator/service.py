@@ -81,6 +81,7 @@ class SimulatorService:
             benchmark_tickers=tuple(req.benchmark_tickers) if req.benchmark_tickers else self._config.benchmark_tickers,
             allow_short=req.allow_short,
             deviation_threshold=req.deviation_threshold if req.deviation_threshold is not None else self._config.deviation_threshold,
+            full_metrics=req.full_metrics,
         )
 
         inp = SimulationInput(
@@ -121,7 +122,10 @@ class SimulatorService:
             trade_count=len(result.trades),
         )
 
-        validation, attribution = self._run_validation_and_attribution(result, price_data)
+        validation = None
+        attribution = None
+        if req.run_validation:
+            validation, attribution = self._run_validation_and_attribution(result, price_data)
         run_dir = self._config.data_root / "simulations" / result.run_id[:2] / result.run_id
         write_run_card(
             run_dir=run_dir,
@@ -203,6 +207,7 @@ class SimulatorService:
             allow_short=req.allow_short,
             deviation_threshold=req.deviation_threshold if req.deviation_threshold is not None else self._config.deviation_threshold,
             interval=req.interval,
+            full_metrics=req.full_metrics,
         )
 
         result = _run_custom_sim(
@@ -249,7 +254,10 @@ class SimulatorService:
             trade_count=len(result.trades),
         )
 
-        validation, attribution = self._run_validation_and_attribution(result, price_df)
+        validation = None
+        attribution = None
+        if req.run_validation:
+            validation, attribution = self._run_validation_and_attribution(result, price_df)
         run_dir = self._config.data_root / "simulations" / result.run_id[:2] / result.run_id
         write_run_card(
             run_dir=run_dir,
@@ -434,7 +442,7 @@ class SimulatorService:
         }
         
         # Attribution
-        symbol_attribution = by_symbol_stats(result.trades)
+        symbol_attribution = by_symbol_stats(result.trades, round_trips=round_trips)
         
         benchmark_attribution = {}
         regime_attribution = {}

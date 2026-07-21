@@ -222,8 +222,14 @@ def compute_full_metrics(
     benchmark_returns: pd.Series | None = None,
     risk_free_rate: float = 0.0,
     periods_per_year: float = 252.0,
+    full: bool = True,
 ) -> dict[str, float]:
     basic = compute_performance_metrics(portfolio_values, daily_returns, risk_free_rate, periods_per_year)
+    if not full:
+        return {
+            k: (0.0 if isinstance(v, float) and not np.isfinite(v) else v)
+            for k, v in basic.items()
+        }
     extended = compute_extended_metrics(portfolio_values, daily_returns, trades, benchmark_returns, risk_free_rate, periods_per_year)
     merged = {**basic, **extended}
     # inf/-inf/nan are not valid JSON and would break API responses (profit_factor,

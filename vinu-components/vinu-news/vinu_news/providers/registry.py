@@ -44,13 +44,15 @@ class TickerNewsRegistry:
         ticker: str,
         from_ts: int,
         to_ts: int,
-    ) -> list[dict]:
+    ) -> tuple[list[dict], list[str]]:
         raw: list[dict] = []
+        errors: list[str] = []
         seen_links: set[str] = set()
         for provider in self.list_enabled():
             try:
                 items = provider.fetch_ticker_news(ticker, from_ts, to_ts)
             except Exception:
+                errors.append(getattr(provider, "provider_id", "?"))
                 LOG.warning(
                     "Provider %s failed for %s [%d, %d)",
                     getattr(provider, "provider_id", provider), ticker, from_ts, to_ts,
@@ -62,4 +64,4 @@ class TickerNewsRegistry:
                 if link and link not in seen_links:
                     seen_links.add(link)
                     raw.append(item)
-        return raw
+        return raw, errors

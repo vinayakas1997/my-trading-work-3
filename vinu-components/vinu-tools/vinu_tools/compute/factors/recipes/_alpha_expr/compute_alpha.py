@@ -17,8 +17,13 @@ def get_fields_and_names(kind: str, getter: GetFeatureConfig) -> tuple[list[str]
     return _CACHE[kind]
 
 
-def compute_alpha(rows: list[dict], getter: GetFeatureConfig) -> dict[str, list[float | None]]:
+def compute_alpha(rows: list[dict], getter: GetFeatureConfig, subset: set[str] | None = None) -> dict[str, list[float | None]]:
     fields, names = getter()
+    if subset:
+        pairs = [(f, n) for f, n in zip(fields, names) if n in subset]
+        if not pairs:
+            return {}
+        fields, names = zip(*pairs)
     arrays = rows_to_arrays(rows)
     out: dict[str, list[float | None]] = {}
     for expr, col in zip(fields, names):

@@ -144,7 +144,7 @@ class StockService:
             LOG.info("DRY RUN: run_backfill(%s) — skipping", symbols)
             return BackfillCycleResult(summary=BackfillSummary(years_ok=[], years_failed=[], total_rows=0))
 
-        syms = symbols or self.get_watchlist()
+        syms = symbols or self.get_pending_backfill_symbols()
         summary = run_backfill(
             syms,
             data_root=self.data_root,

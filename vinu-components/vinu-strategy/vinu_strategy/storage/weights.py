@@ -63,16 +63,53 @@ class WeightStorage:
         else:
             pq.write_table(table, path)
 
-    def _collect_tables(self, strategy_dir: Path) -> list[pa.Table]:
+    def _collect_tables(
+        self,
+        strategy_dir: Path,
+        symbol: str | None = None,
+        from_ts: int | None = None,
+        to_ts: int | None = None,
+    ) -> list[pa.Table]:
+        from_dt = pd.to_datetime(from_ts, unit="s") if from_ts else None
+        to_dt = pd.to_datetime(to_ts, unit="s") if to_ts else None
+
+        filters = []
+        if symbol:
+            filters.append(("symbol", "==", symbol))
+        if from_dt:
+            filters.append(("date", ">=", from_dt))
+        if to_dt:
+            filters.append(("date", "<=", to_dt))
+        filters = filters or None
+
         tables = []
         for year_dir in sorted(strategy_dir.iterdir()):
             if not year_dir.is_dir():
                 continue
+            year = int(year_dir.name)
+            if from_dt and year < from_dt.year:
+                continue
+            if to_dt and year > to_dt.year:
+                continue
+
             for month_dir in sorted(year_dir.iterdir()):
                 if not month_dir.is_dir():
                     continue
+                month = int(month_dir.name)
+                if from_dt and year == from_dt.year and month < from_dt.month:
+                    continue
+                if to_dt and year == to_dt.year and month > to_dt.month:
+                    continue
+
                 for parquet_file in sorted(month_dir.glob("*.parquet")):
-                    tables.append(pq.read_table(str(parquet_file)))
+                    day = int(parquet_file.stem)
+                    if from_dt and year == from_dt.year and month == from_dt.month and day < from_dt.day:
+                        continue
+                    if to_dt and year == to_dt.year and month == to_dt.month and day > to_dt.day:
+                        continue
+                    table = pq.read_table(str(parquet_file), filters=filters)
+                    if table.num_rows > 0:
+                        tables.append(table)
         return tables
 
     def read_weights(
@@ -86,22 +123,13 @@ class WeightStorage:
         if not strategy_dir.exists():
             return pd.DataFrame()
 
-        tables = self._collect_tables(strategy_dir)
+        tables = self._collect_tables(strategy_dir, symbol=symbol, from_ts=from_ts, to_ts=to_ts)
 
         if not tables:
             return pd.DataFrame()
 
         combined = pa.concat_tables(tables)
-        df = combined.to_pandas()
-
-        if symbol:
-            df = df[df["symbol"] == symbol]
-        if from_ts:
-            df = df[df["date"] >= pd.to_datetime(from_ts, unit="s")]
-        if to_ts:
-            df = df[df["date"] <= pd.to_datetime(to_ts, unit="s")]
-
-        return df.sort_values("date").reset_index(drop=True)
+        return combined.to_pandas().sort_values("date").reset_index(drop=True)
 
     def delete_weights(self, strategy_name: str, symbol: str | None = None) -> int:
         strategy_dir = self._data_root / strategy_name

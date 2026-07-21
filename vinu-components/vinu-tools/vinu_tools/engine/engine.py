@@ -75,7 +75,7 @@ class FeatureEngine:
 
                 futures = {pool.submit(_process_symbol, s): s for s in request.symbols}
                 for future in as_completed(futures):
-                    table = future.result()
+                    table = future.result(timeout=120)
                     if table is None:
                         continue
                     if writer is None:

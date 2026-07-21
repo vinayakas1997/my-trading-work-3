@@ -109,6 +109,44 @@ class AutoAnalysisWorker:
             worker.join(timeout=5.0)
         self.workers.clear()
 
+    def backfill_unanalyzed(self, limit: int = 500) -> int:
+        """Find articles missing LLM analysis and submit them to the queue.
+        
+        Returns the number of articles submitted.
+        """
+        from vinu_news.analysis.storage.repository import NewsRepository
+
+        repo = NewsRepository(self.db_path)
+        try:
+            rows = repo.conn.execute(
+                """
+                SELECT a.link FROM articles a
+                LEFT JOIN news_analysis n ON a.link = n.url
+                WHERE n.url IS NULL
+                ORDER BY a.sort_ts DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        finally:
+            repo.close()
+
+        if not rows:
+            LOG.info("Backfill: no unanalyzed articles found")
+            return 0
+
+        submitted = 0
+        for row in rows:
+            link = row["link"]
+            if link and self.submit(link):
+                submitted += 1
+
+        LOG.info(
+            "Backfill: submitted %d / %d unanalyzed articles",
+            submitted, len(rows),
+        )
+        return submitted
+
 
 def _run_auto_analysis_batch(
     db_path: Path, config: VinuConfig, links: list[str], concurrency: int
@@ -215,6 +253,8 @@ class NewsService:
                 config=self._config,
                 concurrency=llm_analysis_concurrency,
             )
+            # Backfill any articles ingested while analysis was off
+            self._auto_analysis_worker.backfill_unanalyzed()
 
     def _stock_client(self):
         if self._stock_client_instance is None:
@@ -296,6 +336,8 @@ class NewsService:
                 config=self._config,
                 concurrency=result.llm_analysis_concurrency,
             )
+            # Backfill articles ingested while analysis was off
+            self._auto_analysis_worker.backfill_unanalyzed()
 
         # If auto-analysis was disabled at runtime, shut down the worker
         if llm_analysis_mode == "manual" and self._auto_analysis_worker is not None:
@@ -394,17 +436,38 @@ class NewsService:
         total_fetched = 0
         oldest_seen: int | None = None
         chunk_start = start_ts
+        had_errors = False
 
         while chunk_start < end_ts:
             if status and not self._storage.get_backfill_status(ticker).enabled:
                 return {"ticker": ticker, "status": "paused", "articles_fetched": total_fetched}
 
             chunk_end = min(chunk_start + _BACKFILL_CHUNK_DAYS * 86400, end_ts)
-            raw_articles = registry.fetch_for_ticker(ticker, chunk_start, chunk_end)
+            raw_articles, errors = registry.fetch_for_ticker(ticker, chunk_start, chunk_end)
 
             if not raw_articles:
-                chunk_start = chunk_end
-                continue
+                if errors:
+                    LOG.warning(
+                        "Providers failed for %s [%d-%d), retrying once: %s",
+                        ticker, chunk_start, chunk_end, errors,
+                    )
+                    raw_articles, errors = registry.fetch_for_ticker(ticker, chunk_start, chunk_end)
+                if not raw_articles:
+                    if errors:
+                        LOG.error(
+                            "Chunk [%d-%d) permanently failed for %s: %s",
+                            chunk_start, chunk_end, ticker, errors,
+                        )
+                        had_errors = True
+                        self._storage.update_backfill_progress(
+                            ticker,
+                            backfilled_up_to_ts=chunk_end,
+                            article_count=total_fetched,
+                            oldest_ts=oldest_seen,
+                            error_message=f"providers_failed: {','.join(errors)}",
+                        )
+                    chunk_start = chunk_end
+                    continue
 
             result = process_batch(raw_articles, watchlist=watchlist)
             leads = filter_leads_for_mode(result.articles, "all", watchlist)
@@ -426,7 +489,10 @@ class NewsService:
                 oldest_ts=oldest_seen,
             )
 
-        self._storage.mark_backfill_completed(ticker)
+        if had_errors:
+            LOG.warning("Backfill for %s completed with provider errors", ticker)
+        else:
+            self._storage.mark_backfill_completed(ticker)
         return {
             "ticker": ticker,
             "status": "completed",
@@ -482,11 +548,15 @@ class NewsService:
             to_ts = int(datetime.now(timezone.utc).timestamp())
             registry = TickerNewsRegistry(self._config)
             raw_articles: list[dict] = []
+            feeds_failed = 0
             for symbol in active_tickers:
-                raw_articles.extend(registry.fetch_for_ticker(symbol, from_ts, to_ts))
+                articles, errors = registry.fetch_for_ticker(symbol, from_ts, to_ts)
+                raw_articles.extend(articles)
+                if errors:
+                    feeds_failed += 1
+                    LOG.warning("Ticker %s had provider errors: %s", symbol, errors)
             feed_results: list[FeedPollResult] = []
             feeds_polled = len(active_tickers)
-            feeds_failed = 0
         else:
             raise ValueError(f"Unknown source: {source}. Use 'rss' or 'ticker_news'.")
 
@@ -623,6 +693,13 @@ class NewsService:
             return llm_analyze(self._storage.repo, url_or_id, config=self._config)
         except LlmClientError as exc:
             raise RuntimeError(str(exc)) from exc
+
+    def backfill_analysis(self, limit: int = 500) -> dict[str, Any]:
+        """Submit unanalyzed articles to the LLM analysis queue."""
+        if self._auto_analysis_worker is None:
+            return {"submitted": 0, "error": "auto-analysis not enabled"}
+        submitted = self._auto_analysis_worker.backfill_unanalyzed(limit=limit)
+        return {"submitted": submitted}
 
     def get_watchlist_news(
         self,

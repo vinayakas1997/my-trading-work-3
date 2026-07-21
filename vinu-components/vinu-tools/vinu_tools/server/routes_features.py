@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from functools import partial
 from typing import Any
+
+import httpx
 from fastapi import APIRouter, HTTPException, Query
 
 from vinu_tools.compute.feature_catalog import format_help, get_indicator, indicator_meta_to_dict, list_indicators
@@ -28,9 +30,8 @@ def list_features() -> FeatureCatalogResponse:
 
 
 @router.get("/features/{symbol_or_kind}")
-def get_feature_or_symbol(symbol_or_kind: str, indicators: str | None = None) -> Any:
+async def get_feature_or_symbol(symbol_or_kind: str, indicators: str | None = None) -> Any:
     from vinu_tools.compute.feature_catalog import list_indicators, get_indicator, format_help
-    import httpx
     
     known_kinds = {m.kind.lower() for m in list_indicators()}
     # Also support parsing kinds with parameters like rsi_14, sma_20
@@ -66,7 +67,8 @@ def get_feature_or_symbol(symbol_or_kind: str, indicators: str | None = None) ->
         if indicators:
             params["indicators"] = indicators
         try:
-            resp = httpx.get(url, params=params, timeout=10.0)
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, params=params, timeout=10.0)
             resp.raise_for_status()
             data = resp.json()
             candles = data.get("data", [])
@@ -91,7 +93,10 @@ def get_feature_or_symbol(symbol_or_kind: str, indicators: str | None = None) ->
         except Exception as exc:
             import logging
             logging.getLogger(__name__).error("Failed to fetch features from stock-api: %s", exc)
-            return {"symbol": symbol_or_kind, "values": {}, "signal": 0.0}
+            raise HTTPException(
+                status_code=502,
+                detail=f"Upstream stock-api error for {symbol_or_kind}: {exc}",
+            ) from exc
 
 
 # ── Alpha Factor endpoints ─────────────────────────────────────

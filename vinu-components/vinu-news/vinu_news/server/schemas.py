@@ -76,3 +76,7 @@ class ToggleEnabledRequest(BaseModel):
 
 class BackfillToggleRequest(BaseModel):
     enabled: bool
+
+
+class AnalysisBackfillRequest(BaseModel):
+    limit: int = Field(default=500, ge=1, le=5000)

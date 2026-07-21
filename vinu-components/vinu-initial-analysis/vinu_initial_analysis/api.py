@@ -40,7 +40,6 @@ class CorrelationAPI:
     def compute_and_store(
         self,
         symbol: str,
-        incremental: bool = True,
         from_ts: int | None = None,
         to_ts: int | None = None,
     ) -> dict[str, Any]:

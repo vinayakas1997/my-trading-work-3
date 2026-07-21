@@ -21,6 +21,7 @@ def _docker_fallback_url(url: str) -> str | None:
 
 
 def request(method: str, url: str, **kwargs: Any) -> requests.Response:
+    kwargs.setdefault("timeout", (5, 30))
     try:
         return requests.request(method, url, **kwargs)
     except requests.ConnectionError as e:

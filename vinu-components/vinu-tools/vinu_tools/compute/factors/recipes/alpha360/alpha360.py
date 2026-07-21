@@ -49,7 +49,7 @@ def resolve() -> tuple[str, ...]:
     return tuple(names)
 
 
-def compute(rows: list[dict]) -> dict[str, list[float | None]]:
+def compute(rows: list[dict], subset: set[str] | None = None) -> dict[str, list[float | None]]:
     from vinu_tools.compute.factors.recipes._alpha_expr.compute_alpha import compute_alpha
 
-    return compute_alpha(rows, get_feature_config)
+    return compute_alpha(rows, get_feature_config, subset=subset)

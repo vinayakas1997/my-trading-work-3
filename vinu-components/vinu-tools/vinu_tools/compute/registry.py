@@ -351,19 +351,22 @@ def apply_indicators(rows: list[dict], names: Sequence[str]) -> list[dict]:
     a158, a360, a101 = _alpha_name_sets()
 
     if any(n in a101 for n in expanded):
-        cols = recipe_catalog.compute_recipe(rows, "alpha101_benchmark")
+        subset = {n for n in expanded if n in a101}
+        cols = recipe_catalog.compute_recipe(rows, "alpha101_benchmark", subset=subset)
         for i, row in enumerate(out):
             for n in expanded:
                 if n in cols:
                     row[n] = cols[n][i]
     if any(n in a158 for n in expanded):
-        cols = recipe_catalog.compute_recipe(rows, "alpha158")
+        subset = {n for n in expanded if n in a158}
+        cols = recipe_catalog.compute_recipe(rows, "alpha158", subset=subset)
         for i, row in enumerate(out):
             for n in expanded:
                 if n in cols:
                     row[n] = cols[n][i]
     if any(n in a360 for n in expanded):
-        cols = recipe_catalog.compute_recipe(rows, "alpha360")
+        subset = {n for n in expanded if n in a360}
+        cols = recipe_catalog.compute_recipe(rows, "alpha360", subset=subset)
         for i, row in enumerate(out):
             for n in expanded:
                 if n in cols:

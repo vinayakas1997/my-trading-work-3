@@ -106,6 +106,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     run_p.add_argument("--max-iterations", type=int, default=None, help="Max research iterations")
     run_p.add_argument("--indicators", default=None, help="Comma-separated indicator kinds")
     run_p.add_argument("--capital", type=float, default=None, help="Initial capital")
+    run_p.add_argument(
+        "--strategy-code", default=None,
+        help="Pre-written strategy code. Provide a file path to read strategy code from. "
+             "Skips LLM generation and uses this code as the starting point; user_idea "
+             "is used as refinement context.",
+    )
     run_p.add_argument("--approve", action="store_true", help="Approve strategy automatically (non-interactive)")
     run_p.add_argument("--llm", action="store_true", help="Enable LLM usage (risk analysis + strategy generation/refinement)")
     run_p.add_argument(
@@ -253,6 +259,16 @@ def run_main(args: argparse.Namespace) -> None:
             user_idea = f"Strategy for {symbol}"
         print(f"[vinu-research] Auto-proposed idea: {user_idea}")
 
+    strategy_code: str | None = None
+    if getattr(args, "strategy_code", None):
+        code_path = Path(args.strategy_code)
+        if code_path.exists():
+            strategy_code = code_path.read_text()
+            print(f"[vinu-research] Loaded strategy code from {code_path}")
+        else:
+            print(f"[vinu-research] Warning: --strategy-code file not found: {args.strategy_code}")
+            sys.exit(1)
+
     tools = ResearchTools(config)
 
     on_iteration = None if args.quiet else _on_iteration
@@ -278,6 +294,7 @@ def run_main(args: argparse.Namespace) -> None:
         try:
             return await loop.run(
                 user_idea=user_idea,
+                strategy_code=strategy_code,
                 symbol=symbol,
                 from_date=from_date,
                 to_date=to_date,

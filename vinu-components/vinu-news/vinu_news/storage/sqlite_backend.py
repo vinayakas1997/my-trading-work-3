@@ -8,7 +8,7 @@ from typing import Any
 
 from vinu_news.analysis.storage.models import EnrichedArticle
 from vinu_news.analysis.storage.persist import PersistResult, persist_leads
-from vinu_news.analysis.storage.repository import NewsRepository
+from vinu_news.analysis.storage.repository import ARTICLE_COLUMNS, NewsRepository
 
 from vinu_news.backfill.store import BackfillStore, BackfillStatusView
 from vinu_news.config import settings_env_defaults
@@ -168,9 +168,10 @@ class SqliteBackend:
         return [dict(row) for row in rows]
 
     def get_articles_since(self, since_ts: int, limit: int = 100) -> list[dict[str, Any]]:
+        cols = ", ".join(ARTICLE_COLUMNS)
         rows = self._repo.conn.execute(
-            """
-            SELECT * FROM articles
+            f"""
+            SELECT {cols} FROM articles
             WHERE sort_ts >= ? AND is_lead = 1
             ORDER BY sort_ts DESC
             LIMIT ?
@@ -196,19 +197,32 @@ class SqliteBackend:
     ) -> list[dict[str, Any]]:
         if not tickers:
             return []
-        per_ticker = max(1, limit // len(tickers))
+        placeholders = ", ".join("?" for _ in tickers)
+        query = f"""
+            SELECT a.*, m.ticker AS mention_ticker, m.dominance, m.is_primary, n.analysis_json AS llm_analysis
+            FROM article_ticker_mentions m
+            JOIN articles a ON a.id = m.article_id
+            LEFT JOIN news_analysis n ON a.link = n.url
+            WHERE m.ticker IN ({placeholders})
+        """
+        params: list[Any] = [t.upper() for t in tickers]
+        if start_ts is not None:
+            query += " AND a.sort_ts >= ?"
+            params.append(start_ts)
+        query += " ORDER BY a.sort_ts DESC LIMIT ?"
+        params.append(limit)
+
+        rows = self._repo.conn.execute(query, params).fetchall()
         seen: set[str] = set()
         combined: list[dict[str, Any]] = []
-        for symbol in tickers:
-            rows = self.get_news_for_ticker(symbol, start_ts, None, per_ticker)
-            for row in rows:
-                article_id = row["id"]
-                if article_id in seen:
-                    continue
-                seen.add(article_id)
-                combined.append(row)
-        combined.sort(key=lambda r: r["sort_ts"], reverse=True)
-        return combined[:limit]
+        for row in rows:
+            d = dict(row)
+            article_id = d["id"]
+            if article_id in seen:
+                continue
+            seen.add(article_id)
+            combined.append(d)
+        return combined
 
     def search_articles(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
         return self._repo.search_articles(query, limit)

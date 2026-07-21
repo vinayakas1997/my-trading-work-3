@@ -83,35 +83,34 @@ def ingest_main(argv: list[str] | None = None) -> None:
     if args.continuous:
         interval = load_config().default_poll_interval_sec
 
-    def run_cycle() -> None:
-        with StockService() as service:
-            print(service.run_live_cycle().format_report())
+    def run_cycle(service: StockService) -> None:
+        print(service.run_live_cycle().format_report())
 
-    def sync_and_backfill() -> None:
-        with StockService() as service:
-            sync_result = service.sync_watchlist_from_shared()
-            if sync_result.get("added"):
-                logging.info(
-                    "Synced new ticker(s) from shared watchlist: %s",
-                    ", ".join(sync_result["added"]),
-                )
-            pending = service.get_pending_backfill_symbols()
-            if pending:
-                logging.info("Running backfill for pending symbol(s): %s", ", ".join(pending))
-                result = service.run_backfill(pending)
-                print(result.format_report())
+    def sync_and_backfill(service: StockService) -> None:
+        sync_result = service.sync_watchlist_from_shared()
+        if sync_result.get("added"):
+            logging.info(
+                "Synced new ticker(s) from shared watchlist: %s",
+                ", ".join(sync_result["added"]),
+            )
+        pending = service.get_pending_backfill_symbols()
+        if pending:
+            logging.info("Running backfill for pending symbol(s): %s", ", ".join(pending))
+            result = service.run_backfill(pending)
+            print(result.format_report())
 
     if args.once or interval is None:
-        run_cycle()
+        with StockService() as service:
+            run_cycle(service)
         return
 
-    while True:
-        sync_and_backfill()
-        run_cycle()
-        with StockService() as service:
+    with StockService() as service:
+        while True:
+            sync_and_backfill(service)
+            run_cycle(service)
             sleep_sec = service.get_settings().poll_interval_sec
-        logging.info("Sleeping %s seconds until next ingest", sleep_sec)
-        time.sleep(sleep_sec)
+            logging.info("Sleeping %s seconds until next ingest", sleep_sec)
+            time.sleep(sleep_sec)
 
 
 def serve_main(argv: list[str] | None = None) -> None:
