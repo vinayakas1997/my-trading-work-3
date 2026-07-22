@@ -34,9 +34,12 @@ class AngleStorage:
         analysis_from: int | None = None,
         analysis_until: int | None = None,
         run_id: str | None = None,
+        cleanup_max_runs: int = 10,
     ) -> str:
         """Write an angle's result DataFrame, auto-stamping fixed columns.
 
+        After writing, prunes the angle's parquet directory to at most
+        *cleanup_max_runs* files (oldest removed first).  Set to 0 to disable.
         Returns the run_id.
         """
         run_id = run_id or uuid4().hex[:12]
@@ -56,6 +59,10 @@ class AngleStorage:
         path = self._path_for(symbol, angle_name, run_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(path, index=False)
+
+        if cleanup_max_runs > 0:
+            self._cleanup(symbol, angle_name, cleanup_max_runs)
+
         return run_id
 
     def read(self, symbol: str, angle_name: str, filters: Any = None) -> pd.DataFrame:
@@ -114,3 +121,15 @@ class AngleStorage:
         if not d.exists():
             return []
         return sorted(d.glob("*.parquet"))
+
+    def _cleanup(self, symbol: str, angle_name: str, max_runs: int) -> int:
+        """Delete oldest parquet files for *symbol/angle_name*, keeping at most *max_runs*.
+
+        Returns the number of files deleted.
+        """
+        files = sorted(self._list_files(symbol, angle_name), key=lambda f: f.stat().st_mtime)
+        deleted = 0
+        while len(files) > max_runs:
+            files.pop(0).unlink()
+            deleted += 1
+        return deleted

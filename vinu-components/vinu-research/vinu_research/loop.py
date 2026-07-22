@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import OrderedDict
 from datetime import datetime, timedelta
@@ -304,8 +305,9 @@ class StrategyResearchLoop:
                             symbols=backtest_symbols,
                         )
                     if holdout_result is None or holdout_result.passed:
-                        best_result = result
-                        best_iteration = iteration
+                        if best_result is None or result.metrics.sharpe_ratio > best_result.metrics.sharpe_ratio:
+                            best_result = result
+                            best_iteration = iteration
                         break
                     # Don't accept an in-sample PASS that fails holdout validation —
                     # downgrade back to REFINE and let refinement continue.
@@ -331,8 +333,9 @@ class StrategyResearchLoop:
                         best_iteration = iteration
                     break
 
-                best_result = result
-                best_iteration = iteration
+                if best_result is None or result.metrics.sharpe_ratio > best_result.metrics.sharpe_ratio:
+                    best_result = result
+                    best_iteration = iteration
 
                 if result.metrics.max_drawdown < self._config.max_drawdown_threshold:
                     LOG.warning(
@@ -547,33 +550,31 @@ class StrategyResearchLoop:
 
         LOG.info("Walk-forward: running %d windows", len(windows))
 
-        window_records = []
-        for w in windows:
-            is_result = await self._run_backtest(
-                strategy_code=strategy_code,
-                symbol=symbol,
-                from_date=w.train_start,
-                to_date=w.train_end,
-                indicators=indicators,
-                initial_capital=initial_capital,
+        async def _run_window(w: WalkForwardWindow) -> dict | None:
+            is_result, oos_result = await asyncio.gather(
+                self._run_backtest(
+                    strategy_code=strategy_code,
+                    symbol=symbol,
+                    from_date=w.train_start,
+                    to_date=w.train_end,
+                    indicators=indicators,
+                    initial_capital=initial_capital,
+                ),
+                self._run_backtest(
+                    strategy_code=strategy_code,
+                    symbol=symbol,
+                    from_date=w.test_start,
+                    to_date=w.test_end,
+                    indicators=indicators,
+                    initial_capital=initial_capital,
+                ),
+                return_exceptions=True,
             )
-
-            if is_result is None:
-                continue
-
-            oos_result = await self._run_backtest(
-                strategy_code=strategy_code,
-                symbol=symbol,
-                from_date=w.test_start,
-                to_date=w.test_end,
-                indicators=indicators,
-                initial_capital=initial_capital,
-            )
-
-            if oos_result is None:
-                continue
-
-            window_records.append({
+            if isinstance(is_result, Exception) or is_result is None:
+                return None
+            if isinstance(oos_result, Exception) or oos_result is None:
+                return None
+            return {
                 "window_id": w.window_id,
                 "train_start": w.train_start,
                 "train_end": w.train_end,
@@ -593,7 +594,13 @@ class StrategyResearchLoop:
                     "cagr": oos_result.metrics.cagr,
                     "total_return": oos_result.metrics.total_return,
                 },
-            })
+            }
+
+        raw = await asyncio.gather(
+            *[_run_window(w) for w in windows],
+            return_exceptions=True,
+        )
+        window_records = [r for r in raw if isinstance(r, dict)]
 
         if not window_records:
             return None

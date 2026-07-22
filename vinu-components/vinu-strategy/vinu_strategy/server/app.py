@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import APIRouter
@@ -7,6 +9,13 @@ from fastapi import APIRouter
 from vinu_lib.server import create_app as _create_app
 from vinu_strategy.server.routes_config import router as config_router
 from vinu_strategy.server.routes_read import router as read_router
+
+
+@asynccontextmanager
+async def lifespan(app):
+    from vinu_strategy.server.routes_read import _get_api
+    await asyncio.to_thread(_get_api)
+    yield
 
 
 def create_app():
@@ -21,4 +30,5 @@ def create_app():
         router=merged,
         static_dir=Path(__file__).resolve().parent / "static",
         expose_health_on_root=True,
+        lifespan=lifespan,
     )

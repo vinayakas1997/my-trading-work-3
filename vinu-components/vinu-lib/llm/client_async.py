@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -130,43 +131,70 @@ class AsyncLlmClient:
         last_error: Exception | None = None
         for candidate_base in candidates:
             url = candidate_base.rstrip("/") + "/chat/completions"
-            try:
-                resp = await self._http.post(url, headers=headers, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"]
-                parsed = _parse_json_content(content)
+            for attempt in range(self._config.retry_max):
+                try:
+                    resp = await self._http.post(url, headers=headers, json=payload)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    content = data["choices"][0]["message"]["content"]
+                    parsed = _parse_json_content(content)
 
-                if self._config.ttl_sec > 0:
-                    self._cache.set(cache_key, parsed)
-                _log_llm_call(
-                    self._log_path, self._service, self._config.model, candidate_base,
-                    system, user, time.perf_counter() - start, parsed, True, None,
-                )
-                return parsed
-            except httpx.ConnectError as e:
-                last_error = e
-                LOG.debug("LLM connection failed to %s: %s", candidate_base, e)
-                continue
-            except httpx.HTTPError as e:
-                last_error = e
-                LOG.warning("LLM request failed to %s: %s", candidate_base, e)
-                continue
-            except (KeyError, json.JSONDecodeError) as e:
-                last_error = e
-                LOG.warning("LLM response parse failed: %s", e)
-                _log_llm_call(
-                    self._log_path, self._service, self._config.model, candidate_base,
-                    system, user, time.perf_counter() - start, None, False, str(e),
-                )
-                return None
+                    if self._config.ttl_sec > 0:
+                        self._cache.set(cache_key, parsed)
+                    _log_llm_call(
+                        self._log_path, self._service, self._config.model, candidate_base,
+                        system, user, time.perf_counter() - start, parsed, True, None,
+                    )
+                    return parsed
+                except httpx.ConnectError as e:
+                    last_error = e
+                    LOG.debug("LLM connection failed to %s: %s", candidate_base, e)
+                    if attempt < self._config.retry_max - 1:
+                        delay = (2 ** attempt) * 1.0
+                        LOG.warning("LLM retrying in %.1fs (attempt %d/%d)", delay, attempt + 1, self._config.retry_max)
+                        await asyncio.sleep(delay)
+                        continue
+                    break
+                except httpx.HTTPStatusError as e:
+                    last_error = e
+                    status = e.response.status_code
+                    if (status == 429 or status >= 500) and attempt < self._config.retry_max - 1:
+                        delay = (2 ** attempt) * 1.0
+                        LOG.warning("LLM HTTP %d on %s, retrying in %.1fs (attempt %d/%d)",
+                                    status, candidate_base, delay, attempt + 1, self._config.retry_max)
+                        await asyncio.sleep(delay)
+                        continue
+                    LOG.warning("LLM request failed to %s (HTTP %d): %s", candidate_base, status, e)
+                    break
+                except httpx.RequestError as e:
+                    last_error = e
+                    LOG.warning("LLM request error to %s: %s", candidate_base, e)
+                    if attempt < self._config.retry_max - 1:
+                        delay = (2 ** attempt) * 1.0
+                        LOG.warning("LLM retrying in %.1fs (attempt %d/%d)", delay, attempt + 1, self._config.retry_max)
+                        await asyncio.sleep(delay)
+                        continue
+                    break
+                except httpx.HTTPError as e:
+                    last_error = e
+                    LOG.warning("LLM HTTP error to %s: %s", candidate_base, e)
+                    break
+                except (KeyError, json.JSONDecodeError) as e:
+                    last_error = e
+                    LOG.warning("LLM response parse failed: %s", e)
+                    _log_llm_call(
+                        self._log_path, self._service, self._config.model, candidate_base,
+                        system, user, time.perf_counter() - start, None, False, str(e),
+                    )
+                    return None
 
         _log_llm_call(
             self._log_path, self._service, self._config.model, self._config.base_url,
             system, user, time.perf_counter() - start, None, False,
             str(last_error) if last_error else "all endpoints failed",
         )
-        LOG.warning("LLM call failed after trying %d endpoints: %s", len(candidates), last_error)
+        LOG.warning("LLM call failed after trying %d endpoints x %d retries: %s",
+                    len(candidates), self._config.retry_max, last_error)
         return None
 
     async def close(self) -> None:

@@ -632,3 +632,54 @@ class TestDefaultQuantCoderRefinement:
         assert "PREVIOUS" not in code
         assert "adx" in code.lower()
 
+
+class TestBestResultSelection:
+    async def test_best_result_is_best_sharpe_not_last(self, monkeypatch):
+        loop = StrategyResearchLoop(config=ResearchConfig(max_iterations=3))
+
+        idx = [0]
+        sharpe_values = [0.8, 1.2, 0.5]
+
+        async def fake_backtest(strategy_code, symbol, from_date, to_date, **kwargs):
+            i = idx[0]
+            idx[0] += 1
+            s = sharpe_values[i] if i < len(sharpe_values) else 0.0
+            metrics = BacktestMetrics(sharpe_ratio=s, max_drawdown=-0.1, win_rate=0.5)
+            return BacktestResult(
+                run_id=f"r{i}", strategy_name="s", metrics=metrics,
+                benchmark_metrics={}, trade_count=10, equity_points=100,
+            )
+
+        async def fake_coder(idea, iteration, last_result=None, last_critique=None, previous_code=None):
+            return "class UserStrategy:\n    pass\n"
+
+        async def fake_critic(result, story, drawdowns, iteration):
+            return CriticFeedback(verdict="REFINE", reasoning="needs work", suggestions=[])
+
+        monkeypatch.setattr(loop, '_run_backtest', fake_backtest)
+        monkeypatch.setattr(loop, '_verify_strategy_code', lambda code: [])
+        monkeypatch.setattr(loop, '_is_improving', lambda history: True)
+
+        async def _noop(*a, **kw): return None
+        async def _empty_dict(*a, **kw): return {}
+
+        monkeypatch.setattr(loop._tools, 'get_angle_context', _empty_dict)
+        monkeypatch.setattr(loop._tools, 'get_feature_snapshot', _empty_dict)
+        monkeypatch.setattr(loop._tools, 'get_story', _empty_dict)
+        monkeypatch.setattr(loop._tools, 'get_drawdowns', _noop)
+        monkeypatch.setattr(loop._tools, 'get_benchmark_data', _noop)
+        loop._quant_coder = fake_coder
+        loop._risk_critic = fake_critic
+
+        result = await loop.run(
+            user_idea="SMA crossover",
+            symbol="AAPL",
+            from_date="2024-01-01",
+            to_date="2024-06-01",
+        )
+
+        assert result.best_result is not None
+        assert result.best_result.metrics.sharpe_ratio == 1.2
+        assert result.best_iteration == 2
+        assert len(result.iterations) == 3
+

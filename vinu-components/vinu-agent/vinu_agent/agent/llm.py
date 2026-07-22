@@ -1,4 +1,5 @@
 import json
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Generator, List, Optional
 
@@ -20,8 +21,11 @@ class OpenAIChatLLM(ChatLLM):
         self._client = OpenAI(
             api_key=api_key or "sk-placeholder",
             base_url=base_url or None,
+            max_retries=3,
+            timeout=timeout,
         )
         self._model = model
+        self._timeout = timeout
 
     def chat(self, messages: list, tools: Optional[list] = None, **kwargs) -> dict:
         params = {"model": self._model, "messages": messages}
@@ -29,7 +33,10 @@ class OpenAIChatLLM(ChatLLM):
             params["tools"] = tools
             params["tool_choice"] = "auto"
 
-        response = self._client.chat.completions.create(**params)
+        try:
+            response = self._client.chat.completions.create(**params)
+        except Exception as e:
+            raise RuntimeError(f"OpenAI LLM call failed after retries: {e}") from e
 
         result = {"content": response.choices[0].message.content or ""}
         tool_calls = response.choices[0].message.tool_calls
@@ -57,10 +64,11 @@ class AnthropicChatLLM(ChatLLM):
     def __init__(self, model: str = "claude-sonnet-4-20250514", api_key: str = "", timeout: int = 120):
         self._api_key = api_key
         self._model = model
+        self._timeout = timeout
 
     def chat(self, messages: list, tools: Optional[list] = None, **kwargs) -> dict:
         from anthropic import Anthropic
-        client = Anthropic(api_key=self._api_key)
+        client = Anthropic(api_key=self._api_key, max_retries=3)
 
         system = None
         msgs = []
@@ -83,7 +91,10 @@ class AnthropicChatLLM(ChatLLM):
                 for t in tools
             ]
 
-        response = client.messages.create(**params)
+        try:
+            response = client.messages.create(**params)
+        except Exception as e:
+            raise RuntimeError(f"Anthropic LLM call failed after retries: {e}") from e
 
         result = {"content": ""}
         tool_calls = []
@@ -116,28 +127,45 @@ class OllamaChatLLM(ChatLLM):
         if tools:
             payload["tools"] = tools
 
-        resp = requests.post(
-            f"{self._base_url}/api/chat",
-            json=payload,
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        retry_max = 3
+        last_error: Exception | None = None
+        for attempt in range(retry_max):
+            try:
+                resp = requests.post(
+                    f"{self._base_url}/api/chat",
+                    json=payload,
+                    timeout=self._timeout,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                result = {"content": data.get("message", {}).get("content", "")}
+                tool_calls = data.get("message", {}).get("tool_calls")
+                if tool_calls:
+                    result["tool_calls"] = [
+                        {
+                            "id": tc.get("id", f"call_{i}"),
+                            "function": {
+                                "name": tc["function"]["name"],
+                                "arguments": json.dumps(tc["function"]["arguments"]),
+                            },
+                        }
+                        for i, tc in enumerate(tool_calls)
+                    ]
+                return result
+            except (requests.ConnectionError, requests.Timeout) as e:
+                last_error = e
+                if attempt < retry_max - 1:
+                    time.sleep((2 ** attempt) * 1.0)
+                    continue
+            except requests.RequestException as e:
+                last_error = e
+                status = e.response.status_code if hasattr(e, 'response') and e.response is not None else None
+                if status is not None and (status == 429 or status >= 500) and attempt < retry_max - 1:
+                    time.sleep((2 ** attempt) * 1.0)
+                    continue
+                raise RuntimeError(f"Ollama LLM call failed: {e}") from e
 
-        result = {"content": data.get("message", {}).get("content", "")}
-        tool_calls = data.get("message", {}).get("tool_calls")
-        if tool_calls:
-            result["tool_calls"] = [
-                {
-                    "id": tc.get("id", f"call_{i}"),
-                    "function": {
-                        "name": tc["function"]["name"],
-                        "arguments": json.dumps(tc["function"]["arguments"]),
-                    },
-                }
-                for i, tc in enumerate(tool_calls)
-            ]
-        return result
+        raise RuntimeError(f"Ollama LLM call failed after {retry_max} attempts: {last_error}")
 
 
 def create_llm(config: AgentConfig) -> ChatLLM:
