@@ -149,6 +149,48 @@ def _format_feature_lines(features: dict[str, Any] | None) -> list[str]:
     return lines
 
 
+def _match_score(query: str, candidate: str) -> float:
+    q_tokens = set(query.lower().split())
+    c_tokens = set(candidate.lower().split())
+    if not q_tokens or not c_tokens:
+        return 0.0
+    overlap = q_tokens & c_tokens
+    return len(overlap) / min(len(q_tokens), len(c_tokens))
+
+
+def _build_memory_context(
+    symbol: str,
+    past_runs: list[dict[str, Any]] | None,
+    user_idea: str = "",
+    max_runs: int = 5,
+) -> str:
+    if not past_runs:
+        return ""
+
+    pool = list(past_runs)
+    if user_idea:
+        for run in pool:
+            score = _match_score(user_idea, run.get("user_idea", ""))
+            run["_relevance_score"] = score
+        pool.sort(key=lambda r: (r.get("_relevance_score", 0), r.get("run_id", 0)), reverse=True)
+    else:
+        pool = pool[:max_runs]
+
+    selected = pool[:max_runs]
+    lines = [f"Past research on {symbol} (top {len(selected)} by relevance):"]
+    for run in selected:
+        status_mark = " (ACTIVE)" if run.get("status") in ("done", "approved") and run.get("best_sharpe", 0) > 0.5 else ""
+        score_str = f" [score={run.get('_relevance_score', 0):.2f}]" if "_relevance_score" in run else ""
+        lines.append(
+            f"  Run #{run['run_id']}{score_str} ({str(run.get('created_at', ''))[:10]}): "
+            f"{str(run.get('user_idea', ''))[:60]} → "
+            f"Sharpe {run.get('best_sharpe', 0):.2f}, "
+            f"{run.get('total_iterations', 0)} iters, "
+            f"status={run.get('status', 'unknown')}{status_mark}"
+        )
+    return "\n".join(lines)
+
+
 def _build_generation_prompt(
     user_idea: str,
     symbol: str,
@@ -157,6 +199,8 @@ def _build_generation_prompt(
     indicators: list[str] | None = None,
     angles: dict[str, Any] | None = None,
     features: dict[str, Any] | None = None,
+    memory_context: str = "",
+    stock_profile: str = "",
 ) -> str:
     ind_list = ", ".join(indicators) if indicators else "sma_20, sma_50, rsi_14"
     prompt = f"""Generate a trading strategy for:
@@ -168,6 +212,10 @@ Available indicators: {ind_list}
 
 The strategy must be a class UserStrategy(BaseStrategy) with generate_weights(self, data) method.
 Make it robust, parameterizable, and suitable for the described market conditions."""
+    if memory_context:
+        prompt += "\n\n" + memory_context
+    if stock_profile:
+        prompt += "\n\nStock characterization:\n" + stock_profile
     angle_lines = format_angle_context_lines(angles or {})
     if angle_lines:
         prompt += "\n" + "\n".join(angle_lines)
@@ -213,6 +261,8 @@ def _build_refinement_prompt(
     indicators: list[str] | None = None,
     angles: dict[str, Any] | None = None,
     features: dict[str, Any] | None = None,
+    memory_context: str = "",
+    stock_profile: str = "",
 ) -> str:
     m = last_result.metrics
     ind_list = ", ".join(indicators) if indicators else "sma_20, sma_50, rsi_14"
@@ -223,6 +273,15 @@ def _build_refinement_prompt(
         f"Period: {from_date} → {to_date}",
         f"Available indicators: {ind_list}",
         "",
+    ]
+    if memory_context:
+        lines.append(memory_context)
+        lines.append("")
+    if stock_profile:
+        lines.append("Stock characterization:")
+        lines.append(stock_profile)
+        lines.append("")
+    lines.extend([
         "Previous strategy summary:",
         _summarize_strategy(previous_code),
         "",
@@ -236,7 +295,7 @@ def _build_refinement_prompt(
         f"Critic verdict: {last_critique.verdict}",
         f"Critic reasoning: {last_critique.reasoning}",
         "Critic suggestions to address:",
-    ]
+    ])
     if last_critique.suggestions:
         for i, s in enumerate(last_critique.suggestions, 1):
             lines.append(f"  {i}. {s}")
@@ -307,9 +366,11 @@ class LlmStrategyGenerator:
         # callers (TokenBucket uses a lock, CircuitBreaker uses an asyncio.Lock).
         angles = (story or {}).get("angles")
         features = (story or {}).get("features")
+        memory_context = (story or {}).get("memory_context", "")
+        stock_profile = (story or {}).get("stock_profile", "")
         results = await asyncio.gather(
             *[
-                self._generate_one(user_idea, symbol, from_date, to_date, indicators, angles, features)
+                self._generate_one(user_idea, symbol, from_date, to_date, indicators, angles, features, memory_context, stock_profile)
                 for _ in range(n_candidates)
             ],
             return_exceptions=True,
@@ -332,8 +393,10 @@ class LlmStrategyGenerator:
         indicators: list[str] | None = None,
         angles: dict[str, Any] | None = None,
         features: dict[str, Any] | None = None,
+        memory_context: str = "",
+        stock_profile: str = "",
     ) -> LlmCandidate | None:
-        prompt = _build_generation_prompt(user_idea, symbol, from_date, to_date, indicators, angles, features)
+        prompt = _build_generation_prompt(user_idea, symbol, from_date, to_date, indicators, angles, features, memory_context, stock_profile)
         response = await self._llm.chat_json(LLM_GEN_SYSTEM_PROMPT, prompt)
         if response is None:
             return None
@@ -366,12 +429,15 @@ class LlmStrategyGenerator:
     ) -> list[LlmCandidate]:
         angles = (story or {}).get("angles")
         features = (story or {}).get("features")
+        memory_context = (story or {}).get("memory_context", "")
+        stock_profile = (story or {}).get("stock_profile", "")
         candidates: list[LlmCandidate] = []
         for i in range(n_candidates):
             try:
                 c = await self._refine_one(
                     user_idea, symbol, from_date, to_date, previous_code,
                     last_result, last_critique, indicators, angles, features,
+                    memory_context, stock_profile,
                 )
                 if c is not None:
                     candidates.append(c)
@@ -391,10 +457,12 @@ class LlmStrategyGenerator:
         indicators: list[str] | None = None,
         angles: dict[str, Any] | None = None,
         features: dict[str, Any] | None = None,
+        memory_context: str = "",
+        stock_profile: str = "",
     ) -> LlmCandidate | None:
         prompt = _build_refinement_prompt(
             user_idea, symbol, from_date, to_date, previous_code,
-            last_result, last_critique, indicators, angles, features,
+            last_result, last_critique, indicators, angles, features, memory_context, stock_profile,
         )
         response = await self._llm.chat_json(LLM_GEN_SYSTEM_PROMPT, prompt)
         if response is None:

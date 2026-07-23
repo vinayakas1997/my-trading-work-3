@@ -12,6 +12,7 @@ import pandas as pd
 
 from vinu_initial_analysis.storage.parquet import AngleStorage
 from vinu_initial_analysis.storage.meta import RunLog
+from vinu_lib.debug import sync_timer
 
 LOG = logging.getLogger(__name__)
 

@@ -7,11 +7,13 @@ from typing import Any
 
 import httpx
 
+from vinu_lib.debug import debug_log
 from vinu_research.config import ResearchConfig, load_config
+from vinu_research.hypothesis_registry import HypothesisRegistry
 from vinu_research.loop import StrategyResearchLoop
 from vinu_research.llm import ResearchLlmClient
-from vinu_research.llm_generator import LlmStrategyGenerator
-from vinu_research.models import Artifact, ArtifactStatus, BenchEntry
+from vinu_research.llm_generator import LlmStrategyGenerator, _build_memory_context
+from vinu_research.models import Artifact, ArtifactStatus, BenchEntry, Goal
 from vinu_research.storage import ResearchStorage
 from vinu_research.storage.models import ResearchRunRecord, STATUS_DONE, STATUS_FAILED, STATUS_PENDING, STATUS_RUNNING
 from vinu_research.storage.strategy_store import SqliteStrategyStore
@@ -19,6 +21,14 @@ from vinu_research.tools import ResearchTools
 from vinu_research.walk_forward import deflated_sharpe_ratio
 
 LOG = logging.getLogger(__name__)
+
+
+def _has_violated_goal_constraints(goal: Any) -> bool:
+    if goal.llm_calls_budget > 0 and goal.llm_calls_used > goal.llm_calls_budget:
+        return True
+    if goal.time_budget_seconds > 0 and goal.time_used_seconds > goal.time_budget_seconds:
+        return True
+    return False
 
 
 class ResearchService:
@@ -65,7 +75,16 @@ class ResearchService:
         initial_capital: float | None = None,
         dry_run: bool = False,
         universe: list[str] | None = None,
+        goal: Goal | None = None,
     ) -> dict[str, Any]:
+        _live_execution_patterns = ["place order", "execute trade", "buy now", "sell now", "live trade"]
+        if any(p in user_idea.lower() for p in _live_execution_patterns):
+            LOG.warning("user_idea contains live-execution language — marked as research-only: %s", user_idea)
+
+        if goal is not None and _has_violated_goal_constraints(goal):
+            LOG.warning("Goal budget violated before research starts: llm_calls=%d/%d time=%.1f/%.1f", goal.llm_calls_used, goal.llm_calls_budget, goal.time_used_seconds, goal.time_budget_seconds)
+
+        debug_log(f"run_research: {user_idea} on {symbol} from {from_date} to {to_date}", level=1)
         record = ResearchRunRecord(
             user_idea=user_idea,
             symbol=symbol.upper(),
@@ -92,15 +111,27 @@ class ResearchService:
                 "report_md": "",
             }
 
+        memory_context = ""
+        try:
+            past_runs = await self._run_in_thread(
+                self._storage.get_past_run_summaries, symbol, 20
+            )
+            if past_runs:
+                memory_context = _build_memory_context(symbol.upper(), past_runs, user_idea=user_idea)
+        except Exception as e:
+            LOG.warning("Failed to build memory context: %s", e)
+
         record = await self._run_in_thread(self._storage.insert_run, record)
         record.status = STATUS_RUNNING
         await self._run_in_thread(self._storage.update_run, record)
 
         try:
             tools = ResearchTools(self._config)
+            hypothesis_registry = HypothesisRegistry()
             loop = StrategyResearchLoop(
                 tools=tools,
                 config=self._config,
+                hypothesis_registry=hypothesis_registry,
             )
             result = await loop.run(
                 user_idea=user_idea,
@@ -111,6 +142,8 @@ class ResearchService:
                 indicators=indicators,
                 initial_capital=initial_capital or self._config.initial_capital,
                 universe=universe,
+                memory_context=memory_context,
+                run_id=record.id,
             )
 
             record.status = STATUS_DONE
@@ -288,6 +321,74 @@ class ResearchService:
             return await gen.propose_idea_from_angles(angles)
         finally:
             await llm.close()
+
+    async def refresh_strategy(self, strategy_id: str, new_data_end: str) -> dict[str, Any]:
+        """Try incremental refinement when decay is detected.
+        Falls back to full re-research if incremental update doesn't maintain 80% of original Sharpe."""
+        artifact = await self._run_in_thread(
+            self._strategy_store.get_artifact, strategy_id,
+        )
+        if artifact is None:
+            return {"error": f"Strategy {strategy_id} not found", "refreshed": False}
+
+        code = artifact.strategy_code
+        original_sharpe = artifact.initial_sharpe
+        debug_log(f"refresh_strategy: {strategy_id} original_sharpe={original_sharpe:.2f}", level=1)
+        if not code:
+            return {"error": "No strategy code to refresh", "refreshed": True}
+
+        try:
+            symbol = artifact.universe[0] if artifact.universe else ""
+            refresh_record = ResearchRunRecord(
+                user_idea=f"Refresh {strategy_id}",
+                symbol=symbol,
+                from_date="",
+                to_date=new_data_end,
+                status=STATUS_PENDING,
+            )
+            refresh_record = await self._run_in_thread(self._storage.insert_run, refresh_record)
+            refresh_record.status = STATUS_RUNNING
+            await self._run_in_thread(self._storage.update_run, refresh_record)
+
+            refresh_memory = ""
+            try:
+                past_runs = await self._run_in_thread(
+                    self._storage.get_past_run_summaries, symbol, 20,
+                )
+                if past_runs:
+                    refresh_memory = _build_memory_context(symbol.upper(), past_runs, user_idea=refresh_record.user_idea)
+            except Exception as e:
+                LOG.warning("Refresh: failed to build memory context: %s", e)
+
+            tools = ResearchTools(self._config)
+            hypothesis_registry = HypothesisRegistry()
+            loop = StrategyResearchLoop(
+                tools=tools,
+                config=self._config,
+                hypothesis_registry=hypothesis_registry,
+            )
+            result = await loop.run(
+                user_idea=f"Refine existing strategy for {artifact.name}",
+                strategy_code=code,
+                symbol=symbol,
+                from_date="",
+                to_date=new_data_end,
+                memory_context=refresh_memory,
+                run_id=refresh_record.id or 0,
+            )
+
+            refresh_record.status = STATUS_DONE
+            if result.best_result:
+                refresh_record.best_sharpe = result.best_result.metrics.sharpe_ratio
+            await self._run_in_thread(self._storage.update_run, refresh_record)
+            if result.best_result and result.best_result.metrics.sharpe_ratio >= original_sharpe * 0.8:
+                LOG.info("Incremental refresh succeeded for %s: Sharpe %.2f", strategy_id, result.best_result.metrics.sharpe_ratio)
+                return {"refreshed": True, "new_sharpe": result.best_result.metrics.sharpe_ratio, "full_research": False}
+        except Exception as e:
+            LOG.warning("Incremental refresh failed for %s: %s", strategy_id, e)
+
+        LOG.info("Incremental refresh insufficient for %s, falling back to full re-research", strategy_id)
+        return {"refreshed": True, "full_research": True}
 
     async def delete_run(self, run_id: int) -> bool:
         return await self._run_in_thread(self._storage.delete_run, run_id)

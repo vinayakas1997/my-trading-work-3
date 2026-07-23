@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 from vinu_research.hypothesis_registry import HypothesisRegistry
-from vinu_research.models import Hypothesis, HypothesisStatus
+from vinu_research.models import Evidence, Hypothesis, HypothesisStatus
 
 
 def _make_registry() -> tuple[HypothesisRegistry, Path]:
@@ -130,6 +130,53 @@ class TestHypothesisBacktestLinking:
         loaded = reg.get(h.hypothesis_id)
         assert loaded is not None
         assert loaded.run_cards == ["/tmp/run_card.json"]
+
+
+class TestAddEvidenceBatch:
+    def test_add_evidence_batch_updates_all_hypotheses(self):
+        reg, _ = _make_registry()
+        h1 = Hypothesis.create("Momentum", "Momentum strategy", universe=["AAPL"])
+        h2 = Hypothesis.create("MeanRev", "Mean reversion strategy", universe=["MSFT"])
+        reg.create(h1)
+        reg.create(h2)
+
+        ev1 = Evidence(run_id=1, iteration=1, metric="sharpe", value=0.6, conclusion="supports", reasoning="good returns")
+        ev2 = Evidence(run_id=1, iteration=2, metric="sharpe", value=0.4, conclusion="contradicts", reasoning="faded")
+        evidence_map = {
+            h1.hypothesis_id: [ev1],
+            h2.hypothesis_id: [ev1, ev2],
+        }
+        for hid, ev_list in evidence_map.items():
+            reg.add_evidence_batch(hid, ev_list)
+
+        loaded1 = reg.get(h1.hypothesis_id)
+        loaded2 = reg.get(h2.hypothesis_id)
+        assert loaded1 is not None
+        assert loaded2 is not None
+        assert len(loaded1.evidence) == 1
+        assert loaded1.evidence[0].value == 0.6
+        assert len(loaded2.evidence) == 2
+        assert loaded2.evidence[1].conclusion == "contradicts"
+
+    def test_add_evidence_batch_updates_best_sharpe(self):
+        reg, _ = _make_registry()
+        h = Hypothesis.create("Test", "Test", universe=["AAPL"])
+        reg.create(h)
+
+        evs = [
+            Evidence(run_id=1, iteration=1, metric="sharpe", value=0.3, conclusion="supports", reasoning="ok"),
+            Evidence(run_id=2, iteration=2, metric="sharpe", value=0.8, conclusion="supports", reasoning="better"),
+            Evidence(run_id=3, iteration=3, metric="sharpe", value=0.5, conclusion="supports", reasoning="medium"),
+        ]
+        reg.add_evidence_batch(h.hypothesis_id, evs)
+        loaded = reg.get(h.hypothesis_id)
+        assert loaded is not None
+        assert loaded.best_sharpe == 0.8
+
+    def test_add_evidence_batch_nonexistent_returns_none(self):
+        reg, _ = _make_registry()
+        result = reg.add_evidence_batch("hyp_nonexistent", [])
+        assert result is None
 
 
 class TestHypothesisSearch:

@@ -7,10 +7,11 @@ from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 
 _DEBUG = os.environ.get("VINU_DEBUG", "false").lower() in ("true", "1", "yes")
+_DEBUG_LEVEL = int(os.environ.get("VINU_DEBUG_LEVEL", "1"))
 
 
-def is_debug() -> bool:
-    return _DEBUG
+def is_debug(level: int = 1) -> bool:
+    return _DEBUG and _DEBUG_LEVEL >= level
 
 
 def setup_logging(service: str, *, verbose: bool = False) -> None:
@@ -31,12 +32,15 @@ def setup_logging(service: str, *, verbose: bool = False) -> None:
     logging.basicConfig(level=level, format=fmt)
 
 
-def debug_log(msg: str, *args: Any) -> None:
-    """Print a debug message only when VINU_DEBUG=true."""
-    if _DEBUG:
-        if args:
-            msg = msg % args
-        print(f"[DEBUG] {msg}", flush=True)
+def debug_log(msg: str, level: int = 1) -> None:
+    """Print a debug message only when VINU_DEBUG=true and VINU_DEBUG_LEVEL >= level.
+    
+    Level 1: step tracking, timing, budget warnings
+    Level 2: LLM prompts/responses, memory context, evidence detail
+    """
+    if _DEBUG and _DEBUG_LEVEL >= level:
+        prefix = "[DEBUG1]" if level <= 1 else "[DEBUG2]"
+        print(f"{prefix} {msg}", flush=True)
 
 
 _INDENT = 0
@@ -55,13 +59,13 @@ def sync_timer(label: str):
         return
     t0 = time.perf_counter()
     _INDENT += 1
-    print(f"{_indent()}[TIMER] {label} START", flush=True)
+    debug_log(f"[TIMER] {label} START", level=1)
     try:
         yield
     finally:
         dt = time.perf_counter() - t0
         _INDENT -= 1
-        print(f"{_indent()}[TIMER] {label} END ({dt:.2f}s)", flush=True)
+        debug_log(f"[TIMER] {label} END ({dt:.2f}s)", level=1)
 
 
 @asynccontextmanager
@@ -76,10 +80,10 @@ async def debug_timer(label: str):
         return
     t0 = time.perf_counter()
     _INDENT += 1
-    print(f"{_indent()}[TIMER] {label} START", flush=True)
+    debug_log(f"[TIMER] {label} START", level=1)
     try:
         yield
     finally:
         dt = time.perf_counter() - t0
         _INDENT -= 1
-        print(f"{_indent()}[TIMER] {label} END ({dt:.2f}s)", flush=True)
+        debug_log(f"[TIMER] {label} END ({dt:.2f}s)", level=1)

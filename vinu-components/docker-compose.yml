@@ -213,7 +213,7 @@ services:
     build:
       context: .
       dockerfile: vinu-initial-analysis/Dockerfile
-    command: ["vinu-initial-compute", "--all", "--continuous", "--incremental"]
+    command: ["vinu-initial-compute", "--all", "--continuous"]
     env_file: ./vinu-initial-analysis/.env
     environment:
       VINU_DEBUG: ${VINU_DEBUG:-false}

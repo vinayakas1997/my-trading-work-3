@@ -45,7 +45,7 @@ def serve_main(args: argparse.Namespace) -> None:
     uvicorn.run(create_app(), host=host, port=port)
 
 
-def _print_separator(char: str = "\u2500") -> None:
+def _print_separator(char: str = "-") -> None:
     print(char * 60)
 
 
@@ -61,14 +61,14 @@ def _on_iteration(record: IterationRecord) -> None:
     if record.critique.suggestions:
         print(f"[Iteration {record.iteration}] Suggestions:")
         for s in record.critique.suggestions:
-            print(f"  \u2192 {s}")
+            print(f"  -> {s}")
 
     if record.critique.verdict == "PASS":
-        print(f"[Iteration {record.iteration}] \u2713 VERDICT: PASS")
+        print(f"[Iteration {record.iteration}] [PASS] VERDICT: PASS")
     elif record.critique.verdict == "STOP":
-        print(f"[Iteration {record.iteration}] \u2717 VERDICT: STOP")
+        print(f"[Iteration {record.iteration}] [STOP] VERDICT: STOP")
     else:
-        print(f"[Iteration {record.iteration}] \u21bb VERDICT: REFINE")
+        print(f"[Iteration {record.iteration}] [REFINE] VERDICT: REFINE")
     _print_separator()
 
 
@@ -84,7 +84,7 @@ def _validate_date(val: str | None, name: str) -> str | None:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="vinu-research \u2014 Agentic Strategy Researcher"
+        description="vinu-research - Agentic Strategy Researcher"
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -237,27 +237,31 @@ def run_main(args: argparse.Namespace) -> None:
 
     if user_idea is None:
         print(f"[vinu-research] No idea provided — proposing from angle context for {symbol}...")
-        tools_tmp = ResearchTools(config)
-        try:
-            angles = asyncio.run(tools_tmp.get_angle_context(symbol, config.interval))
-        finally:
-            asyncio.run(tools_tmp.close())
-        if angles and config.llm_enabled:
-            from vinu_research.llm import ResearchLlmClient
-            from vinu_research.llm_generator import LlmStrategyGenerator
-            llm = ResearchLlmClient(config)
+
+        async def _propose_idea():
+            tools_tmp = ResearchTools(config)
             try:
-                gen = LlmStrategyGenerator(llm)
-                user_idea = asyncio.run(gen.propose_idea_from_angles(angles))
+                angles = await tools_tmp.get_angle_context(symbol, config.interval)
+                if angles and config.llm_enabled:
+                    from vinu_research.llm import ResearchLlmClient
+                    from vinu_research.llm_generator import LlmStrategyGenerator
+                    llm = ResearchLlmClient(config)
+                    try:
+                        gen = LlmStrategyGenerator(llm)
+                        return await gen.propose_idea_from_angles(angles)
+                    finally:
+                        await llm.close()
+                elif angles:
+                    tl = angles.get("trend_lifecycle", {})
+                    stage = tl.get("stage", "unknown")
+                    risk = tl.get("risk", "unknown")
+                    return f"Trend-following strategy for {stage} stage with {risk} risk regime"
+                else:
+                    return f"Strategy for {symbol}"
             finally:
-                asyncio.run(llm.close())
-        elif angles:
-            tl = angles.get("trend_lifecycle", {})
-            stage = tl.get("stage", "unknown")
-            risk = tl.get("risk", "unknown")
-            user_idea = f"Trend-following strategy for {stage} stage with {risk} risk regime"
-        else:
-            user_idea = f"Strategy for {symbol}"
+                await tools_tmp.close()
+
+        user_idea = asyncio.run(_propose_idea())
         print(f"[vinu-research] Auto-proposed idea: {user_idea}")
 
     strategy_code: str | None = None
@@ -281,7 +285,7 @@ def run_main(args: argparse.Namespace) -> None:
 
     print(f"[vinu-research] Strategy: {user_idea}")
     print(f"[vinu-research] Ticker: {symbol}")
-    print(f"[vinu-research] Period: {from_date} \u2192 {to_date}")
+    print(f"[vinu-research] Period: {from_date} -> {to_date}")
     print(f"[vinu-research] Max iterations: {config.max_iterations}")
     if indicators:
         print(f"[vinu-research] Indicators: {', '.join(indicators)}")
@@ -349,7 +353,7 @@ def run_main(args: argparse.Namespace) -> None:
         except (EOFError, KeyboardInterrupt):
             pass
     if approved:
-        print("[vinu-research] \u2713 Strategy approved")
+        print("[vinu-research] [OK] Strategy approved")
         if saved_path:
             approved_path = saved_path.parent / f"{saved_path.stem}_approved.py"
             saved_path.rename(approved_path)
@@ -493,14 +497,14 @@ def _run_decay_scan(store, thresholds, *, dry_run: bool) -> int:
         changed = new_status != art.status
 
         status_icon = {
-            "HEALTHY": "\u2713",
-            "WARNING": "\u26a0",
-            "DECAYED": "\u2717",
-            "CRITICAL": "\u203c",
+            "HEALTHY": "[OK]",
+            "WARNING": "[!]",
+            "DECAYED": "[X]",
+            "CRITICAL": "[!!]",
         }.get(snapshot.evaluation, "?")
 
         print(f"  {art.artifact_id} ({art.name})")
-        print(f"    Status: {art.status.value} \u2192 {new_status.value if changed else '(unchanged)'}")
+        print(f"    Status: {art.status.value} -> {new_status.value if changed else '(unchanged)'}")
         if art.type == "strategy":
             print(f"    Eval: {status_icon} {snapshot.evaluation}  Sharpe_ratio={snapshot.ic_ratio:.2f}  Rolling_Sharpe={snapshot.rolling_sharpe:.2f}")
         else:

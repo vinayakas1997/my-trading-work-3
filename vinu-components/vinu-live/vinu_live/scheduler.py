@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -201,6 +202,10 @@ class LiveScheduler:
         return weights
 
     async def _execute_plan(self, plan: Any) -> list[dict]:
+        HALT_PATH = Path.home() / ".vinu-live" / "HALT"
+        if HALT_PATH.exists():
+            LOG.warning("HALT file detected at %s — skipping all order execution", HALT_PATH)
+            return []
         submitted = []
         delays = schedule_slice_delays(
             plan.total_orders, total_window_minutes=60,
@@ -242,6 +247,9 @@ class LiveScheduler:
 
             if i < len(delays):
                 await asyncio.sleep(delays[i])
+                if HALT_PATH.exists():
+                    LOG.warning("HALT file detected mid-plan — stopping remaining %d slices", len(plan.slices) - i - 1)
+                    break
 
         return submitted
 

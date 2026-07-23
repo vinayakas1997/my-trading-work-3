@@ -6,6 +6,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, TYPE_CHECKING
 
+from vinu_lib.debug import debug_log
+from vinu_research.models import ArtifactStatus
 from vinu_research.scheduled.cron import next_run
 from vinu_research.scheduled.models import ScheduledResearchJob
 from vinu_research.scheduled.store import ScheduledResearchJobStore
@@ -111,6 +113,34 @@ class ScheduledResearchExecutor:
         self._store.save(job)
         return result
 
+    async def decay_scan(self) -> int:
+        decayed_count = 0
+        debug_log("decay_scan: starting", level=1)
+        try:
+            artifacts = await asyncio.to_thread(
+                self.service.strategy_store.list_artifacts_by_statuses,
+                [ArtifactStatus.ACTIVE, ArtifactStatus.MONITORING],
+            )
+            debug_log(f"decay_scan: found {len(artifacts)} ACTIVE/MONITORING artifacts", level=1)
+            for art in artifacts:
+                if not art.universe or not art.strategy_code:
+                    continue
+                LOG.info("Decay scan: checking %s (%s)", art.artifact_id, art.status.value)
+                snapshot = await asyncio.to_thread(self.service.strategy_store.get_latest_snapshot, art.artifact_id)
+                if snapshot is not None and art.initial_sharpe > 0:
+                    ratio = snapshot.rolling_sharpe / art.initial_sharpe if art.initial_sharpe else 0
+                    if ratio < 0.5:
+                        LOG.warning("Decay detected for %s: sharpe=%.2f vs initial=%.2f", art.artifact_id, snapshot.rolling_sharpe, art.initial_sharpe)
+                        debug_log(f"decay_scan: decayed {art.artifact_id} ratio={ratio:.2f}", level=1)
+                        result = await self.service.refresh_strategy(art.artifact_id, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+                        if result.get("full_research"):
+                            LOG.info("Strategy %s marked as DECAYED, full re-research queued", art.artifact_id)
+                        debug_log(f"decay_scan: refresh {art.artifact_id} result={result}", level=1)
+                        decayed_count += 1
+        except Exception as e:
+            LOG.error("Decay scan failed: %s", e)
+        return decayed_count
+
     async def start(self) -> None:
         self._running = True
         recovered = self.recover_stale()
@@ -128,6 +158,9 @@ class ScheduledResearchExecutor:
                 pass
 
     async def _run_loop(self) -> None:
+        decay_interval = 3600.0  # once per hour
+        last_decay_scan = 0.0
+        startup = True
         while self._running:
             try:
                 due = self.tick()
@@ -135,7 +168,16 @@ class ScheduledResearchExecutor:
                     await self.dispatch(job)
             except Exception as exc:
                 LOG.error("Scheduled executor tick failed: %s", exc)
+            if startup:
+                last_decay_scan = asyncio.get_event_loop().time()
+                startup = False
             await asyncio.sleep(self._poll_interval)
+            now = asyncio.get_event_loop().time()
+            if now - last_decay_scan >= decay_interval:
+                n = await self.decay_scan()
+                if n:
+                    LOG.info("Decay scan completed: %d strategies decayed", n)
+                last_decay_scan = now
 
     @property
     def is_running(self) -> bool:

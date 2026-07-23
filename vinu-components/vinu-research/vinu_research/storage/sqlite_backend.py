@@ -121,6 +121,20 @@ class ResearchStorage:
         record.updated_at = now
         return record
 
+    def get_past_run_summaries(self, symbol: str, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self.list_runs(symbol=symbol, limit=limit)
+        return [
+            {
+                "run_id": r.id,
+                "user_idea": r.user_idea,
+                "best_sharpe": r.best_sharpe,
+                "total_iterations": r.total_iterations,
+                "status": r.status,
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ]
+
     def cumulative_trial_count(self, symbol: str) -> int:
         """Sum of `total_iterations` across every past run for this symbol.
 

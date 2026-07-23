@@ -11,6 +11,7 @@ import pytest
 from vinu_research.llm_generator import (
     LlmStrategyGenerator,
     _build_generation_prompt,
+    _build_memory_context,
     _build_refinement_prompt,
     _complexity_penalty,
     validate_code,
@@ -139,7 +140,9 @@ class TestBuildRefinementPrompt:
             last_result=self._make_result(),
             last_critique=self._make_critique(),
         )
-        assert "class UserStrategy(BaseStrategy): pass" in prompt
+        # _build_refinement_prompt summarises code via _summarize_strategy()
+        # rather than dumping raw code — verify summary and critique render
+        assert "Previous strategy summary" in prompt
         assert "Sharpe: 0.80" in prompt
         assert "Add ADX filter to avoid choppy markets" in prompt
         assert "REFINE" in prompt
@@ -260,6 +263,39 @@ class TestComplexityPenalty:
     def test_ignores_comments_and_imports(self):
         code = "# comment\nimport os\nfrom foo import bar\nx = 1"
         assert _complexity_penalty(code) == 0.0
+
+
+class TestBuildMemoryContext:
+    def test_high_overlap_run_appears_first(self):
+        high_overlap = {"run_id": 1, "user_idea": "mean reversion with bollinger bands", "best_sharpe": 0.5, "total_iterations": 10, "status": "done", "created_at": "2024-01-01T00:00:00"}
+        low_overlap = {"run_id": 2, "user_idea": "trend following momentum breakout", "best_sharpe": 1.2, "total_iterations": 8, "status": "done", "created_at": "2024-01-02T00:00:00"}
+        past_runs = [low_overlap, high_overlap]
+        result = _build_memory_context("AAPL", past_runs, user_idea="mean reversion using bollinger bands strategy")
+        lines = result.split("\n")
+        run_ids_in_order = []
+        for line in lines:
+            if line.strip().startswith("Run #"):
+                run_ids_in_order.append(line.strip())
+        assert len(run_ids_in_order) == 2
+        assert "#1" in run_ids_in_order[0], "high-overlap run should appear first"
+        assert "#2" in run_ids_in_order[1], "low-overlap run should appear second"
+
+    def test_no_user_idea_returns_empty(self):
+        result = _build_memory_context("AAPL", None, user_idea="")
+        assert result == ""
+
+    def test_empty_past_runs_returns_empty(self):
+        result = _build_memory_context("AAPL", [], user_idea="anything")
+        assert result == ""
+
+    def test_max_runs_respected(self):
+        past_runs = [
+            {"run_id": i, "user_idea": f"strategy {i}", "best_sharpe": 0.5, "total_iterations": 5, "status": "done", "created_at": f"2024-01-{i:02d}T00:00:00"}
+            for i in range(1, 21)
+        ]
+        result = _build_memory_context("AAPL", past_runs, user_idea="strategy", max_runs=3)
+        lines = [l for l in result.split("\n") if l.strip().startswith("Run #")]
+        assert len(lines) == 3
 
 
 class TestLlmCandidate:

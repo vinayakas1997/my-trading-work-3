@@ -8,17 +8,21 @@ from typing import Any, Callable
 
 import pandas as pd
 
-from vinu_lib.debug import debug_timer
+from vinu_lib.debug import debug_log, debug_timer
 from vinu_research.comparison import rank_candidates
 from vinu_research.config import ResearchConfig, load_config
 from vinu_research.generator import find_recipe, generate_strategy
+from vinu_research.hypothesis_registry import HypothesisRegistry
 from vinu_research.llm import LLM_SYSTEM_PROMPT, ResearchLlmClient, _build_risk_critic_prompt
 from vinu_research.llm_generator import LlmStrategyGenerator
 from vinu_research.models import (
     BacktestMetrics,
     BacktestResult,
     CriticFeedback,
+    Evidence,
     HoldoutResult,
+    Hypothesis,
+    HypothesisStatus,
     IterationRecord,
     ResearchResult,
     StressTestResult,
@@ -39,6 +43,15 @@ from vinu_research.walk_forward import (
 LOG = logging.getLogger(__name__)
 
 _MAX_CACHE_SIZE = 64
+
+
+def _match_score(a: str, b: str) -> float:
+    a_tokens = set(a.lower().split())
+    b_tokens = set(b.lower().split())
+    if not a_tokens or not b_tokens:
+        return 0.0
+    overlap = a_tokens & b_tokens
+    return len(overlap) / min(len(a_tokens), len(b_tokens))
 _MIN_HOLDOUT_DAYS = 5
 _MIN_RESEARCH_DAYS = 30
 
@@ -111,6 +124,7 @@ class StrategyResearchLoop:
         quant_coder: Callable | None = None,
         risk_critic: Callable | None = None,
         on_iteration: Callable | None = None,
+        hypothesis_registry: HypothesisRegistry | None = None,
     ):
         self._config = config or load_config()
         self._tools = tools or ResearchTools(self._config)
@@ -122,6 +136,9 @@ class StrategyResearchLoop:
         self._benchmark_returns: pd.Series | None = None
         self._benchmark_cache_key: str = ""
         self._llm = ResearchLlmClient(self._config) if self._config.llm_enabled else None
+        self._hypothesis_registry = hypothesis_registry
+        self._suggestion_results: dict[str, list[bool]] = {}
+        self._iteration_history_summary: list[str] = []
 
     async def run(
         self,
@@ -133,6 +150,8 @@ class StrategyResearchLoop:
         indicators: list[str] | None = None,
         initial_capital: float | None = None,
         universe: list[str] | None = None,
+        memory_context: str = "",
+        run_id: int = 0,
     ) -> ResearchResult:
         """
         `symbol` remains the primary ticker used for story/drawdown lookups (the
@@ -144,6 +163,9 @@ class StrategyResearchLoop:
         here, not a new engine capability. When `universe` has fewer than 2
         distinct symbols, behavior is identical to a single-symbol run.
         """
+        debug_log(f"run: {user_idea} on {symbol} from {from_date} to {to_date} (max_iter={self._config.max_iterations})", level=1)
+        if memory_context:
+            debug_log(f"memory_context:\n{memory_context}", level=2)
         best_result: BacktestResult | None = None
         best_iteration = -1
         history: list[IterationRecord] = []
@@ -174,6 +196,9 @@ class StrategyResearchLoop:
         # was actually requested — if not, the simulator won't have computed it and
         # injecting the filter would just run against a fake constant column.
         self._indicators = indicators or []
+        self._memory_context = memory_context
+        self._last_reasoning = ""
+        self._run_id = run_id
 
         # Fetched once up front (depends only on symbol + interval, not on research
         # dates or iteration state) so the strategy generator sees the same
@@ -188,10 +213,50 @@ class StrategyResearchLoop:
         # hardcoded indicators (sma_20, sma_50, rsi_14).
         self._feature_snapshot = await self._tools.get_feature_snapshot(symbol)
 
+        self._stock_profile = await self._characterize_stock(symbol)
+
+        goal_check = await self._validate_idea(user_idea, symbol)
+        if goal_check:
+            warning = goal_check.get("warning", "")
+            alt = goal_check.get("suggested_alternative", "")
+            LOG.warning("Idea suitability check for %s: %s", symbol, warning)
+            if alt:
+                LOG.warning("Suggested alternative for %s: %s", symbol, alt)
+
+        self._current_hypothesis = None
+        if self._hypothesis_registry is not None:
+            try:
+                existing = self._hypothesis_registry.query_by_symbol(symbol)
+                matched = None
+                if existing:
+                    best_score = 0.0
+                    for h in existing:
+                        score = _match_score(user_idea, h.strategy_type or "")
+                        if score >= 0.5 and score > best_score:
+                            matched = h
+                            best_score = score
+                    if matched:
+                        LOG.info("Matched hypothesis %s (score=%.2f)", matched.hypothesis_id, best_score)
+                if matched:
+                    self._current_hypothesis = matched
+                else:
+                    from datetime import datetime, timezone
+                    self._current_hypothesis = Hypothesis.create(
+                        title=user_idea,
+                        thesis=user_idea,
+                        universe=[symbol.upper()],
+                    )
+                    self._current_hypothesis.strategy_type = user_idea
+                    self._hypothesis_registry.create(self._current_hypothesis)
+            except Exception as e:
+                LOG.warning("Hypothesis registry error: %s", e)
+                self._current_hypothesis = None
+
         benchmark_symbol = self._config.benchmark_symbol
         bench_cache_key = f"{benchmark_symbol}:{research_from}:{research_to}"
 
         for iteration in range(1, self._config.max_iterations + 1):
+            debug_log(f"Iteration {iteration}/{self._config.max_iterations}", level=1)
             try:
                 if iteration == 1 and not strategy_code:
                     async with debug_timer(f"loop.gen-iter-{iteration}"):
@@ -242,7 +307,9 @@ class StrategyResearchLoop:
                     )
                 if result is None:
                     LOG.warning("Backtest returned no result, stopping")
+                    debug_log(f"Iteration {iteration}: backtest returned None — stopping", level=1)
                     break
+                debug_log(f"Iteration {iteration}: Sharpe={result.metrics.sharpe_ratio:.2f} Trades={result.trade_count} MaxDD={result.metrics.max_drawdown:.1%}", level=1)
 
                 if self._benchmark_returns is None or self._benchmark_cache_key != bench_cache_key:
                     self._benchmark_returns = await self._tools.get_benchmark_data(
@@ -280,6 +347,7 @@ class StrategyResearchLoop:
                 critic_feedback = await self._risk_critic(
                     result, story, drawdowns, iteration
                 )
+                debug_log(f"Iteration {iteration}: verdict={critic_feedback.verdict} suggestions={len(critic_feedback.suggestions)}", level=1)
 
                 # 2. Post-backtest Weight Holding Check
                 holding_errors = await self._verify_weights_holding(result.run_id)
@@ -290,16 +358,54 @@ class StrategyResearchLoop:
                         suggestions=critic_feedback.suggestions + holding_errors,
                     )
 
+                diagnosis = ""
+                if result.trade_count == 0:
+                    diagnosis = await self._diagnose_failure(
+                        strategy_code=strategy_code, result=result, symbol=symbol,
+                    )
+
+                for s in critic_feedback.suggestions:
+                    key = self._normalize_suggestion_key(s)
+                    self._suggestion_results.setdefault(key, [])
+                    if len(history) > 0:
+                        prev_sharpe = history[-1].result.metrics.sharpe_ratio
+                        improved = result.metrics.sharpe_ratio > prev_sharpe
+                        self._suggestion_results[key].append(improved)
+
+                self._iteration_history_summary.append(
+                    f"Iter {iteration}: Sharpe={result.metrics.sharpe_ratio:.2f}, "
+                    f"Trades={result.trade_count}, "
+                    f"Verdict={critic_feedback.verdict}"
+                )
+
+                should_pivot = False
+                if iteration >= 2 and result.metrics.sharpe_ratio < 0.1 and result.trade_count < 5:
+                    pivot_decision, pivot_confidence = await self._reflect()
+                    LOG.info("Meta-reflection: decision=%s, confidence=%.2f for %s", pivot_decision, pivot_confidence, symbol)
+                    debug_log(f"Iteration {iteration}: reflection decision={pivot_decision} confidence={pivot_confidence:.2f}", level=1)
+                    if pivot_decision == "pivot":
+                        should_pivot = True
+                    elif pivot_decision == "stop":
+                        if best_result is None:
+                            best_result = result
+                            best_iteration = iteration
+                        break
+
                 record = IterationRecord(
                     iteration=iteration,
                     strategy_code=strategy_code,
                     result=result,
                     critique=critic_feedback,
+                    reasoning=diagnosis or self._last_reasoning,
                 )
+                self._last_reasoning = ""
                 history.append(record)
 
                 if self._on_iteration:
                     self._on_iteration(record)
+
+                if should_pivot:
+                    break
 
                 if critic_feedback.verdict == "PASS":
                     if holdout_from and holdout_to:
@@ -366,6 +472,41 @@ class StrategyResearchLoop:
             (r for r in history if r.iteration == best_iteration),
             history[-1] if history else None,
         )
+
+        if self._hypothesis_registry is not None and self._current_hypothesis is not None:
+            try:
+                evidence_list = []
+                for rec in history:
+                    if rec.result.run_id.startswith("failed_verification"):
+                        continue
+                    m = rec.result.metrics
+                    ev = Evidence(
+                        run_id=self._run_id,
+                        iteration=rec.iteration,
+                        metric="sharpe",
+                        value=m.sharpe_ratio,
+                        conclusion="supports" if m.sharpe_ratio > 0.3 else "contradicts",
+                        reasoning=rec.critique.reasoning,
+                        metrics_snapshot={
+                            "sharpe": m.sharpe_ratio,
+                            "max_dd": m.max_drawdown,
+                            "trade_count": rec.result.trade_count,
+                            "win_rate": m.win_rate,
+                        },
+                    )
+                    evidence_list.append(ev)
+                if evidence_list:
+                    self._hypothesis_registry.add_evidence_batch(
+                        self._current_hypothesis.hypothesis_id, evidence_list,
+                    )
+                    debug_log(f"Wrote {len(evidence_list)} evidence items for hypothesis {self._current_hypothesis.hypothesis_id}", level=2)
+                if best_result and best_result.metrics.sharpe_ratio < 0.1 and not any(r.result.trade_count > 0 for r in history):
+                    self._hypothesis_registry.reject_with_reason(
+                        self._current_hypothesis.hypothesis_id,
+                        f"All {len(history)} iterations failed with no viable trades on {symbol}",
+                    )
+            except Exception as e:
+                LOG.warning("Failed to update hypothesis evidence: %s", e)
 
         walk_forward_result: WalkForwardResult | None = None
         if self._config.walk_forward_enabled and best_result and best_rec:
@@ -706,6 +847,166 @@ class StrategyResearchLoop:
         curr_sharpe = history[-1].result.metrics.sharpe_ratio
         return (curr_sharpe - prev_sharpe) > self._config.improvement_threshold
 
+    async def _characterize_stock(self, symbol: str) -> str:
+        profile_lines = []
+        if self._angle_context:
+            tl = self._angle_context.get("trend_lifecycle", {})
+            if tl:
+                vol = tl.get("volatility")
+                if vol:
+                    profile_lines.append(f"Annualized Volatility: {vol:.1%}")
+                profile_lines.append(f"Trend Stage: {tl.get('stage', 'unknown')}")
+                profile_lines.append(f"Trend Risk: {tl.get('risk', 'unknown')}")
+            reg = self._angle_context.get("regime", {})
+            if reg:
+                profile_lines.append(f"Regime: {reg.get('label', 'unknown')}")
+
+        if self._feature_snapshot:
+            data = self._feature_snapshot.get("data") or self._feature_snapshot.get("features") or {}
+            if isinstance(data, dict):
+                rsi = data.get("rsi_14")
+                if rsi is not None:
+                    profile_lines.append(f"Latest RSI(14): {rsi:.1f}")
+                adx = data.get("adx_14")
+                if adx is not None:
+                    profile_lines.append(f"Latest ADX(14): {adx:.1f}")
+                atr = data.get("atr_14")
+                if atr is not None:
+                    profile_lines.append(f"Latest ATR(14): {atr:.4f}")
+                sma_50 = data.get("sma_50")
+                close = data.get("close")
+                if close and sma_50:
+                    pct = (close - sma_50) / sma_50 * 100
+                    profile_lines.append(f"Price vs SMA(50): {pct:+.1f}%")
+
+        if not profile_lines:
+            return ""
+
+        base = "Stock characterization:\n" + "\n".join(profile_lines)
+
+        if self._llm and self._llm.is_configured():
+            try:
+                vol_val = None
+                if self._angle_context:
+                    tl = self._angle_context.get("trend_lifecycle", {})
+                    vol_val = tl.get("volatility")
+                feat_data = self._feature_snapshot.get("data") or self._feature_snapshot.get("features") or {} if self._feature_snapshot else {}
+                rsi_val = feat_data.get("rsi_14") if isinstance(feat_data, dict) else None
+                adx_val = feat_data.get("adx_14") if isinstance(feat_data, dict) else None
+                llm_profile = await self._llm.characterize_stock(
+                    symbol=symbol,
+                    angle_context=self._angle_context,
+                    volatility=vol_val,
+                    adx=adx_val,
+                )
+                if llm_profile and isinstance(llm_profile, dict):
+                    reasoning = llm_profile.get("reasoning", "")
+                    rec = llm_profile.get("recommended_approaches", [])
+                    avoid = llm_profile.get("avoid_approaches", [])
+                    extra = []
+                    if rec:
+                        extra.append(f"Recommended approaches: {', '.join(rec)}")
+                    if avoid:
+                        extra.append(f"Avoid approaches: {', '.join(avoid)}")
+                    if reasoning:
+                        extra.append(f"Reasoning: {reasoning}")
+                    if extra:
+                        base += "\n" + "\n".join(extra)
+            except Exception as e:
+                LOG.warning("LLM stock characterization failed: %s", e)
+
+        return base
+
+    async def _diagnose_failure(
+        self,
+        strategy_code: str,
+        result: BacktestResult,
+        symbol: str,
+    ) -> str:
+        if not self._llm or not self._llm.is_configured():
+            return ""
+        stock_profile = getattr(self, "_stock_profile", "")
+        try:
+            diag = await self._llm.diagnose_failure(
+                strategy_code=strategy_code,
+                sharpe=result.metrics.sharpe_ratio,
+                max_dd=result.metrics.max_drawdown,
+                trade_count=result.trade_count,
+                symbol=symbol,
+                stock_profile=stock_profile or None,
+            )
+            if diag and isinstance(diag, dict):
+                parts = []
+                rc = diag.get("root_cause", "")
+                cat = diag.get("category", "")
+                rec = diag.get("recommendation", "")
+                if rc:
+                    parts.append(f"Root cause: {rc}")
+                if cat:
+                    parts.append(f"Category: {cat}")
+                if rec:
+                    parts.append(f"Recommendation: {rec}")
+                return "\n".join(parts) if parts else ""
+        except Exception as e:
+            LOG.warning("Failure diagnosis failed: %s", e)
+        return ""
+
+    async def _validate_idea(self, user_idea: str, symbol: str) -> dict[str, Any] | None:
+        stock_profile = getattr(self, "_stock_profile", "")
+        if not stock_profile or not self._llm or not self._llm.is_configured():
+            return None
+        try:
+            result = await self._llm.validate_idea(user_idea, symbol, stock_profile)
+            if result and isinstance(result, dict):
+                confidence = float(result.get("confidence", 0.5))
+                suitable = result.get("is_suitable", True)
+                LOG.info("Idea validation for %s: suitable=%s, confidence=%.2f", symbol, suitable, confidence)
+                if not suitable:
+                    return result
+        except Exception as e:
+            LOG.warning("Idea validation failed: %s", e)
+        return None
+
+    async def _reflect(self) -> tuple[str, float]:
+        if len(self._iteration_history_summary) < 2:
+            return "continue", 0.0
+        if not self._llm or not self._llm.is_configured():
+            return "continue", 0.0
+        try:
+            history_str = "\n".join(self._iteration_history_summary[-2:])
+            result = await self._llm.suggest_pivot(
+                user_idea=getattr(self, "_user_idea", ""),
+                symbol=getattr(self, "_symbol", ""),
+                history_summary=history_str,
+            )
+            if result and isinstance(result, dict):
+                decision = result.get("decision", "continue")
+                confidence = float(result.get("confidence", 0.5))
+                return decision, confidence
+        except Exception as e:
+            LOG.warning("Reflection failed: %s", e)
+        return "continue", 0.0
+
+    @staticmethod
+    def _normalize_suggestion_key(suggestion: str) -> str:
+        import re
+        s = re.sub(r"\d+\.?\d*", "", suggestion)
+        s = re.sub(r"\s+", " ", s).strip().lower()
+        return s[:80]
+
+    def _filter_ineffective_suggestions(self, suggestions: list[str]) -> list[str]:
+        if not self._suggestion_results:
+            return suggestions
+        effective = []
+        for s in suggestions:
+            key = self._normalize_suggestion_key(s)
+            results = self._suggestion_results.get(key, [])
+            if not results or any(results):
+                effective.append(s)
+            else:
+                LOG.debug("Filtering out ineffective suggestion: %s", s)
+        return effective
+
     async def _default_quant_coder(
         self,
         user_idea: str,
@@ -724,6 +1025,38 @@ class StrategyResearchLoop:
             feat = getattr(self, "_feature_snapshot", None)
             if feat:
                 story["features"] = feat
+        mem = getattr(self, "_memory_context", "")
+        if mem:
+            if story is None:
+                story = {}
+            story["memory_context"] = mem
+        sp = getattr(self, "_stock_profile", "")
+        if sp:
+            if story is None:
+                story = {}
+            story["stock_profile"] = sp
+        hyp = getattr(self, "_current_hypothesis", None)
+        if hyp is not None and hyp.evidence:
+            hyp_lines = [f"Hypothesis status: {hyp.status.value}"]
+            if hyp.best_sharpe > 0:
+                hyp_lines.append(f"Best Sharpe: {hyp.best_sharpe:.2f}")
+            if hyp.invalidation_reason:
+                hyp_lines.append(f"Previously rejected: {hyp.invalidation_reason}")
+            if hyp.evidence:
+                for e in hyp.evidence[-3:]:
+                    hyp_lines.append(f"  Iter {e.iteration}: {e.metric}={e.value:.2f} → {e.conclusion}")
+            hyp_str = "\n".join(hyp_lines)
+            if story is None:
+                story = {}
+            story["memory_context"] = (story.get("memory_context", "") + "\n\n" + hyp_str).strip()
+        max_iter = getattr(self._config, "max_iterations", 10) if hasattr(self, "_config") else 10
+        if iteration >= 0.8 * max_iter:
+            remaining = max_iter - iteration
+            budget_note = f"Only {remaining} iteration(s) remain — converge on your best attempt rather than starting a new approach."
+            if story is None:
+                story = {}
+            existing_mem = story.get("memory_context", "")
+            story["memory_context"] = (existing_mem + "\n\n" + budget_note).strip()
         indicators = ["sma_20", "sma_50", "rsi_14"]
         symbol = self._symbol if hasattr(self, "_symbol") else ""
         from_date = self._from_date if hasattr(self, "_from_date") else ""
@@ -748,6 +1081,7 @@ class StrategyResearchLoop:
                     # candidate the LLM happened to return first.
                     ranked = rank_candidates(candidates)
                     best = ranked[0].candidate
+                    self._last_reasoning = best.reasoning
                     llm_code = best.code
                     LOG.info(
                         "LLM generated strategy (ranked best of %d candidates, score=%.1f): %s",
@@ -781,6 +1115,7 @@ class StrategyResearchLoop:
             if candidates:
                 ranked = rank_candidates(candidates)
                 best = ranked[0].candidate
+                self._last_reasoning = best.reasoning
                 LOG.info(
                     "LLM refined strategy (ranked best of %d candidates, score=%.1f): %s",
                     len(candidates), ranked[0].score, best.reasoning[:100],
@@ -817,7 +1152,8 @@ class StrategyResearchLoop:
                         return_line = i
                         break
 
-            filters = self._generate_filters(last_critique.suggestions)
+            filtered = self._filter_ineffective_suggestions(last_critique.suggestions)
+            filters = self._generate_filters(filtered)
             if filters and return_line is not None:
                 indent = "        "
                 for f_line in reversed(filters):

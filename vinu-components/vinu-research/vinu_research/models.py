@@ -17,6 +17,19 @@ class HypothesisStatus(Enum):
 
 
 @dataclass
+class Evidence:
+    run_id: int
+    iteration: int
+    metric: str
+    value: float
+    conclusion: str
+    reasoning: str
+    timestamp: str = ""
+    metrics_snapshot: dict[str, float] | None = None
+    report_path: str | None = None
+
+
+@dataclass
 class Hypothesis:
     hypothesis_id: str
     title: str
@@ -25,6 +38,12 @@ class Hypothesis:
     universe: list[str] = field(default_factory=list)
     signal_definition: str = ""
     run_cards: list[str] = field(default_factory=list)
+    strategy_type: str = ""
+    indicators_used: list[str] = field(default_factory=list)
+    params_tested: dict[str, Any] = field(default_factory=dict)
+    evidence: list[Evidence] = field(default_factory=list)
+    invalidation_reason: str | None = None
+    best_sharpe: float = 0.0
     created_at: str = ""
     updated_at: str = ""
 
@@ -51,6 +70,10 @@ class Goal:
     objective: str
     criteria: list[str] = field(default_factory=list)
     status: str = "pending"
+    llm_calls_budget: int = 0
+    llm_calls_used: int = 0
+    time_budget_seconds: float = 0.0
+    time_used_seconds: float = 0.0
 
 
 class ArtifactStatus(Enum):
@@ -220,6 +243,7 @@ class IterationRecord:
     strategy_code: str
     result: BacktestResult
     critique: CriticFeedback
+    reasoning: str = ""
 
 
 @dataclass
@@ -305,6 +329,18 @@ class StressTestResult:
         if not evaluated:
             return None
         return all(w.passed for w in evaluated)
+
+
+@dataclass
+class DecisionRecord:
+    iteration: int
+    hypothesis: str
+    approach_chosen: str
+    alternatives_considered: list[str]
+    reasoning: str
+    expected_outcome: str
+    actual_result: BacktestResult | None = None
+    diagnosis: str | None = None
 
 
 @dataclass

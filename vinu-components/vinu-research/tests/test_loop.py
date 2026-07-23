@@ -4,8 +4,44 @@ import numpy as np
 import pandas as pd
 
 from vinu_research.config import ResearchConfig
-from vinu_research.loop import StrategyResearchLoop, _LRUCache, _split_research_and_holdout
+from vinu_research.loop import StrategyResearchLoop, _LRUCache, _match_score, _split_research_and_holdout
 from vinu_research.models import BacktestMetrics, BacktestResult, CriticFeedback, IterationRecord, LlmCandidate
+
+
+class TestMatchScore:
+    def test_high_overlap_returns_ge_05(self):
+        assert _match_score("mean reversion with bollinger bands", "mean reversion using bollinger bands strategy") >= 0.5
+
+    def test_no_overlap_returns_zero(self):
+        assert _match_score("mean reversion with bollinger bands", "trend following momentum breakout") == 0.0
+
+    def test_identical_strings_returns_one(self):
+        assert _match_score("momentum strategy", "momentum strategy") == 1.0
+
+    def test_empty_string_returns_zero(self):
+        assert _match_score("", "some strategy") == 0.0
+        assert _match_score("some strategy", "") == 0.0
+
+
+class TestNormalizeSuggestionKey:
+    def test_lowercases_and_strips(self):
+        result = StrategyResearchLoop._normalize_suggestion_key("  Add ADX Filter  ")
+        assert result == "add adx filter"
+
+    def test_removes_numbers(self):
+        result = StrategyResearchLoop._normalize_suggestion_key("Iteration 3: reduce position size by 50%")
+        assert "3" not in result
+        assert "50" not in result
+        assert result.startswith("iteration : reduce position size by %")
+
+    def test_collapses_whitespace(self):
+        result = StrategyResearchLoop._normalize_suggestion_key("tighten    stop   loss")
+        assert result == "tighten stop loss"
+
+    def test_truncates_to_80_chars(self):
+        long = "x" * 100
+        result = StrategyResearchLoop._normalize_suggestion_key(long)
+        assert len(result) == 80
 
 
 class TestLRUCache:

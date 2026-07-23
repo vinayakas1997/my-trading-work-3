@@ -7,10 +7,20 @@ from vinu_initial_analysis.net import request
 
 LOG = logging.getLogger(__name__)
 
+_INTERVAL_MAP: dict[str, str] = {
+    "15min": "15m",
+    "1W": "1wk",
+    "1M": "1mo",
+    "6M": "6mo",
+}
+
 
 class PriceClient:
     def __init__(self, base_url: str):
         self._base = base_url.rstrip("/")
+
+    def _map_interval(self, interval: str) -> str:
+        return _INTERVAL_MAP.get(interval, interval)
 
     def get_candles(
         self,
@@ -26,7 +36,7 @@ class PriceClient:
         if to_ts is not None:
             params["to"] = to_ts
         if interval is not None:
-            params["interval"] = interval
+            params["interval"] = self._map_interval(interval)
         if limit is not None:
             params["limit"] = limit
         resp = request("GET", f"{self._base}/candles/{symbol.upper()}", params=params)

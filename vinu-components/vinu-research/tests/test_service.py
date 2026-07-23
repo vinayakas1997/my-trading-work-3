@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from vinu_research.models import Goal
+from vinu_research.service import _has_violated_goal_constraints
 from vinu_research.storage import STATUS_DONE, STATUS_FAILED, STATUS_PENDING
 
 
@@ -117,3 +119,25 @@ class TestContextManager:
     async def test_properties(self, service, storage):
         assert service.config is not None
         assert service.storage is storage
+
+
+class TestGoalCompliance:
+    def test_violated_when_llm_calls_exceed_budget(self):
+        goal = Goal(goal_id="g1", hypothesis_id="h1", objective="test", llm_calls_budget=5, llm_calls_used=6)
+        assert _has_violated_goal_constraints(goal) is True
+
+    def test_not_violated_when_llm_calls_within_budget(self):
+        goal = Goal(goal_id="g2", hypothesis_id="h1", objective="test", llm_calls_budget=5, llm_calls_used=3)
+        assert _has_violated_goal_constraints(goal) is False
+
+    def test_not_violated_when_no_budget_set(self):
+        goal = Goal(goal_id="g3", hypothesis_id="h1", objective="test", llm_calls_budget=0, llm_calls_used=100)
+        assert _has_violated_goal_constraints(goal) is False
+
+    def test_violated_when_time_exceeds_budget(self):
+        goal = Goal(goal_id="g4", hypothesis_id="h1", objective="test", time_budget_seconds=60.0, time_used_seconds=120.0)
+        assert _has_violated_goal_constraints(goal) is True
+
+    def test_not_violated_within_all_budgets(self):
+        goal = Goal(goal_id="g5", hypothesis_id="h1", objective="test", llm_calls_budget=10, llm_calls_used=5, time_budget_seconds=100.0, time_used_seconds=50.0)
+        assert _has_violated_goal_constraints(goal) is False
