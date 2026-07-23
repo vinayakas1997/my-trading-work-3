@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from vinu_lib.debug import sync_timer
+
 import numpy as np
 import pandas as pd
 
@@ -51,7 +53,8 @@ def simulate_custom(
                     data[col] = ind_df[col]
 
         try:
-            weights = strategy.generate_weights(data)
+            with sync_timer(f"weights.{sym}"):
+                weights = strategy.generate_weights(data)
         except Exception as e:
             LOG.warning("generate_weights failed for %s: %s, using zeros", sym, e)
             per_ticker_weights[sym] = pd.Series(index=data.index, data=0.0)

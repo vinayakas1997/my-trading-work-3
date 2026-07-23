@@ -8,6 +8,7 @@ import logging
 import sys
 import time
 
+from vinu_lib.debug import setup_logging
 from vinu_stock.config import load_config
 from vinu_stock.server.app import create_app
 from vinu_stock.service import StockService
@@ -47,10 +48,7 @@ def backfill_main(argv: list[str] | None = None) -> None:
     _parse_data_args(parser)
     args = parser.parse_args(argv)
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
+    setup_logging("stock-price", verbose=args.verbose)
     _apply_env_overrides(args)
 
     with StockService() as service:
@@ -73,10 +71,7 @@ def ingest_main(argv: list[str] | None = None) -> None:
     _parse_data_args(parser)
     args = parser.parse_args(argv)
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
+    setup_logging("stock-price", verbose=args.verbose)
     _apply_env_overrides(args)
 
     interval = args.interval

@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 
+from vinu_lib.debug import setup_logging
 from vinu_simulator.api import SimulatorAPI
 from vinu_simulator.config import load_config
 from vinu_simulator.server.app import create_app
@@ -108,7 +109,7 @@ def main(argv: list[str] | None = None) -> None:
     metrics_p.set_defaults(func=metrics_main)
 
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.WARN)
+    setup_logging("simulator")
 
     if hasattr(args, "func"):
         args.func(args)

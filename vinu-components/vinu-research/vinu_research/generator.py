@@ -423,7 +423,7 @@ def _safe_format(template: str, values: dict[str, Any]) -> str:
 
 
 def _extract_params(body: str) -> list[str]:
-    return re.findall(r"\{(\w+)\}", body)
+    return list(dict.fromkeys(re.findall(r"\{(\w+)\}", body)))
 
 
 def _generate_from_description(

@@ -13,6 +13,7 @@ from vinu_simulator.clients.features_client import FeaturesClient
 from vinu_simulator.clients.price_client import PriceClient
 from vinu_simulator.clients.strategy_client import StrategyClient
 from vinu_simulator.config import load_config
+from vinu_lib.debug import sync_timer
 from vinu_simulator.engine.custom_sim import simulate_custom as _run_custom_sim
 from vinu_simulator.engine.metrics import compute_performance_metrics, periods_per_year_for_interval
 from vinu_simulator.engine.run_card import write_run_card
@@ -193,6 +194,10 @@ class SimulatorService:
         return result
 
     def simulate_custom(self, req: CustomSimulateRequest) -> SimulationResult:
+        with sync_timer(f"simulate_custom.{req.class_name}"):
+            return self._simulate_custom_impl(req)
+
+    def _simulate_custom_impl(self, req: CustomSimulateRequest) -> SimulationResult:
         from vinu_simulator.engine.ast_guard import validate_strategy_code
         violations = validate_strategy_code(req.strategy_code)
         if violations:
@@ -224,9 +229,22 @@ class SimulatorService:
         start_date = req.start_date
         end_date = req.end_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
+        # Pre-pend required imports if the strategy code omits them
+        # (e.g. LLM-generated code often ignores the prompt's import instruction).
+        required_imports = (
+            "from __future__ import annotations\n"
+            "import pandas as pd\n"
+            "import numpy as np\n"
+            "from vinu_simulator.engine.strategies import BaseStrategy\n"
+            "\n"
+        )
+        code = req.strategy_code
+        if not code.startswith("from ") and not code.startswith("import "):
+            code = required_imports + code
+
         namespace: dict[str, Any] = {}
         try:
-            exec(req.strategy_code, namespace)
+            exec(code, namespace)
         except Exception as e:
             raise ValueError(f"Failed to compile strategy code: {e}") from e
 

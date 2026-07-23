@@ -8,6 +8,7 @@ import logging
 import sys
 import time
 
+from vinu_lib.debug import setup_logging
 from vinu_news.config import load_config
 from vinu_news.server.app import create_app
 from vinu_news.service import NewsService
@@ -48,10 +49,7 @@ def ingest_main(argv: list[str] | None = None) -> None:
     _parse_common_db_args(parser)
     args = parser.parse_args(argv)
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
+    setup_logging("news", verbose=args.verbose)
 
     if args.db:
         import os
@@ -173,7 +171,7 @@ def backfill_main(argv: list[str] | None = None) -> None:
         import os
         os.environ["VINU_NEWS_DB_PATH"] = args.db
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    setup_logging("news")
 
     def run() -> None:
         with NewsService() as service:

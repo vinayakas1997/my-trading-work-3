@@ -349,9 +349,13 @@ def step_news(ticker: str, article_count: int, wait_sec: float = 180.0) -> dict:
             return False
 
     targets = [a for a in articles[:article_count] if a.get("url") or a.get("id")]
-    with ThreadPoolExecutor(max_workers=min(5, len(targets))) as pool:
-        results = list(pool.map(_analyze_one, targets))
-    analyzed = sum(1 for r in results if r)
+    if not targets:
+        _log("!", f"No articles found for {ticker} after polling {wait_sec}s — skipping analysis")
+        analyzed = 0
+    else:
+        with ThreadPoolExecutor(max_workers=min(5, len(targets))) as pool:
+            results = list(pool.map(_analyze_one, targets))
+        analyzed = sum(1 for r in results if r)
 
     return {"articles_found": len(articles), "articles_analyzed": analyzed}
 

@@ -67,11 +67,16 @@ def list_angles():
 def get_angle(angle_name: str, ticker: str):
     svc = _get_svc()
     df = svc.storage.read(ticker.upper(), angle_name)
+    records = df.to_dict("records") if not df.empty else []
+    for rec in records:
+        for k, v in rec.items():
+            if isinstance(v, float) and (v != v):
+                rec[k] = None
     return {
         "symbol": ticker.upper(),
         "angle": angle_name,
-        "row_count": len(df),
-        "data": df.to_dict("records") if not df.empty else [],
+        "row_count": len(records),
+        "data": records,
     }
 
 

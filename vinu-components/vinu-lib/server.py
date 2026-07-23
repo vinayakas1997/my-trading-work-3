@@ -13,6 +13,7 @@ Security:
 
 from __future__ import annotations
 
+import math
 import os
 import time
 from contextlib import asynccontextmanager
@@ -26,6 +27,22 @@ from fastapi.routing import APIRouter
 from starlette.staticfiles import StaticFiles
 
 from vinu_lib.auth import VINU_API_KEY, require_auth
+
+
+def _replace_nan(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: _replace_nan(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_replace_nan(v) for v in obj]
+    if isinstance(obj, float) and math.isnan(obj):
+        return None
+    return obj
+
+
+_original_render = JSONResponse.render
+def _safe_render(self, content: Any) -> bytes:
+    return _original_render(self, _replace_nan(content))
+JSONResponse.render = _safe_render
 
 
 def create_app(

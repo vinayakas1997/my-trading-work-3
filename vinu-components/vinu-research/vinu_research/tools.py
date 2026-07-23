@@ -191,7 +191,7 @@ class ResearchTools:
     async def get_feature_snapshot(
         self,
         symbol: str,
-        recipe: str = "alpha158",
+        recipe: str = "sma_20,sma_50,rsi_14",
     ) -> dict[str, Any] | None:
         """Fetch a snapshot of computed features for a symbol from vinu-tools.
 
@@ -199,10 +199,13 @@ class ResearchTools:
         vinu-strategy's WeightPipeline uses). Returns the raw response dict
         (column names and latest values) or None if unavailable.
         """
+        params = {}
+        if recipe:
+            params["indicators"] = recipe
         try:
             resp = await self._features_client.get(
                 f"/features/{symbol.upper()}",
-                params={"indicators": recipe},
+                params=params,
             )
             if isinstance(resp, dict):
                 return resp

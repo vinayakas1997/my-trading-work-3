@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from vinu_lib.debug import debug_timer
 from vinu_lib.llm.cache import LlmCache
 from vinu_lib.llm.config import LlmConfig
 from vinu_lib.llm.docker import alternative_urls, is_running_in_docker
@@ -110,6 +111,10 @@ class AsyncLlmClient:
         start = time.perf_counter()
         await self._limiter.wait_async()
 
+        async with debug_timer(f"llm.{self._config.model}"):
+            return await self._chat_request(system, user, cache_key, start)
+
+    async def _chat_request(self, system: str, user: str, cache_key: str, start: float) -> dict[str, Any] | None:
         payload = {
             "model": self._config.model,
             "messages": [
@@ -168,7 +173,7 @@ class AsyncLlmClient:
                     break
                 except httpx.RequestError as e:
                     last_error = e
-                    LOG.warning("LLM request error to %s: %s", candidate_base, e)
+                    LOG.warning("LLM request error to %s (%s): %s", candidate_base, type(e).__name__, e)
                     if attempt < self._config.retry_max - 1:
                         delay = (2 ** attempt) * 1.0
                         LOG.warning("LLM retrying in %.1fs (attempt %d/%d)", delay, attempt + 1, self._config.retry_max)

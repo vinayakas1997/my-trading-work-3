@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from vinu_lib.debug import setup_logging
 from vinu_initial_analysis.api import CorrelationAPI
 from vinu_initial_analysis.clients.news_client import NewsClient
 from vinu_initial_analysis.clients.price_client import PriceClient
@@ -62,7 +63,7 @@ def compute_main(argv: list[str] | None = None) -> None:
     news_client = NewsClient(config.news_api_url)
     price_client = PriceClient(config.stock_api_url)
     runner = AngleRunner(storage, run_log, news_client=news_client, price_client=price_client)
-    logging.basicConfig(level=logging.INFO)
+    setup_logging("initial-analysis")
 
     def _resolve_tickers() -> list[str]:
         if args.tickers:
@@ -226,7 +227,7 @@ def main(argv: list[str] | None = None) -> None:
     news_client = NewsClient(config.news_api_url)
     price_client = PriceClient(config.stock_api_url)
     runner = AngleRunner(storage, run_log, news_client=news_client, price_client=price_client)
-    logging.basicConfig(level=logging.INFO)
+    setup_logging("initial-analysis")
 
     if args.command == "run":
         LOG.info("Running analysis for %s...", args.ticker.upper())

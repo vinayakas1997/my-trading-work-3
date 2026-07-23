@@ -1,8 +1,11 @@
 import argparse
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
+
+from vinu_lib.debug import setup_logging
 
 from .broker.alpaca import AlpacaBroker
 from .broker.kill_switch import halt_trading, is_trading_halted, resume_trading
@@ -219,6 +222,7 @@ def _cmd_mandate(args) -> None:
 
 
 def main() -> None:
+    setup_logging("agent")
     args = _parse_args()
     if args.command == "serve":
         from .server.app import run

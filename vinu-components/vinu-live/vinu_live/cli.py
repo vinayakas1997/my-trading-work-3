@@ -5,6 +5,7 @@ import asyncio
 import logging
 import time
 
+from vinu_lib.debug import setup_logging
 from vinu_live.config import load_config
 from vinu_live.scheduler import LiveScheduler
 
@@ -96,10 +97,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(levelname)s [%(name)s] %(message)s",
-    )
+    setup_logging("live")
     if hasattr(args, "func"):
         args.func(args)
     else:

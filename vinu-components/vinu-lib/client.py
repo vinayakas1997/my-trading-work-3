@@ -8,6 +8,8 @@ from typing import Any, Callable
 
 import httpx
 
+from vinu_lib.debug import debug_timer
+
 LOG = logging.getLogger(__name__)
 
 _CircuitState = str
@@ -166,6 +168,12 @@ class ResilientClient:
             return fb
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        url = f"{self._base_url}{path}"
+        label = f"http.{method} {url}"
+        async with debug_timer(label):
+            return await self._request_impl(method, path, **kwargs)
+
+    async def _request_impl(self, method: str, path: str, **kwargs: Any) -> Any:
         url = f"{self._base_url}{path}"
         last_exc: Exception | None = None
         for attempt in range(self._max_retries):

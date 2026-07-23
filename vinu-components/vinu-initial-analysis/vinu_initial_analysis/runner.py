@@ -92,7 +92,8 @@ class AngleRunner:
 
         for angle in to_run:
             try:
-                count = self._run_angle(symbol, angle, from_ts, to_ts)
+                with sync_timer(f"angle.{angle['name']}"):
+                    count = self._run_angle(symbol, angle, from_ts, to_ts)
                 results[angle["name"]] = {
                     "status": "completed",
                     "row_count": count,

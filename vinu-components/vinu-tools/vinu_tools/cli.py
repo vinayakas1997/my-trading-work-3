@@ -8,6 +8,7 @@ import logging
 import sys
 import time
 
+from vinu_lib.debug import setup_logging
 from vinu_tools.compute.feature_catalog import format_help, indicator_meta_to_dict, list_indicators
 from vinu_tools.config import load_config
 from vinu_tools.server.app import create_app
@@ -73,10 +74,7 @@ def _handle_list(args: argparse.Namespace, service: FeatureService) -> None:
 
 
 def _handle_worker(args: argparse.Namespace, service: FeatureService) -> None:
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
+    setup_logging("features", verbose=args.verbose)
 
     if args.loop:
         while True:

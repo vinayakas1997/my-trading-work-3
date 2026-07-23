@@ -4,6 +4,7 @@ import asyncio
 import ast
 import builtins
 import logging
+import re
 from typing import Any
 
 import numpy as np
@@ -176,6 +177,31 @@ Make it robust, parameterizable, and suitable for the described market condition
     return prompt
 
 
+def _summarize_strategy(code: str) -> str:
+    parts = []
+    init_m = re.search(r'def __init__\(self,\s*([^)]+)\)', code)
+    if init_m:
+        raw = init_m.group(1)
+        params = [p.strip().split(":")[0].split("=")[0].strip() for p in raw.split(",") if p.strip()]
+        parts.append(f"Params: {', '.join(params)}")
+    indicators = set()
+    for ind in ['sma_20', 'sma_50', 'rsi_14', 'rsi', 'sma', 'ema', 'bb', 'atr', 'macd']:
+        if ind.lower() in code.lower():
+            indicators.add(ind)
+    if indicators:
+        parts.append(f"Indicators: {', '.join(sorted(indicators))}")
+    body_m = re.search(r'def generate_weights\([^)]+\):.*', code, re.DOTALL)
+    if body_m:
+        body = body_m.group()
+        comments = re.findall(r'#\s*(.+)', body)
+        if comments:
+            logic = '; '.join(c.strip() for c in comments[:5])
+            parts.append(f"Logic: {logic}")
+    non_comment_lines = [l for l in code.split('\n') if l.strip() and not l.strip().startswith('#') and not l.strip().startswith('from ') and not l.strip().startswith('import ')]
+    parts.append(f"Size: {len(non_comment_lines)} logic lines")
+    return '\n'.join(parts) if parts else f"Strategy with {len(code.splitlines())} lines"
+
+
 def _build_refinement_prompt(
     user_idea: str,
     symbol: str,
@@ -197,10 +223,8 @@ def _build_refinement_prompt(
         f"Period: {from_date} → {to_date}",
         f"Available indicators: {ind_list}",
         "",
-        "Previous strategy code:",
-        "```python",
-        previous_code,
-        "```",
+        "Previous strategy summary:",
+        _summarize_strategy(previous_code),
         "",
         "Backtest results for the code above:",
         f"- Sharpe: {m.sharpe_ratio:.2f}",
@@ -342,23 +366,17 @@ class LlmStrategyGenerator:
     ) -> list[LlmCandidate]:
         angles = (story or {}).get("angles")
         features = (story or {}).get("features")
-        results = await asyncio.gather(
-            *[
-                self._refine_one(
+        candidates: list[LlmCandidate] = []
+        for i in range(n_candidates):
+            try:
+                c = await self._refine_one(
                     user_idea, symbol, from_date, to_date, previous_code,
                     last_result, last_critique, indicators, angles, features,
                 )
-                for _ in range(n_candidates)
-            ],
-            return_exceptions=True,
-        )
-
-        candidates: list[LlmCandidate] = []
-        for i, r in enumerate(results):
-            if isinstance(r, Exception):
-                LOG.warning("LLM refinement candidate %d generation failed: %s", i + 1, r)
-            elif r is not None:
-                candidates.append(r)
+                if c is not None:
+                    candidates.append(c)
+            except Exception as e:
+                LOG.warning("LLM refinement candidate %d generation failed: %s", i + 1, e)
         return candidates
 
     async def _refine_one(

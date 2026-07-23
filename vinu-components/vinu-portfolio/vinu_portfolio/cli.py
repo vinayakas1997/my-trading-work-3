@@ -6,6 +6,7 @@ import json
 import logging
 import sys
 
+from vinu_lib.debug import setup_logging
 from vinu_portfolio.config import load_config
 from vinu_portfolio.service import PortfolioService
 
@@ -55,10 +56,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(levelname)s [%(name)s] %(message)s",
-    )
+    setup_logging("portfolio")
     if hasattr(args, "func"):
         args.func(args)
     else:

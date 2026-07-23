@@ -1,0 +1,72 @@
+{
+  "schema_version": "0.1",
+  "generated_at": "2026-07-23T08:41:22.057377+00:00",
+  "run_id": "6deb86f0-3fcf-4818-8ac2-bfbab4e2d5ca",
+  "run_dir": "/data/simulations/6d/6deb86f0-3fcf-4818-8ac2-bfbab4e2d5ca",
+  "backtest": {
+    "codes": [
+      "JPM"
+    ],
+    "start_date": "2022-01-01",
+    "end_date": "2022-10-15",
+    "interval": "1d",
+    "initial_cash": 1000000.0
+  },
+  "reproducibility": {
+    "config_hash": "",
+    "strategy_hash": ""
+  },
+  "metrics": {
+    "total_return": -0.05317686357476292,
+    "cagr": -0.0678441348253872,
+    "annual_volatility": 0.03556919671439854,
+    "sharpe_ratio": -1.9569153262054049,
+    "sortino_ratio": -0.4250605376851277,
+    "max_drawdown": -0.05317686357476292,
+    "calmar_ratio": -1.2758205404499483,
+    "win_rate": 0.0,
+    "skewness": -10.544814993631185,
+    "kurtosis": 121.64487191159175,
+    "var_95": 0.0,
+    "var_99": -0.008213392753668136,
+    "cvar_95": -0.00027621391345722786,
+    "tail_ratio": 0.0,
+    "max_dd_duration_days": 157,
+    "avg_drawdown": -0.04526936053874065,
+    "recovery_time_days": 0,
+    "profit_factor": 0.0,
+    "avg_win_pct": 0.0,
+    "avg_loss_pct": -0.009022987839602778,
+    "win_loss_ratio": 0.0,
+    "hit_rate": 0.0,
+    "sharpe_standard_error": 0.12194760494524542,
+    "sharpe_p_value": 5.9819739203888406e-58,
+    "sharpe_ci_95_low": -2.195932631898086,
+    "sharpe_ci_95_high": -1.7178980205127239,
+    "annual_turnover": 6.275516079153307
+  },
+  "trade_count": 6,
+  "equity_points": 197,
+  "artifacts": [
+    {
+      "path": "/data/simulations/6d/6deb86f0-3fcf-4818-8ac2-bfbab4e2d5ca/equity.parquet",
+      "size_bytes": 3968,
+      "sha256": "81b646fbedb95f2e40e53153c1b109668902fb26deabe28de06eeabf228ab389"
+    },
+    {
+      "path": "/data/simulations/6d/6deb86f0-3fcf-4818-8ac2-bfbab4e2d5ca/weights.parquet",
+      "size_bytes": 3611,
+      "sha256": "ad66ad2d8008e7e05d37f37088b1a43e4e13d39887e66cd0e4bddf581f840550"
+    },
+    {
+      "path": "/data/simulations/6d/6deb86f0-3fcf-4818-8ac2-bfbab4e2d5ca/trades.parquet",
+      "size_bytes": 2591,
+      "sha256": "1274d058a87d81f4b6e499c4f7bbbb2317697f6a3ce552651a9a27b6e82c42f3"
+    },
+    {
+      "path": "/data/simulations/6d/6deb86f0-3fcf-4818-8ac2-bfbab4e2d5ca/meta.json",
+      "size_bytes": 140,
+      "sha256": "f58eb803deaef8b7063dcca89a7fbb836f05821a5e48b3f2d545e3aa54804d1f"
+    }
+  ]
+}

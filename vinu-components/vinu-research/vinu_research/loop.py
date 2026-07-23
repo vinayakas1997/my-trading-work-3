@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 import pandas as pd
 
+from vinu_lib.debug import debug_timer
 from vinu_research.comparison import rank_candidates
 from vinu_research.config import ResearchConfig, load_config
 from vinu_research.generator import find_recipe, generate_strategy
@@ -193,14 +194,16 @@ class StrategyResearchLoop:
         for iteration in range(1, self._config.max_iterations + 1):
             try:
                 if iteration == 1 and not strategy_code:
-                    strategy_code = await self._quant_coder(
-                        user_idea, iteration, None, None
-                    )
+                    async with debug_timer(f"loop.gen-iter-{iteration}"):
+                        strategy_code = await self._quant_coder(
+                            user_idea, iteration, None, None
+                        )
                 elif iteration > 1:
                     last = history[-1]
-                    strategy_code = await self._quant_coder(
-                        user_idea, iteration, last.result, last.critique, last.strategy_code
-                    )
+                    async with debug_timer(f"loop.gen-iter-{iteration}"):
+                        strategy_code = await self._quant_coder(
+                            user_idea, iteration, last.result, last.critique, last.strategy_code
+                        )
 
                 # 1. Static AST Verification Check
                 verification_errors = self._verify_strategy_code(strategy_code)
@@ -230,12 +233,13 @@ class StrategyResearchLoop:
                         self._on_iteration(record)
                     continue
 
-                result = await self._run_backtest(
-                    strategy_code, symbol, research_from, research_to,
-                    indicators=indicators,
-                    initial_capital=initial_capital,
-                    symbols=backtest_symbols,
-                )
+                async with debug_timer(f"loop.backtest-iter-{iteration}"):
+                    result = await self._run_backtest(
+                        strategy_code, symbol, research_from, research_to,
+                        indicators=indicators,
+                        initial_capital=initial_capital,
+                        symbols=backtest_symbols,
+                    )
                 if result is None:
                     LOG.warning("Backtest returned no result, stopping")
                     break
@@ -365,18 +369,20 @@ class StrategyResearchLoop:
 
         walk_forward_result: WalkForwardResult | None = None
         if self._config.walk_forward_enabled and best_result and best_rec:
-            walk_forward_result = await self._run_walk_forward(
-                strategy_code=best_rec.strategy_code,
-                symbol=symbol,
-                from_date=from_date,
-                to_date=to_date,
-                indicators=indicators,
-                initial_capital=initial_capital,
-            )
+            async with debug_timer("loop.walk-forward"):
+                walk_forward_result = await self._run_walk_forward(
+                    strategy_code=best_rec.strategy_code,
+                    symbol=symbol,
+                    from_date=from_date,
+                    to_date=to_date,
+                    indicators=indicators,
+                    initial_capital=initial_capital,
+                )
 
         stress_test_result: StressTestResult | None = None
         if best_result and best_rec:
-            stress_test_result = await self._run_stress_test(
+            async with debug_timer("loop.stress-test"):
+                stress_test_result = await self._run_stress_test(
                 strategy_code=best_rec.strategy_code,
                 symbol=symbol,
                 indicators=indicators,

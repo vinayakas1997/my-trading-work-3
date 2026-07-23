@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from vinu_lib.debug import setup_logging
 from vinu_research.config import ResearchConfig, load_config
 from vinu_research.loop import StrategyResearchLoop
 from vinu_research.models import IterationRecord
@@ -618,10 +619,7 @@ def recipes_main(args: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
-    logging.basicConfig(
-        level=logging.WARN,
-        format="%(levelname)s [%(name)s] %(message)s",
-    )
+    setup_logging("research")
     if hasattr(args, "func"):
         args.func(args)
     else:
