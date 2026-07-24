@@ -20,7 +20,7 @@ class SimulateRequest(BaseModel):
     allow_short: bool = True
     deviation_threshold: float | None = None
     dry_run: bool = False
-    run_validation: bool = Field(default=False, description="Run full validation suite (Monte Carlo, bootstrap, walk-forward, attribution). Results go to run_card on disk — not returned in API response.")
+    run_validation: bool = Field(default=False, description="Run full validation suite (Monte Carlo, block-bootstrap, price-path resample, bootstrap CI, walk-forward, attribution). Results are returned in the API response and persisted on the run record (queryable later via GET /results/{run_id} and GET /runs).")
     full_metrics: bool = Field(default=True, description="Compute extended metrics (VaR, CVaR, drawdown, win/loss ratios, Sharpe CI, turnover). When False, only basic metrics are returned.")
 
 
@@ -32,6 +32,7 @@ class SimulateResponse(BaseModel):
     benchmark_metrics: dict[str, dict[str, float]] = Field(default_factory=dict)
     trade_count: int
     equity_points: int
+    validation: dict[str, Any] | None = None
 
 
 class MetricRow(BaseModel):
@@ -48,6 +49,8 @@ class RunSummary(BaseModel):
     benchmark_metrics: dict[str, dict[str, float]]
     trade_count: int
     equity_points: int
+    validation: dict[str, Any] | None = None
+    symbols: list[str] = Field(default_factory=list)
 
 
 class SettingsResponse(BaseModel):
@@ -81,7 +84,7 @@ class CustomSimulateRequest(BaseModel):
     deviation_threshold: float | None = None
     interval: Literal["1m", "5m", "15m", "30m", "1h", "4h", "1d"] = "1d"
     indicators: list[str] | None = None
-    run_validation: bool = Field(default=False, description="Run full validation suite (Monte Carlo, bootstrap, walk-forward, attribution). Results go to run_card on disk — not returned in API response.")
+    run_validation: bool = Field(default=False, description="Run full validation suite (Monte Carlo, block-bootstrap, price-path resample, bootstrap CI, walk-forward, attribution). Results are returned in the API response and persisted on the run record (queryable later via GET /results/{run_id} and GET /runs).")
     full_metrics: bool = Field(default=True, description="Compute extended metrics (VaR, CVaR, drawdown, win/loss ratios, Sharpe CI, turnover). When False, only basic metrics are returned.")
 
 
@@ -93,6 +96,7 @@ class CustomSimulateResponse(BaseModel):
     benchmark_metrics: dict[str, dict[str, float]] = Field(default_factory=dict)
     trade_count: int
     equity_points: int
+    validation: dict[str, Any] | None = None
 
 
 class SimulateDryRunResponse(BaseModel):

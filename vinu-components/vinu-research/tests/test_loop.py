@@ -719,3 +719,89 @@ class TestBestResultSelection:
         assert result.best_iteration == 2
         assert len(result.iterations) == 3
 
+
+class TestCheckMcGate:
+    def make_result(self, validation: dict | None) -> BacktestResult:
+        metrics = BacktestMetrics(sharpe_ratio=1.0)
+        return BacktestResult(
+            run_id="r1", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=10, equity_points=100,
+            raw={"validation": validation} if validation is not None else {},
+        )
+
+    def test_no_validation_present_does_not_gate(self):
+        loop = StrategyResearchLoop()
+        result = self.make_result(None)
+        assert loop._check_mc_gate(result) is None
+
+    def test_passing_verdict_does_not_gate(self):
+        loop = StrategyResearchLoop()
+        result = self.make_result({"verdict": {"passed": True, "reasons": ["ok"]}})
+        assert loop._check_mc_gate(result) is None
+
+    def test_failing_verdict_stops_with_reasons(self):
+        loop = StrategyResearchLoop()
+        result = self.make_result({
+            "verdict": {"passed": False, "reasons": ["Trade-permutation p-value 0.4 >= 0.05 (FAIL)"]},
+        })
+        feedback = loop._check_mc_gate(result)
+        assert feedback is not None
+        assert feedback.verdict == "STOP"
+        assert "Trade-permutation p-value" in feedback.reasoning
+        assert feedback.suggestions == ["Trade-permutation p-value 0.4 >= 0.05 (FAIL)"]
+
+    def test_missing_verdict_key_fails_closed(self):
+        # A validation dict without a "verdict" sub-object must not silently
+        # pass what's meant to be a hard, un-bypassable gate.
+        loop = StrategyResearchLoop()
+        result = self.make_result({"monte_carlo": {"p_value": 0.5}})
+        feedback = loop._check_mc_gate(result)
+        assert feedback is not None
+        assert feedback.verdict == "STOP"
+
+    def test_gate_short_circuits_run_before_refinement(self, monkeypatch):
+        import asyncio
+
+        loop = StrategyResearchLoop()
+        failing_result = self.make_result({"verdict": {"passed": False, "reasons": ["bad"]}})
+
+        async def fake_coder(idea, iteration, last_result=None, last_critique=None, previous_code=None):
+            return "class UserStrategy:\n    pass\n"
+
+        calls = {"backtest": 0, "critic": 0}
+
+        async def fake_backtest(*args, **kwargs):
+            calls["backtest"] += 1
+            return failing_result
+
+        async def fake_critic(*args, **kwargs):
+            calls["critic"] += 1
+            return CriticFeedback(verdict="PASS", reasoning="should not run", suggestions=[])
+
+        async def _noop(*args, **kwargs):
+            return None
+
+        async def _empty_dict(*args, **kwargs):
+            return {}
+
+        loop._quant_coder = fake_coder
+        loop._risk_critic = fake_critic
+        monkeypatch.setattr(loop, "_run_backtest", fake_backtest)
+        monkeypatch.setattr(loop._tools, "get_angle_context", _empty_dict)
+        monkeypatch.setattr(loop._tools, "get_feature_snapshot", _empty_dict)
+        monkeypatch.setattr(loop._tools, "get_story", _empty_dict)
+        monkeypatch.setattr(loop._tools, "get_drawdowns", _noop)
+        monkeypatch.setattr(loop._tools, "get_benchmark_data", _noop)
+
+        result = asyncio.run(loop.run(
+            user_idea="SMA crossover",
+            symbol="AAPL",
+            from_date="2024-01-01",
+            to_date="2024-06-01",
+        ))
+
+        assert calls["backtest"] == 1
+        assert calls["critic"] == 0
+        assert len(result.iterations) == 1
+        assert result.iterations[0].critique.verdict == "STOP"
+

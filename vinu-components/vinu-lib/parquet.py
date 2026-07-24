@@ -6,6 +6,8 @@ Usage:
     store = ParquetStore("/data/parquet")
     store.append("AAPL/2026.parquet", records, dedup_on=["article_id"])
     table = store.read("AAPL/2026.parquet")
+    table = store.read_shard("live/AAPL_*.parquet")
+    store.consolidate("live/AAPL_*.parquet", "archive/AAPL_2026.parquet", dedup_on=["id"])
 """
 
 from __future__ import annotations
@@ -56,6 +58,59 @@ class ParquetStore:
             except Exception:
                 return None
         return None
+
+    def read_shard(
+        self,
+        rel_glob: str,
+        dedup_on: list[str] | None = None,
+    ) -> pa.Table | None:
+        matching = sorted(self._root.glob(rel_glob))
+        if not matching:
+            return None
+        tables = []
+        for p in matching:
+            try:
+                tbl = pq.read_table(p)
+                tables.append(tbl)
+            except Exception:
+                continue
+        if not tables:
+            return None
+        combined = pa.concat_tables(tables)
+        if dedup_on:
+            combined = _dedup_table(combined, dedup_on)
+        return combined
+
+    def consolidate(
+        self,
+        shard_glob: str,
+        output_rel_path: str,
+        dedup_on: list[str] | None = None,
+    ) -> int:
+        shards = sorted(self._root.glob(shard_glob))
+        if not shards:
+            return 0
+        tables = []
+        for p in shards:
+            try:
+                tbl = pq.read_table(p)
+                tables.append(tbl)
+            except Exception:
+                continue
+        if not tables:
+            return 0
+        combined = pa.concat_tables(tables)
+        if dedup_on:
+            combined = _dedup_table(combined, dedup_on)
+        output_path = self._resolve(output_rel_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(combined, output_path)
+        for shard in shards:
+            try:
+                shard.unlink()
+            except OSError:
+                pass
+        return combined.num_rows
 
     def compact(self, rel_path: str) -> None:
         table = self.read(rel_path)

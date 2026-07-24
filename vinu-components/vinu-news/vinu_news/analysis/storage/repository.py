@@ -1,15 +1,18 @@
-"""SQLite repository for enriched news articles and thread analytics."""
+"""SQLite repository for enriched news articles and thread analytics.
+
+Uses vinu-lib's SQLiteBackend for thread-local connection management,
+WAL mode, and schema lifecycle.
+"""
 
 from __future__ import annotations
 
-import sqlite3
-import threading
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
+from vinu_lib.sqlite import SQLiteBackend
 from vinu_news.analysis.storage.fts import init_fts
 from vinu_news.analysis.storage.models import ArticleRecord, EnrichedArticle, TickerMention
 
@@ -58,24 +61,16 @@ def normalize_link(link: str) -> str:
     return normalized
 
 
-class NewsRepository:
+class NewsRepository(SQLiteBackend):
     def __init__(self, db_path: str | Path | None = None) -> None:
-        self.db_path = Path(db_path) if db_path else DEFAULT_DB_PATH
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._local = threading.local()
-        conn = self._get_conn()
-        self._init_schema(conn)
+        path = str(Path(db_path) if db_path else DEFAULT_DB_PATH)
+        super().__init__(path)
 
-    def _get_conn(self) -> sqlite3.Connection:
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = sqlite3.connect(str(self.db_path))
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
-            self._local.conn = conn
-        return conn
+    @property
+    def db_path(self) -> Path:
+        return self._db_path
 
-    def _init_schema(self, conn: sqlite3.Connection) -> None:
+    def _init_schema(self, conn: Any) -> None:
         schema = SCHEMA_PATH.read_text(encoding="utf-8")
         conn.executescript(schema)
         self._migrate(conn)
@@ -84,7 +79,7 @@ class NewsRepository:
         from vinu_news.analysis.enrichment.ticker_db import sync_ticker_db_if_needed
         sync_ticker_db_if_needed(conn)
 
-    def _migrate(self, conn: sqlite3.Connection) -> None:
+    def _migrate(self, conn: Any) -> None:
         existing = {
             row[1]
             for row in conn.execute("PRAGMA table_info(articles)").fetchall()
@@ -96,19 +91,8 @@ class NewsRepository:
                 )
 
     @property
-    def conn(self) -> sqlite3.Connection:
+    def conn(self) -> Any:
         return self._get_conn()
-
-    def close(self) -> None:
-        conn = getattr(self._local, "conn", None)
-        if conn is not None:
-            conn.close()
-
-    def __enter__(self) -> NewsRepository:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        self.close()
 
     def link_exists(self, link: str) -> bool:
         normalized = normalize_link(link)

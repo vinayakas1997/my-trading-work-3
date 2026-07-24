@@ -132,6 +132,7 @@ class ResearchService:
                 tools=tools,
                 config=self._config,
                 hypothesis_registry=hypothesis_registry,
+                storage=self._storage,
             )
             result = await loop.run(
                 user_idea=user_idea,
@@ -149,18 +150,21 @@ class ResearchService:
             record.status = STATUS_DONE
             record.total_iterations = result.total_iterations
             record.best_iteration = result.best_iteration or -1
+            # n_trials is cumulative across every past run for this symbol
+            # (queried before this run's own row is updated below, so it
+            # doesn't double-count this run's iterations) plus this run's
+            # own iterations — otherwise the decay-scan re-research loop
+            # would reset the multiple-comparisons correction to ~n_iterations
+            # every single time it re-researches the same symbol. Fetched
+            # unconditionally (not just when a best_result exists) so a run
+            # that fails to produce a passing candidate still counts its
+            # iterations toward the symbol's lifetime trial history.
+            prior_trials = await self._run_in_thread(
+                self._storage.cumulative_trial_count, symbol,
+            )
             if result.best_result:
                 record.best_sharpe = result.best_result.metrics.sharpe_ratio
                 record.best_max_dd = result.best_result.metrics.max_drawdown
-                # n_trials is cumulative across every past run for this symbol
-                # (queried before this run's own row is updated below, so it
-                # doesn't double-count this run's iterations) plus this run's
-                # own iterations — otherwise the decay-scan re-research loop
-                # would reset the multiple-comparisons correction to ~n_iterations
-                # every single time it re-researches the same symbol.
-                prior_trials = await self._run_in_thread(
-                    self._storage.cumulative_trial_count, symbol,
-                )
                 n_trials = prior_trials + result.total_iterations
                 n_obs = max(result.best_result.equity_points - 1, 2)
                 record.deflated_sharpe = deflated_sharpe_ratio(
@@ -180,6 +184,13 @@ class ResearchService:
             if best_rec:
                 record.strategy_code = best_rec.strategy_code
             await self._run_in_thread(self._storage.update_run, record)
+
+            total_trials = prior_trials + result.total_iterations
+            await self._run_in_thread(
+                self._storage.update_catalog_after_run,
+                symbol, record.id or 0, total_trials,
+                record.best_sharpe, validated=False,
+            )
 
             response = {
                 "id": record.id,
@@ -366,6 +377,7 @@ class ResearchService:
                 tools=tools,
                 config=self._config,
                 hypothesis_registry=hypothesis_registry,
+                storage=self._storage,
             )
             result = await loop.run(
                 user_idea=f"Refine existing strategy for {artifact.name}",

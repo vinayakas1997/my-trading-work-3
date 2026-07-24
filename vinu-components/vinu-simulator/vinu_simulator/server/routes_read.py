@@ -60,6 +60,7 @@ async def simulate(req: SimulateRequest) -> SimulateResponse:
         benchmark_metrics=result.benchmark_metrics,
         trade_count=len(result.trades),
         equity_points=len(result.portfolio_values),
+        validation=result.validation,
     )
 
 
@@ -75,6 +76,7 @@ async def simulate_custom(req: CustomSimulateRequest) -> CustomSimulateResponse:
         benchmark_metrics=result.benchmark_metrics,
         trade_count=len(result.trades),
         equity_points=len(result.portfolio_values),
+        validation=result.validation,
     )
 
 
@@ -130,9 +132,10 @@ async def get_run_trades(run_id: str) -> list[dict[str, Any]]:
 @router.get("/runs")
 async def list_runs(
     strategy: str | None = Query(default=None),
+    symbol: str | None = Query(default=None),
 ) -> list[RunSummary]:
     svc = _get_service()
-    return await _run_sync(svc.list_runs, strategy)
+    return await _run_sync(svc.list_runs, strategy, symbol)
 
 
 @router.delete("/runs/{run_id}")

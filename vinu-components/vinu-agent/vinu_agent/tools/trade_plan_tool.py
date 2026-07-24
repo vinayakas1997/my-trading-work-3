@@ -177,25 +177,28 @@ class TradePlanTool(BaseTool):
         symbol: str,
     ) -> dict:
         try:
-            runs_resp = await client.get(f"{base_url}/runs")
+            runs_resp = await client.get(f"{base_url}/runs", params={"symbol": symbol})
             if runs_resp.status_code != 200:
                 return {"status": "unavailable"}
             runs = runs_resp.json()
             if not runs:
-                return {"status": "no_runs"}
-
-            candidate = None
-            for r in runs:
-                codes = r.get("config", {}).get("symbols", [])
-                if symbol in codes or symbol in r.get("config", {}).get("tickers", []):
-                    candidate = r
-                    break
-            if not candidate:
                 return {"status": "no_matching_run"}
 
+            candidate = runs[0]
             run_id = candidate.get("run_id") or candidate.get("id")
             if not run_id:
                 return {"status": "no_run_id"}
+
+            # RunSummary already carries validation for the most recent matching
+            # run — avoid an extra round trip unless it's missing.
+            validation = candidate.get("validation")
+            if validation is not None:
+                return {
+                    "run_id": run_id,
+                    "status": "available",
+                    "metrics": candidate.get("metrics", {}),
+                    "validation": validation,
+                }
 
             result_resp = await client.get(f"{base_url}/results/{run_id}")
             if result_resp.status_code != 200:

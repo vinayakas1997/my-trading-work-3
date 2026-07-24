@@ -10,6 +10,7 @@ import pandas as pd
 
 from vinu_lib.debug import debug_log, debug_timer
 from vinu_research.comparison import rank_candidates
+from vinu_research.storage.sqlite_backend import ResearchStorage
 from vinu_research.config import ResearchConfig, load_config
 from vinu_research.generator import find_recipe, generate_strategy
 from vinu_research.hypothesis_registry import HypothesisRegistry
@@ -125,12 +126,14 @@ class StrategyResearchLoop:
         risk_critic: Callable | None = None,
         on_iteration: Callable | None = None,
         hypothesis_registry: HypothesisRegistry | None = None,
+        storage: ResearchStorage | None = None,
     ):
         self._config = config or load_config()
         self._tools = tools or ResearchTools(self._config)
         self._quant_coder = quant_coder or self._default_quant_coder
         self._risk_critic = risk_critic or self._default_risk_critic
         self._on_iteration = on_iteration
+        self._storage = storage
         self._story_cache = _LRUCache()
         self._drawdown_cache = _LRUCache()
         self._benchmark_returns: pd.Series | None = None
@@ -311,6 +314,21 @@ class StrategyResearchLoop:
                     break
                 debug_log(f"Iteration {iteration}: Sharpe={result.metrics.sharpe_ratio:.2f} Trades={result.trade_count} MaxDD={result.metrics.max_drawdown:.1%}", level=1)
 
+                # Monte Carlo gate — short-circuit if first backtest fails validation
+                mc_gate = self._check_mc_gate(result)
+                if mc_gate is not None:
+                    critic_feedback = mc_gate
+                    record = IterationRecord(
+                        iteration=iteration,
+                        strategy_code=strategy_code,
+                        result=result,
+                        critique=critic_feedback,
+                    )
+                    history.append(record)
+                    if self._on_iteration:
+                        self._on_iteration(record)
+                    break
+
                 if self._benchmark_returns is None or self._benchmark_cache_key != bench_cache_key:
                     self._benchmark_returns = await self._tools.get_benchmark_data(
                         benchmark_symbol, research_from, research_to,
@@ -400,6 +418,15 @@ class StrategyResearchLoop:
                 )
                 self._last_reasoning = ""
                 history.append(record)
+
+                if self._storage is not None and self._run_id > 0:
+                    self._storage.save_checkpoint(
+                        run_id=self._run_id,
+                        iteration=iteration,
+                        code=strategy_code or "",
+                        metrics={"sharpe": result.metrics.sharpe_ratio, "max_dd": result.metrics.max_drawdown, "trade_count": result.trade_count},
+                        critic_verdict=critic_feedback.verdict if hasattr(critic_feedback, "verdict") else "",
+                    )
 
                 if self._on_iteration:
                     self._on_iteration(record)
@@ -1427,6 +1454,7 @@ class StrategyResearchLoop:
         result: BacktestResult,
         story: dict[str, Any] | None,
         rules_feedback: CriticFeedback,
+        catalog_entry: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         if not hasattr(self, "_llm") or self._llm is None:
             return None
@@ -1434,7 +1462,7 @@ class StrategyResearchLoop:
             return None
         prompt = _build_risk_critic_prompt(
             user_idea, symbol, from_date, to_date,
-            result, rules_feedback, story,
+            result, rules_feedback, story, catalog_entry,
         )
         try:
             return await self._llm.chat_json(LLM_SYSTEM_PROMPT, prompt)
@@ -1466,6 +1494,50 @@ class StrategyResearchLoop:
             suggestions=new_suggestions,
         )
 
+    def _check_mc_gate(self, result: BacktestResult) -> CriticFeedback | None:
+        val = result.raw.get("validation")
+        if val is None:
+            return None
+        verdict = val.get("verdict", {})
+        if verdict.get("passed", False):
+            return None
+        reasons = verdict.get("reasons", []) or ["Validation verdict missing or malformed"]
+        return CriticFeedback(
+            verdict="STOP",
+            reasoning="Monte Carlo validation gate failed: " + "; ".join(reasons),
+            suggestions=reasons,
+        )
+
+    def _cross_run_comparison(self) -> CriticFeedback | None:
+        symbol = getattr(self, "_symbol", "")
+        if not symbol or self._storage is None:
+            return None
+        catalog = self._storage.get_catalog_entry(symbol)
+        if catalog is None:
+            return None
+        lt = catalog.get("lifetime_trial_count", 0)
+        bs = catalog.get("best_sharpe_ever", 0.0)
+
+        if lt >= 10 and bs < 0.3:
+            return CriticFeedback(
+                verdict="STOP",
+                reasoning=f"Cross-run: {lt} lifetime trials on {symbol}, best Sharpe ever {bs:.2f}",
+                suggestions=[f"Symbol {symbol} has yielded no viable strategy after {lt} trials — try a different symbol or fundamentally new approach"],
+            )
+        if lt >= 5 and bs < 0.1:
+            return CriticFeedback(
+                verdict="STOP",
+                reasoning=f"Cross-run: {lt} lifetime trials on {symbol}, best Sharpe ever {bs:.2f}",
+                suggestions=[f"Symbol {symbol} shows no edge after {lt} trials across all prior research runs"],
+            )
+        if lt >= 3 and bs < 0.5:
+            return CriticFeedback(
+                verdict="REFINE",
+                reasoning=f"Cross-run: {lt} prior trials on {symbol}, best Sharpe {bs:.2f}",
+                suggestions=[f"Best Sharpe ever on {symbol} is {bs:.2f} after {lt} trials — consider pivoting symbol or approach"],
+            )
+        return None
+
     async def _default_risk_critic(
         self,
         result: BacktestResult,
@@ -1473,13 +1545,35 @@ class StrategyResearchLoop:
         drawdowns: dict[str, Any] | None,
         iteration: int,
     ) -> CriticFeedback:
+        cross = self._cross_run_comparison()
+        if cross is not None and cross.verdict == "STOP":
+            return cross
+
         rules = self._rule_based_check(result, story, drawdowns, iteration)
+
+        if cross is not None:
+            merged_suggestions = list(rules.suggestions)
+            for s in cross.suggestions:
+                if s not in merged_suggestions:
+                    merged_suggestions.append(s)
+            rules = CriticFeedback(
+                verdict=rules.verdict,
+                reasoning=f"{rules.reasoning} | {cross.reasoning}",
+                suggestions=merged_suggestions,
+            )
+
+        catalog_entry = None
+        if self._storage is not None:
+            catalog_entry = self._storage.get_catalog_entry(
+                getattr(self, "_symbol", "")
+            )
+
         llm = await self._llm_enhanced_check(
             self._user_idea if hasattr(self, "_user_idea") else "",
             self._symbol if hasattr(self, "_symbol") else "",
             self._from_date if hasattr(self, "_from_date") else "",
             self._to_date if hasattr(self, "_to_date") else "",
-            result, story, rules,
+            result, story, rules, catalog_entry=catalog_entry,
         )
         return self._merge_feedback(rules, llm)
 

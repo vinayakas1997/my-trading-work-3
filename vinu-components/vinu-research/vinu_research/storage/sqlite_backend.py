@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import sqlite3
-import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from vinu_lib.sqlite import SQLiteBackend
 from vinu_research.storage.models import ResearchRunRecord, STATUS_APPROVED, STATUS_DELETED, STATUS_DONE
 
+SCHEMA_VERSION = 2
 
-_SCHEMA = """
+_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS research_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_idea TEXT NOT NULL,
@@ -34,57 +35,45 @@ CREATE TABLE IF NOT EXISTS research_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_research_status ON research_runs(status);
 CREATE INDEX IF NOT EXISTS idx_research_symbol ON research_runs(symbol);
+CREATE TABLE IF NOT EXISTS research_catalog (
+    symbol TEXT PRIMARY KEY,
+    lifetime_trial_count INTEGER NOT NULL DEFAULT 0,
+    last_run_id INTEGER,
+    last_run_ts TEXT,
+    last_validated_ts TEXT,
+    best_sharpe_ever REAL NOT NULL DEFAULT 0.0,
+    status TEXT NOT NULL DEFAULT 'active'
+);
+CREATE TABLE IF NOT EXISTS iteration_checkpoints (
+    run_id INTEGER NOT NULL,
+    iteration INTEGER NOT NULL,
+    code TEXT NOT NULL DEFAULT '',
+    metrics TEXT,
+    critic_verdict TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, iteration)
+);
 """
 
+_MIGRATIONS: list[tuple[str, str]] = [
+    ("ALTER TABLE research_runs ADD COLUMN strategy_code TEXT NOT NULL DEFAULT ''", "add_strategy_code"),
+    ("ALTER TABLE research_runs ADD COLUMN deflated_sharpe REAL NOT NULL DEFAULT 0.0", "add_deflated_sharpe"),
+    ("ALTER TABLE research_runs ADD COLUMN holdout_passed INTEGER", "add_holdout_passed"),
+    ("ALTER TABLE research_runs ADD COLUMN stress_test_passed INTEGER", "add_stress_test_passed"),
+]
 
-class ResearchStorage:
+
+class ResearchStorage(SQLiteBackend):
+    SCHEMA = _SCHEMA
+    SCHEMA_VERSION = SCHEMA_VERSION
+    MIGRATIONS = _MIGRATIONS
+
     def __init__(self, db_path: Path) -> None:
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._local = threading.local()
-
-    def _get_conn(self) -> sqlite3.Connection:
-        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = sqlite3.connect(str(self.db_path))
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
-            conn.row_factory = sqlite3.Row
-            conn.executescript(_SCHEMA)
-            self._migrate_schema(conn)
-            self._local.conn = conn
-        return conn
-
-    @staticmethod
-    def _migrate_schema(conn: sqlite3.Connection) -> None:
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(research_runs)")}
-        if "strategy_code" not in cols:
-            try:
-                conn.execute("ALTER TABLE research_runs ADD COLUMN strategy_code TEXT NOT NULL DEFAULT ''")
-                conn.commit()
-            except sqlite3.OperationalError:
-                pass
-        if "deflated_sharpe" not in cols:
-            try:
-                conn.execute("ALTER TABLE research_runs ADD COLUMN deflated_sharpe REAL NOT NULL DEFAULT 0.0")
-                conn.commit()
-            except sqlite3.OperationalError:
-                pass
-        if "holdout_passed" not in cols:
-            try:
-                conn.execute("ALTER TABLE research_runs ADD COLUMN holdout_passed INTEGER")
-                conn.commit()
-            except sqlite3.OperationalError:
-                pass
-        if "stress_test_passed" not in cols:
-            try:
-                conn.execute("ALTER TABLE research_runs ADD COLUMN stress_test_passed INTEGER")
-                conn.commit()
-            except sqlite3.OperationalError:
-                pass
+        super().__init__(db_path)
+        self.db_path = self._db_path
 
     def close(self) -> None:
-        conn = getattr(self._local, "conn", None)
+        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is not None:
             conn.close()
             self._local.conn = None
@@ -248,6 +237,138 @@ class ResearchStorage:
             "total_runs": total,
             "status_counts": {r["status"]: r["cnt"] for r in by_status},
         }
+
+    # ── Catalog methods ──────────────────────────────────────────────
+
+    def update_catalog_after_run(
+        self,
+        symbol: str,
+        run_id: int,
+        trial_count: int,
+        sharpe: float,
+        validated: bool = False,
+    ) -> None:
+        """Record a completed research run against a symbol's lifetime catalog.
+
+        `trial_count` must already be the symbol's *full* lifetime trial
+        total (prior runs' iterations, via `cumulative_trial_count`, plus this
+        run's own) — callers compute that before calling this, so this is a
+        plain overwrite of `lifetime_trial_count`, not an additive delta
+        (adding here on top of an already-cumulative value would double-count
+        prior runs). `best_sharpe_ever` is the one field that genuinely needs
+        max-across-history semantics, since callers only ever pass *this*
+        run's best Sharpe, not a running best.
+        """
+        conn = self._get_conn()
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """INSERT INTO research_catalog
+               (symbol, lifetime_trial_count, last_run_id, last_run_ts,
+                last_validated_ts, best_sharpe_ever, status)
+               VALUES (?, ?, ?, ?, ?, ?, 'active')
+               ON CONFLICT (symbol) DO UPDATE SET
+               lifetime_trial_count = excluded.lifetime_trial_count,
+               last_run_id = excluded.last_run_id,
+               last_run_ts = excluded.last_run_ts,
+               last_validated_ts = COALESCE(excluded.last_validated_ts, last_validated_ts),
+               best_sharpe_ever = MAX(best_sharpe_ever, excluded.best_sharpe_ever),
+               status = excluded.status""",
+            (
+                symbol.upper(), trial_count, run_id, now,
+                now if validated else None, sharpe,
+            ),
+        )
+        conn.commit()
+
+    def get_catalog_entry(self, symbol: str) -> dict[str, Any] | None:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM research_catalog WHERE symbol = ?", (symbol.upper(),)
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def list_catalog(self) -> list[dict[str, Any]]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM research_catalog ORDER BY symbol"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_stale_catalog(self, days: int = 30) -> list[dict[str, Any]]:
+        conn = self._get_conn()
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        rows = conn.execute(
+            "SELECT * FROM research_catalog WHERE "
+            "last_validated_ts IS NULL OR "
+            "last_validated_ts < ? ORDER BY symbol",
+            (cutoff.isoformat(),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── Checkpoint methods ───────────────────────────────────────────
+
+    def save_checkpoint(
+        self,
+        run_id: int,
+        iteration: int,
+        code: str = "",
+        metrics: dict[str, Any] | None = None,
+        critic_verdict: str = "",
+    ) -> None:
+        self.insert_or_ignore(
+            "iteration_checkpoints",
+            {
+                "run_id": run_id,
+                "iteration": iteration,
+                "code": code,
+                "metrics": __import__("json").dumps(metrics or {}),
+                "critic_verdict": critic_verdict,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+            conflict_columns=["run_id", "iteration"],
+        )
+
+    def get_last_checkpoint(self, run_id: int) -> dict[str, Any] | None:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM iteration_checkpoints WHERE run_id = ? "
+            "ORDER BY iteration DESC LIMIT 1",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        try:
+            result["metrics"] = __import__("json").loads(result["metrics"])
+        except (ValueError, TypeError):
+            result["metrics"] = {}
+        return result
+
+    def list_checkpoints(self, run_id: int) -> list[dict[str, Any]]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM iteration_checkpoints WHERE run_id = ? "
+            "ORDER BY iteration ASC",
+            (run_id,),
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["metrics"] = __import__("json").loads(d["metrics"])
+            except (ValueError, TypeError):
+                d["metrics"] = {}
+            result.append(d)
+        return result
+
+    def delete_checkpoints(self, run_id: int) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "DELETE FROM iteration_checkpoints WHERE run_id = ?", (run_id,)
+        )
+        conn.commit()
 
     @staticmethod
     def _row_to_record(row: sqlite3.Row | None) -> ResearchRunRecord | None:

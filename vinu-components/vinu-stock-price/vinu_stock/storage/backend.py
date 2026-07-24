@@ -1,12 +1,16 @@
-"""Meta SQLite backend: catalog, settings, watchlist."""
+"""Meta SQLite backend: catalog, settings, watchlist.
+
+Uses vinu-lib's SQLiteBackend for thread-local connection management,
+WAL mode, and schema lifecycle.
+"""
 
 from __future__ import annotations
 
 import sqlite3
-import threading
 from pathlib import Path
 
-from vinu_stock.catalog.store import CatalogStore, open_catalog_db
+from vinu_lib.sqlite import SQLiteBackend
+from vinu_stock.catalog.store import CatalogStore
 from vinu_stock.config import settings_env_defaults
 from vinu_stock.settings.store import SettingsStore, SettingsView
 from vinu_stock.watchlist.store import WatchlistStore
@@ -14,17 +18,13 @@ from vinu_stock.watchlist.store import WatchlistStore
 _SCHEMA_DIR = Path(__file__).resolve().parent.parent
 
 
-class MetaBackend:
+class MetaBackend(SQLiteBackend):
     def __init__(self, meta_db_path: Path) -> None:
-        self.meta_db_path = meta_db_path
-        self._local = threading.local()
-        conn = open_catalog_db(meta_db_path)
-        try:
-            self._init_schema(conn)
-        finally:
-            conn.close()
+        super().__init__(meta_db_path)
+        self.meta_db_path = self._db_path
 
     def _init_schema(self, conn: sqlite3.Connection) -> None:
+        super()._init_schema(conn)
         CatalogStore(conn).init_schema(
             (_SCHEMA_DIR / "catalog" / "schema.sql").read_text(encoding="utf-8")
         )
@@ -36,13 +36,6 @@ class MetaBackend:
             (_SCHEMA_DIR / "watchlist" / "schema.sql").read_text(encoding="utf-8")
         )
         conn.commit()
-
-    def _get_conn(self) -> sqlite3.Connection:
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = open_catalog_db(self.meta_db_path)
-            self._local.conn = conn
-        return conn
 
     @property
     def catalog(self) -> CatalogStore:
@@ -61,17 +54,6 @@ class MetaBackend:
         if not hasattr(self._local, "_watchlist"):
             self._local._watchlist = WatchlistStore(self._get_conn())
         return self._local._watchlist
-
-    def close(self) -> None:
-        conn = getattr(self._local, "conn", None)
-        if conn is not None:
-            conn.close()
-
-    def __enter__(self) -> MetaBackend:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        self.close()
 
     def get_settings(self) -> SettingsView:
         return self.settings.get_all()

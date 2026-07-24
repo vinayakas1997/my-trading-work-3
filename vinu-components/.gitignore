@@ -1,0 +1,37 @@
+# Virtual environments
+.venv/
+venv/
+
+# Data files (SQLite, WAL, SHM)
+*.db
+*.db-shm
+*.db-wal
+
+# LLM cache / generated data
+*.jsonl
+*.lock
+*.csv
+
+# Logs
+logs/
+
+# Generated output
+output/
+
+# Catboost training artifacts
+catboost_info/
+
+# Secrets
+.env
+!.env.example
+
+# Simulation results (regenerable)
+data/simulator/simulations/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

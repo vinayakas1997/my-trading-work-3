@@ -60,6 +60,7 @@ class SimulatorService:
             daily_returns=daily_returns,
             weights_history=pd.DataFrame(),
             trades=trades,
+            validation=row.get("validation"),
         )
 
     def simulate(self, req: SimulateRequest) -> SimulationResult:
@@ -88,6 +89,7 @@ class SimulatorService:
             "allow_short": req.allow_short,
             "deviation_threshold": req.deviation_threshold,
             "full_metrics": req.full_metrics,
+            "run_validation": req.run_validation,
         })
         cached = self._meta_storage.get_run_by_config_hash(config_hash)
         if cached is not None:
@@ -146,6 +148,13 @@ class SimulatorService:
         result.benchmark_metrics = benchmark_metrics
 
         self._result_storage.save(result)
+
+        validation = None
+        attribution = None
+        if req.run_validation:
+            validation, attribution = self._run_validation_and_attribution(result, price_data)
+        result.validation = validation
+
         self._meta_storage.insert_run(
             run_id=result.run_id,
             strategy_name=result.strategy_name,
@@ -166,12 +175,10 @@ class SimulatorService:
             equity_points=len(result.portfolio_values),
             trade_count=len(result.trades),
             config_hash=config_hash,
+            validation=validation,
+            symbols=list(weight_signals.columns),
         )
 
-        validation = None
-        attribution = None
-        if req.run_validation:
-            validation, attribution = self._run_validation_and_attribution(result, price_data)
         run_dir = self._config.data_root / "simulations" / result.run_id[:2] / result.run_id
         write_run_card(
             run_dir=run_dir,
@@ -220,6 +227,7 @@ class SimulatorService:
             "interval": req.interval,
             "indicators": sorted(req.indicators) if req.indicators else None,
             "full_metrics": req.full_metrics,
+            "run_validation": req.run_validation,
         })
         cached = self._meta_storage.get_run_by_config_hash(config_hash)
         if cached is not None:
@@ -319,6 +327,13 @@ class SimulatorService:
         result.benchmark_metrics = benchmark_metrics
 
         self._result_storage.save(result)
+
+        validation = None
+        attribution = None
+        if req.run_validation:
+            validation, attribution = self._run_validation_and_attribution(result, price_df)
+        result.validation = validation
+
         self._meta_storage.insert_run(
             run_id=result.run_id,
             strategy_name=result.strategy_name,
@@ -339,12 +354,10 @@ class SimulatorService:
             equity_points=len(result.portfolio_values),
             trade_count=len(result.trades),
             config_hash=config_hash,
+            validation=validation,
+            symbols=list(req.symbols),
         )
 
-        validation = None
-        attribution = None
-        if req.run_validation:
-            validation, attribution = self._run_validation_and_attribution(result, price_df)
         run_dir = self._config.data_root / "simulations" / result.run_id[:2] / result.run_id
         write_run_card(
             run_dir=run_dir,
@@ -428,8 +441,10 @@ class SimulatorService:
             return None
         return self._result_storage._trades_to_dicts(run_id)
 
-    def list_runs(self, strategy_name: str | None = None) -> list[RunSummary]:
-        runs = self._meta_storage.list_runs(strategy_name)
+    def list_runs(
+        self, strategy_name: str | None = None, symbol: str | None = None,
+    ) -> list[RunSummary]:
+        runs = self._meta_storage.list_runs(strategy_name, symbol)
         return [
             RunSummary(
                 run_id=r["run_id"],
@@ -439,6 +454,8 @@ class SimulatorService:
                 benchmark_metrics=r["benchmark_metrics"],
                 trade_count=r["trade_count"],
                 equity_points=r["equity_points"],
+                validation=r.get("validation"),
+                symbols=r.get("symbols", []),
             )
             for r in runs
         ]
@@ -470,7 +487,10 @@ class SimulatorService:
         result: SimulationResult,
         price_data: pd.DataFrame,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        from vinu_simulator.engine.validation import monte_carlo_permutation, bootstrap_sharpe_ci, walk_forward_consistency
+        from vinu_simulator.engine.validation import (
+            monte_carlo_permutation, bootstrap_sharpe_ci, walk_forward_consistency,
+            block_bootstrap_permutation, price_path_resample, compute_validation_verdict,
+        )
         from vinu_simulator.engine.attribution import by_symbol_stats, beta_regression, match_trades
         from vinu_simulator.engine.regime import classify_regime, per_regime_performance
         
@@ -487,6 +507,17 @@ class SimulatorService:
             initial_capital=sim_config.initial_capital,
         )
         
+        bb_result = block_bootstrap_permutation(
+            trade_pnls=trade_pnls,
+            actual_sharpe=result.metrics.get("sharpe_ratio", 0.0),
+            initial_capital=sim_config.initial_capital,
+        )
+        
+        pr_result = price_path_resample(
+            daily_returns=result.daily_returns,
+            actual_sharpe=result.metrics.get("sharpe_ratio", 0.0),
+        )
+        
         bs_result = bootstrap_sharpe_ci(
             daily_returns=result.daily_returns,
             periods_per_year=periods_per_year,
@@ -499,9 +530,13 @@ class SimulatorService:
         
         validation = {
             "monte_carlo": mc_result,
+            "block_bootstrap": bb_result,
+            "price_path": pr_result,
             "bootstrap": bs_result,
             "walk_forward": wf_result,
         }
+        
+        validation["verdict"] = compute_validation_verdict(validation)
         
         # Attribution
         symbol_attribution = by_symbol_stats(result.trades, round_trips=round_trips)

@@ -14,6 +14,7 @@ class HypothesisStatus(Enum):
     validated = "validated"
     rejected = "rejected"
     monitoring = "monitoring"
+    mc_gate_failed = "mc_gate_failed"
 
 
 @dataclass

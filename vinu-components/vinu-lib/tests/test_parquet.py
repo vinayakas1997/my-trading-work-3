@@ -63,3 +63,65 @@ def test_parquet_compact():
         table = store.read("test/compact.parquet")
         assert table is not None
         assert table.num_rows == 2
+
+
+def test_read_shard_glob():
+    with TemporaryDirectory() as tmp:
+        store = ParquetStore(tmp)
+        store.append("live/AAPL_20260701.parquet", [{"id": "a1", "value": 1}])
+        store.append("live/AAPL_20260702.parquet", [{"id": "a2", "value": 2}])
+        table = store.read_shard("live/AAPL_*.parquet")
+        assert table is not None
+        assert table.num_rows == 2
+
+
+def test_read_shard_nonexistent():
+    with TemporaryDirectory() as tmp:
+        store = ParquetStore(tmp)
+        assert store.read_shard("live/*.parquet") is None
+
+
+def test_read_shard_dedup():
+    with TemporaryDirectory() as tmp:
+        store = ParquetStore(tmp)
+        store.append("live/AAPL_20260701.parquet", [{"id": "a1", "value": 1}])
+        store.append("live/AAPL_20260701.parquet", [{"id": "a1", "value": 2}])
+        table = store.read_shard("live/AAPL_*.parquet", dedup_on=["id"])
+        assert table is not None
+        assert table.num_rows == 1
+        df = table.to_pandas()
+        assert df["value"].iloc[0] == 2
+
+
+def test_consolidate_merges_correctly():
+    with TemporaryDirectory() as tmp:
+        store = ParquetStore(tmp)
+        store.append("live/AAPL_20260701.parquet", [{"id": "a1", "value": 1}])
+        store.append("live/AAPL_20260702.parquet", [{"id": "a2", "value": 2}])
+        n = store.consolidate("live/AAPL_*.parquet", "archive/AAPL_2026.parquet")
+        assert n == 2
+        table = store.read("archive/AAPL_2026.parquet")
+        assert table is not None
+        assert table.num_rows == 2
+        remaining = list(Path(tmp).glob("live/AAPL_*.parquet"))
+        assert len(remaining) == 0
+
+
+def test_consolidate_dedups():
+    with TemporaryDirectory() as tmp:
+        store = ParquetStore(tmp)
+        store.append("live/AAPL_20260701.parquet", [{"id": "a1", "value": 1}])
+        store.append("live/AAPL_20260701.parquet", [{"id": "a1", "value": 2}])
+        n = store.consolidate("live/AAPL_*.parquet", "archive/AAPL_2026.parquet",
+                              dedup_on=["id"])
+        assert n == 1
+        table = store.read("archive/AAPL_2026.parquet")
+        assert table is not None
+        assert table.num_rows == 1
+
+
+def test_consolidate_empty_glob():
+    with TemporaryDirectory() as tmp:
+        store = ParquetStore(tmp)
+        n = store.consolidate("nonexistent/*.parquet", "output.parquet")
+        assert n == 0

@@ -37,6 +37,7 @@ def _build_risk_critic_prompt(
     result: BacktestResult,
     rules_feedback: CriticFeedback,
     story: dict[str, Any] | None,
+    catalog_entry: dict[str, Any] | None = None,
 ) -> str:
     m = result.metrics
     lines = [
@@ -53,8 +54,18 @@ def _build_risk_critic_prompt(
         f"- Calmar: {m.calmar_ratio:.2f}",
         f"- Trade Count: {result.trade_count}",
         "",
-        "Rule-based suggestions:",
     ]
+
+    if catalog_entry:
+        lt = catalog_entry.get("lifetime_trial_count", 0)
+        bs = catalog_entry.get("best_sharpe_ever", 0.0)
+        if lt:
+            lines.append("Cross-Run History:")
+            lines.append(f"  Lifetime trials on {symbol}: {lt}")
+            lines.append(f"  Best Sharpe ever on {symbol}: {bs:.2f}")
+            lines.append("")
+
+    lines.append("Rule-based suggestions:")
     if rules_feedback.suggestions:
         for i, s in enumerate(rules_feedback.suggestions, 1):
             lines.append(f"  {i}. {s}")

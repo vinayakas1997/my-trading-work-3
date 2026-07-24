@@ -87,3 +87,4 @@ class SimulationResult:
     trades: list[TradeRecord]
     metrics: dict[str, float]
     benchmark_metrics: dict[str, dict[str, float]] = field(default_factory=dict)
+    validation: dict[str, Any] | None = None

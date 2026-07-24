@@ -56,6 +56,7 @@ class ResearchTools:
         slippage_pct: float | None = None,
         allow_short: bool = True,
         interval: str | None = None,
+        run_validation: bool = True,
     ) -> BacktestResult | None:
         body: dict[str, Any] = {
             "strategy_code": strategy_code,
@@ -64,6 +65,7 @@ class ResearchTools:
             "start_date": from_date,
             "end_date": to_date,
             "allow_short": allow_short,
+            "run_validation": run_validation,
         }
         if initial_capital is not None:
             body["initial_capital"] = initial_capital

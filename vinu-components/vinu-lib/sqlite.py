@@ -49,6 +49,49 @@ class SQLiteBackend:
             migrate_schema(conn, self.SCHEMA_VERSION, self.MIGRATIONS)
         conn.commit()
 
+    def upsert(
+        self,
+        table: str,
+        data: dict[str, Any],
+        conflict_columns: list[str],
+    ) -> None:
+        if not conflict_columns:
+            raise ValueError("conflict_columns must not be empty")
+        columns = list(data.keys())
+        placeholders = ", ".join("?" for _ in columns)
+        col_names = ", ".join(columns)
+        conflict_target = ", ".join(conflict_columns)
+        updates = ", ".join(f"{col}=excluded.{col}" for col in columns)
+        sql = (
+            f"INSERT INTO {table} ({col_names}) VALUES ({placeholders}) "
+            f"ON CONFLICT ({conflict_target}) DO UPDATE SET {updates}"
+        )
+        values = [data[col] for col in columns]
+        conn = self._get_conn()
+        conn.execute(sql, values)
+        conn.commit()
+
+    def insert_or_ignore(
+        self,
+        table: str,
+        data: dict[str, Any],
+        conflict_columns: list[str],
+    ) -> None:
+        if not conflict_columns:
+            raise ValueError("conflict_columns must not be empty")
+        columns = list(data.keys())
+        placeholders = ", ".join("?" for _ in columns)
+        col_names = ", ".join(columns)
+        conflict_target = ", ".join(conflict_columns)
+        sql = (
+            f"INSERT INTO {table} ({col_names}) VALUES ({placeholders}) "
+            f"ON CONFLICT ({conflict_target}) DO NOTHING"
+        )
+        values = [data[col] for col in columns]
+        conn = self._get_conn()
+        conn.execute(sql, values)
+        conn.commit()
+
     def health_info(self) -> dict[str, Any]:
         path = str(self._db_path)
         try:
