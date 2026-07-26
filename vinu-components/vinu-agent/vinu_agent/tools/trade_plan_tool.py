@@ -73,9 +73,14 @@ class TradePlanTool(BaseTool):
 
     def __init__(self):
         self._services_config = {}
+        self._last_plan_data: dict | None = None
 
     def execute(self, **kwargs) -> str:
         return asyncio.run(self._execute_async(**kwargs))
+
+    @property
+    def last_plan_data(self) -> dict | None:
+        return self._last_plan_data
 
     async def _execute_async(
         self,
@@ -114,6 +119,10 @@ class TradePlanTool(BaseTool):
 
             artifacts_task = self._fetch_active_strategies(client, research_url, symbol)
 
+            frozen_plan_task = self._fetch_frozen_trade_plan(
+                client, research_url, symbol, timeframe,
+            )
+
             angles = await angles_task
             features = await features_task
             validation = await validation_task
@@ -121,8 +130,27 @@ class TradePlanTool(BaseTool):
             liquidity = await liquidity_task
             news = await news_task
             strategies = await artifacts_task
+            frozen_plan = await frozen_plan_task
 
-        return self._render_plan(
+        trend_stage = self._extract_trend_stage(angles)
+        trend_bias = self._extract_trend_bias(angles)
+        tranches_config = _TRANCHES_BY_STRENGTH.get(trend_stage, _TRANCHES_BY_STRENGTH["moderate"])
+
+        plan_data = self._build_structured_plan(
+            symbol=symbol,
+            timeframe=timeframe,
+            trend_stage=trend_stage,
+            trend_bias=trend_bias,
+            tranches=tranches_config,
+            angles=angles,
+            features=features,
+            validation=validation,
+            liquidity=liquidity,
+            news=news,
+        )
+        self._last_plan_data = plan_data
+
+        markdown = self._render_plan(
             symbol=symbol,
             timeframe=timeframe,
             angles=angles,
@@ -134,6 +162,11 @@ class TradePlanTool(BaseTool):
             strategies=strategies,
             interval=interval,
         )
+
+        output = markdown + "\n\n" + self._render_plan_json_block(plan_data)
+        if frozen_plan.get("status") == "available":
+            output += "\n\n" + self._render_frozen_plan_block(frozen_plan)
+        return output
 
     async def _symbol_has_analysis(
         self, client: httpx.AsyncClient, base_url: str, symbol: str,
@@ -335,6 +368,148 @@ class TradePlanTool(BaseTool):
         except Exception as e:
             logger.warning("Failed to fetch active strategies for %s: %s", symbol, e)
             return []
+
+    async def _fetch_frozen_trade_plan(
+        self,
+        client: httpx.AsyncClient,
+        base_url: str,
+        symbol: str,
+        timeframe: str,
+    ) -> dict:
+        """Fetch the Phase 4 frozen TradePlan (forecast + risk bands + contingency rules).
+
+        This is the only place TradePlanTool talks to the LLM-backed authoring step in
+        vinu-research -- it never calls an LLM itself, it only reads the artifact
+        vinu-research already froze via POST /research/trade-plan/{symbol}.
+        """
+        try:
+            resp = await client.post(
+                f"{base_url}/research/trade-plan/{symbol}",
+                json={"timeframe": timeframe},
+                timeout=60.0,
+            )
+            if resp.status_code != 200:
+                return {"status": "unavailable"}
+            data = resp.json()
+            return {"status": "available", "artifact": data}
+        except Exception as e:
+            logger.warning("Failed to fetch frozen trade plan for %s: %s", symbol, e)
+            return {"status": "error", "error": str(e)}
+
+    def _render_frozen_plan_block(self, frozen_plan: dict) -> str:
+        artifact = frozen_plan.get("artifact", {})
+        return (
+            "<!-- frozen_trade_plan -->\n```json\n"
+            + json.dumps(artifact, indent=2)
+            + "\n```\n<!-- /frozen_trade_plan -->"
+        )
+
+    # ------------------------------------------------------------------
+    # Structured plan (machine-evaluable)
+    # ------------------------------------------------------------------
+
+    def _build_structured_plan(
+        self,
+        symbol: str,
+        timeframe: str,
+        trend_stage: str,
+        trend_bias: str,
+        tranches: list[tuple[float, float]],
+        angles: dict[str, list[dict]],
+        features: dict,
+        validation: dict,
+        liquidity: dict,
+        news: dict | None,
+    ) -> dict:
+        direction = "short" if trend_bias == "bearish" else "long"
+        direction = "neutral" if trend_bias == "neutral" else direction
+
+        tranche_list: list[dict[str, float]] = []
+        for target_r, fraction in tranches:
+            tranche_list.append({"target_r": target_r, "fraction": fraction})
+
+        entry_rules: list[dict[str, str]] = []
+        entry_rules.append({
+            "condition": f"trend_direction == '{self._extract_trend_stage(angles)}'",
+            "status": "met" if trend_bias in ("bullish", "neutral") and trend_stage != "weak" else "pending",
+            "source": "trend_lifecycle",
+        })
+        has_features = isinstance(features, dict) and features.get("status") != "unavailable"
+        entry_rules.append({
+            "condition": "signal_confirmation_from_factors",
+            "status": "met" if has_features else "pending",
+            "source": "vinu-tools",
+        })
+        liq_ok = liquidity.get("normal", False) if isinstance(liquidity, dict) else False
+        entry_rules.append({
+            "condition": "adequate_liquidity",
+            "status": "met" if liq_ok else "caution",
+            "source": "stock-price",
+        })
+
+        exit_rules: list[dict[str, str]] = []
+        exit_rules.append({
+            "condition": "stop_loss_hit",
+            "action": "exit",
+            "source": "position_sizing",
+        })
+        exit_rules.append({
+            "condition": "trend_reversal",
+            "action": "exit",
+            "source": "trend_lifecycle",
+        })
+        exit_rules.append({
+            "condition": "regime_shift",
+            "action": "reduce",
+            "source": "regime_analysis",
+        })
+        exit_rules.append({
+            "condition": "gap_against_position_exceeds_2pct",
+            "action": "exit",
+            "source": "price_action",
+        })
+
+        contingency_rules: list[dict[str, str]] = []
+        contingency_rules.append({
+            "condition": "max_drawdown_exceeded",
+            "action": "reduce_by_50pct",
+        })
+        if validation.get("status") == "available":
+            contingency_rules.append({
+                "condition": "validation_p_value_below_0_05",
+                "action": "review_and_hold",
+            })
+        news_exit = False
+        if news and news.get("status") == "available":
+            for art in (news.get("articles") or [])[:3]:
+                sentiment = art.get("sentiment", "")
+                if isinstance(sentiment, str) and sentiment.lower() in ("negative", "bearish"):
+                    news_exit = True
+                    break
+                if isinstance(sentiment, (int, float)) and sentiment < -0.3:
+                    news_exit = True
+                    break
+        contingency_rules.append({
+            "condition": "adverse_news_catalyst",
+            "action": "exit" if news_exit else "monitor",
+        })
+
+        return {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "direction": direction,
+            "trend_stage": trend_stage,
+            "trend_bias": trend_bias,
+            "tranches": tranche_list,
+            "entry_rules": entry_rules,
+            "exit_rules": exit_rules,
+            "contingency_rules": contingency_rules,
+            "position_size_pct": 0.0,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _render_plan_json_block(self, plan_data: dict) -> str:
+        return "<!-- structured_plan -->\n```json\n" + json.dumps(plan_data, indent=2) + "\n```\n<!-- /structured_plan -->"
 
     # ------------------------------------------------------------------
     # Rendering

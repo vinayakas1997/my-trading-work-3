@@ -1,0 +1,23 @@
+title: PnL Attribution
+purpose: >
+  Realized-trade PnL statistics per symbol -- win rate, average win/loss, trade
+  count -- computed from Phase 6 (vinu-live) execution logs. Every field
+  includes sample size and confidence interval.
+  Deviates from the standard runner-driven angle pattern: its natural input is
+  closed positions/fills, not price bars, so it is push-fed via
+  POST /pnl-attribution/{symbol}/record (Phase 7's feedback loop) rather than
+  pulled by AngleRunner from bars/news. `compute()` still exists with the
+  standard signature so a generic `/run/{ticker}` sweep doesn't error, but it
+  is a documented no-op there -- real population happens through the ingest
+  path (`pnl_attribution_ingest.py`), which calls `aggregate_pnl_attribution`
+  directly and writes via `AngleStorage.write()`.
+time_formats:
+- 1D
+needs_bars: false
+inputs:
+  symbol: str
+  closed_positions: list[dict]
+outputs:
+- column: angle_data
+  type: dict
+  description: PnL attribution results with confidence intervals

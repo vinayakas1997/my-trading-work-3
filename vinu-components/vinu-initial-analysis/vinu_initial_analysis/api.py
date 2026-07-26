@@ -42,8 +42,9 @@ class CorrelationAPI:
         symbol: str,
         from_ts: int | None = None,
         to_ts: int | None = None,
+        angle_names: list[str] | None = None,
     ) -> dict[str, Any]:
-        return self._runner.run(symbol, from_ts=from_ts, to_ts=to_ts)
+        return self._runner.run(symbol, from_ts=from_ts, to_ts=to_ts, angle_names=angle_names)
 
     # -- backward-compat single-angle query methods ------------------------
     # These read from the new parquet storage.

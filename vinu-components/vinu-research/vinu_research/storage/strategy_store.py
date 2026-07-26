@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from vinu_research.models import Artifact, ArtifactStatus, BenchEntry, DecaySnapshot
+from vinu_research.models import Artifact, ArtifactStatus, BenchEntry, CalibrationEntry, DecaySnapshot
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS artifacts (
     stress_test_passed INTEGER,
     last_validated_ts TEXT NOT NULL DEFAULT '',
     revalidation_count INTEGER NOT NULL DEFAULT 0,
-    last_revalidation_verdict INTEGER
+    last_revalidation_verdict INTEGER,
+    trade_plan_data TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS bench_history (
@@ -57,8 +58,22 @@ CREATE TABLE IF NOT EXISTS decay_snapshots (
     FOREIGN KEY (artifact_id) REFERENCES artifacts(artifact_id)
 );
 
+CREATE TABLE IF NOT EXISTS calibration_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    artifact_id TEXT NOT NULL,
+    forecast_direction TEXT NOT NULL,
+    actual_return_pct REAL NOT NULL,
+    forecast_magnitude_pct REAL NOT NULL DEFAULT 0.0,
+    brier_score REAL NOT NULL DEFAULT 0.0,
+    directional_correct INTEGER NOT NULL DEFAULT 0,
+    magnitude_error REAL NOT NULL DEFAULT 0.0,
+    timestamp TEXT NOT NULL,
+    FOREIGN KEY (artifact_id) REFERENCES artifacts(artifact_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_bench_artifact ON bench_history(artifact_id);
 CREATE INDEX IF NOT EXISTS idx_snapshots_artifact ON decay_snapshots(artifact_id);
+CREATE INDEX IF NOT EXISTS idx_calibration_artifact ON calibration_entries(artifact_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_status ON artifacts(status);
 """
 
@@ -97,6 +112,7 @@ class SqliteStrategyStore:
             ("last_validated_ts", "TEXT NOT NULL DEFAULT ''"),
             ("revalidation_count", "INTEGER NOT NULL DEFAULT 0"),
             ("last_revalidation_verdict", "INTEGER"),
+            ("trade_plan_data", "TEXT NOT NULL DEFAULT ''"),
         ]
         for name, typedef in migrations:
             if name not in cols:
@@ -128,8 +144,9 @@ class SqliteStrategyStore:
                 signal_definition, entry_rules, exit_rules, created_at, updated_at,
                 strategy_code, source_run_id, initial_sharpe, initial_max_dd, deflated_sharpe,
                 holdout_passed, stress_test_passed,
-                last_validated_ts, revalidation_count, last_revalidation_verdict)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                last_validated_ts, revalidation_count, last_revalidation_verdict,
+                trade_plan_data)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 artifact.artifact_id,
                 artifact.type,
@@ -152,6 +169,7 @@ class SqliteStrategyStore:
                 artifact.last_validated_ts,
                 artifact.revalidation_count,
                 None if artifact.last_revalidation_verdict is None else int(artifact.last_revalidation_verdict),
+                artifact.trade_plan_data,
             ),
         )
         conn.commit()
@@ -259,6 +277,7 @@ class SqliteStrategyStore:
         conn = self._get_conn()
         conn.execute("DELETE FROM decay_snapshots WHERE artifact_id = ?", (artifact_id,))
         conn.execute("DELETE FROM bench_history WHERE artifact_id = ?", (artifact_id,))
+        conn.execute("DELETE FROM calibration_entries WHERE artifact_id = ?", (artifact_id,))
         cur = conn.execute("DELETE FROM artifacts WHERE artifact_id = ?", (artifact_id,))
         conn.commit()
         return cur.rowcount > 0
@@ -282,6 +301,35 @@ class SqliteStrategyStore:
             (artifact_id,),
         ).fetchall()
         return [self._row_to_bench_entry(r) for r in rows]
+
+    def append_calibration_entry(self, entry: CalibrationEntry) -> CalibrationEntry:
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO calibration_entries
+               (artifact_id, forecast_direction, actual_return_pct, forecast_magnitude_pct,
+                brier_score, directional_correct, magnitude_error, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                entry.artifact_id,
+                entry.forecast_direction,
+                entry.actual_return_pct,
+                entry.forecast_magnitude_pct,
+                entry.brier_score,
+                int(entry.directional_correct),
+                entry.magnitude_error,
+                entry.timestamp,
+            ),
+        )
+        conn.commit()
+        return entry
+
+    def get_calibration_entries(self, artifact_id: str) -> list[CalibrationEntry]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM calibration_entries WHERE artifact_id = ? ORDER BY id ASC",
+            (artifact_id,),
+        ).fetchall()
+        return [self._row_to_calibration_entry(r) for r in rows]
 
     def save_snapshot(self, snapshot: DecaySnapshot) -> DecaySnapshot:
         conn = self._get_conn()
@@ -354,6 +402,7 @@ class SqliteStrategyStore:
                 None if "last_revalidation_verdict" not in row.keys() or row["last_revalidation_verdict"] is None
                 else bool(row["last_revalidation_verdict"])
             ),
+            trade_plan_data=row["trade_plan_data"] if "trade_plan_data" in row.keys() else "",
         )
 
     @staticmethod
@@ -365,6 +414,19 @@ class SqliteStrategyStore:
             ir=row["ir"],
             ic_positive=bool(row["ic_positive"]),
             sharpe=row["sharpe"],
+        )
+
+    @staticmethod
+    def _row_to_calibration_entry(row: sqlite3.Row) -> CalibrationEntry:
+        return CalibrationEntry(
+            artifact_id=row["artifact_id"],
+            forecast_direction=row["forecast_direction"],
+            actual_return_pct=row["actual_return_pct"],
+            forecast_magnitude_pct=row["forecast_magnitude_pct"],
+            brier_score=row["brier_score"],
+            directional_correct=bool(row["directional_correct"]),
+            magnitude_error=row["magnitude_error"],
+            timestamp=row["timestamp"],
         )
 
     @staticmethod

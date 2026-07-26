@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -120,6 +121,8 @@ class Artifact:
     last_validated_ts: str = ""
     revalidation_count: int = 0
     last_revalidation_verdict: bool | None = None
+    # Phase 4 — frozen trade-plan JSON for type="trade_plan" artifacts
+    trade_plan_data: str = ""
 
     @classmethod
     def create(cls, type_: str, name: str, universe: list[str] | None = None) -> Artifact:
@@ -136,6 +139,152 @@ class Artifact:
             created_at=now,
             updated_at=now,
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Forecast & Trade-Plan models
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RiskBand:
+    max_position_size_pct: float = 0.0
+    max_portfolio_risk_pct: float = 0.0
+    var_95_limit: float = 0.0
+    max_leverage: float = 1.0
+    max_cluster_exposure_pct: float = 0.0
+    volatility_band_upper: float = 0.0
+    volatility_band_lower: float = 0.0
+
+
+# Comparison operators a deterministic evaluator (Phase 6) can apply to a live
+# metric value without interpreting free text.
+_VALID_OPERATORS = (">=", "<=", ">", "<", "==", "!=")
+
+
+@dataclass
+class ContingencyRule:
+    """A mechanically evaluable in-trade rule: `metric operator threshold -> action`.
+
+    `metric` names a value Phase 6 reads from live state (e.g. "drawdown_pct",
+    "realized_vol_ratio", "shock_cluster_correlation"). `condition` is a
+    derived human-readable label, not a parsed instruction — evaluation must
+    use `metric`/`operator`/`threshold` directly.
+    """
+    metric: str
+    operator: str
+    threshold: float
+    action: str
+    action_params: dict[str, Any] = field(default_factory=dict)
+    condition: str = ""
+
+    def __post_init__(self) -> None:
+        if self.operator not in _VALID_OPERATORS:
+            raise ValueError(f"invalid operator {self.operator!r}, must be one of {_VALID_OPERATORS}")
+        if not self.condition:
+            self.condition = f"{self.metric} {self.operator} {self.threshold}"
+
+
+@dataclass
+class InvalidationCondition:
+    """A mechanically evaluable exit-trigger rule: `metric operator threshold -> action`."""
+    metric: str
+    operator: str
+    threshold: float
+    action: str
+    action_params: dict[str, Any] = field(default_factory=dict)
+    condition: str = ""
+
+    def __post_init__(self) -> None:
+        if self.operator not in _VALID_OPERATORS:
+            raise ValueError(f"invalid operator {self.operator!r}, must be one of {_VALID_OPERATORS}")
+        if not self.condition:
+            self.condition = f"{self.metric} {self.operator} {self.threshold}"
+
+
+@dataclass
+class Forecast:
+    direction: str
+    confidence: float = 0.0
+    magnitude_pct: float = 0.0
+    magnitude_std: float = 0.0
+    horizon_days: int = 0
+    brier_score: float = 0.0
+    reasoning: str = ""
+
+
+@dataclass
+class TradePlan:
+    symbol: str
+    timeframe: str
+    direction: str
+    position_size_pct: float = 0.0
+    risk_bands: RiskBand = field(default_factory=RiskBand)
+    tranches: list[dict[str, float]] = field(default_factory=list)
+    contingency_rules: list[ContingencyRule] = field(default_factory=list)
+    invalidation_conditions: list[InvalidationCondition] = field(default_factory=list)
+    forecast: Forecast | None = None
+    entry_checklist: list[dict[str, str]] = field(default_factory=list)
+    exit_checklist: list[dict[str, str]] = field(default_factory=list)
+    created_at: str = ""
+    version: int = 1
+
+    def to_json(self) -> str:
+        return json.dumps(self, default=_dataclass_to_dict, indent=2)
+
+    @classmethod
+    def from_json(cls, raw: str) -> TradePlan:
+        d = json.loads(raw)
+        d["risk_bands"] = RiskBand(**d.get("risk_bands") or {})
+        d["contingency_rules"] = [
+            ContingencyRule(**r) for r in d.get("contingency_rules") or []
+        ]
+        d["invalidation_conditions"] = [
+            InvalidationCondition(**i) for i in d.get("invalidation_conditions") or []
+        ]
+        forecast = d.get("forecast")
+        d["forecast"] = Forecast(**forecast) if forecast else None
+        return cls(**d)
+
+
+def _dataclass_to_dict(o: Any) -> dict[str, Any]:
+    if hasattr(o, "__dataclass_fields__"):
+        return {k: _dataclass_to_dict(v) for k, v in o.__dict__.items()}
+    if isinstance(o, list):
+        return [_dataclass_to_dict(i) for i in o]
+    return o
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Calibration tracking
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CalibrationEntry:
+    artifact_id: str
+    forecast_direction: str
+    actual_return_pct: float
+    forecast_magnitude_pct: float = 0.0
+    brier_score: float = 0.0
+    directional_correct: bool = False
+    magnitude_error: float = 0.0
+    timestamp: str = ""
+
+
+@dataclass
+class CalibrationResult:
+    artifact_id: str
+    n_entries: int = 0
+    accuracy: float = 0.0
+    brier_mean: float = 0.0
+    magnitude_mape: float = 0.0
+    passed: bool = False
+    reasons: list[str] = field(default_factory=list)
+    timestamp: str = ""
+
+
+# ---------------------------------------------------------------------------
 
 
 @dataclass

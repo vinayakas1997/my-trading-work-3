@@ -60,9 +60,19 @@ class InitialAnalysisService:
             return
         self._api.compute_and_store(symbol)
 
-    def run_analysis(self, symbol: str, from_ts: int | None = None, to_ts: int | None = None) -> dict[str, Any]:
-        """Run all available angles for a symbol. Returns summary."""
-        return self._api.compute_and_store(symbol, from_ts=from_ts, to_ts=to_ts)
+    def run_analysis(
+        self,
+        symbol: str,
+        from_ts: int | None = None,
+        to_ts: int | None = None,
+        angle_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Run all (or a targeted subset of) angles for a symbol. Returns summary.
+
+        `angle_names` lets Phase 7's feedback loop refresh just `shock_personality`/
+        `shock_clustering` for one symbol instead of the full angle suite.
+        """
+        return self._api.compute_and_store(symbol, from_ts=from_ts, to_ts=to_ts, angle_names=angle_names)
 
     def list_angles(self) -> list[dict[str, Any]]:
         return self._api.runner.list_angles()

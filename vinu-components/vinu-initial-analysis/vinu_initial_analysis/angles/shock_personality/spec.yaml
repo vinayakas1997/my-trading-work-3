@@ -1,0 +1,15 @@
+title: Shock Personality
+purpose: >
+  Post-shock behavioral characterization — gap_fill_rate, vol_persistence (from
+  Phase 1 GARCH), drift_persistence_days. Every field includes sample size and
+  confidence interval.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: Shock personality results with confidence intervals

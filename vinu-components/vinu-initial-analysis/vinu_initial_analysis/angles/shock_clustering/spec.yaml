@@ -1,0 +1,15 @@
+title: Shock Clustering
+purpose: >
+  Identifies which symbols tend to shock together, derived from Phase 1's
+  dynamic covariance sampled specifically at shock dates. Reports cluster
+  membership with correlation strength and confidence intervals.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: Shock cluster membership for the symbol

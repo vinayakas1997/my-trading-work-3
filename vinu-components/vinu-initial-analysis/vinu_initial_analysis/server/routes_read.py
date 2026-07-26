@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
+from vinu_initial_analysis.pnl_attribution_ingest import ingest_closed_positions
 from vinu_initial_analysis.service import InitialAnalysisService
 
 router = APIRouter()
@@ -81,9 +83,30 @@ def get_angle(angle_name: str, ticker: str):
 
 
 @router.post("/run/{ticker}")
-def run_analysis(ticker: str, from_ts: int | None = Query(None), to_ts: int | None = Query(None)):
+def run_analysis(
+    ticker: str,
+    from_ts: int | None = Query(None),
+    to_ts: int | None = Query(None),
+    angle_names: str | None = Query(
+        None, description="Comma-separated angle names to run; omit to run all angles",
+    ),
+):
     svc = _get_svc()
-    return svc.run_analysis(ticker.upper(), from_ts, to_ts)
+    names = [n.strip() for n in angle_names.split(",") if n.strip()] if angle_names else None
+    return svc.run_analysis(ticker.upper(), from_ts, to_ts, angle_names=names)
+
+
+class RecordPnlAttributionRequest(BaseModel):
+    closed_positions: list[dict[str, Any]]
+
+
+@router.post("/pnl-attribution/{ticker}/record")
+def record_pnl_attribution(ticker: str, body: RecordPnlAttributionRequest) -> dict[str, Any]:
+    """Phase 7's push-fed write path into the pnl_attribution angle (see
+    angles/pnl_attribution/spec.yaml for why this doesn't go through /run/{ticker})."""
+    svc = _get_svc()
+    run_id = ingest_closed_positions(svc.storage, ticker.upper(), body.closed_positions)
+    return {"symbol": ticker.upper(), "run_id": run_id, "n_recorded": len(body.closed_positions)}
 
 
 @router.get("/symbols")

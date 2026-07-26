@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 DEFAULT_PORTFOLIO_API_URL = "http://127.0.0.1:8090"
 DEFAULT_AGENT_API_URL = "http://127.0.0.1:8086"
 DEFAULT_STOCK_PRICE_API_URL = "http://127.0.0.1:8081"
+DEFAULT_RESEARCH_API_URL = "http://127.0.0.1:8087"
+DEFAULT_INITIAL_ANALYSIS_API_URL = "http://127.0.0.1:8083"
 DEFAULT_DATA_ROOT = Path.cwd() / "data"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8091
@@ -29,6 +31,8 @@ class LiveConfig:
     portfolio_api_url: str = DEFAULT_PORTFOLIO_API_URL
     agent_api_url: str = DEFAULT_AGENT_API_URL
     stock_price_api_url: str = DEFAULT_STOCK_PRICE_API_URL
+    research_api_url: str = DEFAULT_RESEARCH_API_URL
+    initial_analysis_api_url: str = DEFAULT_INITIAL_ANALYSIS_API_URL
     data_root: Path = DEFAULT_DATA_ROOT
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
@@ -41,6 +45,8 @@ class LiveConfig:
     # always safe to select even before volume data is verified good.
     execution_style: str = "twap"
     fallback_portfolio_value: float = 1_000_000.0
+    trade_plan_worker_interval_sec: int = 300
+    feedback_worker_interval_sec: int = 300
 
     @classmethod
     def from_env(cls) -> LiveConfig:
@@ -49,12 +55,22 @@ class LiveConfig:
             portfolio_api_url=os.getenv("VINU_PORTFOLIO_API_URL", DEFAULT_PORTFOLIO_API_URL),
             agent_api_url=os.getenv("VINU_AGENT_API_URL", DEFAULT_AGENT_API_URL),
             stock_price_api_url=os.getenv("VINU_STOCK_PRICE_API_URL", DEFAULT_STOCK_PRICE_API_URL),
+            research_api_url=os.getenv("VINU_RESEARCH_API_URL", DEFAULT_RESEARCH_API_URL),
+            initial_analysis_api_url=os.getenv(
+                "VINU_INITIAL_ANALYSIS_API_URL", DEFAULT_INITIAL_ANALYSIS_API_URL,
+            ),
             data_root=Path(os.getenv("VINU_LIVE_DATA_ROOT", str(DEFAULT_DATA_ROOT))),
             host=os.getenv("VINU_LIVE_HOST", DEFAULT_HOST),
             port=int(os.getenv("VINU_LIVE_PORT", str(DEFAULT_PORT))),
             worker_interval_sec=int(os.getenv("VINU_LIVE_INTERVAL", "3600")),
             execution_style=os.getenv("VINU_LIVE_EXECUTION_STYLE", "twap"),
             fallback_portfolio_value=float(os.getenv("VINU_LIVE_FALLBACK_PORTFOLIO_VALUE", "1000000.0")),
+            trade_plan_worker_interval_sec=int(
+                os.getenv("VINU_LIVE_TRADE_PLAN_INTERVAL", "300"),
+            ),
+            feedback_worker_interval_sec=int(
+                os.getenv("VINU_LIVE_FEEDBACK_INTERVAL", "300"),
+            ),
         )
 
 
