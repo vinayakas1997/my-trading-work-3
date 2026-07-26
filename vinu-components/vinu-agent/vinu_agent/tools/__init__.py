@@ -26,6 +26,7 @@ def _discover_subclasses() -> list:
 def build_registry(
     *,
     persistent_memory: Any = None,
+    unified_memory: Any = None,
     session_id: str = "",
     event_callback: Optional[Callable] = None,
     services_config: Optional[dict] = None,
@@ -41,6 +42,8 @@ def build_registry(
         tool = cls()
         if hasattr(tool, "_persistent_memory"):
             tool._persistent_memory = persistent_memory
+        if hasattr(tool, "_unified_memory"):
+            tool._unified_memory = unified_memory
         if hasattr(tool, "_session_id"):
             tool._session_id = session_id
         if hasattr(tool, "_event_callback"):

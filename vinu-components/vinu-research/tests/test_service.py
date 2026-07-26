@@ -141,3 +141,21 @@ class TestGoalCompliance:
     def test_not_violated_within_all_budgets(self):
         goal = Goal(goal_id="g5", hypothesis_id="h1", objective="test", llm_calls_budget=10, llm_calls_used=5, time_budget_seconds=100.0, time_used_seconds=50.0)
         assert _has_violated_goal_constraints(goal) is False
+
+
+class TestRevalidate:
+    @pytest.mark.asyncio
+    async def test_revalidate_missing_artifact(self, service):
+        result = await service.revalidate_artifact("nonexistent")
+        assert result["revalidated"] is False
+        assert "not found" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_revalidate_no_strategy_code(self, service, strategy_store):
+        from vinu_research.models import Artifact
+        a = Artifact.create("strategy", "NoCode", universe=["AAPL"])
+        a.strategy_code = ""
+        strategy_store.upsert_artifact(a)
+        result = await service.revalidate_artifact(a.artifact_id)
+        assert result["revalidated"] is False
+        assert "No strategy code" in result["error"]

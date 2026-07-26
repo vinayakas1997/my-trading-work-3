@@ -141,6 +141,38 @@ class ScheduledResearchExecutor:
             LOG.error("Decay scan failed: %s", e)
         return decayed_count
 
+    async def revalidation_scan(self) -> int:
+        """Re-validate ACTIVE/MONITORING artifacts whose `last_validated_ts` is
+        older than the configured interval. Returns count of re-validated artifacts."""
+        revalidated_count = 0
+        debug_log("revalidation_scan: starting", level=1)
+        try:
+            interval_days = self.service.config.revalidation_interval_days
+            if interval_days <= 0:
+                return 0
+            artifacts = await asyncio.to_thread(
+                self.service.strategy_store.list_stale_artifacts,
+                days=interval_days,
+            )
+            debug_log(f"revalidation_scan: found {len(artifacts)} stale artifacts", level=1)
+            for art in artifacts:
+                if not art.strategy_code:
+                    continue
+                try:
+                    result = await self.service.revalidate_artifact(art.artifact_id)
+                    if result.get("revalidated"):
+                        revalidated_count += 1
+                        status = "passed" if result.get("validation_passed") else "failed"
+                        LOG.info(
+                            "Re-validation %s for %s (%s): sharpe=%.2f",
+                            status, art.artifact_id, art.name, result.get("sharpe", 0),
+                        )
+                except Exception as e:
+                    LOG.error("Re-validation failed for %s: %s", art.artifact_id, e)
+        except Exception as e:
+            LOG.error("Revalidation scan failed: %s", e)
+        return revalidated_count
+
     async def start(self) -> None:
         self._running = True
         recovered = self.recover_stale()
@@ -159,7 +191,9 @@ class ScheduledResearchExecutor:
 
     async def _run_loop(self) -> None:
         decay_interval = 3600.0  # once per hour
+        revalidation_interval = 3600.0  # once per hour
         last_decay_scan = 0.0
+        last_revalidation_scan = 0.0
         startup = True
         while self._running:
             try:
@@ -169,7 +203,9 @@ class ScheduledResearchExecutor:
             except Exception as exc:
                 LOG.error("Scheduled executor tick failed: %s", exc)
             if startup:
-                last_decay_scan = asyncio.get_event_loop().time()
+                now = asyncio.get_event_loop().time()
+                last_decay_scan = now
+                last_revalidation_scan = now
                 startup = False
             await asyncio.sleep(self._poll_interval)
             now = asyncio.get_event_loop().time()
@@ -178,6 +214,11 @@ class ScheduledResearchExecutor:
                 if n:
                     LOG.info("Decay scan completed: %d strategies decayed", n)
                 last_decay_scan = now
+            if now - last_revalidation_scan >= revalidation_interval:
+                n = await self.revalidation_scan()
+                if n:
+                    LOG.info("Revalidation scan completed: %d artifacts re-validated", n)
+                last_revalidation_scan = now
 
     @property
     def is_running(self) -> bool:

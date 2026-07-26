@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from vinu_research.config import ResearchConfig
+from vinu_research.gates.correlation_gate import CorrelationVerdict
 from vinu_research.models import Artifact
 
 
@@ -24,7 +25,7 @@ class PromotionVerdict:
     reasons: list[str]
 
 
-def meets_promotion_bar(artifact: Artifact, config: ResearchConfig) -> PromotionVerdict:
+def meets_promotion_bar(artifact: Artifact, config: ResearchConfig, correlation_verdict: CorrelationVerdict | None = None) -> PromotionVerdict:
     reasons: list[str] = []
 
     if artifact.deflated_sharpe < config.promotion_deflated_sharpe_threshold:
@@ -52,5 +53,8 @@ def meets_promotion_bar(artifact: Artifact, config: ResearchConfig) -> Promotion
             )
         elif artifact.stress_test_passed is False:
             reasons.append("failed at least one historical stress window")
+
+    if correlation_verdict is not None and not correlation_verdict.eligible:
+        reasons.extend(correlation_verdict.reasons)
 
     return PromotionVerdict(eligible=not reasons, reasons=reasons)

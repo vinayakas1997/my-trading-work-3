@@ -152,3 +152,29 @@ class TestScheduledExecutor:
         from vinu_research.service import ResearchService
         assert isinstance(executor.service, ResearchService)
         assert executor._service is not None
+
+    @pytest.mark.asyncio
+    async def test_revalidation_scan_disabled_when_interval_zero(self):
+        tmp = Path(tempfile.mkdtemp())
+        store = ScheduledResearchJobStore(tmp / "jobs.json")
+        from unittest.mock import AsyncMock, MagicMock
+        executor = ScheduledResearchExecutor(store)
+        mock_svc = AsyncMock()
+        mock_svc.config.revalidation_interval_days = 0
+        executor._service = mock_svc
+        count = await executor.revalidation_scan()
+        assert count == 0
+        mock_svc.strategy_store.list_stale_artifacts.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_revalidation_scan_handles_exception_gracefully(self):
+        tmp = Path(tempfile.mkdtemp())
+        store = ScheduledResearchJobStore(tmp / "jobs.json")
+        from unittest.mock import AsyncMock, MagicMock
+        executor = ScheduledResearchExecutor(store)
+        mock_svc = AsyncMock()
+        mock_svc.config.revalidation_interval_days = 30
+        mock_svc.strategy_store.list_stale_artifacts.side_effect = Exception("DB error")
+        executor._service = mock_svc
+        count = await executor.revalidation_scan()
+        assert count == 0

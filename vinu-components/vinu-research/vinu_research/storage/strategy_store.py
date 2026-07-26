@@ -27,7 +27,10 @@ CREATE TABLE IF NOT EXISTS artifacts (
     initial_max_dd REAL NOT NULL DEFAULT 0.0,
     deflated_sharpe REAL NOT NULL DEFAULT 0.0,
     holdout_passed INTEGER,
-    stress_test_passed INTEGER
+    stress_test_passed INTEGER,
+    last_validated_ts TEXT NOT NULL DEFAULT '',
+    revalidation_count INTEGER NOT NULL DEFAULT 0,
+    last_revalidation_verdict INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS bench_history (
@@ -91,6 +94,9 @@ class SqliteStrategyStore:
             ("deflated_sharpe", "REAL NOT NULL DEFAULT 0.0"),
             ("holdout_passed", "INTEGER"),
             ("stress_test_passed", "INTEGER"),
+            ("last_validated_ts", "TEXT NOT NULL DEFAULT ''"),
+            ("revalidation_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("last_revalidation_verdict", "INTEGER"),
         ]
         for name, typedef in migrations:
             if name not in cols:
@@ -121,8 +127,9 @@ class SqliteStrategyStore:
                (artifact_id, type, name, universe, status, decay_horizon,
                 signal_definition, entry_rules, exit_rules, created_at, updated_at,
                 strategy_code, source_run_id, initial_sharpe, initial_max_dd, deflated_sharpe,
-                holdout_passed, stress_test_passed)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                holdout_passed, stress_test_passed,
+                last_validated_ts, revalidation_count, last_revalidation_verdict)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 artifact.artifact_id,
                 artifact.type,
@@ -142,6 +149,9 @@ class SqliteStrategyStore:
                 artifact.deflated_sharpe,
                 None if artifact.holdout_passed is None else int(artifact.holdout_passed),
                 None if artifact.stress_test_passed is None else int(artifact.stress_test_passed),
+                artifact.last_validated_ts,
+                artifact.revalidation_count,
+                None if artifact.last_revalidation_verdict is None else int(artifact.last_revalidation_verdict),
             ),
         )
         conn.commit()
@@ -218,6 +228,30 @@ class SqliteStrategyStore:
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = conn.execute(
             f"SELECT * FROM artifacts {where} ORDER BY created_at DESC", params
+        ).fetchall()
+        return [self._row_to_artifact(r) for r in rows]
+
+    def list_stale_artifacts(
+        self,
+        days: int = 30,
+        statuses: list[ArtifactStatus] | None = None,
+    ) -> list[Artifact]:
+        """Return artifacts whose `last_validated_ts` is older than `days`, or never validated.
+        
+        Falls back to `created_at` when `last_validated_ts` is empty (an artifact
+        that was created before re-validation tracking existed is treated as stale).
+        """
+        from datetime import datetime, timedelta, timezone
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        conn = self._get_conn()
+        wanted = [s.value for s in statuses] if statuses else ["ACTIVE", "MONITORING"]
+        placeholders = ",".join("?" for _ in wanted)
+        rows = conn.execute(
+            f"""SELECT * FROM artifacts
+                WHERE status IN ({placeholders})
+                  AND last_validated_ts < ?
+                ORDER BY last_validated_ts ASC""",
+            [*wanted, cutoff],
         ).fetchall()
         return [self._row_to_artifact(r) for r in rows]
 
@@ -313,6 +347,12 @@ class SqliteStrategyStore:
             stress_test_passed=(
                 None if "stress_test_passed" not in row.keys() or row["stress_test_passed"] is None
                 else bool(row["stress_test_passed"])
+            ),
+            last_validated_ts=row["last_validated_ts"] if "last_validated_ts" in row.keys() else "",
+            revalidation_count=row["revalidation_count"] if "revalidation_count" in row.keys() else 0,
+            last_revalidation_verdict=(
+                None if "last_revalidation_verdict" not in row.keys() or row["last_revalidation_verdict"] is None
+                else bool(row["last_revalidation_verdict"])
             ),
         )
 

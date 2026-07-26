@@ -40,11 +40,13 @@ class ContextBuilder:
         memory: Any = None,
         skills_loader: Any = None,
         persistent_memory: Any = None,
+        unified_memory: Any = None,
     ) -> None:
         self.registry = registry
         self.memory = memory
         self.skills_loader = skills_loader
         self.persistent_memory = persistent_memory
+        self.unified_memory = unified_memory
 
     def build_system_prompt(self) -> str:
         tool_count = len(self.registry.tool_names)
@@ -70,22 +72,91 @@ class ContextBuilder:
             current_datetime=_utc_now_iso(),
         )
 
+    def _extract_symbols(self, text: str) -> list[str]:
+        import re
+        candidates = re.findall(r"\b[A-Z]{1,5}\b", text)
+        symbols = []
+        for c in candidates:
+            if len(c) >= 1 and len(c) <= 5 and c.isalpha():
+                symbols.append(c)
+        return symbols[:5]
+
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        memory: Any = None,
+        skills_loader: Any = None,
+        persistent_memory: Any = None,
+        unified_memory: Any = None,
+        max_memory_tokens: int = 2000,
+    ) -> None:
+        self.registry = registry
+        self.memory = memory
+        self.skills_loader = skills_loader
+        self.persistent_memory = persistent_memory
+        self.unified_memory = unified_memory
+        self.max_memory_tokens = max_memory_tokens
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        return len(text) // 4
+
     def build_messages(
         self, history: List[Dict], user_message: str
     ) -> List[Dict]:
         messages = [{"role": "system", "content": self.build_system_prompt()}]
         messages.extend(history)
 
+        combined_context = []
         if self.persistent_memory:
             recalls = self.persistent_memory.find_relevant(user_message, max_results=3)
             if recalls:
-                recalled_text = "\n".join(
-                    f"- {r.name}: {r.description}" for r in recalls
-                )
-                user_message = (
-                    f"<recalled-memories>\n{recalled_text}\n</recalled-memories>\n\n"
-                    + user_message
-                )
+                combined_context.append("<agent-memories>")
+                for r in recalls:
+                    combined_context.append(f"- {r.name}: {r.description}")
+                combined_context.append("</agent-memories>")
+
+        if self.unified_memory:
+            symbols = self._extract_symbols(user_message)
+            budget_remaining = self.max_memory_tokens
+
+            for sym in symbols:
+                entries = self.unified_memory.list_by_symbol(sym, limit=10)
+                if not entries:
+                    continue
+
+                block_lines: list[str] = []
+                block_lines.append(f"<memory symbol={sym}>")
+                for e in entries:
+                    line = f"  [{e.source}/{e.memory_type}] {e.title}: {e.summary}"
+                    block_lines.append(line)
+                block_lines.append(f"</memory>")
+
+                block_text = "\n".join(block_lines)
+                block_tokens = self._estimate_tokens(block_text)
+
+                if block_tokens <= budget_remaining:
+                    combined_context.append(block_text)
+                    budget_remaining -= block_tokens
+                else:
+                    trimmed_lines: list[str] = []
+                    trimmed_lines.append(f"<memory symbol={sym}>")
+                    sub_budget = budget_remaining
+                    for e in entries:
+                        line = f"  [{e.source}/{e.memory_type}] {e.title}: {e.summary}"
+                        line_tokens = self._estimate_tokens(line)
+                        if line_tokens <= sub_budget and sub_budget > 20:
+                            trimmed_lines.append(line)
+                            sub_budget -= line_tokens
+                        else:
+                            break
+                    trimmed_lines.append(f"</memory>")
+                    if len(trimmed_lines) > 2:
+                        combined_context.append("\n".join(trimmed_lines))
+                    break
+
+        if combined_context:
+            user_message = "\n".join(combined_context) + "\n\n" + user_message
 
         messages.append({"role": "user", "content": user_message})
         return messages

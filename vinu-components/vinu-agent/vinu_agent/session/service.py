@@ -19,6 +19,7 @@ class SessionService:
         llm: Any = None,
         skills_loader: Any = None,
         persistent_memory: Any = None,
+        unified_memory: Any = None,
         services_config: Optional[dict] = None,
     ) -> None:
         self.store = store
@@ -26,6 +27,7 @@ class SessionService:
         self._llm = llm
         self._skills_loader = skills_loader
         self._persistent_memory = persistent_memory
+        self._unified_memory = unified_memory
         self._services_config = services_config or {}
         self._active_loops: Dict[str, Any] = {}
         self._context_builder: Optional[ContextBuilder] = None
@@ -127,6 +129,7 @@ class SessionService:
             session_id=session_id,
             services_config=self._services_config,
             persistent_memory=self._persistent_memory,
+            unified_memory=self._unified_memory,
             skills_loader=self._skills_loader,
             session_service=self,
         )
@@ -136,6 +139,7 @@ class SessionService:
             memory=None,
             skills_loader=self._skills_loader,
             persistent_memory=self._persistent_memory,
+            unified_memory=self._unified_memory,
         )
         self._context_builder = context_builder
 

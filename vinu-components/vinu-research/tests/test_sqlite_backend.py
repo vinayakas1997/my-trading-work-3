@@ -114,6 +114,30 @@ class TestHealthInfo:
         assert info["total_runs"] == 2
 
 
+class TestCatalogRevalidation:
+    def test_touch_catalog_validated_ts_creates_entry(self, storage: ResearchStorage):
+        storage.touch_catalog_validated_ts("AAPL", "2024-07-01T00:00:00")
+        entry = storage.get_catalog_entry("AAPL")
+        assert entry is not None
+        assert entry["last_validated_ts"] == "2024-07-01T00:00:00"
+        assert entry["lifetime_trial_count"] == 0
+
+    def test_touch_catalog_validated_ts_updates_existing(self, storage: ResearchStorage):
+        storage.update_catalog_after_run("AAPL", run_id=1, trial_count=10, sharpe=0.8, validated=True)
+        storage.touch_catalog_validated_ts("AAPL", "2024-08-01T00:00:00")
+        entry = storage.get_catalog_entry("AAPL")
+        assert entry["last_validated_ts"] == "2024-08-01T00:00:00"
+        assert entry["lifetime_trial_count"] == 10
+
+    def test_touch_catalog_validated_ts_default_ts(self, storage: ResearchStorage):
+        from datetime import datetime, timezone
+        before = datetime.now(timezone.utc).isoformat()
+        storage.touch_catalog_validated_ts("MSFT")
+        entry = storage.get_catalog_entry("MSFT")
+        assert entry is not None
+        assert entry["last_validated_ts"] >= before
+
+
 class TestThreadSafety:
     def test_concurrent_writes(self, storage: ResearchStorage, tmp_db_path: Path, sample_record):
         errors: list[Exception] = []

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -17,6 +17,7 @@ from vinu_research.models import Artifact, ArtifactStatus, BenchEntry, Goal
 from vinu_research.storage import ResearchStorage
 from vinu_research.storage.models import ResearchRunRecord, STATUS_DONE, STATUS_FAILED, STATUS_PENDING, STATUS_RUNNING
 from vinu_research.storage.strategy_store import SqliteStrategyStore
+from vinu_research.gates.correlation_gate import check_correlation_gate
 from vinu_research.tools import ResearchTools
 from vinu_research.walk_forward import deflated_sharpe_ratio
 
@@ -143,6 +144,7 @@ class ResearchService:
                 indicators=indicators,
                 initial_capital=initial_capital or self._config.initial_capital,
                 universe=universe,
+                goal=goal,
                 memory_context=memory_context,
                 run_id=record.id,
             )
@@ -186,11 +188,18 @@ class ResearchService:
             await self._run_in_thread(self._storage.update_run, record)
 
             total_trials = prior_trials + result.total_iterations
+            validated = (
+                (result.holdout is not None and result.holdout.passed)
+                or (result.stress_test is not None and result.stress_test.passed)
+            )
             await self._run_in_thread(
                 self._storage.update_catalog_after_run,
                 symbol, record.id or 0, total_trials,
-                record.best_sharpe, validated=False,
+                record.best_sharpe, validated=validated,
             )
+
+            if self._storage.is_symbol_exhausted(symbol):
+                LOG.warning("Symbol %s is now exhausted after this run", symbol)
 
             response = {
                 "id": record.id,
@@ -241,12 +250,47 @@ class ResearchService:
         result = await self._run_in_thread(self._storage.approve_run, run_id)
         if result is None:
             return None
-        artifact = await self._run_in_thread(self._create_artifact_from_run, result)
+
+        correlation_blocked = False
+        if self._config.promotion_correlation_required and result.strategy_code and result.from_date and result.to_date:
+            try:
+                active = await self._run_in_thread(
+                    self._strategy_store.list_artifacts_by_statuses,
+                    [ArtifactStatus.ACTIVE], "strategy",
+                )
+                if active:
+                    tools = ResearchTools(self._config)
+                    try:
+                        verdict = await check_correlation_gate(
+                            candidate_code=result.strategy_code,
+                            candidate_symbol=result.symbol,
+                            from_date=result.from_date,
+                            to_date=result.to_date,
+                            active_strategies=active,
+                            tools=tools,
+                            config=self._config,
+                            interval=self._config.interval,
+                        )
+                        if not verdict.eligible:
+                            correlation_blocked = True
+                            LOG.warning(
+                                "Correlation gate blocked promotion for run %s on %s: "
+                                "avg_corr=%.3f with %d active strategy(ies)",
+                                run_id, result.symbol,
+                                verdict.avg_correlation, verdict.n_active,
+                            )
+                    finally:
+                        await tools.close()
+            except Exception as e:
+                LOG.warning("Correlation gate check failed for run %s: %s", run_id, e)
+
+        target_status = ArtifactStatus.BENCHING if correlation_blocked else ArtifactStatus.ACTIVE
+        artifact = await self._run_in_thread(self._create_artifact_from_run, result, target_status)
         response = result.to_dict()
         response["artifact_id"] = artifact.artifact_id
         return response
 
-    def _create_artifact_from_run(self, record: ResearchRunRecord) -> Artifact:
+    def _create_artifact_from_run(self, record: ResearchRunRecord, status: ArtifactStatus = ArtifactStatus.ACTIVE) -> Artifact:
         """Persist an approved run as a strategy artifact — the bridge between
         "a research run finished" and "a strategy is tracked over time"."""
         artifact = Artifact.create(
@@ -254,7 +298,8 @@ class ResearchService:
             name=f"{record.symbol}_{record.id}",
             universe=[record.symbol],
         )
-        artifact.status = ArtifactStatus.ACTIVE
+        artifact.status = status
+        artifact.last_validated_ts = datetime.now(timezone.utc).isoformat()
         artifact.strategy_code = record.strategy_code
         artifact.source_run_id = record.id
         artifact.initial_sharpe = record.best_sharpe
@@ -269,6 +314,81 @@ class ResearchService:
             sharpe=record.best_sharpe,
         ))
         return artifact
+
+    async def revalidate_artifact(self, artifact_id: str) -> dict[str, Any]:
+        """Re-backtest an ACTIVE/MONITORING artifact against fresh data and run
+        Monte Carlo validation. Returns a verdict dict with revalidation result.
+        
+        1. Backtests the artifact's `strategy_code` on a recent window
+        2. Extracts validation data from the backtest response
+        3. Updates the artifact's `last_validated_ts`, `revalidation_count`,
+           and `last_revalidation_verdict`
+        4. If validation fails, transitions to MONITORING (if currently ACTIVE)
+        5. Updates the research_catalog's `last_validated_ts`
+        """
+        artifact = await self._run_in_thread(
+            self._strategy_store.get_artifact, artifact_id,
+        )
+        if artifact is None:
+            return {"error": f"Artifact {artifact_id} not found", "revalidated": False}
+        if not artifact.strategy_code:
+            return {"error": "No strategy code to re-validate", "revalidated": False}
+
+        symbol = artifact.universe[0] if artifact.universe else ""
+        now = datetime.now(timezone.utc)
+        from_date = (now - timedelta(days=self._config.revalidation_lookback_days)).strftime("%Y-%m-%d")
+        to_date = now.strftime("%Y-%m-%d")
+
+        tools = ResearchTools(self._config)
+        try:
+            result = await tools.run_backtest(
+                strategy_code=artifact.strategy_code,
+                strategy_class_name="CustomStrategy",
+                symbols=[symbol] if symbol else [],
+                from_date=from_date,
+                to_date=to_date,
+                run_validation=True,
+            )
+
+            if result is None:
+                return {"error": "Backtest returned no result", "revalidated": False}
+
+            validation_passed = False
+            if result.raw and "validation" in result.raw:
+                v = result.raw["validation"]
+                validation_passed = v.get("passed", True) if isinstance(v, dict) else True
+
+            # Update artifact fields
+            artifact.last_validated_ts = now.isoformat()
+            artifact.revalidation_count += 1
+            artifact.last_revalidation_verdict = validation_passed
+
+            # Transition to MONITORING when validation fails on an ACTIVE artifact
+            previous_status = artifact.status
+            if not validation_passed and artifact.status == ArtifactStatus.ACTIVE:
+                artifact.status = ArtifactStatus.MONITORING
+
+            await self._run_in_thread(self._strategy_store.upsert_artifact, artifact)
+
+            # Update research_catalog's last_validated_ts for this symbol
+            if symbol:
+                await self._run_in_thread(
+                    self._storage.touch_catalog_validated_ts, symbol, now.isoformat(),
+                )
+
+            return {
+                "revalidated": True,
+                "artifact_id": artifact_id,
+                "symbol": symbol,
+                "validation_passed": validation_passed,
+                "previous_status": previous_status.value,
+                "new_status": artifact.status.value,
+                "sharpe": result.metrics.sharpe_ratio,
+                "from_date": from_date,
+                "to_date": to_date,
+            }
+        finally:
+            await tools.close()
 
     async def has_active_strategy(self, symbol: str) -> bool:
         artifacts = await self._run_in_thread(

@@ -15,6 +15,7 @@ from vinu_lib.debug import debug_timer
 from vinu_lib.llm.cache import LlmCache
 from vinu_lib.llm.config import LlmConfig
 from vinu_lib.llm.docker import alternative_urls, is_running_in_docker
+from vinu_lib.llm.cost import CostEntry, TokenUsage, get_global_cost_tracker
 from vinu_lib.llm.providers import detect_provider, get_capabilities
 from vinu_lib.rate_limit import TokenBucket
 
@@ -32,8 +33,10 @@ def _log_llm_call(
     response: Any,
     success: bool,
     error: str | None,
+    token_usage: TokenUsage | None = None,
+    estimated_cost: float = 0.0,
 ) -> None:
-    entry = {
+    entry: dict[str, Any] = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "service": service,
         "event": "llm_call",
@@ -46,6 +49,13 @@ def _log_llm_call(
         "success": success,
         "error": error,
     }
+    if token_usage is not None:
+        entry["token_usage"] = {
+            "prompt": token_usage.prompt_tokens,
+            "completion": token_usage.completion_tokens,
+            "total": token_usage.total_tokens,
+        }
+        entry["estimated_cost_usd"] = estimated_cost
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as f:
@@ -144,12 +154,30 @@ class AsyncLlmClient:
                     content = data["choices"][0]["message"]["content"]
                     parsed = _parse_json_content(content)
 
+                    token_usage = TokenUsage.from_api_response(data)
+                    cost = self._caps.estimate_cost(
+                        self._config.model, token_usage.prompt_tokens, token_usage.completion_tokens,
+                    ) if self._caps else 0.0
+
                     if self._config.ttl_sec > 0:
                         self._cache.set(cache_key, parsed)
                     _log_llm_call(
                         self._log_path, self._service, self._config.model, candidate_base,
                         system, user, time.perf_counter() - start, parsed, True, None,
+                        token_usage=token_usage, estimated_cost=cost,
                     )
+                    get_global_cost_tracker().record(CostEntry(
+                        ts=datetime.now(timezone.utc).isoformat(),
+                        service=self._service,
+                        model=self._config.model,
+                        provider=self._provider,
+                        prompt_tokens=token_usage.prompt_tokens,
+                        completion_tokens=token_usage.completion_tokens,
+                        total_tokens=token_usage.total_tokens,
+                        estimated_cost_usd=cost,
+                        duration_sec=time.perf_counter() - start,
+                        success=True,
+                    ))
                     return parsed
                 except httpx.ConnectError as e:
                     last_error = e

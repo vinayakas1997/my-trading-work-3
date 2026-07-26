@@ -23,6 +23,20 @@ class ProviderCapabilities:
     supports_streaming: bool = True
     max_tokens_default: int = 4096
     requires_api_key: bool = True
+    pricing: dict[str, dict[str, float]] = field(default_factory=dict)
+
+    def get_model_pricing(self, model: str) -> dict[str, float]:
+        """Return pricing for a specific model, falling back to 'default'."""
+        if model in self.pricing:
+            return self.pricing[model]
+        return self.pricing.get("default", {"input_per_1m": 0.0, "output_per_1m": 0.0})
+
+    def estimate_cost(self, model: str, prompt_tokens: int, completion_tokens: int) -> float:
+        """Estimate USD cost for a call given token counts and model pricing."""
+        p = self.get_model_pricing(model)
+        input_cost = (prompt_tokens / 1_000_000) * p.get("input_per_1m", 0.0)
+        output_cost = (completion_tokens / 1_000_000) * p.get("output_per_1m", 0.0)
+        return round(input_cost + output_cost, 6)
 
 
 _providers_cache: dict[str, ProviderCapabilities] | None = None

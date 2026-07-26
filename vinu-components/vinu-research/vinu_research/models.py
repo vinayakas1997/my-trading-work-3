@@ -115,6 +115,11 @@ class Artifact:
     holdout_passed: bool | None = None
     # None when no stress window had usable price data, from StressTestResult.passed.
     stress_test_passed: bool | None = None
+    # Periodic re-validation tracking — updated when the artifact's strategy is
+    # re-backtested against fresh data to check for decay.
+    last_validated_ts: str = ""
+    revalidation_count: int = 0
+    last_revalidation_verdict: bool | None = None
 
     @classmethod
     def create(cls, type_: str, name: str, universe: list[str] | None = None) -> Artifact:

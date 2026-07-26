@@ -298,6 +298,52 @@ class TestSqliteStrategyStore:
         assert loaded.initial_sharpe == 1.4
         assert loaded.initial_max_dd == -0.2
 
+    def test_revalidation_fields_roundtrip(self):
+        store, _ = self._make_store()
+        a = Artifact.create("strategy", "Reval Test", universe=["AAPL"])
+        a.last_validated_ts = "2024-06-01T00:00:00"
+        a.revalidation_count = 3
+        a.last_revalidation_verdict = True
+        store.upsert_artifact(a)
+        loaded = store.get_artifact(a.artifact_id)
+        assert loaded.last_validated_ts == "2024-06-01T00:00:00"
+        assert loaded.revalidation_count == 3
+        assert loaded.last_revalidation_verdict is True
+
+    def test_list_stale_artifacts_returns_recent_first(self):
+        from datetime import datetime, timedelta, timezone
+        store, _ = self._make_store()
+        a1 = Artifact.create("strategy", "Recent", universe=["AAPL"])
+        a1.status = ArtifactStatus.ACTIVE
+        a1.last_validated_ts = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+        store.upsert_artifact(a1)
+        a2 = Artifact.create("strategy", "Stale", universe=["MSFT"])
+        a2.status = ArtifactStatus.ACTIVE
+        a2.last_validated_ts = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+        store.upsert_artifact(a2)
+        stale = store.list_stale_artifacts(days=30)
+        ids = [a.artifact_id for a in stale]
+        assert a2.artifact_id in ids
+        assert a1.artifact_id not in ids
+
+    def test_list_stale_artifacts_never_validated(self):
+        store, _ = self._make_store()
+        a = Artifact.create("strategy", "NeverValidated", universe=["AAPL"])
+        a.status = ArtifactStatus.ACTIVE
+        a.last_validated_ts = ""
+        store.upsert_artifact(a)
+        stale = store.list_stale_artifacts(days=1000)
+        assert any(s.artifact_id == a.artifact_id for s in stale)
+
+    def test_list_stale_artifacts_empty_when_none_stale(self):
+        store, _ = self._make_store()
+        a = Artifact.create("strategy", "Fresh", universe=["AAPL"])
+        a.status = ArtifactStatus.ACTIVE
+        a.last_validated_ts = "2099-01-01T00:00:00"
+        store.upsert_artifact(a)
+        stale = store.list_stale_artifacts(days=30)
+        assert len(stale) == 0
+
     def test_list_artifacts_for_symbol(self):
         store, _ = self._make_store()
         a1 = Artifact.create("strategy", "AAPL_1", universe=["AAPL"])

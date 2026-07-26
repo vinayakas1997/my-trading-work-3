@@ -21,6 +21,7 @@ from vinu_research.models import (
     BacktestResult,
     CriticFeedback,
     Evidence,
+    Goal,
     HoldoutResult,
     Hypothesis,
     HypothesisStatus,
@@ -155,6 +156,7 @@ class StrategyResearchLoop:
         universe: list[str] | None = None,
         memory_context: str = "",
         run_id: int = 0,
+        goal: Goal | None = None,
     ) -> ResearchResult:
         """
         `symbol` remains the primary ticker used for story/drawdown lookups (the
@@ -202,6 +204,29 @@ class StrategyResearchLoop:
         self._memory_context = memory_context
         self._last_reasoning = ""
         self._run_id = run_id
+
+        # Check if this symbol has been exhausted (too many consecutive
+        # validation failures or lifetime trials without a passing strategy).
+        if self._storage is not None and self._storage.is_symbol_exhausted(symbol):
+            LOG.warning("Symbol %s is exhausted — returning early", symbol)
+            return ResearchResult(
+                symbol=symbol,
+                from_date=from_date,
+                to_date=to_date,
+                user_idea=user_idea,
+                iterations=[],
+                best_result=None,
+                best_iteration=-1,
+                total_iterations=0,
+                report_md=f"## Symbol {symbol} is exhausted\n\n"
+                          f"This symbol has been flagged as exhausted after "
+                          f"multiple research runs without producing a viable "
+                          f"strategy. Skipping this research request.\n",
+                walk_forward=None,
+                holdout=None,
+                portfolio=None,
+                stress_test=None,
+            )
 
         # Fetched once up front (depends only on symbol + interval, not on research
         # dates or iteration state) so the strategy generator sees the same
@@ -257,21 +282,31 @@ class StrategyResearchLoop:
 
         benchmark_symbol = self._config.benchmark_symbol
         bench_cache_key = f"{benchmark_symbol}:{research_from}:{research_to}"
+        self._goal = goal
+        self._goal_llm_calls = 0
+        self._goal_start_time = time.perf_counter()
 
         for iteration in range(1, self._config.max_iterations + 1):
+            if self._check_goal_budget(iteration):
+                break
             debug_log(f"Iteration {iteration}/{self._config.max_iterations}", level=1)
             try:
+                llm_was_called = False
                 if iteration == 1 and not strategy_code:
                     async with debug_timer(f"loop.gen-iter-{iteration}"):
                         strategy_code = await self._quant_coder(
                             user_idea, iteration, None, None
                         )
+                    llm_was_called = True
                 elif iteration > 1:
                     last = history[-1]
                     async with debug_timer(f"loop.gen-iter-{iteration}"):
                         strategy_code = await self._quant_coder(
                             user_idea, iteration, last.result, last.critique, last.strategy_code
                         )
+                    llm_was_called = True
+                if llm_was_called:
+                    self._track_goal_llm_call()
 
                 # 1. Static AST Verification Check
                 verification_errors = self._verify_strategy_code(strategy_code)
@@ -365,6 +400,7 @@ class StrategyResearchLoop:
                 critic_feedback = await self._risk_critic(
                     result, story, drawdowns, iteration
                 )
+                self._track_goal_llm_call()
                 debug_log(f"Iteration {iteration}: verdict={critic_feedback.verdict} suggestions={len(critic_feedback.suggestions)}", level=1)
 
                 # 2. Post-backtest Weight Holding Check
@@ -381,6 +417,7 @@ class StrategyResearchLoop:
                     diagnosis = await self._diagnose_failure(
                         strategy_code=strategy_code, result=result, symbol=symbol,
                     )
+                    self._track_goal_llm_call()
 
                 for s in critic_feedback.suggestions:
                     key = self._normalize_suggestion_key(s)
@@ -399,6 +436,7 @@ class StrategyResearchLoop:
                 should_pivot = False
                 if iteration >= 2 and result.metrics.sharpe_ratio < 0.1 and result.trade_count < 5:
                     pivot_decision, pivot_confidence = await self._reflect()
+                    self._track_goal_llm_call()
                     LOG.info("Meta-reflection: decision=%s, confidence=%.2f for %s", pivot_decision, pivot_confidence, symbol)
                     debug_log(f"Iteration {iteration}: reflection decision={pivot_decision} confidence={pivot_confidence:.2f}", level=1)
                     if pivot_decision == "pivot":
@@ -1469,6 +1507,23 @@ class StrategyResearchLoop:
         except Exception as e:
             LOG.warning("LLM enhanced check failed: %s, falling back to rules only", e)
             return None
+
+    def _check_goal_budget(self, iteration: int) -> bool:
+        if self._goal is None:
+            return False
+        elapsed = time.perf_counter() - self._goal_start_time
+        self._goal.llm_calls_used = self._goal_llm_calls
+        self._goal.time_used_seconds = round(elapsed, 3)
+        if self._goal.llm_calls_budget > 0 and self._goal_llm_calls >= self._goal.llm_calls_budget:
+            LOG.warning("Goal LLM call budget exhausted (%d/%d) at iteration %d — stopping", self._goal.llm_calls_used, self._goal.llm_calls_budget, iteration)
+            return True
+        if self._goal.time_budget_seconds > 0 and elapsed >= self._goal.time_budget_seconds:
+            LOG.warning("Goal time budget exhausted (%.1f/%.1f) at iteration %d — stopping", elapsed, self._goal.time_budget_seconds, iteration)
+            return True
+        return False
+
+    def _track_goal_llm_call(self) -> None:
+        self._goal_llm_calls += 1
 
     def _merge_feedback(
         self,

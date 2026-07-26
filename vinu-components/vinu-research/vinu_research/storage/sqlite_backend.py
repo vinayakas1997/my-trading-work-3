@@ -8,7 +8,7 @@ from typing import Any
 from vinu_lib.sqlite import SQLiteBackend
 from vinu_research.storage.models import ResearchRunRecord, STATUS_APPROVED, STATUS_DELETED, STATUS_DONE
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS research_runs (
@@ -42,7 +42,11 @@ CREATE TABLE IF NOT EXISTS research_catalog (
     last_run_ts TEXT,
     last_validated_ts TEXT,
     best_sharpe_ever REAL NOT NULL DEFAULT 0.0,
-    status TEXT NOT NULL DEFAULT 'active'
+    status TEXT NOT NULL DEFAULT 'active',
+    total_validated_count INTEGER NOT NULL DEFAULT 0,
+    last_validation_verdict INTEGER,
+    consecutive_validation_failures INTEGER NOT NULL DEFAULT 0,
+    exhausted INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS iteration_checkpoints (
     run_id INTEGER NOT NULL,
@@ -60,6 +64,10 @@ _MIGRATIONS: list[tuple[str, str]] = [
     ("ALTER TABLE research_runs ADD COLUMN deflated_sharpe REAL NOT NULL DEFAULT 0.0", "add_deflated_sharpe"),
     ("ALTER TABLE research_runs ADD COLUMN holdout_passed INTEGER", "add_holdout_passed"),
     ("ALTER TABLE research_runs ADD COLUMN stress_test_passed INTEGER", "add_stress_test_passed"),
+    ("ALTER TABLE research_catalog ADD COLUMN total_validated_count INTEGER NOT NULL DEFAULT 0", "add_total_validated_count"),
+    ("ALTER TABLE research_catalog ADD COLUMN last_validation_verdict INTEGER", "add_last_validation_verdict"),
+    ("ALTER TABLE research_catalog ADD COLUMN consecutive_validation_failures INTEGER NOT NULL DEFAULT 0", "add_consecutive_validation_failures"),
+    ("ALTER TABLE research_catalog ADD COLUMN exhausted INTEGER NOT NULL DEFAULT 0", "add_exhausted"),
 ]
 
 
@@ -258,25 +266,86 @@ class ResearchStorage(SQLiteBackend):
         prior runs). `best_sharpe_ever` is the one field that genuinely needs
         max-across-history semantics, since callers only ever pass *this*
         run's best Sharpe, not a running best.
+
+        `validated` tracks whether the strategy survived out-of-sample testing
+        (holdout, walk-forward, or stress test). Consecutive validation failures
+        increment `consecutive_validation_failures`; a passing validation resets
+        that counter. When consecutive failures reach the exhaustion threshold (5),
+        the symbol is automatically marked as `exhausted`.
         """
         conn = self._get_conn()
         now = datetime.now(timezone.utc).isoformat()
+
+        existing = self.get_catalog_entry(symbol)
+        prev_consecutive = existing.get("consecutive_validation_failures", 0) if existing else 0
+        prev_validated_count = existing.get("total_validated_count", 0) if existing else 0
+
+        if validated:
+            new_validated_count = prev_validated_count + 1
+            new_consecutive = 0
+            last_verdict = 1
+        else:
+            new_validated_count = prev_validated_count
+            new_consecutive = prev_consecutive + 1
+            last_verdict = 0 if existing and existing.get("last_run_id") is not None else None
+
+        exhausted = 1 if new_consecutive >= 5 else 0
+
         conn.execute(
             """INSERT INTO research_catalog
                (symbol, lifetime_trial_count, last_run_id, last_run_ts,
-                last_validated_ts, best_sharpe_ever, status)
-               VALUES (?, ?, ?, ?, ?, ?, 'active')
+                last_validated_ts, best_sharpe_ever, status,
+                total_validated_count, last_validation_verdict,
+                consecutive_validation_failures, exhausted)
+               VALUES (?, ?, ?, ?, ?, ?, 'active',
+                       ?, ?, ?, ?)
                ON CONFLICT (symbol) DO UPDATE SET
                lifetime_trial_count = excluded.lifetime_trial_count,
                last_run_id = excluded.last_run_id,
                last_run_ts = excluded.last_run_ts,
                last_validated_ts = COALESCE(excluded.last_validated_ts, last_validated_ts),
                best_sharpe_ever = MAX(best_sharpe_ever, excluded.best_sharpe_ever),
-               status = excluded.status""",
+               status = excluded.status,
+               total_validated_count = excluded.total_validated_count,
+               last_validation_verdict = excluded.last_validation_verdict,
+               consecutive_validation_failures = excluded.consecutive_validation_failures,
+               exhausted = excluded.exhausted""",
             (
                 symbol.upper(), trial_count, run_id, now,
                 now if validated else None, sharpe,
+                new_validated_count, last_verdict,
+                new_consecutive, exhausted,
             ),
+        )
+        conn.commit()
+
+    def is_symbol_exhausted(self, symbol: str) -> bool:
+        """Check if a symbol has been marked as exhausted (too many consecutive
+        validation failures or lifetime trials without a passing strategy)."""
+        entry = self.get_catalog_entry(symbol)
+        if entry is None:
+            return False
+        if entry.get("exhausted", 0):
+            return True
+        lt = entry.get("lifetime_trial_count", 0)
+        bs = entry.get("best_sharpe_ever", 0.0)
+        if lt >= 20 and bs < 0.3:
+            return True
+        return False
+
+    def exhaust_symbol(self, symbol: str) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE research_catalog SET exhausted = 1 WHERE symbol = ?",
+            (symbol.upper(),),
+        )
+        conn.commit()
+
+    def clear_exhaustion(self, symbol: str) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE research_catalog SET exhausted = 0, consecutive_validation_failures = 0 WHERE symbol = ?",
+            (symbol.upper(),),
         )
         conn.commit()
 
@@ -306,6 +375,23 @@ class ResearchStorage(SQLiteBackend):
             (cutoff.isoformat(),),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def touch_catalog_validated_ts(self, symbol: str, ts: str | None = None) -> None:
+        """Update the `last_validated_ts` for a catalog entry without changing
+        any other fields. Creates an entry if none exists for this symbol."""
+        if ts is None:
+            ts = datetime.now(timezone.utc).isoformat()
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO research_catalog
+               (symbol, lifetime_trial_count, last_validated_ts, status,
+                total_validated_count, consecutive_validation_failures, exhausted)
+               VALUES (?, 0, ?, 'active', 0, 0, 0)
+               ON CONFLICT (symbol) DO UPDATE SET
+               last_validated_ts = excluded.last_validated_ts""",
+            (symbol.upper(), ts),
+        )
+        conn.commit()
 
     # ── Checkpoint methods ───────────────────────────────────────────
 

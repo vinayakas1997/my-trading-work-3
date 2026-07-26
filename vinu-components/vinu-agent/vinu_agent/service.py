@@ -6,6 +6,7 @@ from .agent.llm import create_llm
 from .agent.skills import SkillsLoader
 from .config import AgentConfig, load_config
 from .memory.persistent import PersistentMemory
+from .memory.unified_store import UnifiedMemoryStore
 from .session.events import EventBus
 from .session.models import Session
 from .session.service import SessionService
@@ -27,6 +28,10 @@ class AgentService:
         self._memory = PersistentMemory(
             Path(self._config.memory_dir)
         )
+        data_root = Path(self._config.memory_dir).parent
+        self._unified_memory = UnifiedMemoryStore(
+            data_root / "unified_memory.db"
+        )
         self._skills_loader = SkillsLoader(
             skills_dir=Path(self._config.skills_dir) if self._config.skills_dir else None,
             user_skills_dir=Path(self._config.user_skills_dir) if self._config.user_skills_dir else None,
@@ -37,6 +42,7 @@ class AgentService:
             llm=self._llm,
             skills_loader=self._skills_loader,
             persistent_memory=self._memory,
+            unified_memory=self._unified_memory,
             services_config=self._config.services,
         )
         self._swarm_store = SwarmStore(
@@ -58,6 +64,10 @@ class AgentService:
     @property
     def config(self) -> AgentConfig:
         return self._config
+
+    @property
+    def unified_memory(self) -> UnifiedMemoryStore:
+        return self._unified_memory
 
     async def create_session(self, title: str = "") -> Session:
         return await self._session_service.create_session(title=title)
@@ -82,7 +92,8 @@ class AgentService:
         return self._swarm_runtime
 
     def close(self) -> None:
-        pass
+        if hasattr(self, "_unified_memory"):
+            self._unified_memory.close()
 
     def __enter__(self):
         return self

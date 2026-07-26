@@ -111,6 +111,12 @@ class ResearchConfig:
     promotion_deflated_sharpe_threshold: float = 0.95
     promotion_holdout_required: bool = True
     promotion_stress_test_required: bool = True
+    # Cross-strategy correlation gate: before promoting, the candidate's daily
+    # returns are compared against all ACTIVE strategies. If the average pairwise
+    # correlation exceeds this threshold, promotion is blocked and the artifact
+    # is created as BENCHING instead of ACTIVE.
+    promotion_correlation_threshold: float = 0.85
+    promotion_correlation_required: bool = False
 
     # Fixed historical crisis windows the winning strategy is replayed through
     # once, after the refinement loop finishes — never used to pick or tune
@@ -125,6 +131,12 @@ class ResearchConfig:
     # deliberately lenient: crisis windows are *expected* to hurt, this is
     # meant to catch catastrophic/leveraged blowups, not ordinary drawdown.
     stress_test_max_drawdown_threshold: float = -0.50
+
+    # Re-validation: how often an ACTIVE artifact should be re-backtested against
+    # fresh data to check for decay (in days). Also controls the lookback window
+    # used for the re-validation backtest. Set to 0 to disable.
+    revalidation_interval_days: int = 30
+    revalidation_lookback_days: int = 180
 
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
@@ -205,10 +217,22 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         promotion_stress_test_required=os.environ.get(
             "VINU_RESEARCH_PROMOTION_STRESS_TEST_REQUIRED", "true"
         ).lower() in ("1", "true", "yes"),
+        promotion_correlation_threshold=float(
+            os.environ.get("VINU_RESEARCH_PROMOTION_CORRELATION_THRESHOLD", "0.85")
+        ),
+        promotion_correlation_required=os.environ.get(
+            "VINU_RESEARCH_PROMOTION_CORRELATION_REQUIRED", "false"
+        ).lower() in ("1", "true", "yes"),
         stress_test_enabled=os.environ.get("VINU_RESEARCH_STRESS_TEST_ENABLED", "true").lower()
         in ("1", "true", "yes"),
         stress_test_max_drawdown_threshold=float(
             os.environ.get("VINU_RESEARCH_STRESS_TEST_MAX_DD", "-0.50")
+        ),
+        revalidation_interval_days=int(
+            os.environ.get("VINU_RESEARCH_REVALIDATION_INTERVAL_DAYS", "30")
+        ),
+        revalidation_lookback_days=int(
+            os.environ.get("VINU_RESEARCH_REVALIDATION_LOOKBACK_DAYS", "180")
         ),
         host=os.environ.get("VINU_RESEARCH_HOST", DEFAULT_HOST),
         port=int(os.environ.get("VINU_RESEARCH_PORT", str(DEFAULT_PORT))),
