@@ -7,6 +7,10 @@ from statistics import NormalDist
 import numpy as np
 import pandas as pd
 
+from vinu_simulator.engine.inference import (
+    deflated_sharpe_ratio as _deflated_sharpe_ratio,
+)
+
 _STANDARD_NORMAL = NormalDist()
 _EULER_GAMMA = 0.5772156649015329
 
@@ -142,25 +146,16 @@ def deflated_sharpe_ratio(
 
     `excess_kurtosis` follows the pandas/numpy convention (0.0 for a normal
     distribution), matching `BacktestMetrics.kurtosis`.
+
+    Note: the canonical implementation lives in
+    ``vinu_simulator.engine.inference.deflated_sharpe_ratio``.  This
+    wrapper is kept for backward compatibility.
     """
-    if n_obs < 2 or n_trials < 1:
-        return 0.5
-
-    # De-annualize Sharpe to get daily Sharpe (non-annualized)
-    daily_sharpe = sharpe / math.sqrt(periods_per_year) if periods_per_year > 0 else sharpe
-
-    kurt = excess_kurtosis + 3.0  # convert to regular (non-excess) kurtosis
-    variance_term = max(1 - skew * daily_sharpe + ((kurt - 1) / 4) * daily_sharpe**2, 1e-12)
-    sr_std = math.sqrt(variance_term / max(n_obs - 1, 1))
-    if sr_std <= 0:
-        return 0.5
-
-    if n_trials <= 1:
-        expected_max_sharpe = 0.0
-    else:
-        z_a = _STANDARD_NORMAL.inv_cdf(1 - 1.0 / n_trials)
-        z_b = _STANDARD_NORMAL.inv_cdf(1 - 1.0 / (n_trials * math.e))
-        expected_max_sharpe = sr_std * ((1 - _EULER_GAMMA) * z_a + _EULER_GAMMA * z_b)
-
-    z = (daily_sharpe - expected_max_sharpe) / sr_std
-    return float(_STANDARD_NORMAL.cdf(z))
+    return _deflated_sharpe_ratio(
+        sharpe=sharpe,
+        n_trials=n_trials,
+        n_obs=n_obs,
+        skew=skew,
+        excess_kurtosis=excess_kurtosis,
+        periods_per_year=periods_per_year,
+    )

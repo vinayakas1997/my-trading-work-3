@@ -60,6 +60,7 @@ def compute(
     from_ts: int | None = None,
     to_ts: int | None = None,
     time_format: str | None = None,
+    extra_features: dict[str, pd.Series] | None = None,
 ) -> pd.DataFrame:
     rows = []
     if bars is None:
@@ -97,6 +98,20 @@ def compute(
         "high_low": (bars["high"].astype(float) - bars["low"].astype(float)) / close,
         "volume_ratio": bars["volume"].astype(float) / bars["volume"].astype(float).rolling(21).mean(),
     })
+
+    if news:
+        news_sentiments = [float(a.get("sentiment_score", 0) or 0) for a in news if a.get("sort_ts")]
+        if len(news_sentiments) >= features.shape[0]:
+            features["news_sentiment"] = pd.Series(news_sentiments[:features.shape[0]], index=features.index)
+        news_impact = [1.0 if a.get("impact_label") in ("high_bullish", "high_bearish") else 0.0 for a in news if a.get("sort_ts")]
+        if len(news_impact) >= features.shape[0]:
+            features["news_high_impact"] = pd.Series(news_impact[:features.shape[0]], index=features.index)
+
+    if extra_features:
+        for name, series in extra_features.items():
+            aligned = series.reindex(features.index, method=None)
+            if aligned.notna().sum() > 0:
+                features[name] = aligned
 
     y = returns.shift(-1)
     combined = pd.concat([features, y.rename("target")], axis=1).dropna()

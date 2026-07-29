@@ -16,52 +16,6 @@ angles:
   - column: angle_data
     type: dict
     description: Angle-specific results
-- id: benchmark_comparison
-  title: Benchmark Comparison
-  purpose: Alpha, beta, tracking error, information ratio, up/down capture vs benchmark
-  time_formats:
-  - 1D
-  - 1W
-  - 1M
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: Angle-specific results
-- id: decay_monitoring
-  title: Decay Monitoring
-  purpose: Rolling IC, information ratio half-life, 4-level health score, decay curve
-  time_formats:
-  - 1D
-  - 1W
-  - 1M
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: Angle-specific results
-- id: deflated_sharpe_ratio
-  title: Deflated Sharpe Ratio
-  purpose: Full Bailey & López de Prado DSR formula with skew/kurt adjustment, variable
-    trials
-  time_formats:
-  - 1D
-  - 1W
-  - 1M
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: Angle-specific results
 - id: drawdown_deep_dive
   title: Drawdown Deep-Dive
   purpose: Drawdown detection, news attribution, max drawdown duration, recovery time
@@ -69,34 +23,6 @@ angles:
   time_formats:
   - 15min
   - 1H
-  - 1D
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: Angle-specific results
-- id: event_study_methodology
-  title: Event Study Methodology
-  purpose: Abnormal return, cumulative abnormal return (CAR), t-test significance
-    classification
-  time_formats:
-  - 1D
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: Angle-specific results
-- id: factor_backtesting
-  title: Factor Backtesting
-  purpose: Cross-sectional long/short factor backtest with 7 factors × 4 weight schemes,
-    10 portfolio metrics
-  time_formats:
   - 1D
   inputs:
     symbol: str
@@ -153,22 +79,29 @@ angles:
   - column: angle_data
     type: dict
     description: Angle-specific results
-- id: portfolio_analysis
-  title: Portfolio Analysis
-  purpose: Pairwise correlation, rolling beta, beta-hedged Sharpe, multi-timeframe
-    correlation
+- id: pnl_attribution
+  title: PnL Attribution
+  purpose: 'Realized-trade PnL statistics per symbol -- win rate, average win/loss,
+    trade count -- computed from Phase 6 (vinu-live) execution logs. Every field includes
+    sample size and confidence interval. Deviates from the standard runner-driven
+    angle pattern: its natural input is closed positions/fills, not price bars, so
+    it is push-fed via POST /pnl-attribution/{symbol}/record (Phase 7''s feedback
+    loop) rather than pulled by AngleRunner from bars/news. `compute()` still exists
+    with the standard signature so a generic `/run/{ticker}` sweep doesn''t error,
+    but it is a documented no-op there -- real population happens through the ingest
+    path (`pnl_attribution_ingest.py`), which calls `aggregate_pnl_attribution` directly
+    and writes via `AngleStorage.write()`.
+
+    '
   time_formats:
   - 1D
-  - 1W
-  - 1M
   inputs:
     symbol: str
-    from_ts: int | None
-    to_ts: int | None
+    closed_positions: list[dict]
   outputs:
   - column: angle_data
     type: dict
-    description: Angle-specific results
+    description: PnL attribution results with confidence intervals
 - id: regime_analysis
   title: Regime Analysis
   purpose: 4-regime classifier (bull/bear/high_vol/sideways), transition matrix, per-regime
@@ -185,10 +118,13 @@ angles:
   - column: angle_data
     type: dict
     description: Angle-specific results
-- id: technical_indicators
-  title: Technical Indicator Landscape
-  purpose: Compute and evaluate 24 technical indicators across trend, momentum, volatility,
-    volume, and price action
+- id: shock_clustering
+  title: Shock Clustering
+  purpose: 'Identifies which symbols tend to shock together, derived from Phase 1''s
+    dynamic covariance sampled specifically at shock dates. Reports cluster membership
+    with correlation strength and confidence intervals.
+
+    '
   time_formats:
   - 1D
   inputs:
@@ -198,7 +134,24 @@ angles:
   outputs:
   - column: angle_data
     type: dict
-    description: Angle-specific results
+    description: Shock cluster membership for the symbol
+- id: shock_personality
+  title: Shock Personality
+  purpose: 'Post-shock behavioral characterization — gap_fill_rate, vol_persistence
+    (from Phase 1 GARCH), drift_persistence_days. Every field includes sample size
+    and confidence interval.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Shock personality results with confidence intervals
 - id: trend_lifecycle
   title: Trend Lifecycle
   purpose: Peak/trough pattern library, KNN similarity matching, trend stage classification,
@@ -225,23 +178,6 @@ angles:
   - 15min
   - 1H
   - 4H
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: Angle-specific results
-- id: validation_overfitting
-  title: Validation & Overfitting
-  purpose: Monte Carlo permutation test, bootstrap confidence intervals, walk-forward
-    validation, deflated Sharpe
-  time_formats:
-  - 1D
-  - 1W
-  - 1M
-  - 6M
   inputs:
     symbol: str
     from_ts: int | None

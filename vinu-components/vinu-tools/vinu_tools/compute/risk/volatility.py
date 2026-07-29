@@ -74,7 +74,7 @@ def _garch_ml_estimate(
     squared = returns ** 2
 
     for _ in range(max_iter):
-        sigma2 = np.full(n, np.var(returns))
+        sigma2 = np.full(n, np.var(returns, ddof=1))
         for t in range(1, n):
             sigma2[t] = omega + alpha * squared[t - 1] + beta * sigma2[t - 1]
         sigma2 = np.maximum(sigma2, 1e-12)
@@ -122,7 +122,7 @@ def garch_volatility(
         beta = beta or 0.85
 
     result = np.full_like(returns, np.nan, dtype=float)
-    variance = np.var(clean) if len(clean) > 0 else 1e-6
+    variance = np.var(clean, ddof=1) if len(clean) > 0 else 1e-6
     for i in range(len(returns)):
         if np.isnan(returns[i]):
             continue
@@ -144,7 +144,7 @@ def egarch_volatility(
 ) -> np.ndarray:
     af = annualization_factor(time_format)
     result = np.full_like(returns, np.nan, dtype=float)
-    log_variance = np.log(np.var(returns[~np.isnan(returns)]) + 1e-12)
+    log_variance = np.log(np.var(returns[~np.isnan(returns)], ddof=1) + 1e-12)
     for i in range(len(returns)):
         if np.isnan(returns[i]):
             continue

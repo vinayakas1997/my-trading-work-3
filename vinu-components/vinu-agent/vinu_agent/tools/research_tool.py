@@ -59,6 +59,6 @@ class ResearchTool(BaseTool):
         if kwargs.get("dry_run"):
             payload["dry_run"] = True
 
-        resp = httpx.post(f"{url}/research/run", json=payload, timeout=600)
+        resp = httpx.post(f"{url}/run", json=payload, timeout=600)
         resp.raise_for_status()
         return resp.text

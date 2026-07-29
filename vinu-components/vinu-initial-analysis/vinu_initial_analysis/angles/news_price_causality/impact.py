@@ -9,7 +9,7 @@ from vinu_initial_analysis.angles._market_hours import (
     classify_session,
     impact_window_within_session,
 )
-from vinu_initial_analysis.angles.event_study_methodology.event_study import compute_abnormal_return, classify_significance
+from vinu_initial_analysis.angles._helpers import compute_abnormal_return, classify_significance
 
 LOG = logging.getLogger(__name__)
 

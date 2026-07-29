@@ -11,6 +11,9 @@ WORKDIR /app/vinu-news
 
 RUN pip install --no-cache-dir -e .
 
+COPY vinu-news/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 RUN addgroup --system app && adduser --system --ingroup app app
 USER app
 
@@ -19,3 +22,5 @@ ENV VINU_NEWS_DB_PATH=/data/news.db
 VOLUME ["/data"]
 
 EXPOSE 8080
+
+ENTRYPOINT ["/app/entrypoint.sh"]

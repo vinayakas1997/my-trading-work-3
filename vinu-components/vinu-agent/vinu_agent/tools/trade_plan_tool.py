@@ -305,8 +305,8 @@ class TradePlanTool(BaseTool):
                 if closes[i - 1] != 0
             ]
             recent_returns = returns[-5:]
-            baseline_std = statistics.pstdev(returns) if len(returns) >= 2 else 0.0
-            recent_std = statistics.pstdev(recent_returns) if len(recent_returns) >= 2 else 0.0
+            baseline_std = statistics.stdev(returns) if len(returns) >= 2 else 0.0
+            recent_std = statistics.stdev(recent_returns) if len(recent_returns) >= 2 else 0.0
             vol_ratio = (recent_std / baseline_std) if baseline_std > 0 else None
 
             volume_ok = volume_ratio is None or volume_ratio >= 0.3
@@ -357,7 +357,7 @@ class TradePlanTool(BaseTool):
     ) -> list[dict]:
         try:
             resp = await client.get(
-                f"{base_url}/research/artifacts",
+                f"{base_url}/artifacts",
                 params={"status": "ACTIVE,MONITORING"},
                 timeout=10.0,
             )
@@ -384,7 +384,7 @@ class TradePlanTool(BaseTool):
         """
         try:
             resp = await client.post(
-                f"{base_url}/research/trade-plan/{symbol}",
+                f"{base_url}/trade-plan/{symbol}",
                 json={"timeframe": timeframe},
                 timeout=60.0,
             )

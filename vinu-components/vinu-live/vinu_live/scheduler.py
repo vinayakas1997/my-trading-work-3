@@ -97,7 +97,7 @@ class LiveScheduler:
         return result
 
     async def _fetch_portfolio(self) -> dict[str, Any]:
-        resp = await self._http.get(f"{self._config.portfolio_api_url}/portfolio")
+        resp = await self._http.get(f"{self._config.portfolio_api_url}/state")
         resp.raise_for_status()
         return resp.json()
 

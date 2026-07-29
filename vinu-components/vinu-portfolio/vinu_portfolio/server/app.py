@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 
 from vinu_portfolio.service import PortfolioService
 
@@ -15,21 +15,24 @@ def create_app() -> FastAPI:
     async def shutdown() -> None:
         await _service.close()
 
-    @app.get("/health")
+    router = APIRouter(prefix="/portfolio")
+
+    @router.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": "vinu-portfolio"}
 
-    @app.get("/portfolio")
+    @router.get("/state")
     async def get_portfolio() -> dict[str, Any]:
         return await _service.build_portfolio()
 
-    @app.get("/portfolio/strategies")
+    @router.get("/strategies")
     async def list_strategies() -> list[dict[str, Any]]:
         return await _service.list_active_strategies()
 
-    @app.get("/portfolio/weights")
+    @router.get("/weights")
     async def get_weights() -> list[dict[str, Any]]:
         portfolio = await _service.build_portfolio()
         return portfolio.get("weights", [])
 
+    app.include_router(router)
     return app

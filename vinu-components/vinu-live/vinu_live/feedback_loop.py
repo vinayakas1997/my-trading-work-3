@@ -106,7 +106,7 @@ class FeedbackLoopWorker:
             return False
         try:
             resp = await self._http.post(
-                f"{self._config.research_api_url}/research/trade-plan/{artifact_id}/record-outcome",
+                f"{self._config.research_api_url}/trade-plan/{artifact_id}/record-outcome",
                 json={"actual_return_pct": realized_return_pct},
             )
             return resp.status_code == 200

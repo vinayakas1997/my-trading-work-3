@@ -164,7 +164,7 @@ class StockService:
         summary = run_live_cycle(
             syms,
             data_root=self.data_root,
-            catalog=self._backend.catalog,
+            backend=self._backend,
             registry=self._registry,
         )
         return LiveCycleResult(summary=summary, watchlist_size=len(syms))

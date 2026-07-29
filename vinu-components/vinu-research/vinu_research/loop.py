@@ -6,6 +6,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
+import numpy as np
 import pandas as pd
 
 from vinu_lib.debug import debug_log, debug_timer
@@ -626,6 +627,30 @@ class StrategyResearchLoop:
                 max_hedge_ratio=self._config.portfolio_beta_hedge_max_ratio,
             )
 
+        pbo_result: dict[str, float] | None = None
+        try:
+            all_return_series: list[pd.Series] = []
+            for rec in history:
+                if rec.result.run_id.startswith("failed_verification"):
+                    continue
+                rets = await self._tools.fetch_equity_returns(rec.result.run_id)
+                if rets is not None and len(rets) >= 20:
+                    all_return_series.append(rets)
+
+            if len(all_return_series) >= 2:
+                min_len = min(len(r) for r in all_return_series)
+                rets_matrix = np.column_stack(
+                    [r.values[-min_len:] for r in all_return_series]
+                )
+                from vinu_research.pbo import probability_of_backtest_overfitting
+                pbo_result = probability_of_backtest_overfitting(
+                    returns_matrix=rets_matrix,
+                    n_splits=min(16, min_len // 5),
+                )
+        except Exception as e:
+            LOG.warning("PBO computation failed: %s", e)
+            pbo_result = None
+
         report_md = generate_report(
             symbol, from_date, to_date, user_idea,
             history, best_result, best_iteration,
@@ -649,6 +674,7 @@ class StrategyResearchLoop:
             holdout=holdout_result,
             portfolio=portfolio_result,
             stress_test=stress_test_result,
+            pbo=pbo_result,
         )
 
     async def _run_backtest(

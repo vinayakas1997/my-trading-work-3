@@ -31,4 +31,5 @@ def create_app():
         static_dir=Path(__file__).resolve().parent / "static",
         expose_health_on_root=True,
         lifespan=lifespan,
+        route_prefix="strategy",
     )

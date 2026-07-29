@@ -68,7 +68,7 @@ def compute_baseline(
                 sq_diff = 0.0
                 for i in range(left, len(session_counts[session_name]) - 1):
                     sq_diff += (session_counts[session_name][i] - mean) ** 2
-                variance = sq_diff / n_in_window
+                variance = sq_diff / (n_in_window - 1)
                 stddev = variance ** 0.5 or 1.0
 
             z_score = (current_count - mean) / stddev

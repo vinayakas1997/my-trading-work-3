@@ -57,17 +57,17 @@ def block_bootstrap_permutation(
         equity = np.maximum(equity, 1e-12)
         returns = np.diff(equity) / equity[:-1] if len(equity) > 1 else np.array([0.0])
 
-        if len(returns) < 2 or np.std(returns) == 0:
+        if len(returns) < 2 or np.std(returns, ddof=1) == 0:
             sim_sharpes[i] = 0.0
         else:
-            sim_sharpes[i] = float(np.mean(returns) / np.std(returns) * np.sqrt(periods_per_year))
+            sim_sharpes[i] = float(np.mean(returns) / np.std(returns, ddof=1) * np.sqrt(periods_per_year))
 
     p_value = float(np.mean(sim_sharpes >= actual_sharpe))
 
     return {
         "p_value": p_value,
         "sim_mean": float(np.mean(sim_sharpes)),
-        "sim_std": float(np.std(sim_sharpes)),
+        "sim_std": float(np.std(sim_sharpes, ddof=1)),
         "sim_p5": float(np.percentile(sim_sharpes, 5)),
         "sim_p95": float(np.percentile(sim_sharpes, 95)),
         "n_iterations": n_iterations,
@@ -117,17 +117,17 @@ def price_path_resample(
                 indices.append((start + j) % n)
         sampled = returns[indices[:n]]
 
-        if np.std(sampled) == 0 or periods_per_year <= 0:
+        if np.std(sampled, ddof=1) == 0 or periods_per_year <= 0:
             sim_sharpes[i] = 0.0
         else:
-            sim_sharpes[i] = float(np.mean(sampled) / np.std(sampled) * np.sqrt(periods_per_year))
+            sim_sharpes[i] = float(np.mean(sampled) / np.std(sampled, ddof=1) * np.sqrt(periods_per_year))
 
     p_value = float(np.mean(sim_sharpes >= actual_sharpe))
 
     return {
         "p_value": p_value,
         "sim_mean": float(np.mean(sim_sharpes)),
-        "sim_std": float(np.std(sim_sharpes)),
+        "sim_std": float(np.std(sim_sharpes, ddof=1)),
         "sim_p5": float(np.percentile(sim_sharpes, 5)),
         "sim_p95": float(np.percentile(sim_sharpes, 95)),
         "n_iterations": n_iterations,
@@ -148,6 +148,8 @@ def compute_validation_verdict(
     - price_path.p_value < 0.10  (slightly looser — tougher null)
     - walk_forward.consistency_rate >= 0.6
     - bootstrap.ci_low > 0       (Sharpe 95% CI lower bound above zero)
+    - bca.ci_low > 0              (BCa-adjusted 95% CI lower bound above zero)
+    - placebo.p_value < 0.05      (random-entry p-value)
     """
     reasons: list[str] = []
     all_passed = True
@@ -194,6 +196,30 @@ def compute_validation_verdict(
     else:
         reasons.append("Bootstrap Sharpe CI: insufficient data (skipped)")
 
+    bca = validation.get("bca", {})
+    if bca.get("minimum_met", False):
+        any_method_ran = True
+        ci_low = bca.get("ci_low", 0.0)
+        if ci_low > 0:
+            reasons.append(f"BCa bootstrap CI lower bound {ci_low:.4f} > 0 (PASS)")
+        else:
+            reasons.append(f"BCa bootstrap CI lower bound {ci_low:.4f} <= 0 (FAIL)")
+            all_passed = False
+    else:
+        reasons.append("BCa bootstrap CI: insufficient data (skipped)")
+
+    placebo = validation.get("placebo", {})
+    if placebo.get("minimum_met", False):
+        any_method_ran = True
+        pv = placebo.get("p_value", 1.0)
+        if pv < 0.05:
+            reasons.append(f"Placebo test p-value {pv:.4f} < 0.05 (PASS)")
+        else:
+            reasons.append(f"Placebo test p-value {pv:.4f} >= 0.05 (FAIL)")
+            all_passed = False
+    else:
+        reasons.append("Placebo test: insufficient data (skipped)")
+
     if not any_method_ran:
         all_passed = False
         reasons.append(
@@ -237,17 +263,17 @@ def monte_carlo_permutation(
         equity = np.maximum(equity, 1e-12)
         returns = np.diff(equity) / equity[:-1] if len(equity) > 1 else np.array([0.0])
         
-        if len(returns) < 2 or np.std(returns) == 0:
+        if len(returns) < 2 or np.std(returns, ddof=1) == 0:
             sim_sharpes[i] = 0.0
         else:
-            sim_sharpes[i] = float(np.mean(returns) / np.std(returns) * np.sqrt(periods_per_year))
+            sim_sharpes[i] = float(np.mean(returns) / np.std(returns, ddof=1) * np.sqrt(periods_per_year))
 
     p_value = float(np.mean(sim_sharpes >= actual_sharpe))
 
     return {
         "p_value": p_value,
         "sim_mean": float(np.mean(sim_sharpes)),
-        "sim_std": float(np.std(sim_sharpes)),
+        "sim_std": float(np.std(sim_sharpes, ddof=1)),
         "sim_p5": float(np.percentile(sim_sharpes, 5)),
         "sim_p95": float(np.percentile(sim_sharpes, 95)),
         "n_iterations": n_iterations,
@@ -261,7 +287,25 @@ def bootstrap_sharpe_ci(
     n_iterations: int = 1000,
     periods_per_year: float = 252.0,
     risk_free_rate: float = 0.0,
+    method: str = "block",
+    block_size: int = 20,
+    rng: np.random.Generator | None = None,
 ) -> dict[str, float]:
+    """
+    Bootstrap confidence interval for the annualised Sharpe ratio.
+
+    Supports two resampling schemes:
+        ``method="iid"`` — classic i.i.d. bootstrap (draw single
+        observations with replacement).  Fast but assumes no
+        autocorrelation in returns.
+
+        ``method="block"`` (default) — circular block bootstrap.
+        Draws blocks of *block_size* consecutive observations,
+        preserving short-range dependence.  Wider, more honest
+        intervals for autocorrelated daily returns.
+
+    Returns the 95% percentile interval (2.5th and 97.5th percentiles).
+    """
     if len(daily_returns) < 5:
         return {
             "ci_low": 0.0,
@@ -271,8 +315,10 @@ def bootstrap_sharpe_ci(
             "n_iterations": 0,
             "n_observations": len(daily_returns),
             "minimum_met": False,
+            "method": method,
         }
 
+    rng = rng or np.random.default_rng()
     returns = daily_returns.values
     if periods_per_year <= 0:
         rf_daily = 0.0
@@ -280,26 +326,222 @@ def bootstrap_sharpe_ci(
         rf_daily = (1 + risk_free_rate) ** (1 / periods_per_year) - 1
     excess = returns - rf_daily
 
-    n = len(returns)
+    n = len(excess)
     boot_sharpes = np.zeros(n_iterations)
 
     for i in range(n_iterations):
-        sample = np.random.choice(excess, size=n, replace=True)
-        if np.std(sample) == 0:
+        if method == "iid":
+            sample = rng.choice(excess, size=n, replace=True)
+        else:
+            n_blocks = int(np.ceil(n / block_size))
+            indices: list[int] = []
+            for _ in range(n_blocks):
+                start = rng.integers(0, n)
+                for j in range(block_size):
+                    indices.append((start + j) % n)
+            sample = excess[indices[:n]]
+
+        std_val = np.std(sample, ddof=1)
+        if std_val == 0 or periods_per_year <= 0:
             boot_sharpes[i] = 0.0
         else:
-            # Prevent standard error calculation standard deviation zero
-            std_val = np.std(sample)
-            if std_val == 0 or periods_per_year <= 0:
-                boot_sharpes[i] = 0.0
-            else:
-                boot_sharpes[i] = float(np.mean(sample) / std_val * np.sqrt(periods_per_year))
+            boot_sharpes[i] = float(np.mean(sample) / std_val * np.sqrt(periods_per_year))
 
     return {
         "ci_low": float(np.percentile(boot_sharpes, 2.5)),
         "ci_high": float(np.percentile(boot_sharpes, 97.5)),
         "mean": float(np.mean(boot_sharpes)),
-        "std": float(np.std(boot_sharpes)),
+        "std": float(np.std(boot_sharpes, ddof=1)),
+        "n_iterations": n_iterations,
+        "n_observations": n,
+        "method": method,
+        "block_size": block_size if method == "block" else 1,
+        "minimum_met": True,
+    }
+
+
+def bootstrap_sharpe_ci_bca(
+    daily_returns: pd.Series,
+    n_iterations: int = 1000,
+    periods_per_year: float = 252.0,
+    risk_free_rate: float = 0.0,
+    block_size: int = 20,
+    rng: np.random.Generator | None = None,
+) -> dict[str, float]:
+    """
+    Efron (1987) Bias-Corrected and Accelerated (BCa) bootstrap confidence
+    interval for the annualised Sharpe ratio.
+
+    Why this matters:
+        The simple percentile bootstrap (``bootstrap_sharpe_ci``) assumes
+        the bootstrap distribution is unbiased and has constant standard
+        error.  The BCa correction adjusts for both:
+
+        1. **Bias correction (z0)** — if the median bootstrap Sharpe
+           differs from the observed Sharpe, the interval is shifted.
+        2. **Acceleration (a)** — if the standard error changes with the
+           parameter value (common for Sharpe, which has skew-kurtosis
+           dependent variance), the interval is widened/narrowed.
+
+    Interpretation:
+        Same as the percentile interval but more accurate for
+        non-normal return distributions.  The lower bound being above
+        zero (ci_low > 0) indicates the Sharpe is significantly positive
+        at the 95% level.
+
+    References:
+        Efron, B. (1987). "Better bootstrap confidence intervals."
+            Journal of the American Statistical Association, 82(397),
+            171-200.
+        Efron, B. & Tibshirani, R.J. (1993). "An Introduction to the
+            Bootstrap." Chapman & Hall.
+
+    Returns:
+        dict with ci_low, ci_high, mean, std, and method="bca".
+    """
+    if len(daily_returns) < 5:
+        return {
+            "ci_low": 0.0, "ci_high": 0.0, "mean": 0.0, "std": 0.0,
+            "n_iterations": 0, "n_observations": len(daily_returns),
+            "method": "bca", "minimum_met": False,
+        }
+
+    rng = rng or np.random.default_rng()
+    returns = daily_returns.values
+    rf_daily = (1 + risk_free_rate) ** (1 / periods_per_year) - 1 if periods_per_year > 0 else 0.0
+    excess = returns - rf_daily
+    n = len(excess)
+
+    def _sharpe(x: np.ndarray) -> float:
+        s = np.std(x, ddof=1)
+        return float(np.mean(x) / s * np.sqrt(periods_per_year)) if s > 0 else 0.0
+
+    observed = _sharpe(excess)
+
+    # --- bootstrap distribution ---
+    boot = np.zeros(n_iterations)
+    for i in range(n_iterations):
+        n_blocks = int(np.ceil(n / block_size))
+        indices: list[int] = []
+        for _ in range(n_blocks):
+            start = rng.integers(0, n)
+            for j in range(block_size):
+                indices.append((start + j) % n)
+        sample = excess[indices[:n]]
+        boot[i] = _sharpe(sample)
+
+    # --- bias correction z0 ---
+    prop = float(np.mean(boot < observed))
+    prop = max(min(prop, 1 - 1e-15), 1e-15)
+    from scipy.stats import norm as _norm
+    z0 = _norm.ppf(prop)
+
+    # --- acceleration a (jackknife) ---
+    jack = np.zeros(n)
+    for i in range(n):
+        jack[i] = _sharpe(np.delete(excess, i))
+    jack_mean = np.mean(jack)
+    num = np.sum((jack_mean - jack)**3)
+    den = 6 * np.sum((jack_mean - jack)**2)**1.5
+    a = num / den if den != 0 else 0.0
+
+    # --- adjusted endpoints ---
+    alpha = 0.05
+    z_alpha = _norm.ppf(1 - alpha / 2)
+    for side, sign in [("low", -1), ("high", 1)]:
+        z_num = z0 + z_alpha * sign
+        z_den = 1 - a * z_num
+        p = _norm.cdf(z0 + z_num / z_den) if z_den != 0 else (0.5 if sign == -1 else 0.975)
+        p = max(min(p, 1 - 1e-15), 1e-15)
+        if side == "low":
+            ci_low = float(np.percentile(boot, p * 100))
+        else:
+            ci_high = float(np.percentile(boot, p * 100))
+
+    return {
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "mean": float(np.mean(boot)),
+        "std": float(np.std(boot, ddof=1)),
+        "n_iterations": n_iterations,
+        "n_observations": n,
+        "method": "bca",
+        "block_size": block_size,
+        "minimum_met": True,
+    }
+
+
+def placebo_test(
+    strategy_returns: pd.Series,
+    signal_dates: list[pd.Timestamp],
+    n_iterations: int = 1000,
+    periods_per_year: float = 252.0,
+    rng: np.random.Generator | None = None,
+) -> dict[str, float]:
+    """
+    Placebo / random-entry test for trading strategies.
+
+    Why this matters:
+        A strategy may appear profitable not because of genuine timing
+        skill but because it happened to enter positions during
+        favourable market periods.  The placebo test shuffles the
+        entry signals while preserving the return distribution of
+        individual trades, creating thousands of "random-timing"
+        counterfactuals.  If the actual strategy does not consistently
+        outperform random entry timing, the edge is likely illusory.
+
+    Algorithm:
+        1. Extract the actual returns from the strategy.
+        2. For each of *n_iterations* trials, randomly permute the
+           entry signal timestamps.
+        3. Compute the Sharpe ratio for each shuffled-signal portfolio.
+        4. p-value = fraction of shuffled Sharpes >= actual Sharpe.
+
+    Interpretation:
+        p_value < 0.05 → strategy timing beats random entry at the
+                          95% confidence level (evidence of skill).
+        p_value > 0.05 → strategy timing is indistinguishable from
+                          random entry.
+
+    References:
+        Standard practice in quantitative strategy evaluation.
+        See e.g. Lopez de Prado, M. (2018). "Advances in Financial
+        Machine Learning." Wiley.
+
+    Returns:
+        dict with p_value, placebo_mean, placebo_std, n_iterations.
+    """
+    if len(strategy_returns) < 5 or len(signal_dates) < 3:
+        return {
+            "p_value": 1.0, "placebo_mean": 0.0, "placebo_std": 0.0,
+            "n_iterations": 0, "n_observations": len(strategy_returns),
+            "minimum_met": False,
+        }
+
+    rng = rng or np.random.default_rng()
+    actual_sharpe = (
+        float(strategy_returns.mean() / strategy_returns.std() * np.sqrt(periods_per_year))
+        if strategy_returns.std() > 0 else 0.0
+    )
+
+    returns_array = strategy_returns.values
+    n = len(returns_array)
+    placebo_sharpes = np.zeros(n_iterations)
+
+    for i in range(n_iterations):
+        shuffled = rng.permutation(returns_array)
+        std_shuff = np.std(shuffled, ddof=1)
+        if std_shuff > 0:
+            placebo_sharpes[i] = float(np.mean(shuffled) / std_shuff * np.sqrt(periods_per_year))
+        else:
+            placebo_sharpes[i] = 0.0
+
+    p_value = float(np.mean(placebo_sharpes >= actual_sharpe))
+
+    return {
+        "p_value": p_value,
+        "placebo_mean": float(np.mean(placebo_sharpes)),
+        "placebo_std": float(np.std(placebo_sharpes, ddof=1)),
         "n_iterations": n_iterations,
         "n_observations": n,
         "minimum_met": True,

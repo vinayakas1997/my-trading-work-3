@@ -3,6 +3,8 @@ description: "RSI mean reversion — long when oversold (RSI < 30), short when o
 schedule: daily
 features_required:
   - RSI_14
+angles_required:
+  - regime_analysis
 pipeline:
   selection:
     method: all
@@ -10,7 +12,12 @@ pipeline:
     method: signal_scaled
     signal: "max(0, (30 - RSI_14) / 30) - max(0, (RSI_14 - 70) / 30)"
   timing:
-    method: none
+    method: rules
+    rules:
+      - name: no_mean_revert_in_high_vol
+        when:
+          - {source: angles, key: regime_analysis.regime, eq: "high_vol"}
+        then: {action: weight_set, value: 0.0}
   risk:
     max_weight: 0.25
     cash_floor: 0.10

@@ -1,53 +1,12 @@
 services:
   # =========================================================================
-  # vinu-news Services (Ports: 8080)
+  # vinu-news (Port: 8080) — API + ingest worker
   # =========================================================================
-  news-ingest:
-    build:
-      context: .
-      dockerfile: vinu-news/Dockerfile
-    command: ["vinu-news-ingest", "--continuous"]
-    env_file: ./vinu-news/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_NEWS_DB_PATH: /data/news.db
-      VINU_NEWS_STORAGE: sqlite
-      VINU_SHARED_WATCHLIST_PATH: /shared/watchlist.json
-      ALPACA_API_KEY: ${ALPACA_API_KEY}
-      ALPACA_API_SECRET: ${ALPACA_API_SECRET}
-    volumes:
-      - ./data/news:/data
-      - ./data/shared:/shared
-    cap_drop:
-      - ALL
-    cap_add:
-      - SETUID
-      - SETGID
-    security_opt:
-      - "no-new-privileges:true"
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /home/app/.cache
-    mem_limit: 1g
-    cpus: 1
-    pids_limit: 256
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    restart: unless-stopped
-
   news-api:
     build:
       context: .
       dockerfile: vinu-news/Dockerfile
-    command: ["vinu-news-serve", "--host", "0.0.0.0", "--port", "8080"]
-    env_file: ./vinu-news/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_NEWS_DB_PATH: /data/news.db
-      VINU_NEWS_STORAGE: sqlite
-      VINU_SHARED_WATCHLIST_PATH: /shared/watchlist.json
-      VINU_STOCK_API_URL: http://stock-api:8081
+    env_file: .env
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
@@ -70,53 +29,15 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
-    depends_on:
-      - news-ingest
 
   # =========================================================================
-  # vinu-stock-price Services (Ports: 8081)
+  # vinu-stock-price (Port: 8081) — API + ingest worker
   # =========================================================================
-  stock-ingest:
-    build:
-      context: .
-      dockerfile: vinu-stock-price/Dockerfile
-    command: ["vinu-stock-ingest", "--interval", "60"]
-    env_file: ./vinu-stock-price/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_STOCK_DATA_ROOT: /data
-      VINU_STOCK_META_DB_PATH: /data/meta.db
-      VINU_SHARED_WATCHLIST_PATH: /shared/watchlist.json
-    volumes:
-      - ./data/stock-price:/data
-      - ./data/shared:/shared
-    cap_drop:
-      - ALL
-    cap_add:
-      - SETUID
-      - SETGID
-    security_opt:
-      - "no-new-privileges:true"
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /home/app/.cache
-    mem_limit: 1g
-    cpus: 1
-    pids_limit: 256
-    restart: unless-stopped
-
   stock-api:
     build:
       context: .
       dockerfile: vinu-stock-price/Dockerfile
-    command: ["vinu-stock-serve", "--host", "0.0.0.0", "--port", "8081"]
-    env_file: ./vinu-stock-price/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_STOCK_DATA_ROOT: /data
-      VINU_STOCK_META_DB_PATH: /data/meta.db
-      VINU_SHARED_WATCHLIST_PATH: /shared/watchlist.json
+    env_file: .env
     ports:
       - "127.0.0.1:8081:8081"
     volumes:
@@ -137,52 +58,15 @@ services:
     cpus: 1
     pids_limit: 256
     restart: unless-stopped
-    depends_on:
-      - stock-ingest
 
   # =========================================================================
-  # vinu-tools Services (Ports: 8082)
+  # vinu-tools (Port: 8082) — API + feature worker
   # =========================================================================
-  features-worker:
-    build:
-      context: .
-      dockerfile: vinu-tools/Dockerfile
-    command: ["vinu-tools", "worker", "--loop"]
-    env_file: ./vinu-tools/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_FEATURES_DATA_DIR: /data
-      VINU_FEATURES_META_DB_PATH: /data/meta.db
-      VINU_STOCK_API_URL: http://stock-api:8081
-    volumes:
-      - ./data/features:/data
-    cap_drop:
-      - ALL
-    cap_add:
-      - SETUID
-      - SETGID
-    security_opt:
-      - "no-new-privileges:true"
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /home/app/.cache
-    mem_limit: 1g
-    cpus: 1
-    pids_limit: 256
-    restart: unless-stopped
-
   features-api:
     build:
       context: .
       dockerfile: vinu-tools/Dockerfile
-    command: ["vinu-tools", "serve", "--host", "0.0.0.0", "--port", "8082"]
-    env_file: ./vinu-tools/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_FEATURES_DATA_DIR: /data
-      VINU_FEATURES_META_DB_PATH: /data/meta.db
-      VINU_STOCK_API_URL: http://stock-api:8081
+    env_file: .env
     ports:
       - "127.0.0.1:8082:8082"
     volumes:
@@ -203,23 +87,18 @@ services:
     pids_limit: 256
     restart: unless-stopped
     depends_on:
-      - features-worker
       - stock-api
 
   # =========================================================================
-  # vinu-initial-analysis Services (Ports: 8083)
+  # vinu-initial-analysis (Port: 8083) — API + compute worker
   # =========================================================================
-  initial-analysis-compute:
+  initial-analysis-api:
     build:
       context: .
       dockerfile: vinu-initial-analysis/Dockerfile
-    command: ["vinu-initial-compute", "--all", "--continuous"]
-    env_file: ./vinu-initial-analysis/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_INITIAL_ANALYSIS_DATA_ROOT: /data
-      VINU_NEWS_API_URL: http://news-api:8080
-      VINU_STOCK_API_URL: http://stock-api:8081
+    env_file: .env
+    ports:
+      - "127.0.0.1:8083:8083"
     volumes:
       - ./data/initial-analysis:/data
     cap_drop:
@@ -241,54 +120,15 @@ services:
       - news-api
       - stock-api
 
-  initial-analysis-api:
-    build:
-      context: .
-      dockerfile: vinu-initial-analysis/Dockerfile
-    command: ["vinu-initial-serve", "--host", "0.0.0.0", "--port", "8083"]
-    env_file: ./vinu-initial-analysis/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_INITIAL_ANALYSIS_DATA_ROOT: /data
-      VINU_NEWS_API_URL: http://news-api:8080
-      VINU_STOCK_API_URL: http://stock-api:8081
-    ports:
-      - "127.0.0.1:8083:8083"
-    volumes:
-      - ./data/initial-analysis:/data
-    cap_drop:
-      - ALL
-    cap_add:
-      - SETUID
-      - SETGID
-    security_opt:
-      - "no-new-privileges:true"
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /home/app/.cache
-    mem_limit: 1g
-    cpus: 1
-    pids_limit: 256
-    restart: unless-stopped
-    depends_on:
-      - initial-analysis-compute
-
   # =========================================================================
-  # vinu-strategy Services (Ports: 8084)
+  # vinu-strategy (Port: 8084)
   # =========================================================================
   strategy-api:
     build:
       context: .
       dockerfile: vinu-strategy/Dockerfile
     command: ["vinu-strategy", "serve", "--host", "0.0.0.0", "--port", "8084"]
-    env_file: ./vinu-strategy/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_STRATEGY_DATA_ROOT: /data
-      VINU_STRATEGY_STRATEGIES_DIR: /app/vinu-strategy/strategies
-      VINU_FEATURES_API_URL: http://features-api:8082
-      VINU_CORRELATION_API_URL: http://initial-analysis-api:8083
+    env_file: .env
     ports:
       - "127.0.0.1:8084:8084"
     volumes:
@@ -313,19 +153,14 @@ services:
       - initial-analysis-api
 
   # =========================================================================
-  # vinu-simulator Services (Ports: 8085)
+  # vinu-simulator (Port: 8085)
   # =========================================================================
   simulator-api:
     build:
       context: .
       dockerfile: vinu-simulator/Dockerfile
     command: ["vinu-simulator", "serve", "--host", "0.0.0.0", "--port", "8085"]
-    env_file: ./vinu-simulator/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_SIMULATOR_DATA_ROOT: /data
-      VINU_STRATEGY_API_URL: http://strategy-api:8084
-      VINU_STOCK_API_URL: http://stock-api:8081
+    env_file: .env
     ports:
       - "127.0.0.1:8085:8085"
     volumes:
@@ -350,21 +185,13 @@ services:
       - stock-api
 
   # =========================================================================
-  # vinu-portfolio Service (Ports: 8090)
+  # vinu-portfolio (Port: 8090) — API + drawdown monitor
   # =========================================================================
   portfolio-api:
     build:
       context: .
       dockerfile: vinu-portfolio/Dockerfile
-    command: ["vinu-portfolio", "serve", "--host", "0.0.0.0", "--port", "8090"]
-    env_file: ./vinu-portfolio/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_PORTFOLIO_DATA_ROOT: /data
-      VINU_STRATEGY_API_URL: http://strategy-api:8084
-      VINU_RESEARCH_API_URL: http://research-api:8087
-      VINU_SIMULATOR_API_URL: http://simulator-api:8085
-      VINU_AGENT_API_URL: http://agent-api:8086
+    env_file: .env
     ports:
       - "127.0.0.1:8090:8090"
     volumes:
@@ -390,21 +217,13 @@ services:
       - simulator-api
 
   # =========================================================================
-  # vinu-research Service (Ports: 8087)
+  # vinu-research (Port: 8087) — API + decay scan
   # =========================================================================
   research-api:
     build:
       context: .
       dockerfile: vinu-research/Dockerfile
-    command: ["vinu-research", "serve", "--host", "0.0.0.0", "--port", "8087"]
-    env_file: ./vinu-research/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_RESEARCH_DATA_ROOT: /data
-      VINU_FEATURES_API_URL: http://features-api:8082
-      VINU_SIMULATOR_API_URL: http://simulator-api:8085
-      VINU_CORRELATION_API_URL: http://initial-analysis-api:8083
-      VINU_STOCK_PRICE_API_URL: http://stock-api:8081
+    env_file: .env
     ports:
       - "127.0.0.1:8087:8087"
     volumes:
@@ -432,92 +251,14 @@ services:
       - initial-analysis-api
       - stock-api
 
-  research-decay-scan:
-    build:
-      context: .
-      dockerfile: vinu-research/Dockerfile
-    command: ["vinu-research", "schedule-decay", "--interval-hours", "24"]
-    env_file: ./vinu-research/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_RESEARCH_DATA_ROOT: /data
-      VINU_FEATURES_API_URL: http://features-api:8082
-      VINU_SIMULATOR_API_URL: http://simulator-api:8085
-      VINU_CORRELATION_API_URL: http://initial-analysis-api:8083
-      VINU_STOCK_PRICE_API_URL: http://stock-api:8081
-    volumes:
-      - ./data/research:/data
-    cap_drop:
-      - ALL
-    cap_add:
-      - SETUID
-      - SETGID
-    security_opt:
-      - "no-new-privileges:true"
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /home/app/.cache
-    mem_limit: 1g
-    cpus: 0.5
-    pids_limit: 256
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    restart: unless-stopped
-    depends_on:
-      - research-api
-
-  portfolio-drawdown-monitor:
-    build:
-      context: .
-      dockerfile: vinu-portfolio/Dockerfile
-    command: ["vinu-portfolio", "monitor"]
-    env_file: ./vinu-portfolio/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_PORTFOLIO_DATA_ROOT: /data
-      VINU_STRATEGY_API_URL: http://strategy-api:8084
-      VINU_RESEARCH_API_URL: http://research-api:8087
-      VINU_SIMULATOR_API_URL: http://simulator-api:8085
-      VINU_AGENT_API_URL: http://agent-api:8086
-      VINU_PORTFOLIO_DRAWDOWN_HALT: "-0.20"
-      VINU_PORTFOLIO_DRAWDOWN_INTERVAL_SEC: "300"
-    volumes:
-      - ./data/portfolio:/data
-    cap_drop:
-      - ALL
-    cap_add:
-      - SETUID
-      - SETGID
-    security_opt:
-      - "no-new-privileges:true"
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /home/app/.cache
-    mem_limit: 512m
-    cpus: 0.5
-    pids_limit: 128
-    restart: unless-stopped
-    depends_on:
-      - portfolio-api
-      - agent-api
-
   # =========================================================================
-  # vinu-live Services (Ports: 8091)
+  # vinu-live (Port: 8091) — API + live worker
   # =========================================================================
   live-api:
     build:
       context: .
       dockerfile: vinu-live/Dockerfile
-    command: ["vinu-live", "serve", "--host", "0.0.0.0", "--port", "8091"]
-    env_file: ./vinu-live/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_LIVE_DATA_ROOT: /data
-      VINU_PORTFOLIO_API_URL: http://portfolio-api:8090
-      VINU_AGENT_API_URL: http://agent-api:8086
-      VINU_STOCK_PRICE_API_URL: http://stock-api:8081
+    env_file: .env
     ports:
       - "127.0.0.1:8091:8091"
     volumes:
@@ -542,57 +283,15 @@ services:
       - agent-api
       - stock-api
 
-  live-worker:
-    build:
-      context: .
-      dockerfile: vinu-live/Dockerfile
-    command: ["vinu-live-worker", "--interval", "3600"]
-    env_file: ./vinu-live/.env
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_LIVE_DATA_ROOT: /data
-      VINU_PORTFOLIO_API_URL: http://portfolio-api:8090
-      VINU_AGENT_API_URL: http://agent-api:8086
-      VINU_STOCK_PRICE_API_URL: http://stock-api:8081
-    volumes:
-      - ./data/live:/data
-    cap_drop:
-      - ALL
-    cap_add:
-      - SETUID
-      - SETGID
-    security_opt:
-      - "no-new-privileges:true"
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /home/app/.cache
-    mem_limit: 1g
-    cpus: 0.5
-    pids_limit: 256
-    restart: unless-stopped
-    depends_on:
-      - live-api
-      - stock-api
-
   # =========================================================================
-  # vinu-agent Service (Ports: 8086)
+  # vinu-agent (Port: 8086)
   # =========================================================================
   agent-api:
     build:
       context: .
       dockerfile: vinu-agent/Dockerfile
     command: ["vinu-agent", "serve", "--host", "0.0.0.0", "--port", "8086"]
-    environment:
-      VINU_DEBUG: ${VINU_DEBUG:-false}
-      VINU_STOCK_PRICE_API_URL: http://stock-api:8081
-      VINU_TOOLS_API_URL: http://features-api:8082
-      VINU_NEWS_API_URL: http://news-api:8080
-      VINU_INITIAL_ANALYSIS_API_URL: http://initial-analysis-api:8083
-      VINU_STRATEGY_API_URL: http://strategy-api:8084
-      VINU_SIMULATOR_API_URL: http://simulator-api:8085
-      VINU_RESEARCH_API_URL: http://research-api:8087
-      VINU_PORTFOLIO_API_URL: http://portfolio-api:8090
+    env_file: .env
     ports:
       - "127.0.0.1:8086:8086"
     volumes:
@@ -623,4 +322,3 @@ services:
       - strategy-api
       - simulator-api
       - research-api
-

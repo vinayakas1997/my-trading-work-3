@@ -42,6 +42,7 @@ def create_app(service: NewsService | None = None):
         lifespan=lifespan,
         static_dir=Path(__file__).parent / "static",
         expose_health_on_root=False,
+        route_prefix="news",
     )
 
 

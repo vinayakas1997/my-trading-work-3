@@ -11,6 +11,9 @@ WORKDIR /app/vinu-stock-price
 
 RUN pip install --no-cache-dir -e ".[dev]"
 
+COPY vinu-stock-price/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 RUN addgroup --system app && adduser --system --ingroup app app
 USER app
 
@@ -20,3 +23,5 @@ ENV VINU_STOCK_META_DB_PATH=/data/meta.db
 VOLUME ["/data"]
 
 EXPOSE 8081
+
+ENTRYPOINT ["/app/entrypoint.sh"]

@@ -50,7 +50,7 @@ class ShadowEvaluator:
     async def _list_benching_artifacts(self) -> list[dict[str, Any]]:
         try:
             resp = await self._http.get(
-                f"{self._research_api}/research/artifacts",
+                f"{self._research_api}/artifacts",
                 params={"status": "BENCHING"},
             )
             if resp.status_code == 200:
@@ -110,9 +110,9 @@ class ShadowEvaluator:
                 return None
             import numpy as np
             arr = np.array(returns, dtype=float)
-            if arr.std() == 0:
+            if arr.std(ddof=1) == 0:
                 return 0.0
-            sharpe = (arr.mean() / arr.std()) * np.sqrt(252)
+            sharpe = (arr.mean() / arr.std(ddof=1)) * np.sqrt(252)
             return float(sharpe)
         except Exception as e:
             LOG.debug("Could not fetch paper Sharpe for %s: %s", artifact_id, e)
@@ -122,7 +122,7 @@ class ShadowEvaluator:
         """Transition artifact from BENCHING to ACTIVE via research API."""
         try:
             resp = await self._http.post(
-                f"{self._research_api}/research/artifacts/{artifact_id}/promote",
+                f"{self._research_api}/artifacts/{artifact_id}/promote",
             )
             if resp.status_code == 200:
                 LOG.info("Promoted artifact %s to ACTIVE", artifact_id)

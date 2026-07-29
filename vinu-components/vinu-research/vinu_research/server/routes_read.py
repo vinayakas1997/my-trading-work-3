@@ -43,7 +43,7 @@ def set_service(svc: ResearchService) -> None:
     _service = svc
 
 
-@router.post("/research/run")
+@router.post("/run")
 async def run_research(body: RunResearchRequest) -> dict[str, Any]:
     if _service is None:
         raise HTTPException(status_code=503, detail="Service not initialized")
@@ -64,7 +64,7 @@ async def run_research(body: RunResearchRequest) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/research/ensure")
+@router.post("/ensure")
 async def ensure_strategy(body: RunResearchRequest) -> dict[str, Any]:
     """Like /research/run, but skips running if `symbol` already has an
     ACTIVE/MONITORING strategy artifact — the "zero strategies" trigger."""
@@ -85,7 +85,7 @@ async def ensure_strategy(body: RunResearchRequest) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/research/runs")
+@router.get("/runs")
 async def list_runs(
     symbol: str | None = None,
     status: str | None = None,
@@ -96,7 +96,7 @@ async def list_runs(
     return await _service.list_runs(symbol=symbol, status=status, limit=limit)
 
 
-@router.get("/research/runs/{run_id}")
+@router.get("/runs/{run_id}")
 async def get_run(run_id: int) -> dict[str, Any]:
     if _service is None:
         raise HTTPException(status_code=503, detail="Service not initialized")
@@ -106,7 +106,7 @@ async def get_run(run_id: int) -> dict[str, Any]:
     return result
 
 
-@router.delete("/research/runs/{run_id}")
+@router.delete("/runs/{run_id}")
 async def delete_run(run_id: int) -> dict[str, Any]:
     if _service is None:
         raise HTTPException(status_code=503, detail="Service not initialized")
@@ -114,7 +114,7 @@ async def delete_run(run_id: int) -> dict[str, Any]:
     return {"deleted": deleted, "run_id": run_id}
 
 
-@router.get("/research/artifacts")
+@router.get("/artifacts")
 async def list_artifacts(
     status: str | None = None,
     type_: str | None = None,
@@ -157,7 +157,7 @@ async def list_artifacts(
     ]
 
 
-@router.post("/research/artifacts/{artifact_id}/promote")
+@router.post("/artifacts/{artifact_id}/promote")
 async def promote_artifact(artifact_id: str, force: bool = False) -> dict[str, Any]:
     """Transition a BENCHING artifact to ACTIVE.
 
@@ -191,7 +191,7 @@ async def promote_artifact(artifact_id: str, force: bool = False) -> dict[str, A
     }
 
 
-@router.post("/research/runs/{run_id}/approve")
+@router.post("/runs/{run_id}/approve")
 async def approve_run(run_id: int) -> dict[str, Any]:
     if _service is None:
         raise HTTPException(status_code=503, detail="Service not initialized")

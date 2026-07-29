@@ -152,7 +152,7 @@ class TestTsSum:
     def test_ts_std(self):
         data = np.array([[1.0], [2.0], [3.0]])
         s = ts_std(data, n=2)
-        assert s[1, 0] == 0.5  # std of [1, 2] = 0.5
+        assert round(s[1, 0], 4) == 0.7071  # sample std of [1, 2]
 
     def test_ts_max(self):
         data = np.array([[1.0], [3.0], [2.0]])

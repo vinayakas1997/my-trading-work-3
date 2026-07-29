@@ -169,7 +169,7 @@ def _rolling_std(values: list[float | None], period: int) -> list[float | None]:
     for i in range(period - 1, n):
         window = arr[i - period + 1 : i + 1]
         if not np.any(np.isnan(window)):
-            result[i] = np.std(window, ddof=0)
+            result[i] = np.std(window, ddof=1)
     return [_nan_to_none(v) for v in result.tolist()]
 
 

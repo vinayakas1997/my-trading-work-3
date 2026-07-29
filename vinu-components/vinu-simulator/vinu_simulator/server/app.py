@@ -44,4 +44,5 @@ def create_app(service: SimulatorService | None = None):
         router=merged,
         static_dir=Path(__file__).resolve().parent / "static",
         expose_health_on_root=True,
+        route_prefix="simulator",
     )

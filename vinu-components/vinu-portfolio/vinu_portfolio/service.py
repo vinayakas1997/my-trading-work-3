@@ -74,7 +74,7 @@ class PortfolioService:
 
     async def _list_llm_strategies(self) -> list[dict[str, Any]]:
         resp = await self._http.get(
-            f"{self._config.research_api_url}/research/artifacts",
+            f"{self._config.research_api_url}/artifacts",
             params={"status": "ACTIVE"},
         )
         resp.raise_for_status()

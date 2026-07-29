@@ -1,0 +1,5 @@
+#!/bin/bash
+set -e
+
+vinu-news-ingest --continuous &
+exec vinu-news-serve --host 0.0.0.0 --port 8080

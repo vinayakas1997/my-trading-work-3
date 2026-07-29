@@ -19,6 +19,7 @@ class WeightPipeline:
         universe: list[str],
         feature_signals: dict[str, dict[str, float]] | None = None,
         correlation_signals: dict[str, dict[str, Any]] | None = None,
+        angle_signals: dict[str, dict[str, Any]] | None = None,
         params: dict[str, Any] | None = None,
     ) -> tuple[dict[str, float], dict[str, Any]]:
         pipeline = config.pipeline
@@ -33,6 +34,9 @@ class WeightPipeline:
         if correlation_signals:
             for sym, fields in correlation_signals.items():
                 signal_context.setdefault(sym, {})["correlation"] = fields
+        if angle_signals:
+            for sym, angles in angle_signals.items():
+                signal_context.setdefault(sym, {})["angles"] = angles
 
         candidates = run_selection(pipeline.selection.method, universe, all_signal_values, pipeline.selection.params, signal_context)
         meta["selection"] = {"method": pipeline.selection.method, "candidates": len(candidates), "universe_size": len(universe)}

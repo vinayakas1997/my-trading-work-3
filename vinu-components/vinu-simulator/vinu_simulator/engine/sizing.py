@@ -57,7 +57,7 @@ class VolTargetSizer(PositionSizer):
             return target_weights
 
         window = realized_returns[-self.lookback_days:]
-        realized_vol = float(np.std(window)) * np.sqrt(self.periods_per_year)
+        realized_vol = float(np.std(window, ddof=1)) * np.sqrt(self.periods_per_year)
 
         if realized_vol <= 1e-9:
             scale = self.max_leverage

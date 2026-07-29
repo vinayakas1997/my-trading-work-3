@@ -80,6 +80,7 @@ def create_app(service: Any = None) -> FastAPI:
         router=merged,
         lifespan=_lifespan,
         expose_health_on_root=True,
+        route_prefix="agent",
     )
 
 

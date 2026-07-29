@@ -25,4 +25,5 @@ def create_app(service: ResearchService | None = None):
         router=merged,
         static_dir=None,
         expose_health_on_root=False,
+        route_prefix="research",
     )

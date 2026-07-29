@@ -168,7 +168,7 @@ class OrderGuard:
         """
         try:
             resp = requests.get(
-                f"{self._research_api_url}/research/artifacts",
+                f"{self._research_api_url}/artifacts",
                 params={"status": "ACTIVE"},
                 timeout=10.0,
             )
@@ -224,7 +224,7 @@ class OrderGuard:
 
         mandate = self._mandate
         try:
-            resp = requests.get(f"{self._portfolio_api_url}/portfolio", timeout=10.0)
+            resp = requests.get(f"{self._portfolio_api_url}/state", timeout=10.0)
             resp.raise_for_status()
             portfolio = resp.json()
         except Exception as e:

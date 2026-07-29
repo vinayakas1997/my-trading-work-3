@@ -117,7 +117,7 @@ class TradePlanOrchestrator:
     async def _fetch_active_trade_plans(self) -> list[dict[str, Any]]:
         try:
             resp = await self._http.get(
-                f"{self._config.research_api_url}/research/artifacts",
+                f"{self._config.research_api_url}/artifacts",
                 params={"status": "ACTIVE", "type_": "trade_plan"},
             )
             if resp.status_code != 200:
@@ -134,7 +134,7 @@ class TradePlanOrchestrator:
                 continue
             try:
                 detail_resp = await self._http.get(
-                    f"{self._config.research_api_url}/research/trade-plan/{artifact_id}",
+                    f"{self._config.research_api_url}/trade-plan/{artifact_id}",
                 )
                 if detail_resp.status_code != 200:
                     continue

@@ -4,6 +4,8 @@ schedule: daily
 features_required:
   - SMA_9
   - SMA_21
+angles_required:
+  - regime_analysis
 pipeline:
   selection:
     method: all
@@ -11,7 +13,12 @@ pipeline:
     method: signal_scaled
     signal: "SMA_9 / SMA_21 - 1"
   timing:
-    method: none
+    method: rules
+    rules:
+      - name: bear_exit
+        when:
+          - {source: angles, key: regime_analysis.regime, eq: "bear"}
+        then: {action: weight_set, value: 0.0}
   risk:
     max_weight: 0.25
     cash_floor: 0.10

@@ -522,3 +522,4 @@ class ResearchResult:
     holdout: HoldoutResult | None = None
     portfolio: PortfolioAnalysisResult | None = None
     stress_test: StressTestResult | None = None
+    pbo: dict[str, float] | None = None

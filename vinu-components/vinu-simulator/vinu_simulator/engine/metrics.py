@@ -4,6 +4,11 @@ import numpy as np
 import pandas as pd
 from scipy import stats as scipy_stats
 
+from vinu_simulator.engine.inference import (
+    mertens_sharpe_se,
+    probabilistic_sharpe_ratio,
+)
+
 # Trading day = 6.5h (390min) on US equities. periods_per_year is "how many bars
 # of this size occur in a 252-trading-day year" — the annualization factor for
 # CAGR/vol/Sharpe/etc. Wrong for non-equity calendars, but this is what the rest
@@ -182,14 +187,18 @@ def compute_extended_metrics(
             extended["down_capture"] = down_capture
 
     n = len(daily_returns)
+    skewness = float(daily_returns.skew()) if len(daily_returns) > 2 else 0.0
+    kurtosis = float(daily_returns.kurtosis()) if len(daily_returns) > 2 else 0.0
+
     extended["sharpe_standard_error"] = 0.0
     extended["sharpe_p_value"] = 1.0
     extended["sharpe_ci_95_low"] = 0.0
     extended["sharpe_ci_95_high"] = 0.0
+    extended["probabilistic_sharpe_ratio"] = 0.5
 
     basic_sharpe = _get_basic_sharpe(portfolio_values, daily_returns, risk_free_rate, periods_per_year) if n > 1 else None
     if basic_sharpe is not None:
-        sharpe_se = float(np.sqrt((1 + 0.5 * basic_sharpe**2) / n))
+        sharpe_se = mertens_sharpe_se(basic_sharpe, n, skewness, kurtosis)
         extended["sharpe_standard_error"] = sharpe_se
         if sharpe_se > 0:
             z = abs(basic_sharpe / sharpe_se)
@@ -197,6 +206,9 @@ def compute_extended_metrics(
             extended["sharpe_p_value"] = max(min(sharpe_p_value, 1.0), 1e-300)
             extended["sharpe_ci_95_low"] = basic_sharpe - 1.96 * sharpe_se
             extended["sharpe_ci_95_high"] = basic_sharpe + 1.96 * sharpe_se
+            extended["probabilistic_sharpe_ratio"] = probabilistic_sharpe_ratio(
+                basic_sharpe, n, skewness, kurtosis, benchmark=0.0,
+            )
 
     if trades is not None and len(trades) > 0:
         first = trades[0]

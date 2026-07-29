@@ -179,16 +179,18 @@ class ResearchTools:
     async def get_angle_context(self, symbol: str, interval: str = "1d") -> dict[str, Any]:
         """Compact context from the deterministic angles for the risk critic / LLM.
 
-        Reads trend_lifecycle, trend_session_structure, and news_price_causality
-        and reduces them to a small dict (see angle_context.build_angle_context).
+        Reads trend_lifecycle, trend_session_structure, news_price_causality,
+        and backtesting_44_metrics and reduces them to a small dict
+        (see angle_context.build_angle_context).
         Returns {} when the angles have not been run for this symbol.
         """
-        trend_rows, session_rows, causality_rows = await asyncio.gather(
+        trend_rows, session_rows, causality_rows, bm_rows = await asyncio.gather(
             self.get_angle_rows("trend_lifecycle", symbol),
             self.get_angle_rows("trend_session_structure", symbol),
             self.get_angle_rows("news_price_causality", symbol),
+            self.get_angle_rows("backtesting_44_metrics", symbol),
         )
-        return build_angle_context(trend_rows, session_rows, causality_rows, interval=interval)
+        return build_angle_context(trend_rows, session_rows, causality_rows, bm_rows, interval=interval)
 
     async def get_feature_snapshot(
         self,

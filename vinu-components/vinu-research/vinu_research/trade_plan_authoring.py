@@ -76,7 +76,7 @@ async def fetch_risk_state(
     vol_path, alpha, beta, omega = garch_volatility(returns, fit=True, time_format="1D")
     valid_vol = vol_path[~np.isnan(vol_path)]
     annualized_volatility = (
-        float(valid_vol[-1]) if len(valid_vol) > 0 else float(np.std(returns) * np.sqrt(252))
+        float(valid_vol[-1]) if len(valid_vol) > 0 else float(np.std(returns, ddof=1) * np.sqrt(252))
     )
     daily_volatility = annualized_volatility / np.sqrt(252)
 
@@ -235,16 +235,26 @@ async def author_trade_plan(
     "Warning for whoever implements Phase 4" requires.
     """
     symbol = symbol.upper()
+    logger.info("[%s %s] Authoring trade plan: fetching risk state + personality context", symbol, timeframe)
     risk_state, personality = await asyncio.gather(
         fetch_risk_state(tools, symbol),
         fetch_personality_features(tools, symbol),
     )
+    logger.info("[%s %s] Risk state status=%s", symbol, timeframe, risk_state.get("status"))
 
     forecast = await generate_forecast(symbol, personality, risk_state, config, llm_client)
+    logger.info(
+        "[%s %s] Forecast: direction=%s magnitude_std=%.4f",
+        symbol, timeframe, forecast.direction, forecast.magnitude_std,
+    )
 
     risk_bands = _build_risk_band(risk_state, personality)
     contingency_rules = _build_contingency_rules(risk_state, personality)
     invalidation_conditions = _build_invalidation_conditions(risk_state, forecast)
+    logger.info(
+        "[%s %s] Trade plan authored: %d contingency rule(s), %d invalidation condition(s)",
+        symbol, timeframe, len(contingency_rules), len(invalidation_conditions),
+    )
 
     return TradePlan(
         symbol=symbol,
@@ -267,7 +277,9 @@ def freeze_trade_plan(store: SqliteStrategyStore, plan: TradePlan) -> Artifact:
         universe=[plan.symbol],
     )
     artifact.trade_plan_data = plan.to_json()
-    return store.upsert_artifact(artifact)
+    saved = store.upsert_artifact(artifact)
+    logger.info("[%s] Froze trade plan artifact_id=%s (status=%s)", plan.symbol, saved.artifact_id, saved.status)
+    return saved
 
 
 def approve_trade_plan(
@@ -298,10 +310,13 @@ def approve_trade_plan(
     gate = CalibrationGate(tracker, min_window=tracker.config.min_calibration_window)
     result = gate.check()
     if not result.passed:
+        logger.warning("[%s] Approval REJECTED: %s", artifact_id, "; ".join(result.reasons))
         raise TradePlanApprovalError(result.reasons)
 
     artifact.status = ArtifactStatus.ACTIVE
-    return store.upsert_artifact(artifact)
+    saved = store.upsert_artifact(artifact)
+    logger.info("[%s] Approved -- trade plan is now ACTIVE", artifact_id)
+    return saved
 
 
 def record_realized_outcome(
@@ -327,7 +342,11 @@ def record_realized_outcome(
 
     tracker = CalibrationTracker(artifact_id, config)
     entry = tracker.add_entry(plan.forecast, actual_return_pct)
-    return store.append_calibration_entry(entry)
+    saved = store.append_calibration_entry(entry)
+    logger.info(
+        "[%s] Recorded realized outcome: actual_return_pct=%.4f", artifact_id, actual_return_pct,
+    )
+    return saved
 
 
 def load_calibration_tracker(

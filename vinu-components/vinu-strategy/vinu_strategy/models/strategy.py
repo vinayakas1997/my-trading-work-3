@@ -12,7 +12,7 @@ LOG = logging.getLogger(__name__)
 
 _KNOWN_TOP_LEVEL_KEYS = frozenset({
     "name", "description", "schedule", "features_required",
-    "correlation_required", "pipeline", "universe", "metadata",
+    "correlation_required", "angles_required", "pipeline", "universe", "metadata",
 })
 _KNOWN_PIPELINE_KEYS = frozenset({"selection", "allocation", "timing", "risk"})
 _KNOWN_STAGE_KEYS: dict[str, frozenset] = {
@@ -83,6 +83,7 @@ class StrategyConfig:
     schedule: str
     features_required: list[str] = field(default_factory=list)
     correlation_required: list[str] = field(default_factory=list)
+    angles_required: list[str] = field(default_factory=list)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     universe: dict[str, Any] = field(default_factory=lambda: {"source": "watchlist"})
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -99,6 +100,7 @@ class StrategyConfig:
             schedule=d.get("schedule", "daily"),
             features_required=d.get("features_required", []),
             correlation_required=d.get("correlation_required", []),
+            angles_required=d.get("angles_required", []),
             pipeline=PipelineConfig.from_dict(d.get("pipeline", {}), source),
             universe=d.get("universe", {"source": "watchlist"}),
             metadata=d.get("metadata", {}),

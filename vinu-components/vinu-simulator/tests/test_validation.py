@@ -92,10 +92,12 @@ class TestComputeValidationVerdict:
             "price_path": {"minimum_met": True, "p_value": 0.05},
             "walk_forward": {"minimum_met": True, "consistency_rate": 0.75},
             "bootstrap": {"minimum_met": True, "ci_low": 0.02},
+            "bca": {"minimum_met": True, "ci_low": 0.02},
+            "placebo": {"minimum_met": True, "p_value": 0.01},
         }
         verdict = compute_validation_verdict(validation)
         assert verdict["passed"] is True
-        assert len(verdict["reasons"]) == 5
+        assert len(verdict["reasons"]) == 7
         assert all("PASS" in r for r in verdict["reasons"])
 
     def test_fails_when_monte_carlo_p_value_is_high(self):
@@ -105,6 +107,8 @@ class TestComputeValidationVerdict:
             "price_path": {"minimum_met": True, "p_value": 0.05},
             "walk_forward": {"minimum_met": True, "consistency_rate": 0.75},
             "bootstrap": {"minimum_met": True, "ci_low": 0.02},
+            "bca": {"minimum_met": True, "ci_low": 0.02},
+            "placebo": {"minimum_met": True, "p_value": 0.01},
         }
         verdict = compute_validation_verdict(validation)
         assert verdict["passed"] is False
@@ -117,6 +121,8 @@ class TestComputeValidationVerdict:
             "price_path": {"minimum_met": True, "p_value": 0.05},
             "walk_forward": {"minimum_met": True, "consistency_rate": 0.75},
             "bootstrap": {"minimum_met": True, "ci_low": 0.02},
+            "bca": {"minimum_met": True, "ci_low": 0.02},
+            "placebo": {"minimum_met": True, "p_value": 0.01},
         }
         verdict = compute_validation_verdict(validation)
         assert verdict["passed"] is False
@@ -128,6 +134,8 @@ class TestComputeValidationVerdict:
             "price_path": {"minimum_met": True, "p_value": 0.15},
             "walk_forward": {"minimum_met": True, "consistency_rate": 0.75},
             "bootstrap": {"minimum_met": True, "ci_low": 0.02},
+            "bca": {"minimum_met": True, "ci_low": 0.02},
+            "placebo": {"minimum_met": True, "p_value": 0.01},
         }
         verdict = compute_validation_verdict(validation)
         assert verdict["passed"] is False
@@ -139,6 +147,8 @@ class TestComputeValidationVerdict:
             "price_path": {"minimum_met": True, "p_value": 0.05},
             "walk_forward": {"minimum_met": True, "consistency_rate": 0.40},
             "bootstrap": {"minimum_met": True, "ci_low": 0.02},
+            "bca": {"minimum_met": True, "ci_low": 0.02},
+            "placebo": {"minimum_met": True, "p_value": 0.01},
         }
         verdict = compute_validation_verdict(validation)
         assert verdict["passed"] is False
@@ -150,6 +160,8 @@ class TestComputeValidationVerdict:
             "price_path": {"minimum_met": True, "p_value": 0.05},
             "walk_forward": {"minimum_met": True, "consistency_rate": 0.75},
             "bootstrap": {"minimum_met": True, "ci_low": -0.01},
+            "bca": {"minimum_met": True, "ci_low": 0.02},
+            "placebo": {"minimum_met": True, "p_value": 0.01},
         }
         verdict = compute_validation_verdict(validation)
         assert verdict["passed"] is False
@@ -163,14 +175,14 @@ class TestComputeValidationVerdict:
         assert any("skipped" in r for r in verdict["reasons"])
 
     def test_fails_closed_when_every_method_has_insufficient_data(self):
-        # A strategy with too few trades/observations for any method to run must
-        # NOT silently pass a gate that's supposed to be un-bypassable — fail closed.
         validation = {
             "monte_carlo": {"minimum_met": False, "p_value": 1.0},
             "block_bootstrap": {"minimum_met": False, "p_value": 1.0},
             "price_path": {"minimum_met": False, "p_value": 1.0},
             "walk_forward": {"minimum_met": False, "consistency_rate": 0.0},
             "bootstrap": {"minimum_met": False, "ci_low": 0.0},
+            "bca": {"minimum_met": False, "ci_low": 0.0},
+            "placebo": {"minimum_met": False, "p_value": 1.0},
         }
         verdict = compute_validation_verdict(validation)
         assert verdict["passed"] is False
@@ -178,15 +190,14 @@ class TestComputeValidationVerdict:
         assert "sufficient data" in verdict["reasons"][-1].lower()
 
     def test_passes_when_some_methods_skip_but_the_rest_pass(self):
-        # Partial data (e.g. too few trades for block-bootstrap but enough for
-        # everything else) should not itself block a strategy that otherwise
-        # clears every check that *could* run.
         validation = {
             "monte_carlo": {"minimum_met": True, "p_value": 0.01},
             "block_bootstrap": {"minimum_met": False, "p_value": 1.0},
             "price_path": {"minimum_met": True, "p_value": 0.05},
             "walk_forward": {"minimum_met": True, "consistency_rate": 0.75},
             "bootstrap": {"minimum_met": True, "ci_low": 0.02},
+            "bca": {"minimum_met": True, "ci_low": 0.02},
+            "placebo": {"minimum_met": True, "p_value": 0.01},
         }
         verdict = compute_validation_verdict(validation)
         assert verdict["passed"] is True
@@ -199,6 +210,8 @@ class TestComputeValidationVerdict:
             "price_path": {"minimum_met": True, "p_value": 0.05},
             "walk_forward": {"minimum_met": True, "consistency_rate": 0.75},
             "bootstrap": {"minimum_met": True, "ci_low": 0.02},
+            "bca": {"minimum_met": True, "ci_low": 0.02},
+            "placebo": {"minimum_met": True, "p_value": 0.01},
         }
         assert compute_validation_verdict(validation)["passed"] is True
 
@@ -209,6 +222,8 @@ class TestComputeValidationVerdict:
             "price_path": {"minimum_met": True, "p_value": 0.05},
             "walk_forward": {"minimum_met": True, "consistency_rate": 0.75},
             "bootstrap": {"minimum_met": True, "ci_low": 0.02},
+            "bca": {"minimum_met": True, "ci_low": 0.02},
+            "placebo": {"minimum_met": True, "p_value": 0.01},
         }
         assert compute_validation_verdict(validation)["passed"] is False
 
@@ -219,6 +234,8 @@ class TestComputeValidationVerdict:
             "price_path": {"minimum_met": True, "p_value": 0.05},
             "walk_forward": {"minimum_met": True, "consistency_rate": 0.599},
             "bootstrap": {"minimum_met": True, "ci_low": 0.02},
+            "bca": {"minimum_met": True, "ci_low": 0.02},
+            "placebo": {"minimum_met": True, "p_value": 0.01},
         }
         assert compute_validation_verdict(validation)["passed"] is False
 
@@ -229,6 +246,8 @@ class TestComputeValidationVerdict:
             "price_path": {"minimum_met": True, "p_value": 0.05},
             "walk_forward": {"minimum_met": True, "consistency_rate": 0.601},
             "bootstrap": {"minimum_met": True, "ci_low": 0.02},
+            "bca": {"minimum_met": True, "ci_low": 0.02},
+            "placebo": {"minimum_met": True, "p_value": 0.01},
         }
         assert compute_validation_verdict(validation)["passed"] is True
 
@@ -239,6 +258,8 @@ class TestComputeValidationVerdict:
             "price_path": {"minimum_met": True, "p_value": 0.099},
             "walk_forward": {"minimum_met": True, "consistency_rate": 0.75},
             "bootstrap": {"minimum_met": True, "ci_low": 0.02},
+            "bca": {"minimum_met": True, "ci_low": 0.02},
+            "placebo": {"minimum_met": True, "p_value": 0.01},
         }
         assert compute_validation_verdict(validation)["passed"] is True
 
@@ -249,5 +270,7 @@ class TestComputeValidationVerdict:
             "price_path": {"minimum_met": True, "p_value": 0.101},
             "walk_forward": {"minimum_met": True, "consistency_rate": 0.75},
             "bootstrap": {"minimum_met": True, "ci_low": 0.02},
+            "bca": {"minimum_met": True, "ci_low": 0.02},
+            "placebo": {"minimum_met": True, "p_value": 0.01},
         }
         assert compute_validation_verdict(validation)["passed"] is False

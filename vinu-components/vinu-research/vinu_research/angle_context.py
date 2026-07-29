@@ -142,6 +142,19 @@ def compact_news_causality(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     return out or None
 
 
+def compact_backtesting_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    rows = _latest_run(rows)
+    if not rows:
+        return None
+    r = rows[-1]
+    return {
+        k: _val(r, k) for k in (
+            "sharpe_ratio", "sortino_ratio", "max_drawdown", "calmar_ratio",
+            "win_rate", "var_95", "cvar_95", "skewness", "kurtosis",
+        ) if _val(r, k) is not None
+    } or None
+
+
 def format_angle_context_lines(angles: dict[str, Any]) -> list[str]:
     """Render a compact `story["angles"]` dict as prompt lines.
 
@@ -186,6 +199,17 @@ def format_angle_context_lines(angles: dict[str, Any]) -> list[str]:
             f"lag={nc.get('best_lag_minutes')}min, p={nc.get('p_value')}, "
             f"news-return corr={nc.get('news_return_corr')}"
         )
+    bm = angles.get("backtesting_metrics")
+    if bm:
+        lines.append(
+            f"  Risk metrics: Sharpe={bm.get('sharpe_ratio')}, "
+            f"Sortino={bm.get('sortino_ratio')}, MaxDD={bm.get('max_drawdown')}, "
+            f"Calmar={bm.get('calmar_ratio')}, WinRate={bm.get('win_rate')}"
+        )
+        lines.append(
+            f"    Tail risk: VaR95={bm.get('var_95')}, CVaR95={bm.get('cvar_95')}, "
+            f"Skew={bm.get('skewness')}, Kurt={bm.get('kurtosis')}"
+        )
     return lines
 
 
@@ -193,6 +217,7 @@ def build_angle_context(
     trend_rows: list[dict[str, Any]] | None,
     session_rows: list[dict[str, Any]] | None,
     causality_rows: list[dict[str, Any]] | None,
+    backtesting_rows: list[dict[str, Any]] | None = None,
     interval: str = "1d",
 ) -> dict[str, Any]:
     """Build the compact `story["angles"]` dict from raw /angle endpoint records."""
@@ -207,4 +232,7 @@ def build_angle_context(
     nc = compact_news_causality(causality_rows or [])
     if nc:
         ctx["news_causality"] = nc
+    bm = compact_backtesting_metrics(backtesting_rows or [])
+    if bm:
+        ctx["backtesting_metrics"] = bm
     return ctx

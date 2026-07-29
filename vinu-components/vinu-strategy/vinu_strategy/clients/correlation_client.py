@@ -29,3 +29,6 @@ class CorrelationClient(BaseClient):
         if to_ts:
             params["to"] = str(to_ts)
         return self._get(f"/drawdown/{symbol}", params=params)
+
+    def get_angle(self, symbol: str, angle_name: str) -> dict[str, Any]:
+        return self._get(f"/angle/{angle_name}/{symbol}")

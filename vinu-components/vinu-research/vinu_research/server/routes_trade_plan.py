@@ -42,7 +42,7 @@ def _artifact_to_dict(artifact: Any) -> dict[str, Any]:
     }
 
 
-@router.post("/research/trade-plan/{symbol}")
+@router.post("/trade-plan/{symbol}")
 async def generate_trade_plan(symbol: str, body: GenerateTradePlanRequest) -> dict[str, Any]:
     """Author + freeze a complete trade plan for `symbol` (status stays CREATED)."""
     if _service is None:
@@ -58,7 +58,7 @@ async def generate_trade_plan(symbol: str, body: GenerateTradePlanRequest) -> di
     return _artifact_to_dict(artifact)
 
 
-@router.get("/research/trade-plan/{artifact_id}")
+@router.get("/trade-plan/{artifact_id}")
 async def get_trade_plan(artifact_id: str) -> dict[str, Any]:
     if _service is None:
         raise HTTPException(status_code=503, detail="Service not initialized")
@@ -68,7 +68,7 @@ async def get_trade_plan(artifact_id: str) -> dict[str, Any]:
     return _artifact_to_dict(artifact)
 
 
-@router.post("/research/trade-plan/{artifact_id}/approve")
+@router.post("/trade-plan/{artifact_id}/approve")
 async def approve_trade_plan_route(artifact_id: str) -> dict[str, Any]:
     """Promote a frozen trade plan to ACTIVE, gated by calibration (fail-closed).
 
@@ -94,7 +94,7 @@ class RecordOutcomeRequest(BaseModel):
     actual_return_pct: float
 
 
-@router.post("/research/trade-plan/{artifact_id}/record-outcome")
+@router.post("/trade-plan/{artifact_id}/record-outcome")
 async def record_outcome_route(artifact_id: str, body: RecordOutcomeRequest) -> dict[str, Any]:
     """Phase 7's write path: score a closed position's realized return against its frozen
     forecast and persist the calibration entry. Never triggers any live/in-trade action --

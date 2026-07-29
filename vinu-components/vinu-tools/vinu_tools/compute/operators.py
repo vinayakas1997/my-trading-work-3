@@ -118,7 +118,7 @@ def ts_std(df: np.ndarray, n: int) -> np.ndarray:
     result = np.full_like(df, np.nan, dtype=float)
     for i in range(n - 1, df.shape[0]):
         window = df[max(0, i - n + 1):i + 1, :]
-        result[i, :] = np.nanstd(window, axis=0)
+        result[i, :] = np.nanstd(window, axis=0, ddof=1)
     return result
 
 

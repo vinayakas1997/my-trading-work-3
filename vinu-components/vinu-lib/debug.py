@@ -4,10 +4,12 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager, contextmanager
+from pathlib import Path
 from typing import Any
 
 _DEBUG = os.environ.get("VINU_DEBUG", "false").lower() in ("true", "1", "yes")
 _DEBUG_LEVEL = int(os.environ.get("VINU_DEBUG_LEVEL", "1"))
+_DEBUG_LOGGER = logging.getLogger("vinu.debug")
 
 
 def is_debug(level: int = 1) -> bool:
@@ -17,30 +19,46 @@ def is_debug(level: int = 1) -> bool:
 def setup_logging(service: str, *, verbose: bool = False) -> None:
     """Unified logging setup for all services.
 
-    When VINU_DEBUG=true the root level is DEBUG with a full timestamped format
-    that includes the logger name.  Otherwise it is INFO with a compact format.
+    Every service (`vinu-news`, `vinu-live`, `vinu-research`, ...) calls this once at
+    startup with its own name. When VINU_DEBUG=true (or verbose=True), root level is
+    DEBUG and every `logger.info/warning/error` call from every service -- plus
+    `debug_log()` below -- is ALSO appended to one shared file, so a run spanning
+    multiple service processes can be read back in one place, in timestamp order,
+    instead of piecing together N separate consoles.
+
+    File sink location: `VINU_LOG_FILE` env var if set, else `logs/vinu-trace.log`
+    (relative to cwd) whenever VINU_DEBUG=true. Set `VINU_LOG_FILE=` (empty) to force
+    console-only. Console output is unaffected either way.
     """
-    if _DEBUG or verbose:
-        level = logging.DEBUG
-    else:
-        level = logging.INFO
-    fmt = (
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-        if _DEBUG
-        else "%(asctime)s %(levelname)s %(message)s"
-    )
-    logging.basicConfig(level=level, format=fmt)
+    level = logging.DEBUG if (_DEBUG or verbose) else logging.INFO
+    fmt = f"%(asctime)s [{service}] [%(levelname)s] %(name)s: %(message)s"
+
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+
+    log_file = os.environ.get("VINU_LOG_FILE", "/tmp/logs/vinu-trace.log" if _DEBUG else "")
+    if log_file:
+        path = Path(log_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(path, mode="a", encoding="utf-8"))
+
+    # force=True: some services boot uvicorn/other libs that call basicConfig first;
+    # without it this setup would silently no-op and every service would keep logging
+    # to its own console only, defeating the point of a shared file.
+    logging.basicConfig(level=level, format=fmt, handlers=handlers, force=True)
 
 
 def debug_log(msg: str, level: int = 1) -> None:
-    """Print a debug message only when VINU_DEBUG=true and VINU_DEBUG_LEVEL >= level.
-    
+    """Log a debug message only when VINU_DEBUG=true and VINU_DEBUG_LEVEL >= level.
+
     Level 1: step tracking, timing, budget warnings
     Level 2: LLM prompts/responses, memory context, evidence detail
+
+    Goes through the same handlers `setup_logging()` configured -- console AND the
+    shared file -- instead of a bare print() that only the console would ever see.
     """
     if _DEBUG and _DEBUG_LEVEL >= level:
         prefix = "[DEBUG1]" if level <= 1 else "[DEBUG2]"
-        print(f"{prefix} {msg}", flush=True)
+        _DEBUG_LOGGER.debug("%s %s", prefix, msg)
 
 
 _INDENT = 0

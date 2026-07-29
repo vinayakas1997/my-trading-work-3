@@ -5,6 +5,8 @@ features_required:
   - SMA_9
   - SMA_21
   - ADX_14
+angles_required:
+  - regime_analysis
 pipeline:
   selection:
     method: all
@@ -22,6 +24,10 @@ pipeline:
         when:
           - { source: features, key: ADX_14, lte: 25 }
         then: { action: weight_set, value: 0.0 }
+      - name: sideways_skip
+        when:
+          - {source: angles, key: regime_analysis.regime, eq: "sideways"}
+        then: {action: weight_set, value: 0.0}
   risk:
     method: normalize
     max_weight: 0.25

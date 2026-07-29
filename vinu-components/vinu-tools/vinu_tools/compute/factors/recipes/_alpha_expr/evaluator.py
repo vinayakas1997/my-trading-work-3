@@ -103,7 +103,7 @@ def _rolling_mean(arr: np.ndarray, w: int) -> np.ndarray:
 
 
 def _rolling_std(arr: np.ndarray, w: int) -> np.ndarray:
-    return _rolling_apply(arr, w, lambda x: np.std(x, ddof=0))
+    return _rolling_apply(arr, w, lambda x: np.std(x, ddof=1))
 
 
 def _rolling_sum(arr: np.ndarray, w: int) -> np.ndarray:

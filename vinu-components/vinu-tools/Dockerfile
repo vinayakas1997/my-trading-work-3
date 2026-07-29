@@ -11,6 +11,9 @@ WORKDIR /app/vinu-tools
 
 RUN pip install --no-cache-dir -e .
 
+COPY vinu-tools/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 RUN addgroup --system app && adduser --system --ingroup app app
 USER app
 
@@ -20,3 +23,5 @@ ENV VINU_FEATURES_META_DB_PATH=/data/meta.db
 VOLUME ["/data"]
 
 EXPOSE 8082
+
+ENTRYPOINT ["/app/entrypoint.sh"]

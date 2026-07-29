@@ -55,6 +55,7 @@ def create_app(
     static_dir: Path | None = None,
     config_routes: APIRouter | None = None,
     expose_health_on_root: bool = True,
+    route_prefix: str | None = None,
 ) -> FastAPI:
     start_time = time.time()
 
@@ -87,14 +88,21 @@ def create_app(
     # Auth — opt-in via VINU_API_KEY (checked inside require_auth)
     auth_deps = [Depends(require_auth)] if VINU_API_KEY else []
 
-    app.include_router(router, dependencies=auth_deps)
+    router_kwargs: dict[str, Any] = {"dependencies": auth_deps}
+    if route_prefix:
+        router_kwargs["prefix"] = f"/{route_prefix}"
+    app.include_router(router, **router_kwargs)
 
     if config_routes is not None:
-        app.include_router(config_routes, dependencies=auth_deps)
+        config_kwargs: dict[str, Any] = {"dependencies": auth_deps}
+        if route_prefix:
+            config_kwargs["prefix"] = f"/{route_prefix}"
+        app.include_router(config_routes, **config_kwargs)
 
     if expose_health_on_root:
+        health_path = f"/{route_prefix}/health" if route_prefix else "/health"
 
-        @app.get("/health")
+        @app.get(health_path)
         def _health() -> dict[str, Any]:
             return {
                 "ok": True,

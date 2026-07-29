@@ -93,11 +93,23 @@ class StrategyService:
                     sym = futures[fut]
                     correlation_signals[sym] = fut.result()
 
+        angle_signals: dict[str, dict[str, Any]] = {}
+        if config.angles_required:
+            with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
+                futures = {}
+                for sym in universe:
+                    fut = pool.submit(self._fetch_angles_for_symbol, sym, config.angles_required)
+                    futures[fut] = sym
+                for fut in as_completed(futures):
+                    sym = futures[fut]
+                    angle_signals[sym] = fut.result()
+
         weights, pipeline_meta = self._pipeline.run(
             config=config,
             universe=universe,
             feature_signals=feature_signals,
             correlation_signals=correlation_signals,
+            angle_signals=angle_signals,
             params={
                 "max_weight": self._config.max_weight,
                 "cash_floor": self._config.cash_floor,
@@ -152,6 +164,15 @@ class StrategyService:
             except Exception:
                 LOG.warning("Could not load watchlist from %s", self._config.shared_watchlist_path)
         return config.universe.get("inline", ["AAPL", "MSFT", "GOOGL", "AMZN", "META"])
+
+    def _fetch_angles_for_symbol(self, sym: str, angles: list[str]) -> dict[str, Any]:
+        ctx: dict[str, Any] = {}
+        for angle_name in angles:
+            try:
+                ctx[angle_name] = self._correlation_client.get_angle(sym, angle_name)
+            except Exception:
+                LOG.warning("Failed to fetch angle %s for %s", angle_name, sym)
+        return ctx
 
     def _fetch_correlation_for_symbol(self, sym: str, required: list[str]) -> dict[str, Any]:
         ctx: dict[str, Any] = {}

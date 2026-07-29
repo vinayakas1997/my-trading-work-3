@@ -33,4 +33,5 @@ def create_app(service: FeatureService | None = None):
         lifespan=lifespan,
         static_dir=None,
         expose_health_on_root=True,
+        route_prefix="features",
     )

@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from vinu_stock.catalog.store import CatalogStore
 from vinu_stock.providers.registry import ProviderRegistry
 from vinu_stock.storage import parquet
 from vinu_stock.storage.models import BarRecord
@@ -48,7 +47,7 @@ def _ingest_symbol(
     sym: str,
     *,
     data_root: Path,
-    catalog: CatalogStore,
+    backend,
     registry: ProviderRegistry,
     all_entries: dict,
     now_ts: int,
@@ -56,6 +55,7 @@ def _ingest_symbol(
     summary_lock: threading.Lock,
     summary: LiveIngestSummary,
 ) -> None:
+    catalog = backend.catalog
     entry = all_entries.get(sym)
     last_ts = entry.last_bar_ts if entry and entry.last_bar_ts else None
     start_ts = (last_ts - OVERLAP_SEC) if last_ts else now_ts - 24 * 3600
@@ -96,12 +96,13 @@ def run_live_cycle(
     symbols: list[str],
     *,
     data_root: Path,
-    catalog: CatalogStore,
+    backend,
     registry: ProviderRegistry,
 ) -> LiveIngestSummary:
     summary = LiveIngestSummary()
     now_ts = int(time.time())
     current_year = datetime.now(timezone.utc).year
+    catalog = backend.catalog
     all_entries = {e.symbol: e for e in catalog.list_symbols()}
 
     clean_symbols = [raw.strip().upper() for raw in symbols if raw.strip()]
@@ -119,7 +120,7 @@ def run_live_cycle(
                 _ingest_symbol,
                 sym,
                 data_root=data_root,
-                catalog=catalog,
+                backend=backend,
                 registry=registry,
                 all_entries=all_entries,
                 now_ts=now_ts,

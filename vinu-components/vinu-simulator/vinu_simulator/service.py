@@ -488,7 +488,8 @@ class SimulatorService:
         price_data: pd.DataFrame,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         from vinu_simulator.engine.validation import (
-            monte_carlo_permutation, bootstrap_sharpe_ci, walk_forward_consistency,
+            monte_carlo_permutation, bootstrap_sharpe_ci, bootstrap_sharpe_ci_bca,
+            placebo_test, walk_forward_consistency,
             block_bootstrap_permutation, price_path_resample, compute_validation_verdict,
         )
         from vinu_simulator.engine.attribution import by_symbol_stats, beta_regression, match_trades
@@ -523,6 +524,18 @@ class SimulatorService:
             periods_per_year=periods_per_year,
         )
         
+        bca_result = bootstrap_sharpe_ci_bca(
+            daily_returns=result.daily_returns,
+            periods_per_year=periods_per_year,
+        )
+        
+        signal_dates = [pd.Timestamp(t.date) for t in result.trades if hasattr(t, "date")]
+        placebo_result = placebo_test(
+            strategy_returns=result.daily_returns,
+            signal_dates=signal_dates,
+            periods_per_year=periods_per_year,
+        )
+        
         wf_result = walk_forward_consistency(
             equity_curve=result.portfolio_values,
             periods_per_year=periods_per_year,
@@ -533,6 +546,8 @@ class SimulatorService:
             "block_bootstrap": bb_result,
             "price_path": pr_result,
             "bootstrap": bs_result,
+            "bca": bca_result,
+            "placebo": placebo_result,
             "walk_forward": wf_result,
         }
         
