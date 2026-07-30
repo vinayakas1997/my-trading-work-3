@@ -9,6 +9,7 @@ from vinu_lib.debug import setup_logging
 from vinu_live.config import load_config
 from vinu_live.scheduler import LiveScheduler
 from vinu_live.feedback_loop import FeedbackLoopWorker
+from vinu_live.shadow_evaluator import ShadowEvaluator
 from vinu_live.trade_plan.orchestrator import TradePlanOrchestrator
 
 
@@ -76,6 +77,23 @@ def trade_plan_worker_main(args: argparse.Namespace | None = None) -> None:
             await orchestrator.close()
 
     asyncio.run(_worker_loop())
+
+
+def run_shadow_evaluate_main(args: argparse.Namespace) -> None:
+    async def _run() -> None:
+        config = load_config()
+        evaluator = ShadowEvaluator(
+            research_api_url=config.research_api_url,
+            agent_api_url=config.agent_api_url,
+        )
+        try:
+            results = await evaluator.evaluate_all()
+            print(f"Shadow evaluation complete: {len(results)} artifacts checked")
+            for r in results:
+                print(f"  {r['artifact_id']}: {r['status']} (paper={r.get('paper_sharpe')})")
+        finally:
+            await evaluator.close()
+    asyncio.run(_run())
 
 
 def run_feedback_cycle_main(args: argparse.Namespace) -> None:
@@ -183,6 +201,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     fb_cycle_p = sub.add_parser("feedback-cycle", help="Run a single Phase 7 feedback-loop cycle")
     fb_cycle_p.set_defaults(func=run_feedback_cycle_main)
+
+    se_p = sub.add_parser("shadow-evaluate", help="Run a single shadow-evaluation cycle (BENCHING artifacts)")
+    se_p.set_defaults(func=run_shadow_evaluate_main)
 
     fb_worker_p = sub.add_parser("feedback-worker", help="Run continuous feedback-loop worker")
     fb_worker_p.add_argument("--interval", type=int, dest="interval_sec", default=None)

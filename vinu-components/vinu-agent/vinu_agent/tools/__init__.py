@@ -32,6 +32,7 @@ def build_registry(
     services_config: Optional[dict] = None,
     skills_loader: Any = None,
     session_service: Any = None,
+    workflow_tracker: Any = None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
     subclasses = _discover_subclasses()
@@ -54,6 +55,8 @@ def build_registry(
             tool._skills_loader = skills_loader
         if session_service and hasattr(tool, "_session_service"):
             tool._session_service = session_service
+        if workflow_tracker and hasattr(tool, "_workflow_tracker"):
+            tool._workflow_tracker = workflow_tracker
         registry.register(tool)
 
     return registry

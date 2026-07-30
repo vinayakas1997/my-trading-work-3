@@ -123,7 +123,10 @@ class SessionService:
 
     def _run_with_agent(self, session_id: str, attempt: Attempt) -> Dict:
         from ..agent.loop import AgentLoop
+        from ..agent.workflow import WorkflowTracker
         from ..tools import build_registry
+
+        workflow_tracker = WorkflowTracker()
 
         registry = build_registry(
             session_id=session_id,
@@ -132,6 +135,7 @@ class SessionService:
             unified_memory=self._unified_memory,
             skills_loader=self._skills_loader,
             session_service=self,
+            workflow_tracker=workflow_tracker,
         )
 
         context_builder = ContextBuilder(
@@ -157,6 +161,7 @@ class SessionService:
             max_iterations=50,
             persistent_memory=self._persistent_memory,
         )
+        agent_loop._workflow_tracker = workflow_tracker
         self._active_loops[session_id] = agent_loop
 
         try:

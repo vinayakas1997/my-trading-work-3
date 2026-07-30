@@ -141,6 +141,34 @@ class TestBrokerOrderRoute:
         assert call_kwargs["symbol"] == "AAPL"
         assert call_kwargs["qty"] == 10
 
+    def test_performance_returns_empty_for_unknown_artifact(self, client) -> None:
+        resp = client.get("/broker/performance/unknown-artifact")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["artifact_id"] == "unknown-artifact"
+        assert body["daily_returns"] == []
+
+    def test_record_then_get_performance(self, client) -> None:
+        resp = client.post(
+            "/broker/performance/art-1",
+            json={"daily_returns": [0.01, -0.005, 0.02, 0.0, -0.01]},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+        assert resp.json()["n_returns"] == 5
+
+        resp = client.get("/broker/performance/art-1")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["artifact_id"] == "art-1"
+        assert body["daily_returns"] == [0.01, -0.005, 0.02, 0.0, -0.01]
+
+    def test_record_overwrites_previous_data(self, client) -> None:
+        client.post("/broker/performance/art-2", json={"daily_returns": [0.1, 0.2]})
+        client.post("/broker/performance/art-2", json={"daily_returns": [0.3, 0.4, 0.5]})
+        resp = client.get("/broker/performance/art-2")
+        assert resp.json()["daily_returns"] == [0.3, 0.4, 0.5]
+
     def test_passes_bracket_order_fields_through(self, client) -> None:
         mock_tool = MagicMock()
         mock_tool.execute.return_value = json.dumps({"status": "submitted"})

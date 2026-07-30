@@ -38,5 +38,13 @@ def create_app() -> FastAPI:
     async def get_daily_allocation() -> dict[str, Any]:
         return await _service.compute_daily_allocation()
 
+    @router.get("/daily-game-plan")
+    async def get_daily_game_plan() -> dict[str, Any]:
+        return await _service.compute_daily_game_plan()
+
+    @router.get("/risk/status")
+    async def get_risk_status() -> dict[str, Any]:
+        return await _service.compute_risk_status()
+
     app.include_router(router)
     return app

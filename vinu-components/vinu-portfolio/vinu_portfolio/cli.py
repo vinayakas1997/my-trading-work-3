@@ -37,6 +37,22 @@ def daily_allocation_main(args: argparse.Namespace) -> None:
     asyncio.run(_run())
 
 
+def daily_game_plan_main(args: argparse.Namespace) -> None:
+    async def _run() -> None:
+        async with PortfolioService() as svc:
+            plan = await svc.compute_daily_game_plan()
+            print(json.dumps(plan, indent=2, default=str))
+    asyncio.run(_run())
+
+
+def risk_status_main(args: argparse.Namespace) -> None:
+    async def _run() -> None:
+        async with PortfolioService() as svc:
+            status = await svc.compute_risk_status()
+            print(json.dumps(status, indent=2, default=str))
+    asyncio.run(_run())
+
+
 def monitor_main(args: argparse.Namespace) -> None:
     from vinu_portfolio.drawdown_scheduler import monitor_main_loop
 
@@ -61,6 +77,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Build regime-aware, outcome-confidence-weighted daily allocation (one-shot)",
     )
     daily_allocation_p.set_defaults(func=daily_allocation_main)
+
+    game_plan_p = sub.add_parser(
+        "daily-game-plan",
+        help="Build unified daily game plan document with readiness score (one-shot)",
+    )
+    game_plan_p.set_defaults(func=daily_game_plan_main)
+
+    risk_p = sub.add_parser(
+        "risk-status",
+        help="Check daily risk budget and regime-tightened bands (one-shot)",
+    )
+    risk_p.set_defaults(func=risk_status_main)
 
     monitor_p = sub.add_parser("monitor", help="Run drawdown-monitor loop, halting trading on breach")
     monitor_p.set_defaults(func=monitor_main)

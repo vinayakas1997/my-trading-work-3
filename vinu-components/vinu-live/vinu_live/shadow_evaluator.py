@@ -54,7 +54,7 @@ class ShadowEvaluator:
                 params={"status": "BENCHING"},
             )
             if resp.status_code == 200:
-                return resp.json()
+                return await resp.json()
         except Exception as e:
             LOG.warning("Failed to list benching artifacts: %s", e)
         return []
@@ -108,7 +108,7 @@ class ShadowEvaluator:
             )
             if resp.status_code != 200:
                 return None
-            data = resp.json()
+            data = await resp.json()
             returns = data.get("daily_returns", [])
             if len(returns) < self._min_paper_days:
                 return None

@@ -54,6 +54,7 @@ class PortfolioConfig:
     outcome_tilt_bound: float = 0.3
     min_calibration_entries_for_tilt: int = 5
     tags_path: Path = DEFAULT_TAGS_PATH
+    game_plan_readiness_threshold: float = 0.5
 
     @classmethod
     def from_env(cls) -> PortfolioConfig:
@@ -79,6 +80,9 @@ class PortfolioConfig:
                 os.getenv("VINU_PORTFOLIO_MIN_CALIBRATION_ENTRIES", "5")
             ),
             tags_path=Path(os.getenv("VINU_PORTFOLIO_TAGS_PATH", str(DEFAULT_TAGS_PATH))),
+            game_plan_readiness_threshold=float(
+                os.getenv("VINU_PORTFOLIO_GAME_PLAN_READINESS_THRESHOLD", "0.5")
+            ),
         )
 
 

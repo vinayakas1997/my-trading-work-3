@@ -189,6 +189,22 @@ class TradePlanOrchestrator:
     # Open-position evaluation
     # ------------------------------------------------------------------
 
+    async def _fetch_calibration_accuracy(self, artifact_id: str) -> float | None:
+        try:
+            resp = await self._http.get(
+                f"{self._config.research_api_url}/research/trade-plan/{artifact_id}/calibration",
+            )
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            n = data.get("n_entries", 0)
+            if n < 5:
+                return None
+            return data.get("accuracy")
+        except Exception as e:
+            LOG.debug("Failed to fetch calibration for %s: %s", artifact_id, e)
+        return None
+
     async def _evaluate_open_position(
         self, plan: dict[str, Any], position: Position, price: float, portfolio_value: float,
     ) -> dict[str, Any] | None:
@@ -198,11 +214,25 @@ class TradePlanOrchestrator:
         recent_returns = _simple_returns(recent_prices)
         cluster_corr = await self._fetch_shock_cluster_correlation(symbol)
 
+        artifact_id = plan.get("_artifact_id", "")
+        calibration_accuracy = await self._fetch_calibration_accuracy(artifact_id) if artifact_id else None
+
+        created_at = plan.get("created_at", "")
+        days_elapsed = 0
+        if created_at:
+            try:
+                created = datetime.fromisoformat(created_at)
+                days_elapsed = (datetime.now(timezone.utc) - created).days
+            except (ValueError, TypeError):
+                pass
+
         metrics = compute_live_metrics(
             position, price, plan,
             recent_returns=recent_returns,
             previous_close=previous_close,
             shock_cluster_correlation=cluster_corr,
+            calibration_accuracy=calibration_accuracy,
+            days_elapsed=days_elapsed,
         )
 
         triggered_invalidations = find_triggered_rules(

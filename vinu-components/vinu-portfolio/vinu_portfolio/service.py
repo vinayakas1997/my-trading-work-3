@@ -12,7 +12,10 @@ import pandas as pd
 import yaml
 
 from vinu_portfolio.config import PortfolioConfig, load_config
+from vinu_portfolio.game_plan import DailyGamePlan, SymbolPlan
 from vinu_portfolio.regime import classify_current_regime
+from vinu_portfolio.risk_budget import compute_risk_budget, DailyPositionTracker
+from vinu_portfolio.shock_correlation import dcc_shock_correlation
 from vinu_portfolio.sizing import apply_position_sizing
 
 LOG = logging.getLogger(__name__)
@@ -258,6 +261,8 @@ class PortfolioService:
                 "values": corr_matrix.round(4).values.tolist(),
             }
 
+        shock = dcc_shock_correlation(returns_df) if returns_df is not None else None
+
         return {
             "status": "ok",
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -265,6 +270,7 @@ class PortfolioService:
             "strategies": strategies,
             "weights": weights,
             "correlation_matrix": matrix_dict,
+            "shock_correlation": shock,
         }
 
     # ------------------------------------------------------------------
@@ -420,6 +426,98 @@ class PortfolioService:
             "account_equity": equity,
         }
 
+    async def compute_daily_game_plan(self) -> dict[str, Any]:
+        allocation = await self.compute_daily_allocation()
+        if allocation.get("status") != "ok":
+            return allocation
+
+        regime_info = allocation.get("regime", {})
+        equity = allocation.get("account_equity")
+        base = allocation  # already includes build_portfolio output
+
+        by_name = {s["name"]: s for s in base["strategies"]}
+        symbols: list[SymbolPlan] = []
+        n_available = 0
+        n_total = len(allocation["weights"])
+
+        for w in allocation["weights"]:
+            strategy = by_name.get(w["name"], {})
+            plan_data, plan_found = await self._fetch_trade_plan(strategy)
+            forecast = None
+            invalidation_conditions = None
+            p_failure = None
+            if plan_data:
+                forecast = plan_data.get("forecast")
+                invalidation_conditions = plan_data.get("invalidation_conditions")
+                p_failure = plan_data.get("p_failure")
+
+            outcome_source = w.get("outcome_source", "not_tracked")
+
+            plan = SymbolPlan(
+                ticker=w.get("symbol", ""),
+                target_weight=w.get("target_weight", 0.0),
+                base_weight=w.get("base_weight", 0.0),
+                regime_multiplier=w.get("regime_multiplier", 1.0),
+                outcome_multiplier=w.get("outcome_multiplier", 1.0),
+                outcome_source=outcome_source,
+                position_size=w.get("position_size"),
+                direction=w.get("direction"),
+                forecast=forecast,
+                invalidation_conditions=invalidation_conditions,
+                p_failure=p_failure,
+                shock_correlation=None,
+                plan_status="found" if plan_found else "no_plan",
+            )
+            symbols.append(plan)
+            if plan_found:
+                n_available += 1
+
+        readiness_score = n_available / max(n_total, 1)
+        ready = readiness_score >= self._config.game_plan_readiness_threshold
+        readiness_flags = {
+            "n_total": n_total,
+            "n_with_plan": n_available,
+            "readiness_score": round(readiness_score, 4),
+            "game_ready": ready,
+        }
+
+        game_plan = DailyGamePlan(
+            date=base.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            readiness_score=round(readiness_score, 4),
+            readiness_flags=readiness_flags,
+            n_symbols=n_total,
+            symbols=[s.to_dict() for s in symbols],
+            portfolio={
+                "n_strategies": base.get("n_strategies", 0),
+                "status": base.get("status"),
+                "strategy_names": [s["name"] for s in base.get("strategies", [])],
+            },
+            regime=regime_info,
+            shock_correlation=base.get("shock_correlation"),
+            account_equity=equity,
+        )
+        return game_plan.to_dict()
+
+    async def _fetch_trade_plan(
+        self, strategy: dict[str, Any]
+    ) -> tuple[dict[str, Any] | None, bool]:
+        if strategy.get("kind") != "llm_python":
+            return None, False
+        artifact_id = strategy.get("artifact_id", "")
+        if not artifact_id:
+            return None, False
+        try:
+            resp = await self._http.get(
+                f"{self._config.research_api_url}/research/trade-plan/{artifact_id}"
+            )
+            if resp.status_code != 200:
+                return None, False
+            data = resp.json()
+            return data, True
+        except Exception as e:
+            LOG.warning("Failed to fetch trade plan for %s: %s", artifact_id, e)
+            return None, False
+
     async def _fetch_account_equity(self) -> float | None:
         """Live equity, reused from the same source drawdown_scheduler.py already polls."""
         try:
@@ -434,3 +532,33 @@ class PortfolioService:
         except Exception as e:
             LOG.warning("Failed to fetch account equity: %s", e)
             return None
+
+    async def _fetch_positions(self) -> list[dict[str, Any]]:
+        try:
+            resp = await self._http.get(f"{self._config.agent_api_url}/agent/broker/positions")
+            if resp.status_code != 200:
+                return []
+            return resp.json()
+        except Exception as e:
+            LOG.warning("Failed to fetch positions: %s", e)
+            return []
+
+    async def compute_risk_status(self) -> dict[str, Any]:
+        game_plan = await self.compute_daily_game_plan()
+        if game_plan.get("status") == "empty":
+            return game_plan
+
+        regime = None
+        if game_plan.get("regime"):
+            regime = game_plan["regime"].get("regime")
+
+        equity = game_plan.get("account_equity")
+        positions = await self._fetch_positions()
+
+        tracker = DailyPositionTracker()
+        budget = compute_risk_budget(positions, equity, regime=regime, tracker=tracker)
+
+        result = budget.to_dict()
+        result["regime"] = regime
+        result["game_plan_readiness"] = game_plan.get("readiness_score")
+        return result

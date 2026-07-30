@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from .tools import ToolRegistry
+from .workflow import WorkflowTracker
 
 
 @dataclass
@@ -52,6 +53,8 @@ class AgentLoop:
         self._nudge_sent: bool = False
         self._compact_requested: bool = False
         self.tool_timeout: int = 60
+        self._workflow_tracker: WorkflowTracker = WorkflowTracker()
+        self._workflow_injected: bool = False
 
     def run(self, messages: List[Dict], session_id: str = "") -> Dict:
         self._cancel_event.clear()
@@ -91,6 +94,11 @@ class AgentLoop:
 
             # 1. Apply context management
             compressed = self._apply_context_layers(full_history)
+
+            # 1b. Inject workflow context
+            wf_block = self._workflow_tracker.to_context_block()
+            if wf_block:
+                compressed.insert(1, {"role": "system", "content": wf_block})
 
             # 2. Call LLM
             self._emit("llm.call", {
@@ -188,6 +196,10 @@ class AgentLoop:
         return self._build_result(
             "max_iterations", force_msg["content"], iteration, token_usage, full_history
         )
+
+    @property
+    def workflow_tracker(self) -> WorkflowTracker:
+        return self._workflow_tracker
 
     def cancel(self) -> None:
         self._cancel_event.set()

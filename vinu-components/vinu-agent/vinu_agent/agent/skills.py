@@ -50,7 +50,7 @@ class SkillsLoader:
             if not skill_md.exists():
                 continue
 
-            content = skill_md.read_text()
+            content = skill_md.read_text(encoding="utf-8")
             metadata, body = parse_frontmatter(content)
 
             skill = Skill(

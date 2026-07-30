@@ -1,0 +1,65 @@
+# Optimizer knowledge library — NOT a fixed sweep plan, and NOT a strategy
+# catalog. See SKILL.md for the adaptive search algorithm this feeds and
+# for why a per-strategy `strategies:` section was removed: Step 06's
+# `list_sweep_recipes` tool already exposes a real, live parameter catalog
+# for every built-in strategy — a hand-maintained duplicate here would
+# drift out of sync with it immediately.
+
+defaults:
+  # Governor (Step 08) owns the actual stopping decision — these are
+  # starting-point conventions for THIS skill's own widen/narrow bookkeeping,
+  # not a competing stop condition.
+  primary_objective: metrics.sharpe_ratio
+  tiebreaker: metrics.max_drawdown_ascending
+  # Multiplier applied to seed_step when a coarse pass shows high sensitivity
+  # (narrow to refine) vs low sensitivity (widen to re-search).
+  refine_step_factor: 0.5
+  widen_bounds_by_steps: 5
+
+# Generic knowledge, keyed by parameter TYPE, not by strategy or indicator
+# name — classify a real parameter's name into one of these (see SKILL.md's
+# "Classifying a parameter" section) to inherit a reasonable starting point.
+parameter_library:
+  moving_average_period:
+    unit: bars
+    seed_step: 1
+    seed_bounds_pm: 5        # +/- around the strategy's stated default
+    notes: >
+      Short periods (e.g. 9-20, matches recipe defaults like crossover's
+      fast_period=20) are usually sensitive at step=1 within a small
+      window. Long periods (e.g. slow_period=50-60 in crossover/
+      triple_crossover/adx_filtered_crossover/momentum_mean_reversion)
+      often need a much wider window before sensitivity shows up — widen
+      aggressively (well past +/-5) before concluding "not useful."
+    seen_in_recipes: [crossover, triple_crossover, macd, vwap_crossover, rsi, bollinger_bands, mean_reversion_zscore, momentum, rate_of_change, breakout, volatility_breakout, supertrend, adx_filtered_crossover, volume_confirmed_breakout, momentum_mean_reversion]
+    # period-shaped params: fast/slow/mid_period, macd_fast/slow/signal, vwap_period,
+    # rsi_period, bb_period, zscore_period, lookback, roc_period, atr_period,
+    # st_period, adx_period, volume_period, regime_period, trend_period, mr_period
+
+  oscillator_threshold:
+    unit: index_points        # e.g. RSI, ADX levels (0-100 scale)
+    seed_step: 5
+    seed_bounds_pm: 10
+    notes: "Typical for RSI/ADX style bounded oscillators and their entry/exit thresholds."
+    seen_in_recipes: [rsi, adx_filtered_crossover]
+
+  ratio_threshold:
+    unit: fraction
+    seed_step: 0.05
+    seed_bounds_pm: 0.10
+    notes: "Typical for 0-1-scale distance/deviation thresholds."
+    seen_in_recipes: [momentum_mean_reversion]  # vol_ratio
+
+  atr_multiplier:
+    unit: multiplier
+    seed_step: 0.5
+    seed_bounds_pm: 1.0
+    notes: "Typical for volatility-band widths and trailing-stop distances."
+    seen_in_recipes: [bollinger_bands, mean_reversion_zscore, volatility_breakout, supertrend, volume_confirmed_breakout]  # bb_std, zscore_entry, vol_entry, st_multiplier, volume_multiplier
+
+  signal_threshold:
+    unit: raw_ratio
+    seed_step: 0.01
+    seed_bounds_pm: 0.02
+    notes: "Small-magnitude signal cutoffs, e.g. rate-of-change thresholds."
+    seen_in_recipes: [rate_of_change]  # roc_threshold

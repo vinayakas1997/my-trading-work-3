@@ -217,6 +217,26 @@ def _build_invalidation_conditions(
             )
         )
 
+    if forecast.horizon_days > 0:
+        conditions.extend([
+            InvalidationCondition(
+                metric="probability_of_failure",
+                operator=">=",
+                threshold=0.3,
+                action="trim",
+                action_params={"reduce_by_pct": 0.5},
+                condition="P_failure >= 0.3",
+            ),
+            InvalidationCondition(
+                metric="probability_of_failure",
+                operator=">=",
+                threshold=0.6,
+                action="exit",
+                action_params={"reason": "high_probability_failure"},
+                condition="P_failure >= 0.6",
+            ),
+        ])
+
     return conditions
 
 

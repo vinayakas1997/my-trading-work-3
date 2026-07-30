@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from ..broker.alpaca import AlpacaBroker
 from ..broker.kill_switch import halt_trading, is_trading_halted, resume_trading
+from ..broker.performance_store import get_store
 from ..tools.trade_tool import TradeTool
 
 router = APIRouter()
@@ -108,3 +109,32 @@ async def broker_order(body: OrderRequest) -> dict[str, Any]:
     tool = TradeTool()
     result_json = await asyncio.to_thread(tool.execute, **body.model_dump())
     return json.loads(result_json)
+
+
+@router.get("/broker/performance/{artifact_id}")
+async def broker_performance(artifact_id: str) -> dict[str, Any]:
+    """Paper-trading daily returns for a BENCHING artifact.
+
+    Called by ShadowEvaluator to compute paper Sharpe ratio. Returns the
+    recorded daily returns list; an empty list means no data yet (evaluator
+    returns ``insufficient_data``).
+    """
+    store = get_store()
+    returns = store.get_daily_returns(artifact_id)
+    return {"artifact_id": artifact_id, "daily_returns": returns}
+
+
+class RecordPerformanceRequest(BaseModel):
+    daily_returns: list[float]
+
+
+@router.post("/broker/performance/{artifact_id}")
+async def record_performance(artifact_id: str, body: RecordPerformanceRequest) -> dict[str, Any]:
+    """Record paper-trading daily returns for an artifact.
+
+    Called by vinu-live's cycle after each trading day to accumulate the
+    per-artifact paper P&L history that ShadowEvaluator reads.
+    """
+    store = get_store()
+    store.record_daily_returns(artifact_id, body.daily_returns)
+    return {"status": "ok", "artifact_id": artifact_id, "n_returns": len(body.daily_returns)}
