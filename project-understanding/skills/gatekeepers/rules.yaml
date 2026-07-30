@@ -1,0 +1,76 @@
+# Gatekeepers — machine-readable thresholds.
+# See SKILL.md for how these are meant to be used.
+# `check` is written as a plain-English expression over result metrics;
+# the exact metric names should match whatever vinu-simulator / vinu-initial-analysis
+# actually output — placeholders here, confirm field names before wiring this up.
+
+gatekeepers:
+  - id: min_trade_count
+    angle: sample_size
+    check: "trade_count >= 30"
+    severity: hard
+    reason: >
+      Results from fewer than 30 trades are noise, not evidence of edge.
+      (Matches the existing hard-gate checklist in backtest-diagnose/SKILL.md
+      and the small-sample warning in info-1.pdf — several of that article's
+      "top 5" strategies only had 1-2 closed trades.)
+
+  - id: sharpe_floor
+    angle: risk_adjusted_return
+    check: "sharpe_oos >= 0.7"
+    severity: hard
+    reason: "Minimum acceptable out-of-sample risk-adjusted return."
+
+  - id: sharpe_is_floor
+    angle: risk_adjusted_return
+    check: "sharpe_is >= 1.0"
+    severity: hard
+    reason: "In-sample Sharpe should clear a higher bar than OOS."
+
+  - id: drawdown_ratio
+    angle: risk_stability
+    check: "maxdd_oos <= 1.5 * maxdd_is"
+    severity: hard
+    reason: "OOS drawdown blowing past 1.5x IS drawdown signals overfitting."
+
+  - id: profit_factor_floor
+    angle: risk_adjusted_return
+    check: "profit_factor >= 1.5"
+    severity: soft
+    reason: "Gross wins vs gross losses should have real margin."
+
+  - id: parameter_sensitivity
+    angle: robustness
+    check: "performance_stable_within(param_perturbation=0.1)"
+    severity: soft
+    reason: >
+      Nudging any parameter by 10% shouldn't collapse performance. Guards
+      against a result that only works at one exact parameter value.
+
+  - id: walk_forward_windows
+    angle: robustness
+    check: "walk_forward_windows_passed >= 3"
+    severity: hard
+    reason: "Result must hold across at least 3 non-overlapping walk-forward windows."
+
+  - id: cost_realism
+    angle: cost_realism
+    check: "includes_commissions_and_slippage == true"
+    severity: hard
+    reason: "A result computed with zero costs is not a real result."
+
+  - id: beats_benchmark
+    angle: benchmark_relative
+    check: "return_pct > benchmark_return_pct"
+    severity: soft
+    reason: >
+      Should beat a naive buy-and-hold/SPY benchmark over the same window,
+      per the excess-return framing in info-1.pdf.
+
+  - id: closed_trade_ratio
+    angle: sample_size
+    check: "open_trades / max(trade_count, 1) <= 0.2"
+    severity: soft
+    reason: >
+      Too many still-open positions at test end means the return isn't
+      fully realized yet — treat with caution.
