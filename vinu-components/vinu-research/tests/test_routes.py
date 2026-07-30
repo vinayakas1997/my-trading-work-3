@@ -27,21 +27,21 @@ def client(app):
 
 class TestHealth:
     def test_health_returns_200(self, client):
-        resp = client.get("/health")
+        resp = client.get("/research/health")
         assert resp.status_code == 200
         data = resp.json()
         assert data["service"] == "vinu-research"
         assert data["version"] == "0.1.0"
 
     def test_health_has_deps(self, client):
-        resp = client.get("/health")
+        resp = client.get("/research/health")
         data = resp.json()
         assert "dependencies" in data
 
 
 class TestSettings:
     def test_settings_returns_config(self, client):
-        resp = client.get("/settings")
+        resp = client.get("/research/settings")
         assert resp.status_code == 200
         data = resp.json()
         assert "features_api_url" in data

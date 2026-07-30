@@ -14,66 +14,75 @@ def _make_store(tmp: str) -> MetaStorage:
 def test_insert_run_persists_validation_and_symbols():
     with TemporaryDirectory() as tmp:
         store = _make_store(tmp)
-        validation = {
-            "monte_carlo": {"p_value": 0.02, "minimum_met": True},
-            "verdict": {"passed": True, "reasons": ["ok"]},
-        }
-        store.insert_run(
-            run_id="run-1",
-            strategy_name="ma_crossover",
-            timestamp=datetime.now(timezone.utc),
-            config={"strategy_name": "ma_crossover"},
-            metrics={"sharpe_ratio": 1.5},
-            validation=validation,
-            symbols=["AAPL", "MSFT"],
-        )
-        row = store.get_run("run-1")
-        assert row is not None
-        assert row["validation"] == validation
-        assert row["symbols"] == ["AAPL", "MSFT"]
+        try:
+            validation = {
+                "monte_carlo": {"p_value": 0.02, "minimum_met": True},
+                "verdict": {"passed": True, "reasons": ["ok"]},
+            }
+            store.insert_run(
+                run_id="run-1",
+                strategy_name="ma_crossover",
+                timestamp=datetime.now(timezone.utc),
+                config={"strategy_name": "ma_crossover"},
+                metrics={"sharpe_ratio": 1.5},
+                validation=validation,
+                symbols=["AAPL", "MSFT"],
+            )
+            row = store.get_run("run-1")
+            assert row is not None
+            assert row["validation"] == validation
+            assert row["symbols"] == ["AAPL", "MSFT"]
+        finally:
+            store.close()
 
 
 def test_insert_run_without_validation_stores_none():
     with TemporaryDirectory() as tmp:
         store = _make_store(tmp)
-        store.insert_run(
-            run_id="run-2",
-            strategy_name="ma_crossover",
-            timestamp=datetime.now(timezone.utc),
-            config={},
-            metrics={},
-        )
-        row = store.get_run("run-2")
-        assert row is not None
-        assert row["validation"] is None
-        assert row["symbols"] == []
+        try:
+            store.insert_run(
+                run_id="run-2",
+                strategy_name="ma_crossover",
+                timestamp=datetime.now(timezone.utc),
+                config={},
+                metrics={},
+            )
+            row = store.get_run("run-2")
+            assert row is not None
+            assert row["validation"] is None
+            assert row["symbols"] == []
+        finally:
+            store.close()
 
 
 def test_list_runs_filters_by_symbol():
     with TemporaryDirectory() as tmp:
         store = _make_store(tmp)
-        store.insert_run(
-            run_id="run-aapl",
-            strategy_name="s1",
-            timestamp=datetime.now(timezone.utc),
-            config={},
-            metrics={},
-            symbols=["AAPL"],
-        )
-        store.insert_run(
-            run_id="run-msft",
-            strategy_name="s1",
-            timestamp=datetime.now(timezone.utc),
-            config={},
-            metrics={},
-            symbols=["MSFT"],
-        )
-        aapl_runs = store.list_runs(symbol="AAPL")
-        assert {r["run_id"] for r in aapl_runs} == {"run-aapl"}
+        try:
+            store.insert_run(
+                run_id="run-aapl",
+                strategy_name="s1",
+                timestamp=datetime.now(timezone.utc),
+                config={},
+                metrics={},
+                symbols=["AAPL"],
+            )
+            store.insert_run(
+                run_id="run-msft",
+                strategy_name="s1",
+                timestamp=datetime.now(timezone.utc),
+                config={},
+                metrics={},
+                symbols=["MSFT"],
+            )
+            aapl_runs = store.list_runs(symbol="AAPL")
+            assert {r["run_id"] for r in aapl_runs} == {"run-aapl"}
 
-        # case-insensitive
-        aapl_runs_lower = store.list_runs(symbol="aapl")
-        assert {r["run_id"] for r in aapl_runs_lower} == {"run-aapl"}
+            # case-insensitive
+            aapl_runs_lower = store.list_runs(symbol="aapl")
+            assert {r["run_id"] for r in aapl_runs_lower} == {"run-aapl"}
+        finally:
+            store.close()
 
 
 def test_migration_adds_validation_columns_to_existing_db():
@@ -105,7 +114,10 @@ def test_migration_adds_validation_columns_to_existing_db():
         conn.close()
 
         store = MetaStorage(db_path)
-        row = store.get_run("old-run")
-        assert row is not None
-        assert row["validation"] is None
-        assert row["symbols"] == []
+        try:
+            row = store.get_run("old-run")
+            assert row is not None
+            assert row["validation"] is None
+            assert row["symbols"] == []
+        finally:
+            store.close()

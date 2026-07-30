@@ -24,7 +24,7 @@ class CandleClient(Protocol):
 
 class StockPriceClient:
     def __init__(self, base_url: str | None = None, timeout: float = 60.0) -> None:
-        self.base_url = (base_url or load_config().stock_api_url).rstrip("/")
+        self.base_url = (base_url or f"{load_config().stock_api_url}/stock").rstrip("/")
         self.timeout = timeout
         self._client = httpx.Client(timeout=self.timeout)
 

@@ -50,7 +50,7 @@ class ShadowEvaluator:
     async def _list_benching_artifacts(self) -> list[dict[str, Any]]:
         try:
             resp = await self._http.get(
-                f"{self._research_api}/artifacts",
+                f"{self._research_api}/research/artifacts",
                 params={"status": "BENCHING"},
             )
             if resp.status_code == 200:
@@ -100,7 +100,11 @@ class ShadowEvaluator:
         """Fetch paper-trading P&L for an artifact and compute Sharpe."""
         try:
             resp = await self._http.get(
-                f"{self._agent_api}/broker/performance/{artifact_id}",
+                # NOTE: /agent/broker/performance/{artifact_id} does not exist yet in
+                # vinu_agent/server/routes_broker.py — this call will 404 regardless
+                # of prefix until that endpoint is actually built. Not fixed here;
+                # see live-safety/SKILL.md.
+                f"{self._agent_api}/agent/broker/performance/{artifact_id}",
             )
             if resp.status_code != 200:
                 return None
@@ -122,7 +126,7 @@ class ShadowEvaluator:
         """Transition artifact from BENCHING to ACTIVE via research API."""
         try:
             resp = await self._http.post(
-                f"{self._research_api}/artifacts/{artifact_id}/promote",
+                f"{self._research_api}/research/artifacts/{artifact_id}/promote",
             )
             if resp.status_code == 200:
                 LOG.info("Promoted artifact %s to ACTIVE", artifact_id)

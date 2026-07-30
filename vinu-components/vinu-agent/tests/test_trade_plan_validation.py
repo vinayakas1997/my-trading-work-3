@@ -9,10 +9,10 @@ def _client_for(runs_by_symbol: dict, results_by_run_id: dict | None = None) -> 
     results_by_run_id = results_by_run_id or {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/runs":
+        if request.url.path == "/simulator/runs":
             symbol = request.url.params.get("symbol")
             return httpx.Response(200, json=runs_by_symbol.get(symbol, []))
-        if request.url.path.startswith("/results/"):
+        if request.url.path.startswith("/simulator/results/"):
             run_id = request.url.path.rsplit("/", 1)[-1]
             if run_id in results_by_run_id:
                 return httpx.Response(200, json=results_by_run_id[run_id])

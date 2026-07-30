@@ -38,13 +38,16 @@ import requests
 ROOT = Path(__file__).resolve().parent
 
 SERVICES: dict[str, dict[str, Any]] = {
-    "stock_price": {"base_url": "http://127.0.0.1:8081", "compose_service": "stock-api", "data_subdir": None},
-    "news": {"base_url": "http://127.0.0.1:8080", "compose_service": "news-api", "data_subdir": "news"},
-    "features": {"base_url": "http://127.0.0.1:8082", "compose_service": "features-api", "data_subdir": None},
-    "initial_analysis": {"base_url": "http://127.0.0.1:8083", "compose_service": "initial-analysis-api", "data_subdir": None},
-    "strategy": {"base_url": "http://127.0.0.1:8084", "compose_service": "strategy-api", "data_subdir": None},
-    "simulator": {"base_url": "http://127.0.0.1:8085", "compose_service": "simulator-api", "data_subdir": None},
-    "research": {"base_url": "http://127.0.0.1:8087", "compose_service": "research-api", "data_subdir": "research"},
+    # base_url includes each service's own route_prefix (e.g. vinu-stock-price
+    # mounts under /stock — see vinu_stock/server/app.py's route_prefix="stock")
+    # so every call built from these below is correct without repeating it.
+    "stock_price": {"base_url": "http://127.0.0.1:8081/stock", "compose_service": "stock-api", "data_subdir": None},
+    "news": {"base_url": "http://127.0.0.1:8080/news", "compose_service": "news-api", "data_subdir": "news"},
+    "features": {"base_url": "http://127.0.0.1:8082/features", "compose_service": "features-api", "data_subdir": None},
+    "initial_analysis": {"base_url": "http://127.0.0.1:8083/analysis", "compose_service": "initial-analysis-api", "data_subdir": None},
+    "strategy": {"base_url": "http://127.0.0.1:8084/strategy", "compose_service": "strategy-api", "data_subdir": None},
+    "simulator": {"base_url": "http://127.0.0.1:8085/simulator", "compose_service": "simulator-api", "data_subdir": None},
+    "research": {"base_url": "http://127.0.0.1:8087/research", "compose_service": "research-api", "data_subdir": "research"},
 }
 
 
@@ -434,7 +437,7 @@ def step_research(ticker: str, from_date: str, to_date: str, model: str | None =
     }
     if strategy_code:
         body["strategy_code"] = strategy_code
-    resp = _req("POST", f"{base}/research/run", json=body, timeout=1800)
+    resp = _req("POST", f"{base}/run", json=body, timeout=1800)
     return resp.json()
 
 

@@ -106,7 +106,7 @@ class FeedbackLoopWorker:
             return False
         try:
             resp = await self._http.post(
-                f"{self._config.research_api_url}/trade-plan/{artifact_id}/record-outcome",
+                f"{self._config.research_api_url}/research/trade-plan/{artifact_id}/record-outcome",
                 json={"actual_return_pct": realized_return_pct},
             )
             return resp.status_code == 200
@@ -117,7 +117,7 @@ class FeedbackLoopWorker:
     async def _push_pnl_attribution(self, symbol: str, position: dict[str, Any]) -> bool:
         try:
             resp = await self._http.post(
-                f"{self._config.initial_analysis_api_url}/pnl-attribution/{symbol}/record",
+                f"{self._config.initial_analysis_api_url}/analysis/pnl-attribution/{symbol}/record",
                 json={"closed_positions": [position]},
             )
             return resp.status_code == 200
@@ -134,7 +134,7 @@ class FeedbackLoopWorker:
         to_ts = int(datetime.now(timezone.utc).timestamp())
         try:
             resp = await self._http.post(
-                f"{self._config.initial_analysis_api_url}/run/{symbol}",
+                f"{self._config.initial_analysis_api_url}/analysis/run/{symbol}",
                 params={"angle_names": _PERSONALITY_ANGLES, "to_ts": to_ts},
             )
             return resp.status_code == 200

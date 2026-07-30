@@ -113,3 +113,37 @@ class TestRecordOutcome:
         data = resp.json()
         assert data["forecast_direction"] == "long"
         assert data["directional_correct"] is True
+
+
+class TestGetCalibration:
+    def test_no_entries_yet(self, client, monkeypatch) -> None:
+        monkeypatch.setattr(routes_trade_plan, "author_trade_plan", _fake_author_trade_plan)
+        created = client.post("/research/trade-plan/AAPL", json={"timeframe": "daily"}).json()
+        resp = client.get(f"/research/trade-plan/{created['artifact_id']}/calibration")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["artifact_id"] == created["artifact_id"]
+        assert data["n_entries"] == 0
+        assert data["passed"] is False
+
+    def test_reflects_recorded_outcomes(self, client, monkeypatch) -> None:
+        monkeypatch.setattr(routes_trade_plan, "author_trade_plan", _fake_author_trade_plan)
+        created = client.post("/research/trade-plan/AAPL", json={"timeframe": "daily"}).json()
+        artifact_id = created["artifact_id"]
+        for _ in range(3):
+            client.post(
+                f"/research/trade-plan/{artifact_id}/record-outcome",
+                json={"actual_return_pct": 0.03},
+            )
+        resp = client.get(f"/research/trade-plan/{artifact_id}/calibration")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["n_entries"] == 3
+        assert data["accuracy"] == pytest.approx(1.0)
+
+    def test_unknown_artifact_returns_empty_result(self, client) -> None:
+        resp = client.get("/research/trade-plan/does_not_exist/calibration")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["artifact_id"] == "does_not_exist"
+        assert data["n_entries"] == 0

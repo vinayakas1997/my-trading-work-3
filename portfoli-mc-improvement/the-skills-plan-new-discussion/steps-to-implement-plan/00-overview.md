@@ -6,9 +6,11 @@ purpose: entry point for any agent picking up this plan cold
 
 # Portfolio-MC-Improvement — Implementation Plan Overview
 
-**If you are an agent reading this for the first time: start here, then open the
-step file for whatever you're about to work on. Each step file is written to
-stand on its own — you should not need the full discussion transcript
+**If you are an agent reading this for the first time: start here, then check
+[AGENTS.md](AGENTS.md) for the real current state (this table can drift out
+of date — AGENTS.md's entries are the evidence), then open the step file for
+whatever you're about to work on. Each step file is written to stand on its
+own — you should not need the full discussion transcript
 (`the-sills-and-agentic-plan-discussion.md`) to understand what to do, only
 to understand *how we got here* if you're curious.**
 
@@ -72,16 +74,16 @@ a claim by reading the actual file beats trusting this document, always.
 
 | Phase | Step file | Code | Depends on | Unlocks | Status |
 |---|---|---|---|---|---|
-| 0 | [01-verification-pass.md](01-verification-pass.md) | V0 | nothing | 03, 08, 09 (removes risk) | Not Started |
-| 1 | [02-tool-wiring.md](02-tool-wiring.md) | A2 | nothing | 03, 08 | Not Started |
-| 2 | [03-gatekeepers-skill.md](03-gatekeepers-skill.md) | B1 | 01, 02 | 07 | Not Started |
-| 2 | [04-strategy-tag-layer.md](04-strategy-tag-layer.md) | B2 | nothing | 07 (alignment matching) | Not Started |
-| 2 | [05-tool-catalog.md](05-tool-catalog.md) | B3 | nothing | general agent grounding | Not Started |
-| 3 | [06-parameter-sweep-engine.md](06-parameter-sweep-engine.md) | A1 | nothing (independent build) | 07 | Not Started |
-| 3 | [07-optimizer-rules-skill.md](07-optimizer-rules-skill.md) | B4 | 03, 06 | Focus 1 complete | Not Started |
-| 3 | [08-governor.md](08-governor.md) | B6 | 01, 02 | 07 (paired design) | Not Started |
-| 4 | [09-live-safety-doc.md](09-live-safety-doc.md) | B5 | 01 | Focus 3 safety story | Not Started |
-| 5 | [10-focus3-portfolio-intelligence.md](10-focus3-portfolio-intelligence.md) | A3 | nothing (separate track) | Focus 3 complete | Not Started |
+| 0 | [01-verification-pass.md](01-verification-pass.md) | V0 | nothing | 03, 08, 09 (removes risk) | Done |
+| 1 | [02-tool-wiring.md](02-tool-wiring.md) | A2 | nothing | 03, 08 | Done |
+| 2 | [03-gatekeepers-skill.md](03-gatekeepers-skill.md) | B1 | 01, 02 | 07 | Done |
+| 2 | [04-strategy-tag-layer.md](04-strategy-tag-layer.md) | B2 | nothing | 07 (alignment matching) | Done |
+| 2 | [05-tool-catalog.md](05-tool-catalog.md) | B3 | nothing | general agent grounding | Done |
+| 3 | [06-parameter-sweep-engine.md](06-parameter-sweep-engine.md) | A1 | nothing (independent build) | 07 | Done |
+| 3 | [07-optimizer-rules-skill.md](07-optimizer-rules-skill.md) | B4 | 03, 06 | Focus 1 complete | Done |
+| 3 | [08-governor.md](08-governor.md) | B6 | 01, 02 | 07 (paired design) | Done |
+| 4 | [09-live-safety-doc.md](09-live-safety-doc.md) | B5 | 01 | Focus 3 safety story | Done |
+| 5 | [10-focus3-portfolio-intelligence.md](10-focus3-portfolio-intelligence.md) | A3 | nothing (separate track) | Focus 3 complete | In Progress |
 
 **Reading the table:** Phase 2's three steps run in parallel with each other.
 Phase 3's `06` can start any time (it's an independent build), but `07`
@@ -108,13 +110,19 @@ Update the `status` field in each step file's frontmatter as work happens:
 ## How to use this folder if you are picking this up cold
 
 1. Read this file fully.
-2. Check the phase table for the earliest `Not Started` or `In Progress`
+2. Read [AGENTS.md](AGENTS.md)'s status table and entries — this is the
+   real record of what's been done, tested, and touched so far. Trust it
+   over this table if the two ever disagree, and fix the disagreement.
+3. Check the phase table for the earliest `Not Started` or `In Progress`
    step whose dependencies are all `Done`.
-3. Open that step's file. Read it fully before writing any code — the
+4. Open that step's file. Read it fully before writing any code — the
    "Open risks / assumptions" section may tell you something needs a fresh
    source-code check before you trust it, especially anything inherited
    from Step 01.
-4. Do the substeps in order. Update the status and progress log as you go.
-5. When done, verify against the Definition of Done checklist literally,
+5. Do the substeps in order. Update the status and progress log as you go.
+6. When done, verify against the Definition of Done checklist literally,
    not from memory of having "basically done it."
-6. Update this file's phase table row, then move to the next unblocked step.
+7. Update this file's phase table row **and** append an entry to
+   [AGENTS.md](AGENTS.md) for the step (files touched, tests run, status),
+   then move to the next unblocked step. AGENTS.md is mandatory, not
+   optional — see its own Rules section.

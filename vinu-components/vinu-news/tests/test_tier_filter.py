@@ -119,11 +119,11 @@ def client(tmp_path: Path) -> TestClient:
 
 
 def test_api_settings_active_tiers(client: TestClient):
-    resp = client.get("/settings")
+    resp = client.get("/news/settings")
     assert resp.status_code == 200
     assert resp.json()["active_tiers"] == [1, 2, 3, 4]
 
-    resp = client.patch("/settings", json={"active_tiers": [1]})
+    resp = client.patch("/news/settings", json={"active_tiers": [1]})
     assert resp.status_code == 200
     assert resp.json()["active_tiers"] == [1]
 
@@ -135,7 +135,7 @@ def test_api_latest_tiers_query(client: TestClient, tmp_path: Path):
     service = NewsService(storage=storage)
     app = create_app(service=service)
     with TestClient(app) as test_client:
-        resp = test_client.get("/latest?tiers=1")
+        resp = test_client.get("/news/latest?tiers=1")
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert len(data) == 1

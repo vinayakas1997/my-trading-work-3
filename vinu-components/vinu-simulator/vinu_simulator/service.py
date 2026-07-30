@@ -34,9 +34,13 @@ class SimulatorService:
         self._meta_storage = MetaStorage(
             self._config.data_root / "simulator_meta.db"
         )
-        self._strategy_client = StrategyClient(self._config.strategy_api_url)
-        self._price_client = PriceClient(self._config.stock_api_url)
-        self._features_client = FeaturesClient(self._config.features_api_url)
+        # Each vinu-* service mounts its routes under its own route_prefix
+        # (see e.g. vinu_strategy/server/app.py's route_prefix="strategy")
+        # — appended here, once, at construction, so every call through
+        # these clients is correct without each call site repeating it.
+        self._strategy_client = StrategyClient(f"{self._config.strategy_api_url}/strategy")
+        self._price_client = PriceClient(f"{self._config.stock_api_url}/stock")
+        self._features_client = FeaturesClient(f"{self._config.features_api_url}/features")
 
     @staticmethod
     def _compute_config_hash(params: dict[str, Any]) -> str:

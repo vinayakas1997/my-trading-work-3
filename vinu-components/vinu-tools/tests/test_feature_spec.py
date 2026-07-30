@@ -82,7 +82,7 @@ def test_http_invalid_spec_returns_400_with_message(config, backend):
     service = FeatureService(config=config, storage=backend, candle_client=MockCandleClient())
     client = TestClient(create_app(service))
     resp = client.post(
-        "/requests",
+        "/features/requests",
         json={
             "title": "bad_spec",
             "symbols": ["AAPL"],
@@ -99,7 +99,7 @@ def test_http_invalid_spec_returns_400_with_message(config, backend):
 def test_http_features_catalog(config, backend):
     service = FeatureService(config=config, storage=backend, candle_client=MockCandleClient())
     client = TestClient(create_app(service))
-    resp = client.get("/features")
+    resp = client.get("/features/features")
     assert resp.status_code == 200
     assert resp.json()["count"] == 24
     service.close()

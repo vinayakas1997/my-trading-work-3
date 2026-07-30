@@ -27,7 +27,7 @@ class TestPortfolioDrawdownMonitor:
         assert result["halted"] is True
         mock_post.assert_called_once()
         args, kwargs = mock_post.call_args
-        assert args[0] == "http://agent-api.test:8086/broker/halt"
+        assert args[0] == "http://agent-api.test:8086/agent/broker/halt"
         assert "reason" in kwargs["json"]
 
     def test_failed_halt_call_does_not_raise(self) -> None:

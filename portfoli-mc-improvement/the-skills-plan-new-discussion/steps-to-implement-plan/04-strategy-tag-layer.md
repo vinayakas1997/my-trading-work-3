@@ -1,6 +1,6 @@
 ---
 name: 04-strategy-tag-layer
-status: Not Started
+status: Done
 phase: 2
 code: B2
 depends_on: []
@@ -72,17 +72,63 @@ every strategy's full text every time).
    ends up hosting this) — e.g. "same regime + at least one shared
    indicator = candidate aligned strategy."
 
-## Open risks / assumptions
+## What was actually built
 
-- Assumes `StrategyConfig`'s consumers (loader, API routes, `vinu-portfolio`'s
-  `_list_yaml_strategies`) tolerate new optional fields without breaking.
-  Verify this before choosing the extend-in-place approach over a companion
-  file.
+**Decision: companion file, not an extended `StrategyConfig`.** Substep 1's
+check surfaced two concrete reasons to prefer the companion file over
+`StrategyConfig`'s existing (and otherwise perfectly usable) `metadata`
+dict, both confirmed by reading source, not assumed:
+
+1. `vinu_strategy/api.py::get_strategy()` hand-builds its HTTP response
+   field-by-field and does not include `metadata` — tags placed there
+   would be invisible over HTTP without also patching that response shape.
+2. `vinu_strategy/server/routes_read.py`'s `GET /strategies` (list) reads
+   from a **separate SQLite `strategy_registry` table**
+   (`service.py::list_strategies() -> meta_storage.get_registered_strategies()`),
+   not from `StrategyRegistry`/YAML at all. Only the single-strategy
+   `GET /strategies/{name}` route reads the YAML config. These two routes
+   already draw from two disconnected sources — a pre-existing
+   inconsistency in vinu-strategy, left exactly as found; not this step's
+   job to fix. Extending `metadata` would not have made tags visible
+   through the list route regardless of any change made here.
+
+Given both, a companion file the agent reads directly — mirroring
+`gatekeepers/rules.yaml` and `optimizer-rules/rules.yaml`'s existing
+pattern — avoids touching vinu-strategy's HTTP contract at all.
+
+**Files created:** `project-understanding/skills/strategy-tags/SKILL.md`
+and `tags.yaml`, keyed by the 4 real strategy names in
+`vinu-strategy/strategies/*.yaml` (`ma_crossover`, `adx_filtered_crossover`,
+`rsi_mean_reversion`, `news_aware_momentum`). Every tag was derived by
+reading each strategy's actual `features_required`, `pipeline.allocation.signal`,
+`pipeline.timing.rules`, and `angles_required` — not guessed from its name.
+
+**Alignment-matching rule** (per substep 4): same `regime` (any overlap)
+AND at least one shared `indicators_used` entry. Sanity-checked against
+the real 4 strategies: `ma_crossover` and `adx_filtered_crossover` align
+strongly (same regime `trending`, share `SMA_9`/`SMA_21` — the latter is
+structurally the former with an ADX guard against exactly the choppy
+conditions the former has no defense against); `rsi_mean_reversion`
+correctly shares nothing with any of the other three (genuinely different
+regime and indicator family, a diversification bet not a variant);
+`news_aware_momentum` shares regime with the trend-following pair but only
+shares an indicator (`ADX_14`) with `adx_filtered_crossover` specifically
+— documented in `tags.yaml` as a weaker alignment case. The rule produces
+intuitively correct groupings on real data, not just on paper.
+
+**One new distinction surfaced, documented in `tags.yaml`:**
+`news_aware_momentum` reads correlation-service signals
+(`correlation_required: [impact, granger, drawdown]`) that are not
+"indicators" in the `features_required` sense — tracked as a separate
+`external_signals_used` field so alignment-matching on "shared indicator"
+doesn't conflate the two different signal sources.
 
 ## Definition of done
 
-- [ ] Decision made and justified: extended `StrategyConfig` vs. companion
-      file — written down, not just decided in someone's head.
-- [ ] Every existing strategy has real (not placeholder) regime/style/
-      indicator tags.
-- [ ] Alignment-matching rule documented in prose an agent can follow.
+- [x] Decision made and justified: companion file over extended
+      `StrategyConfig` — written down in `SKILL.md`'s own "why" section,
+      with both concrete reasons cited.
+- [x] Every existing strategy (all 4 in the real registry) has real,
+      source-derived regime/style/indicator tags — zero placeholders.
+- [x] Alignment-matching rule documented in prose, with a worked example
+      using the real 4 strategies in `SKILL.md`.

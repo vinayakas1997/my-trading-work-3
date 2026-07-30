@@ -104,7 +104,7 @@ class TestRoutes:
 
     def test_record_endpoint_populates_angle(self, client: TestClient) -> None:
         resp = client.post(
-            "/pnl-attribution/AAPL/record",
+            "/analysis/pnl-attribution/AAPL/record",
             json={"closed_positions": [_closed_position("p1", 50.0)]},
         )
         assert resp.status_code == 200
@@ -112,11 +112,11 @@ class TestRoutes:
         assert data["symbol"] == "AAPL"
         assert data["n_recorded"] == 1
 
-        angle_resp = client.get("/angle/pnl_attribution/AAPL")
+        angle_resp = client.get("/analysis/angle/pnl_attribution/AAPL")
         assert angle_resp.status_code == 200
         rows = angle_resp.json()["data"]
         assert rows[-1]["n_trades"] == 1
 
     def test_run_with_angle_names_does_not_error(self, client: TestClient) -> None:
-        resp = client.post("/run/AAPL", params={"angle_names": "shock_personality,shock_clustering"})
+        resp = client.post("/analysis/run/AAPL", params={"angle_names": "shock_personality,shock_clustering"})
         assert resp.status_code == 200

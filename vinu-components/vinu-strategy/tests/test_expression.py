@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from vinu_strategy.engine.expression import evaluate_expression, ExpressionError
@@ -76,6 +78,10 @@ class TestEvaluateExpression:
         assert abs(result - 30.0 / 25.0) < 0.001
 
     def test_division_by_zero(self):
+        # Deliberately returns NaN rather than raising (engine/expression.py's
+        # own try/except ZeroDivisionError) — a live strategy signal hitting a
+        # momentary zero denominator should propagate as an unusable value,
+        # not crash the whole evaluation.
         ctx = {"x": 1.0, "y": 0.0}
-        with pytest.raises(ZeroDivisionError):
-            evaluate_expression("x / y", ctx)
+        result = evaluate_expression("x / y", ctx)
+        assert math.isnan(result)

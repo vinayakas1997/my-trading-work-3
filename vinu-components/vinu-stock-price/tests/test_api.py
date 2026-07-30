@@ -49,26 +49,26 @@ def client(tmp_path: Path) -> TestClient:
 
 
 def test_health(client: TestClient) -> None:
-    resp = client.get("/health")
+    resp = client.get("/stock/health")
     assert resp.status_code == 200
     assert resp.json()["symbol_count"] >= 1
 
 
 def test_candles_1m(client: TestClient) -> None:
-    resp = client.get("/candles/AAPL?days=30&limit=100")
+    resp = client.get("/stock/candles/AAPL?days=30&limit=100")
     assert resp.status_code == 200
     body = resp.json()
     assert body["count"] == 10
 
 
 def test_candles_5m_aggregate(client: TestClient) -> None:
-    resp = client.get("/candles/AAPL?interval=5m&days=30")
+    resp = client.get("/stock/candles/AAPL?interval=5m&days=30")
     assert resp.status_code == 200
     assert resp.json()["count"] == 2
 
 
 def test_catalog(client: TestClient) -> None:
-    resp = client.get("/catalog/AAPL")
+    resp = client.get("/stock/catalog/AAPL")
     assert resp.status_code == 200
     assert resp.json()["data"][0]["symbol"] == "AAPL"
 
@@ -81,7 +81,7 @@ def test_ui_page(client: TestClient) -> None:
 
 
 def test_health_providers(client: TestClient) -> None:
-    resp = client.get("/health")
+    resp = client.get("/stock/health")
     assert resp.status_code == 200
     body = resp.json()
     assert "providers" in body

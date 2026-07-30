@@ -29,6 +29,14 @@ def build_main(args: argparse.Namespace) -> None:
     asyncio.run(_run())
 
 
+def daily_allocation_main(args: argparse.Namespace) -> None:
+    async def _run() -> None:
+        async with PortfolioService() as svc:
+            allocation = await svc.compute_daily_allocation()
+            print(json.dumps(allocation, indent=2, default=str))
+    asyncio.run(_run())
+
+
 def monitor_main(args: argparse.Namespace) -> None:
     from vinu_portfolio.drawdown_scheduler import monitor_main_loop
 
@@ -47,6 +55,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     build_p = sub.add_parser("build", help="Build and print portfolio weights")
     build_p.set_defaults(func=build_main)
+
+    daily_allocation_p = sub.add_parser(
+        "daily-allocation",
+        help="Build regime-aware, outcome-confidence-weighted daily allocation (one-shot)",
+    )
+    daily_allocation_p.set_defaults(func=daily_allocation_main)
 
     monitor_p = sub.add_parser("monitor", help="Run drawdown-monitor loop, halting trading on breach")
     monitor_p.set_defaults(func=monitor_main)

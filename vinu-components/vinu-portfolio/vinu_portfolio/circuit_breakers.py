@@ -63,7 +63,7 @@ class PortfolioDrawdownMonitor:
         reason = f"portfolio drawdown {drawdown:.1%} exceeds threshold {self._threshold:.1%}"
         try:
             resp = httpx.post(
-                f"{self._agent_api_url}/broker/halt",
+                f"{self._agent_api_url}/agent/broker/halt",
                 json={"reason": reason},
                 timeout=10.0,
             )

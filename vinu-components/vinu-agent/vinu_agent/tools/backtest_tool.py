@@ -55,7 +55,7 @@ class BacktestTool(BaseTool):
             "initial_capital": kwargs.get("initial_capital", 100000),
         }
         resp = httpx.post(
-            f"{simulator_url}/simulate/custom",
+            f"{simulator_url}/simulator/simulate/custom",
             json=payload,
             timeout=120,
         )

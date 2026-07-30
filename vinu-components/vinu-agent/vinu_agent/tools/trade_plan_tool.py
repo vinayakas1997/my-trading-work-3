@@ -172,7 +172,7 @@ class TradePlanTool(BaseTool):
         self, client: httpx.AsyncClient, base_url: str, symbol: str,
     ) -> bool:
         try:
-            resp = await client.get(f"{base_url}/symbols")
+            resp = await client.get(f"{base_url}/analysis/symbols")
             if resp.status_code == 200:
                 symbols = resp.json().get("symbols", [])
                 return symbol in symbols
@@ -191,7 +191,7 @@ class TradePlanTool(BaseTool):
         result: dict[str, list[dict]] = {}
         for name in angle_names:
             try:
-                resp = await client.get(f"{base_url}/angle/{name}/{symbol}")
+                resp = await client.get(f"{base_url}/analysis/angle/{name}/{symbol}")
                 if resp.status_code == 200:
                     data = resp.json().get("data", [])
                     result[name] = data if isinstance(data, list) else []
@@ -213,7 +213,7 @@ class TradePlanTool(BaseTool):
     ) -> dict:
         try:
             resp = await client.post(
-                f"{base_url}/requests",
+                f"{base_url}/features/requests",
                 json={
                     "title": f"trade-plan-{symbol}-{preset}-{interval}",
                     "symbols": [symbol],
@@ -237,7 +237,7 @@ class TradePlanTool(BaseTool):
         symbol: str,
     ) -> dict:
         try:
-            runs_resp = await client.get(f"{base_url}/runs", params={"symbol": symbol})
+            runs_resp = await client.get(f"{base_url}/simulator/runs", params={"symbol": symbol})
             if runs_resp.status_code != 200:
                 return {"status": "unavailable"}
             runs = runs_resp.json()
@@ -258,7 +258,7 @@ class TradePlanTool(BaseTool):
                     "validation": validation,
                 }
 
-            result_resp = await client.get(f"{base_url}/results/{run_id}")
+            result_resp = await client.get(f"{base_url}/simulator/results/{run_id}")
             if result_resp.status_code != 200:
                 return {"run_id": run_id, "status": "metrics_unavailable"}
 
@@ -283,7 +283,7 @@ class TradePlanTool(BaseTool):
     ) -> dict:
         try:
             resp = await client.get(
-                f"{base_url}/candles/{symbol}",
+                f"{base_url}/stock/candles/{symbol}",
                 params={"interval": interval, "days": 30, "adjusted": True},
             )
             if resp.status_code != 200:
@@ -331,7 +331,7 @@ class TradePlanTool(BaseTool):
     ) -> dict:
         try:
             resp = await client.get(
-                f"{base_url}/search",
+                f"{base_url}/news/search",
                 params={"q": symbol, "limit": limit},
                 timeout=15.0,
             )
@@ -357,7 +357,7 @@ class TradePlanTool(BaseTool):
     ) -> list[dict]:
         try:
             resp = await client.get(
-                f"{base_url}/artifacts",
+                f"{base_url}/research/artifacts",
                 params={"status": "ACTIVE,MONITORING"},
                 timeout=10.0,
             )
@@ -384,7 +384,7 @@ class TradePlanTool(BaseTool):
         """
         try:
             resp = await client.post(
-                f"{base_url}/trade-plan/{symbol}",
+                f"{base_url}/research/trade-plan/{symbol}",
                 json={"timeframe": timeframe},
                 timeout=60.0,
             )

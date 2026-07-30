@@ -1,0 +1,65 @@
+# Strategy tags — metadata ABOUT the real strategies registered in
+# vinu-strategy/strategies/*.yaml. Every key here must match a `name` field
+# in that registry exactly. See SKILL.md for why this is a companion file
+# rather than a StrategyConfig.metadata field, and for the alignment-
+# matching rule these tags feed.
+#
+# Every tag below was derived by reading the strategy's actual YAML
+# (features_required, pipeline.allocation.signal, pipeline.timing.rules,
+# angles_required) — not guessed from its name or description.
+
+strategies:
+  ma_crossover:
+    source: "vinu-strategy/strategies/ma_crossover.yaml"
+    regime: [trending]
+    style: trend-following
+    indicators_used: [SMA_9, SMA_21]
+    notes: >
+      Signal = SMA_9/SMA_21 - 1 (continuous, not binary crossover-only).
+      Zeroed out entirely when regime_analysis.regime == "bear" — has no
+      other defense against choppy/sideways conditions, unlike
+      adx_filtered_crossover below.
+
+  adx_filtered_crossover:
+    source: "vinu-strategy/strategies/adx_filtered_crossover.yaml"
+    regime: [trending]
+    style: trend-following
+    indicators_used: [SMA_9, SMA_21, ADX_14]
+    notes: >
+      Same crossover signal as ma_crossover, but zeroed out when
+      ADX_14 <= 25 (weak trend) or regime == "sideways" — structurally
+      the same bet, with an explicit guard against the exact condition
+      (choppy/low-trend-strength) ma_crossover has no defense against.
+      A natural first alignment candidate if ma_crossover fails on a
+      choppy symbol.
+
+  rsi_mean_reversion:
+    source: "vinu-strategy/strategies/rsi_mean_reversion.yaml"
+    regime: [ranging, mean_reverting]
+    style: mean-reversion
+    indicators_used: [RSI_14]
+    notes: >
+      Signal = max(0, (30-RSI_14)/30) - max(0, (RSI_14-70)/30) — long when
+      oversold, short when overbought. Zeroed out when regime ==
+      "high_vol". Shares no regime or indicator with the three
+      trend-following strategies — a genuine diversification bet, not a
+      variant of any of them.
+
+  news_aware_momentum:
+    source: "vinu-strategy/strategies/news_aware_momentum.yaml"
+    regime: [trending]
+    style: momentum
+    indicators_used: [MOM_20, ADX_14]
+    external_signals_used: [correlation.high_impact_bullish_events, correlation.granger_causes_prices, correlation.high_impact_bearish_events, correlation.drawdown_count]
+    notes: >
+      Signal = MOM_20, boosted 1.2x on Granger-causal bullish news +
+      ADX_14>25, cut 0.5x on bearish news clusters or high_vol regime,
+      zeroed on drawdown_count>1 or bear regime. Shares regime "trending"
+      with ma_crossover/adx_filtered_crossover and indicator ADX_14 with
+      adx_filtered_crossover specifically — a weaker (regime-only, unless
+      compared to adx_filtered_crossover) alignment than the
+      ma_crossover <-> adx_filtered_crossover pair. external_signals_used
+      is tracked separately from indicators_used since these come from
+      vinu-research's correlation service (correlation_required in the
+      registry YAML), not vinu-tools' feature set (features_required) —
+      don't conflate the two when matching on "shared indicator."

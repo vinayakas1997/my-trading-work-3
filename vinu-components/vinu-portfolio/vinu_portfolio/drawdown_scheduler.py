@@ -27,7 +27,7 @@ LOG = logging.getLogger(__name__)
 def run_once(monitor: PortfolioDrawdownMonitor, agent_api_url: str) -> dict[str, Any]:
     """One poll-and-check cycle. Returns a status dict for logging/testing."""
     try:
-        resp = httpx.get(f"{agent_api_url}/broker/account", timeout=10.0)
+        resp = httpx.get(f"{agent_api_url}/agent/broker/account", timeout=10.0)
         resp.raise_for_status()
         account = resp.json()
     except Exception as e:

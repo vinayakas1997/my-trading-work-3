@@ -10,9 +10,16 @@ DEFAULT_STRATEGY_API_URL = "http://127.0.0.1:8084"
 DEFAULT_RESEARCH_API_URL = "http://127.0.0.1:8087"
 DEFAULT_SIMULATOR_API_URL = "http://127.0.0.1:8085"
 DEFAULT_AGENT_API_URL = "http://127.0.0.1:8086"
+DEFAULT_ANALYSIS_API_URL = "http://127.0.0.1:8083"
+DEFAULT_STOCK_API_URL = "http://127.0.0.1:8081"
 DEFAULT_DATA_ROOT = Path.cwd() / "data"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8090
+DEFAULT_BENCHMARK_SYMBOL = "SPY"
+DEFAULT_TAGS_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "project-understanding" / "skills" / "strategy-tags" / "tags.yaml"
+)
 
 _env_loaded = False
 
@@ -40,6 +47,13 @@ class PortfolioConfig:
     target_volatility: float = 0.15
     drawdown_halt_threshold: float = -0.20
     drawdown_monitor_interval_sec: int = 300
+    analysis_api_url: str = DEFAULT_ANALYSIS_API_URL
+    stock_api_url: str = DEFAULT_STOCK_API_URL
+    benchmark_symbol: str = DEFAULT_BENCHMARK_SYMBOL
+    regime_tilt_bound: float = 0.3
+    outcome_tilt_bound: float = 0.3
+    min_calibration_entries_for_tilt: int = 5
+    tags_path: Path = DEFAULT_TAGS_PATH
 
     @classmethod
     def from_env(cls) -> PortfolioConfig:
@@ -56,6 +70,15 @@ class PortfolioConfig:
             max_per_sector_weight=float(os.getenv("VINU_PORTFOLIO_MAX_PER_SECTOR", "0.4")),
             drawdown_halt_threshold=float(os.getenv("VINU_PORTFOLIO_DRAWDOWN_HALT", "-0.20")),
             drawdown_monitor_interval_sec=int(os.getenv("VINU_PORTFOLIO_DRAWDOWN_INTERVAL_SEC", "300")),
+            analysis_api_url=os.getenv("VINU_CORRELATION_API_URL", DEFAULT_ANALYSIS_API_URL),
+            stock_api_url=os.getenv("VINU_STOCK_PRICE_API_URL", DEFAULT_STOCK_API_URL),
+            benchmark_symbol=os.getenv("VINU_PORTFOLIO_BENCHMARK_SYMBOL", DEFAULT_BENCHMARK_SYMBOL),
+            regime_tilt_bound=float(os.getenv("VINU_PORTFOLIO_REGIME_TILT_BOUND", "0.3")),
+            outcome_tilt_bound=float(os.getenv("VINU_PORTFOLIO_OUTCOME_TILT_BOUND", "0.3")),
+            min_calibration_entries_for_tilt=int(
+                os.getenv("VINU_PORTFOLIO_MIN_CALIBRATION_ENTRIES", "5")
+            ),
+            tags_path=Path(os.getenv("VINU_PORTFOLIO_TAGS_PATH", str(DEFAULT_TAGS_PATH))),
         )
 
 

@@ -1,6 +1,6 @@
 ---
 name: 07-optimizer-rules-skill
-status: Not Started
+status: Done
 phase: 3
 code: B4
 depends_on: [03-gatekeepers-skill, 06-parameter-sweep-engine, 04-strategy-tag-layer]
@@ -84,16 +84,83 @@ hand each time.
    check alignment" branch, since the current draft only covers the
    parameter-search branch.
 
-## Open risks / assumptions
+## What was actually built
 
-- Fully blocked until 03, 04, and 06 are each individually done — do not
-  start substep 2 onward before all three are real.
+**A gap surfaced immediately on substep 3: Step 02 never built a write
+tool for hypotheses**, only the read-only `query_hypotheses`. Every
+`HypothesisRegistry` write in the existing codebase happens automatically
+inside `StrategyResearchLoop.run()` — but Step 06's sweep engine calls
+`ResearchTools.run_backtest` directly, bypassing `run()` entirely, so
+nothing writes hypotheses/evidence for sweep candidates at all. This
+step's own Definition of Done requires hypothesis-logging to be real, not
+aspirational, so two new mutating routes and two new tools were built as
+part of this step (matching the plan's own recurring principle —
+"knowledge without reach is not knowledge the agent can act on," first
+stated in Step 02):
+- `vinu_research/server/routes_hypothesis.py` — `POST /research/hypotheses`
+  (create), `POST /research/hypotheses/{id}/evidence` (add evidence).
+  Deliberately separate from `routes_introspect.py` (read-only), matching
+  the codebase's own existing split (`routes_broker.py`'s mutating routes
+  vs. read-only ones).
+- `vinu_agent/tools/hypothesis_write_tools.py` — `create_hypothesis`,
+  `add_hypothesis_evidence` (both `is_readonly=False`).
+- Wired into `app.py`; 4 new route tests + 8 new tool tests, all passing;
+  confirmed both tools auto-discovered by `build_registry()`.
+
+**A second, larger correction: the draft's `strategies:` section in
+`rules.yaml` was removed entirely**, not just re-pointed. Its three
+example strategies (`hurst_regime`, `adaptive_vwap_mean_reversion`,
+`hull_ma_slope_rider`) matched neither the real `vinu-strategy` registry
+(Step 04 confirmed only 4 real strategies exist, none of these three among
+them) nor Step 06's 15 real `BUILTIN_RECIPES`. More importantly, Step 06's
+`list_sweep_recipes` tool already exposes a live, real parameter catalog
+per recipe — maintaining a hand-written duplicate would drift immediately,
+the exact mistake Step 04 already avoided for the strategy-tags layer.
+`rules.yaml` now holds only `parameter_library` (the generic,
+strategy-independent parameter-type knowledge), with `seen_in_recipes`
+cross-references added per type — checked against all 15 real recipes'
+actual parameter names (`TEMPLATE_METADATA`), not guessed.
+
+**Parameter-type classification is now an explicit reasoning step in
+`SKILL.md`** ("Classifying a parameter" section) — since there's no
+`strategies:` lookup table anymore, the agent classifies a real
+parameter's name into a `parameter_library` type by pattern (documented
+with real examples from real recipe names), same adaptive-reasoning
+posture as the coarse-to-fine search itself, not a second script.
+
+**Gatekeeper application corrected:** the draft assumed each strategy
+declares its own `gatekeepers_required` subset. Step 03's actual design
+has no such per-strategy opt-in — every `candidate_evaluation` check
+applies to every candidate uniformly. `SKILL.md` states this directly.
+
+**Real field names corrected:** `sharpe_oos`/`maxdd_oos` (placeholders,
+never real) replaced with `metrics.sharpe_ratio`/`metrics.max_drawdown` —
+confirmed against `BacktestMetrics`'s actual dataclass fields.
+
+**Both worked examples added** (substep 5): the SMA9/SMA200 sensitivity
+case (kept, now using real tool calls throughout) and a new
+strategy-alignment-fallback case (RSI mean-reversion failing on a trending
+symbol → `strategy-tags` reveals it's a regime mismatch, not a parameter
+problem → redirect to a trend-following alternative). The fallback example
+also documents a real cross-system nuance found while writing it:
+`strategy-tags` describes `vinu-strategy`-registered strategies (a
+different execution format from Step 06's recipes/base-code) — where a
+recipe name matches a registered strategy name (`adx_filtered_crossover`
+exists as both), the bridge is direct; otherwise the tag is directional
+guidance, not a literal recipe to plug in. Documented honestly rather than
+implying a seamless translation that doesn't exist.
 
 ## Definition of done
 
-- [ ] `SKILL.md` references only real tool calls from Steps 02, 03, 06.
-- [ ] Hypothesis-logging behavior explicit, tied to Step 02's registry
-      tool, not a new parallel mechanism.
-- [ ] Strategy-alignment fallback explicit, tied to Step 04's tags.
-- [ ] Two worked examples present: parameter-sensitivity case and
-      strategy-alignment-fallback case.
+- [x] `SKILL.md` references only real tool calls from Steps 02
+      (`query_hypotheses`, `create_hypothesis`, `add_hypothesis_evidence`
+      — the latter two newly built this step), 03 (gatekeepers skill,
+      referenced by its real `candidate_evaluation` structure), and 06
+      (`run_sweep_candidate`, `list_sweep_recipes`).
+- [x] Hypothesis-logging behavior explicit, tied to real tools — including
+      the two new ones this step had to build to make the requirement
+      possible at all, not just documented.
+- [x] Strategy-alignment fallback explicit, tied to Step 04's
+      `strategy-tags` skill, including the honest cross-system caveat.
+- [x] Two worked examples present: parameter-sensitivity case (updated to
+      real tool calls) and strategy-alignment-fallback case (new).

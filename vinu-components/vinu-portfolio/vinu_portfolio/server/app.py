@@ -34,5 +34,9 @@ def create_app() -> FastAPI:
         portfolio = await _service.build_portfolio()
         return portfolio.get("weights", [])
 
+    @router.get("/daily-allocation")
+    async def get_daily_allocation() -> dict[str, Any]:
+        return await _service.compute_daily_allocation()
+
     app.include_router(router)
     return app

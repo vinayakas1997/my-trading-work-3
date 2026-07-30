@@ -97,13 +97,13 @@ class LiveScheduler:
         return result
 
     async def _fetch_portfolio(self) -> dict[str, Any]:
-        resp = await self._http.get(f"{self._config.portfolio_api_url}/state")
+        resp = await self._http.get(f"{self._config.portfolio_api_url}/portfolio/state")
         resp.raise_for_status()
         return resp.json()
 
     async def _fetch_positions(self) -> dict[str, float]:
         try:
-            resp = await self._http.get(f"{self._config.agent_api_url}/broker/positions")
+            resp = await self._http.get(f"{self._config.agent_api_url}/agent/broker/positions")
             if resp.status_code == 200:
                 data = resp.json()
                 if isinstance(data, list):
@@ -131,7 +131,7 @@ class LiveScheduler:
                 continue
             try:
                 resp = await self._http.get(
-                    f"{self._config.stock_price_api_url}/candles/{symbol}",
+                    f"{self._config.stock_price_api_url}/stock/candles/{symbol}",
                     params={"interval": "1d", "days": 5, "adjusted": True},
                 )
                 if resp.status_code == 200:
@@ -155,7 +155,7 @@ class LiveScheduler:
         explicit config, logged loudly, not a silent magic number.
         """
         try:
-            resp = await self._http.get(f"{self._config.agent_api_url}/broker/account")
+            resp = await self._http.get(f"{self._config.agent_api_url}/agent/broker/account")
             if resp.status_code == 200:
                 account = resp.json()
                 if account.get("configured") and account.get("equity") is not None:
@@ -191,7 +191,7 @@ class LiveScheduler:
                 continue
             try:
                 resp = await self._http.get(
-                    f"{self._config.stock_price_api_url}/candles/{symbol}",
+                    f"{self._config.stock_price_api_url}/stock/candles/{symbol}",
                     params={"interval": "15m", "days": 5, "adjusted": True},
                 )
                 if resp.status_code == 200:
@@ -213,7 +213,7 @@ class LiveScheduler:
         for i, slice_ in enumerate(plan.slices):
             try:
                 resp = await self._http.post(
-                    f"{self._config.agent_api_url}/broker/order",
+                    f"{self._config.agent_api_url}/agent/broker/order",
                     json={
                         "symbol": slice_.symbol,
                         "side": slice_.side,

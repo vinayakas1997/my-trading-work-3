@@ -254,7 +254,7 @@ class FeatureService:
         import time
         for attempt in range(3):
             try:
-                res = httpx.get(f"{self.config.stock_api_url}/health", timeout=2.0)
+                res = httpx.get(f"{self.config.stock_api_url}/stock/health", timeout=2.0)
                 info["stock_api_healthy"] = res.status_code == 200
                 break
             except Exception:

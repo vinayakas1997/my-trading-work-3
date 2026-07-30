@@ -72,7 +72,7 @@ def compute_main(argv: list[str] | None = None) -> None:
             return []
         try:
             import requests
-            r = requests.get(f"{config.stock_api_url}/watchlist/tickers", timeout=5)
+            r = requests.get(f"{config.stock_api_url}/stock/watchlist/tickers", timeout=5)
             tickers = r.json().get("tickers", []) if r.status_code == 200 else []
         except Exception:
             tickers = []

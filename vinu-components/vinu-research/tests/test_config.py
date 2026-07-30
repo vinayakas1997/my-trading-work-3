@@ -19,7 +19,13 @@ def reset_env():
     _reset_env_for_testing()
 
 
-def test_load_config_defaults():
+def test_load_config_defaults(monkeypatch):
+    # This test asserts against the code's built-in defaults, not whatever a
+    # developer's local .env happens to contain (e.g. docker-compose service
+    # hostnames) — force_reload alone still re-reads the real .env file from
+    # disk, so load_dotenv itself must be neutralized here to get a genuinely
+    # clean environment regardless of what's on this machine.
+    monkeypatch.setattr("vinu_research.config.load_dotenv", lambda *a, **k: None)
     cfg = load_config(force_reload=True)
     assert cfg.features_api_url == "http://127.0.0.1:8082"
     assert cfg.simulator_api_url == "http://127.0.0.1:8085"

@@ -1,6 +1,6 @@
 ---
 name: 02-tool-wiring
-status: Not Started
+status: Done
 phase: 1
 code: A2
 depends_on: []
@@ -83,22 +83,70 @@ paper designs with no way to actually run.
    as the existing pattern) confirming it returns real data against a
    running (or mocked) service.
 
-## Open risks / assumptions
+## What was actually built
 
-- Assumes the underlying services (`vinu-research`, `vinu-simulator`)
-  already expose this data over their HTTP APIs. If they only compute it
-  internally and never return it in a response, this step's scope grows to
-  include adding those routes — check this early, in substep 2, before
-  committing to a tool list.
-- Depends on Step 01's FTS5 finding — if FTS5 doesn't exist yet, add it here
-  (this is the natural place, since it's part of exposing hypothesis/reasoning
-  text for search) rather than inventing a separate storage step.
+Four new read-only `vinu-agent` tools, plus the backend routes needed to
+back them (three of the four data sources had no HTTP surface at all
+before this step):
+
+- **`query_hypotheses`** → new route `GET /research/hypotheses`
+  (`vinu_research/server/routes_introspect.py`), wraps
+  `HypothesisRegistry.query_by_symbol`/`list_all`. Real, populated data —
+  `service.py` already writes to this registry during every research run.
+- **`check_symbol_research_state`** → new route
+  `GET /research/symbols/{symbol}/state`, wraps
+  `ResearchStorage.is_symbol_exhausted` + `get_catalog_entry`.
+- **`get_run_checkpoints`** → new route
+  `GET /research/runs/{run_id}/checkpoints` (with `latest_only`), wraps
+  `ResearchStorage.list_checkpoints`/`get_last_checkpoint`. Per Step 01's
+  finding, this is the **first real consumer** of checkpoint data — nothing
+  else reads it back yet.
+- **`get_backtest_validation`** → **no new backend route needed.** The
+  `validation` block (the 7-test statistical verdict) was already returned
+  by vinu-simulator's existing `GET /simulator/results/{run_id}` route; the
+  tool calls it and strips `equity`/`trades` locally so the agent doesn't
+  receive a huge payload just to read the verdict. This confirms Step 06's
+  substep-4 speculation that some of this might already exist.
+
+**`query_judgment_history` was deliberately NOT built.** `JudgmentStore`
+(the class meant to back "was my past verdict correct") was found to be
+**completely unwired** — grepped across all of `vinu-research`, it's
+instantiated nowhere outside its own test file. No code ever calls
+`.record()`. Building a query tool over a store nothing writes to would be
+exactly the "knowledge without reach" problem this step exists to fix, in
+the other direction — visibility into permanently-empty data. Wiring
+`JudgmentStore.record()` into `loop.py`'s verdict path is real work but is
+a *behavior change* to the research loop, not tool visibility — it belongs
+to whichever step next touches `loop.py`'s critic/verdict logic (most
+likely Step 07 or 08), not this one.
+
+**Bug found and fixed in passing:** `research_tool.py` (the existing
+`run_research` tool) was posting to `{url}/run` instead of
+`{url}/research/run` — confirmed via its own test suite, which asserted
+the `/research/run` path and was consequently failing (`2 failed, 4
+passed` before the fix). Since every new tool in this step needed to get
+this exact same prefix convention right, the one-line fix was made
+alongside them; verified by re-running the suite (`6 passed`).
+
+**Open finding, not resolved here:** other multi-service tools
+(`trade_plan_tool.py`, `portfolio_comparison_tool.py`) construct URLs
+against six different services (`vinu_initial_analysis`, `vinu_tools`,
+`vinu_simulator`, `vinu_stock_price`, `vinu_news`, `vinu_research`) and
+were not individually checked for the same missing-route-prefix pattern.
+A dedicated audit is recommended but is out of this step's scope.
 
 ## Definition of done
 
-- [ ] Tool list decided and each mapped to a confirmed, real backend
-      endpoint (not an assumed one).
-- [ ] Each tool implemented, registered, and covered by a passing test.
-- [ ] Manually verified: an agent session can call each new tool and get
-      back real data from a real (or realistically mocked) backend — not
-      just that the code compiles.
+- [x] Tool list decided and each mapped to a confirmed, real backend
+      endpoint (not an assumed one) — `get_backtest_validation` turned out
+      to need no new endpoint at all.
+- [x] Each tool implemented, registered, and covered by a passing test —
+      4 new tools, 4 new test files, all passing; confirmed auto-discovered
+      by `build_registry()`.
+- [x] Manually verified: ran the new routes end-to-end via FastAPI's
+      `TestClient` against a real `HypothesisRegistry` (temp-file backed)
+      and a mocked `ResearchService.storage` — all three new
+      `vinu-research` routes returned real, correctly-shaped data.
+      `get_backtest_validation` was verified structurally (test coverage)
+      but not against a live `vinu-simulator` instance — flagged for
+      whoever first runs this against the real running service.

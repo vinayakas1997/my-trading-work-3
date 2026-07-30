@@ -15,7 +15,7 @@ def test_api_submit_and_run(config, backend):
     client = TestClient(app)
 
     resp = client.post(
-        "/requests",
+        "/features/requests",
         json={
             "title": "api_test",
             "symbols": ["AAPL"],
@@ -30,11 +30,11 @@ def test_api_submit_and_run(config, backend):
     assert body["status"] == "done"
     assert body["file_path"]
 
-    resp2 = client.get("/requests/by-title/api_test")
+    resp2 = client.get("/features/requests/by-title/api_test")
     assert resp2.status_code == 200
     assert resp2.json()["title"] == "api_test"
 
-    resp3 = client.get("/presets")
+    resp3 = client.get("/features/presets")
     assert resp3.status_code == 200
     assert resp3.json()["count"] >= 1
 
@@ -61,7 +61,7 @@ def test_feature_for_symbol(config, backend):
     mock_client.get.return_value = mock_response
 
     with patch("httpx.AsyncClient", return_value=mock_client):
-        resp = client.get("/features/AAPL?indicators=signal")
+        resp = client.get("/features/features/AAPL?indicators=signal")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -82,7 +82,7 @@ def test_feature_for_symbol_upstream_error(config, backend):
     mock_client.get.side_effect = Exception("upstream timeout")
 
     with patch("httpx.AsyncClient", return_value=mock_client):
-        resp = client.get("/features/AAPL?indicators=signal")
+        resp = client.get("/features/features/AAPL?indicators=signal")
 
     assert resp.status_code == 502
     body = resp.json()

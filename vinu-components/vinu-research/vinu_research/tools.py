@@ -20,20 +20,24 @@ LOG = logging.getLogger(__name__)
 class ResearchTools:
     def __init__(self, config: ResearchConfig | None = None):
         self._config = config or load_config()
+        # Each vinu-* service mounts its routes under its own route_prefix
+        # (see e.g. vinu_simulator/server/app.py's route_prefix="simulator")
+        # — appended here, once, at construction, so every call through
+        # these clients is correct without each call site repeating it.
         self._features_client = ResilientClient(
-            self._config.features_api_url, "vinu-features",
+            f"{self._config.features_api_url}/features", "vinu-features",
             timeout=60.0, max_retries=3, circuit_breaker_threshold=3,
         )
         self._simulator_client = ResilientClient(
-            self._config.simulator_api_url, "vinu-simulator",
+            f"{self._config.simulator_api_url}/simulator", "vinu-simulator",
             timeout=120.0, max_retries=2, circuit_breaker_threshold=3,
         )
         self._correlation_client = ResilientClient(
-            self._config.correlation_api_url, "vinu-initial-analysis",
+            f"{self._config.correlation_api_url}/analysis", "vinu-initial-analysis",
             timeout=60.0, max_retries=3, circuit_breaker_threshold=3,
         )
         self._stock_client = ResilientClient(
-            self._config.stock_price_api_url, "vinu-stock-price",
+            f"{self._config.stock_price_api_url}/stock", "vinu-stock-price",
             timeout=30.0, max_retries=2, circuit_breaker_threshold=3,
         )
 

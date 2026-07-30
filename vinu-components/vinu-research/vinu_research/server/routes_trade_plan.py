@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from vinu_research.forecast_skill import compute_calibration
 from vinu_research.service import ResearchService
 from vinu_research.tools import ResearchTools
 from vinu_research.trade_plan_authoring import (
@@ -116,4 +117,27 @@ async def record_outcome_route(artifact_id: str, body: RecordOutcomeRequest) -> 
         "brier_score": entry.brier_score,
         "magnitude_error": entry.magnitude_error,
         "timestamp": entry.timestamp,
+    }
+
+
+@router.get("/trade-plan/{artifact_id}/calibration")
+async def get_trade_plan_calibration(artifact_id: str) -> dict[str, Any]:
+    """Read back the calibration track record built from `.../record-outcome` calls.
+
+    Consumed by vinu-portfolio's daily-allocation outcome-confidence tilt --
+    this is the only read path for `calibration_entries`, previously write-only
+    (only consumed in-process by `approve_trade_plan`'s gate check).
+    """
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    entries = _service.strategy_store.get_calibration_entries(artifact_id)
+    result = compute_calibration(entries)
+    return {
+        "artifact_id": artifact_id,
+        "n_entries": result.n_entries,
+        "accuracy": result.accuracy,
+        "brier_mean": result.brier_mean,
+        "magnitude_mape": result.magnitude_mape,
+        "passed": result.passed,
+        "reasons": result.reasons,
     }

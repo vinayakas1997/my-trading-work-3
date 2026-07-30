@@ -1,6 +1,6 @@
 ---
 name: 03-gatekeepers-skill
-status: Not Started
+status: Done
 phase: 2
 code: B1
 depends_on: [01-verification-pass, 02-tool-wiring]
@@ -48,6 +48,22 @@ robust settings and one that produces a curve-fit illusion of robust settings.
   checks — if it substantially overlaps `compute_validation_verdict`, this
   skill should say so explicitly and avoid telling the agent to run a
   redundant second check.
+  **Resolved by Step 01 (see its Findings §1):** `_build_risk_critic_prompt`
+  is only a prompt formatter — it evaluates nothing. The real risk critic
+  is `loop.py::_default_risk_critic`, three layers: cross-run comparison
+  (can force `STOP`), `_rule_based_check` (deterministic thresholds:
+  max_drawdown < -15%, Sharpe < 0.5, win_rate < 40%, CVaR₉₅ < -3%,
+  recovery > 120 days, turnover > 2000%, Sharpe p-value > 0.05 — plus
+  angle context, which only ever adds suggestions, never changes the
+  verdict), and an LLM layer that can only **upgrade** REFINE → PASS/STOP,
+  never downgrade. This runs *inside the research loop*, before a
+  candidate is ever considered done — it does not overlap
+  `compute_validation_verdict`/PBO/correlation/promotion, which run
+  *after*, on a candidate already accepted. **This skill must document
+  both layers as a sequence** (`_default_risk_critic` gates whether
+  refinement continues → `compute_validation_verdict`/PBO/promotion gate
+  whether an accepted result is trustworthy), not treat them as
+  redundant or pick one over the other.
 - **Depends on Step 02** — this skill only works if a tool exists that
   returns the real `validation` block, PBO score, correlation verdict, and
   promotion verdict for a given result. Do not write this skill's `SKILL.md`
@@ -80,19 +96,70 @@ robust settings and one that produces a curve-fit illusion of robust settings.
    checklist — reconcile any overlap rather than leaving two skills
    disagreeing about the same threshold.
 
-## Open risks / assumptions
+## What was actually built
 
-- Carries forward Step 01's open question about the risk critic overlap —
-  do not finalize this skill until that's answered.
-- The severity model (hard vs soft) is a judgment call this step has to
-  make explicitly and explain, not leave implicit — a future reader should
-  be able to see *why* a given check is hard vs soft, not just that it is.
+Both `project-understanding/skills/gatekeepers/SKILL.md` and `rules.yaml`
+were fully rewritten after reading, in full, all four real mechanisms:
+`compute_validation_verdict` (vinu_simulator/engine/validation.py),
+`probability_of_backtest_overfitting` / PBO (vinu_research/pbo.py),
+`CorrelationVerdict` (vinu_research/gates/correlation_gate.py), and
+`meets_promotion_bar` / `PromotionVerdict` (vinu_research/promotion.py).
+
+**Key structural decision:** gatekeeping was split into two distinct
+moments rather than one flat list — `candidate_evaluation` (judging one
+backtest result, mid-sweep/mid-refinement) and `promotion_evaluation`
+(judging whether an already-accepted artifact should go live). These ask
+different questions and use different mechanisms; the original
+placeholder draft conflated them into one list.
+
+**Severity model, with reasons written into `rules.yaml` directly (not
+left implicit):**
+- Hard at candidate-evaluation time: `compute_validation_verdict.passed`
+  (fails closed by design), plus trade count / profit factor / drawdown
+  ratio / IS-OOS Sharpe — all four **reused from `backtest-diagnose`'s
+  existing hard-gate checklist**, not re-derived, since
+  `compute_validation_verdict` doesn't check any of them.
+- Soft at candidate-evaluation time: PBO (judges the *selection process*
+  across candidates, not one candidate's own validity) and
+  `CorrelationVerdict` (fails **open** by default — opposite of
+  `compute_validation_verdict`'s fail-closed default, called out
+  explicitly so it isn't misread).
+- Hard at promotion time: `PromotionVerdict.eligible`, which folds the
+  correlation gate back in as hard — the same check is soft in one moment
+  and hard in the other, and both files say so explicitly, with why.
+
+**Reconciliation with `backtest-diagnose`:** done by reuse, not
+duplication — `rules.yaml`'s candidate-evaluation entries cite
+`backtest-diagnose/SKILL.md` as their `source` rather than restating
+thresholds. One real, unresolved inconsistency was found and
+**deliberately left unresolved, flagged instead of silently decided**:
+`backtest-diagnose` calls OOS Sharpe > 0.7 a hard gate, but
+`loop.py::_rule_based_check` (the actual running risk critic) only
+treats Sharpe < 0.5 as a soft suggestion. Both are real, currently-running
+code that disagree with each other — this skill documents the tension
+rather than picking a side.
+
+**Two new gaps surfaced during this rewrite** (documented in `SKILL.md`,
+not solved here — out of scope):
+- PBO is computed once per research run but never persisted
+  (`ResearchStorage.insert_run`/`update_run` has no `pbo` column) — only
+  visible in that run's original live response.
+- There's no dedicated read-only way to preview promotion eligibility
+  without risking the mutating `POST /promote` call — `SKILL.md`
+  documents an approximation using the existing `GET /research/artifacts`
+  route's `deflated_sharpe`/`holdout_passed`/`stress_test_passed` fields,
+  explicitly noting it can't include the correlation piece.
 
 ## Definition of done
 
-- [ ] `SKILL.md` and `rules.yaml` reference only real, confirmed field
+- [x] `SKILL.md` and `rules.yaml` reference only real, confirmed field
       names — zero placeholders remain.
-- [ ] Every check's severity (hard/soft) has a written reason.
-- [ ] Overlap with `backtest-diagnose` explicitly reconciled, not ignored.
-- [ ] A tool call from Step 02 is named explicitly in `SKILL.md` as how the
-      agent actually fetches this data.
+- [x] Every check's severity (hard/soft) has a written reason.
+- [x] Overlap with `backtest-diagnose` explicitly reconciled — by reuse
+      (citing it as `source`) for the four shared checks, and by explicit
+      flagged disagreement for the one real inconsistency found
+      (OOS Sharpe threshold: backtest-diagnose says hard, loop.py's actual
+      behavior treats it as soft).
+- [x] A tool call from Step 02 is named explicitly in `SKILL.md` —
+      `get_backtest_validation` for the statistical verdict,
+      `query_hypotheses` for evidence trail context.

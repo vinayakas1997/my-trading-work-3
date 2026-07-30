@@ -117,7 +117,7 @@ class TradePlanOrchestrator:
     async def _fetch_active_trade_plans(self) -> list[dict[str, Any]]:
         try:
             resp = await self._http.get(
-                f"{self._config.research_api_url}/artifacts",
+                f"{self._config.research_api_url}/research/artifacts",
                 params={"status": "ACTIVE", "type_": "trade_plan"},
             )
             if resp.status_code != 200:
@@ -134,7 +134,7 @@ class TradePlanOrchestrator:
                 continue
             try:
                 detail_resp = await self._http.get(
-                    f"{self._config.research_api_url}/trade-plan/{artifact_id}",
+                    f"{self._config.research_api_url}/research/trade-plan/{artifact_id}",
                 )
                 if detail_resp.status_code != 200:
                     continue
@@ -327,7 +327,7 @@ class TradePlanOrchestrator:
     async def _submit_order(self, symbol: str, side: str, qty: float) -> dict[str, Any]:
         try:
             resp = await self._http.post(
-                f"{self._config.agent_api_url}/broker/order",
+                f"{self._config.agent_api_url}/agent/broker/order",
                 json={"symbol": symbol, "side": side, "qty": qty, "order_type": "market"},
             )
             if resp.status_code != 200:
@@ -342,7 +342,7 @@ class TradePlanOrchestrator:
         for symbol in symbols:
             try:
                 resp = await self._http.get(
-                    f"{self._config.stock_price_api_url}/candles/{symbol}",
+                    f"{self._config.stock_price_api_url}/stock/candles/{symbol}",
                     params={"interval": "1d", "days": 5, "adjusted": True},
                 )
                 if resp.status_code == 200:
@@ -356,7 +356,7 @@ class TradePlanOrchestrator:
     async def _fetch_recent_prices(self, symbol: str, days: int = _RETURNS_LOOKBACK_DAYS) -> list[float]:
         try:
             resp = await self._http.get(
-                f"{self._config.stock_price_api_url}/candles/{symbol}",
+                f"{self._config.stock_price_api_url}/stock/candles/{symbol}",
                 params={"interval": "1d", "days": days, "adjusted": True},
             )
             if resp.status_code == 200:
@@ -368,7 +368,7 @@ class TradePlanOrchestrator:
 
     async def _fetch_portfolio_value(self) -> float:
         try:
-            resp = await self._http.get(f"{self._config.agent_api_url}/broker/account")
+            resp = await self._http.get(f"{self._config.agent_api_url}/agent/broker/account")
             if resp.status_code == 200:
                 account = resp.json()
                 if account.get("configured") and account.get("equity") is not None:
@@ -384,7 +384,7 @@ class TradePlanOrchestrator:
     async def _fetch_shock_cluster_correlation(self, symbol: str) -> float | None:
         try:
             resp = await self._http.get(
-                f"{self._config.initial_analysis_api_url}/angle/shock_clustering/{symbol}",
+                f"{self._config.initial_analysis_api_url}/analysis/angle/shock_clustering/{symbol}",
             )
             if resp.status_code != 200:
                 return None
@@ -420,7 +420,7 @@ class TradePlanOrchestrator:
 
     async def _fetch_broker_positions(self) -> dict[str, float]:
         try:
-            resp = await self._http.get(f"{self._config.agent_api_url}/broker/positions")
+            resp = await self._http.get(f"{self._config.agent_api_url}/agent/broker/positions")
             if resp.status_code == 200:
                 data = resp.json()
                 if isinstance(data, list):

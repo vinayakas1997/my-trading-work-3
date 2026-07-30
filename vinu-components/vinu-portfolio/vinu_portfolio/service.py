@@ -9,16 +9,38 @@ from typing import Any
 import httpx
 import numpy as np
 import pandas as pd
+import yaml
 
 from vinu_portfolio.config import PortfolioConfig, load_config
+from vinu_portfolio.regime import classify_current_regime
+from vinu_portfolio.sizing import apply_position_sizing
 
 LOG = logging.getLogger(__name__)
+
+# regime_analysis's own labels (bull/bear/high_vol/sideways, see
+# vinu_portfolio/regime.py) vs. strategy-tags/tags.yaml's labels (trending/
+# ranging/mean_reverting) are two different, unreconciled vocabularies in
+# this codebase -- confirmed by reading tags.yaml itself, whose per-strategy
+# notes already reference regime_analysis.regime == "bear"/"sideways"/
+# "high_vol" directly inside each strategy's own signal-zeroing logic, a
+# vocabulary tags.yaml's own `regime:` field never uses. bull/bear both
+# plausibly read as "trending" (tags.yaml doesn't encode direction);
+# high_vol has no direction-based tag equivalent, and every one of the 4
+# tagged strategies already zeros or cuts its own signal under high_vol
+# internally -- so this tilt deliberately stays neutral for high_vol rather
+# than double-penalizing on top of that existing suppression.
+_REGIME_TO_TAGS: dict[str, set[str]] = {
+    "bull": {"trending"},
+    "bear": {"trending"},
+    "sideways": {"ranging", "mean_reverting"},
+}
 
 
 class PortfolioService:
     def __init__(self, config: PortfolioConfig | None = None) -> None:
         self._config = config or load_config()
         self._http = httpx.AsyncClient(timeout=10.0)
+        self._tags_cache: dict[str, Any] | None = None
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -59,7 +81,7 @@ class PortfolioService:
         return strategies
 
     async def _list_yaml_strategies(self) -> list[dict[str, Any]]:
-        resp = await self._http.get(f"{self._config.strategy_api_url}/strategies")
+        resp = await self._http.get(f"{self._config.strategy_api_url}/strategy/strategies")
         resp.raise_for_status()
         data: list[dict[str, Any]] = resp.json()
         return [
@@ -67,14 +89,14 @@ class PortfolioService:
                 "name": s.get("name", "unknown"),
                 "kind": "yaml",
                 "symbol": s.get("symbol", s.get("ticker", "")),
-                "weights_source": f"{self._config.strategy_api_url}/weights/{s.get('name', '')}",
+                "weights_source": f"{self._config.strategy_api_url}/strategy/weights/{s.get('name', '')}",
             }
             for s in data
         ]
 
     async def _list_llm_strategies(self) -> list[dict[str, Any]]:
         resp = await self._http.get(
-            f"{self._config.research_api_url}/artifacts",
+            f"{self._config.research_api_url}/research/artifacts",
             params={"status": "ACTIVE"},
         )
         resp.raise_for_status()
@@ -98,6 +120,21 @@ class PortfolioService:
         self, strategies: list[dict[str, Any]]
     ) -> pd.DataFrame | None:
         """Fetch historical returns for each strategy and compute correlation."""
+        returns_df = await self._build_returns_df(strategies)
+        if returns_df is None:
+            return None
+        return returns_df.corr()
+
+    async def _build_returns_df(
+        self, strategies: list[dict[str, Any]]
+    ) -> pd.DataFrame | None:
+        """Fetch historical daily-returns series for each strategy, aligned into one frame.
+
+        Shared by compute_correlation_matrix (needs df.corr()) and build_portfolio
+        (needs the raw returns for allocate_risk_parity's vol calc) so both are
+        derived from the same fetch instead of one deriving vol from the other's
+        correlation output.
+        """
         returns_data: dict[str, pd.Series] = {}
         for s in strategies:
             returns = await self._fetch_strategy_returns(s)
@@ -108,8 +145,7 @@ class PortfolioService:
             LOG.info("Need at least 2 strategies with return data for correlation")
             return None
 
-        df = pd.DataFrame(returns_data)
-        return df.corr()
+        return pd.DataFrame(returns_data)
 
     async def _fetch_strategy_returns(self, strategy: dict[str, Any]) -> pd.Series | None:
         """Fetch daily returns series for a strategy."""
@@ -128,7 +164,7 @@ class PortfolioService:
             elif strategy["kind"] == "llm_python":
                 artifact_id = strategy.get("artifact_id", "")
                 resp = await self._http.get(
-                    f"{self._config.simulator_api_url}/results/{artifact_id}/equity"
+                    f"{self._config.simulator_api_url}/simulator/results/{artifact_id}/equity"
                 )
                 if resp.status_code != 200:
                     return None
@@ -210,9 +246,10 @@ class PortfolioService:
         if not strategies:
             return {"status": "empty", "strategies": [], "weights": [], "matrix": None}
 
-        corr_matrix = await self.compute_correlation_matrix(strategies)
+        returns_df = await self._build_returns_df(strategies)
+        corr_matrix = returns_df.corr() if returns_df is not None else None
 
-        weights = self.allocate_risk_parity(strategies, corr_matrix)
+        weights = self.allocate_risk_parity(strategies, returns_df)
 
         matrix_dict: dict[str, Any] | None = None
         if corr_matrix is not None:
@@ -229,3 +266,171 @@ class PortfolioService:
             "weights": weights,
             "correlation_matrix": matrix_dict,
         }
+
+    # ------------------------------------------------------------------
+    # Daily allocation — regime-aware, outcome-confidence-weighted tilt
+    # on top of the base risk-parity weights above (Focus 3 / Step 10).
+    # On-demand only by design -- not started from entrypoint.sh, mirroring
+    # vinu_research/cli.py::promote_scan_main's precedent that a
+    # consequential action (here: allocation-weight changes) stays a
+    # command invoked on purpose, not a silent background loop.
+    # ------------------------------------------------------------------
+
+    async def _fetch_benchmark_regime(self) -> dict[str, Any]:
+        """Current regime read for the configured benchmark symbol.
+
+        Fails open (returns a status dict, never raises) -- this feeds a
+        weighting tilt, not a safety gate, so it must never block
+        allocation the way OrderGuard's checks correctly block orders.
+        """
+        try:
+            resp = await self._http.get(
+                f"{self._config.stock_api_url}/stock/candles/{self._config.benchmark_symbol}",
+                params={"interval": "1d", "adjusted": True},
+            )
+            if resp.status_code != 200:
+                return {"status": "unavailable", "regime": None}
+            data = resp.json()
+            records = data.get("data") if isinstance(data, dict) else None
+            if not records:
+                return {"status": "unavailable", "regime": None}
+            closes = pd.Series([float(r["close"]) for r in records])
+            returns = closes.pct_change().dropna()
+            return classify_current_regime(returns)
+        except Exception as e:
+            LOG.warning("Failed to fetch benchmark regime: %s", e)
+            return {"status": "unavailable", "regime": None}
+
+    async def _fetch_outcome_confidence(self, strategy: dict[str, Any]) -> dict[str, Any]:
+        """Recent directional accuracy for a strategy, if any is tracked.
+
+        llm_python strategies may have a calibration track record (Phase 7's
+        record-outcome path, trade_plan-type artifacts only). YAML
+        strategies have no outcome tracking anywhere in this codebase --
+        always reported "not_tracked", never fabricated.
+        """
+        if strategy.get("kind") != "llm_python":
+            return {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+
+        artifact_id = strategy.get("artifact_id", "")
+        if not artifact_id:
+            return {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+        try:
+            resp = await self._http.get(
+                f"{self._config.research_api_url}/research/trade-plan/{artifact_id}/calibration"
+            )
+            if resp.status_code != 200:
+                return {"source": "unavailable", "accuracy": None, "n_entries": 0}
+            data = resp.json()
+            n_entries = data.get("n_entries", 0)
+            if n_entries < self._config.min_calibration_entries_for_tilt:
+                return {"source": "insufficient_data", "accuracy": None, "n_entries": n_entries}
+            return {"source": "calibration", "accuracy": data.get("accuracy"), "n_entries": n_entries}
+        except Exception as e:
+            LOG.warning("Failed to fetch outcome confidence for %s: %s", artifact_id, e)
+            return {"source": "unavailable", "accuracy": None, "n_entries": 0}
+
+    def _load_tags(self) -> dict[str, Any]:
+        """Load strategy-tags/tags.yaml once and cache it on the instance.
+
+        This is a dev-time knowledge-library file, not guaranteed to be
+        present in every deployment (e.g. a container image that doesn't
+        include project-understanding/) -- missing/unreadable is treated
+        as "no tags known", not a fatal error, consistent with this whole
+        pipeline's fail-open-on-tilt-data convention.
+        """
+        if self._tags_cache is not None:
+            return self._tags_cache
+        try:
+            with open(self._config.tags_path, "r", encoding="utf-8") as f:
+                loaded = yaml.safe_load(f) or {}
+            self._tags_cache = loaded.get("strategies", {})
+        except OSError as e:
+            LOG.warning("Could not load strategy tags from %s: %s", self._config.tags_path, e)
+            self._tags_cache = {}
+        return self._tags_cache
+
+    def _regime_alignment_multiplier(self, strategy_name: str, regime: str | None) -> float:
+        tags = self._load_tags()
+        entry = tags.get(strategy_name)
+        if entry is None or regime is None:
+            return 1.0
+        wanted_tags = _REGIME_TO_TAGS.get(regime)
+        if not wanted_tags:
+            return 1.0  # high_vol / unmapped regime -- no directional tag dimension to compare
+        strategy_regimes = set(entry.get("regime", []))
+        bound = self._config.regime_tilt_bound
+        return 1.0 + bound if strategy_regimes & wanted_tags else 1.0 - bound
+
+    def _outcome_confidence_multiplier(self, confidence: dict[str, Any]) -> float:
+        accuracy = confidence.get("accuracy")
+        if accuracy is None:
+            return 1.0  # untracked/insufficient data keeps the base weight, not penalized
+        bound = self._config.outcome_tilt_bound
+        return 1.0 + bound * (2.0 * accuracy - 1.0)
+
+    async def compute_daily_allocation(self) -> dict[str, Any]:
+        """Regime-aware, outcome-confidence-weighted allocation on top of
+        the base risk-parity weights from build_portfolio().
+
+        This is a defensible v1, not a solved probability model: two
+        bounded multiplicative tilts (regime alignment, outcome confidence)
+        applied to the existing risk-parity base and renormalized. See
+        project-understanding/skills/daily-allocation/SKILL.md for the
+        full reasoning and known limitations (regime-vocabulary mapping,
+        YAML-strategy outcome blind spot, the still-open ShadowEvaluator
+        gap this only partially compensates for).
+        """
+        base = await self.build_portfolio()
+        if base["status"] != "ok":
+            return base
+
+        regime_info = await self._fetch_benchmark_regime()
+        regime = regime_info.get("regime")
+
+        by_name = {s["name"]: s for s in base["strategies"]}
+        tilted: list[dict[str, Any]] = []
+        for w in base["weights"]:
+            strategy = by_name.get(w["name"], {})
+            confidence = await self._fetch_outcome_confidence(strategy)
+            regime_mult = self._regime_alignment_multiplier(w["name"], regime)
+            outcome_mult = self._outcome_confidence_multiplier(confidence)
+            tilted.append({
+                **w,
+                "base_weight": w["target_weight"],
+                "regime_multiplier": round(regime_mult, 4),
+                "outcome_multiplier": round(outcome_mult, 4),
+                "outcome_source": confidence.get("source"),
+                "target_weight": w["target_weight"] * regime_mult * outcome_mult,
+            })
+
+        total = sum(t["target_weight"] for t in tilted)
+        if total > 0:
+            for t in tilted:
+                t["target_weight"] = round(t["target_weight"] / total, 4)
+
+        equity = await self._fetch_account_equity()
+        if equity is not None:
+            tilted = apply_position_sizing(tilted, equity, target_vol=self._config.target_volatility)
+
+        return {
+            **base,
+            "weights": tilted,
+            "regime": regime_info,
+            "account_equity": equity,
+        }
+
+    async def _fetch_account_equity(self) -> float | None:
+        """Live equity, reused from the same source drawdown_scheduler.py already polls."""
+        try:
+            resp = await self._http.get(f"{self._config.agent_api_url}/agent/broker/account")
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            if not data.get("configured"):
+                return None
+            equity = data.get("equity")
+            return float(equity) if equity is not None else None
+        except Exception as e:
+            LOG.warning("Failed to fetch account equity: %s", e)
+            return None

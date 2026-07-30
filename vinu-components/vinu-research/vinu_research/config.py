@@ -34,8 +34,19 @@ def _ensure_dotenv_loaded(*, force: bool = False) -> None:
 
 
 def _reset_env_for_testing() -> None:
+    """Clear cached dotenv state AND any already-exported VINU_* env vars.
+
+    Resetting `_env_loaded` alone isn't enough: python-dotenv's load_dotenv()
+    never overrides a variable already present in os.environ (its default
+    override=False), so once a VINU_* var has been set once in this process
+    (e.g. from a local .env file, or an earlier test), it silently persists
+    across every later "reset" and test_load_config_defaults would assert
+    against whatever leaked in rather than the real code defaults.
+    """
     global _env_loaded
     _env_loaded = False
+    for key in [k for k in os.environ if k.startswith("VINU_")]:
+        del os.environ[key]
 
 
 @dataclass
