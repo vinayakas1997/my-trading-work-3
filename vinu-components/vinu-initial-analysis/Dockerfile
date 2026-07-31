@@ -2,8 +2,14 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY vinu-lib /app/vinu-lib
 RUN pip install --no-cache-dir -e /app/vinu-lib
+
+COPY vinu-tools /app/vinu-tools
+RUN pip install --no-cache-dir -e "/app/vinu-tools[ml]"
 
 COPY vinu-initial-analysis /app/vinu-initial-analysis
 

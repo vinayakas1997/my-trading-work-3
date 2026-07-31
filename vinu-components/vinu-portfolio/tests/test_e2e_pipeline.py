@@ -76,7 +76,12 @@ class TestEndToEndPipeline:
 
         # --- compute_daily_game_plan ---
         game_plan = asyncio.run(svc.compute_daily_game_plan())
-        assert game_plan["readiness_score"] == 0.0  # no llm_python strategies
+        # No llm_python strategies means no trade plans, but regime and equity
+        # are both live here: 2 of 4 data points (2 symbols + regime + equity).
+        assert game_plan["readiness_score"] == 0.5
+        assert game_plan["readiness_flags"]["n_with_plan"] == 0
+        assert game_plan["readiness_flags"]["regime_available"] is True
+        assert game_plan["readiness_flags"]["equity_available"] is True
         assert game_plan["n_symbols"] == 2
         assert len(game_plan["symbols"]) == 2
         assert game_plan["portfolio"]["status"] == "ok"

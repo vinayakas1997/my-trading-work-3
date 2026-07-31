@@ -28,7 +28,7 @@ def _try_model(name: str, X_tr, y_tr, X_te, y_te):
             m = lgb.LGBMRegressor(n_estimators=50, max_depth=5, verbose=-1).fit(X_tr, y_tr)
         elif name == "catboost":
             from catboost import CatBoostRegressor
-            m = CatBoostRegressor(n_estimators=50, max_depth=5, verbose=0, random_seed=42).fit(X_tr, y_tr)
+            m = CatBoostRegressor(n_estimators=50, max_depth=5, verbose=0, random_seed=42, train_dir="/tmp").fit(X_tr, y_tr)
         elif name == "elastic_net":
             from sklearn.linear_model import ElasticNet
             m = ElasticNet(alpha=0.01, l1_ratio=0.5, random_state=42).fit(X_tr, y_tr)

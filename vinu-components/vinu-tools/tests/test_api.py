@@ -61,7 +61,7 @@ def test_feature_for_symbol(config, backend):
     mock_client.get.return_value = mock_response
 
     with patch("httpx.AsyncClient", return_value=mock_client):
-        resp = client.get("/features/features/AAPL?indicators=signal")
+        resp = client.get("/features/AAPL?indicators=signal")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -82,7 +82,7 @@ def test_feature_for_symbol_upstream_error(config, backend):
     mock_client.get.side_effect = Exception("upstream timeout")
 
     with patch("httpx.AsyncClient", return_value=mock_client):
-        resp = client.get("/features/features/AAPL?indicators=signal")
+        resp = client.get("/features/AAPL?indicators=signal")
 
     assert resp.status_code == 502
     body = resp.json()

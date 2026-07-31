@@ -13,6 +13,7 @@ from vinu_stock.backfill.year_job import run_year_job
 from vinu_stock.catalog.store import CatalogStore
 from vinu_stock.providers.registry import ProviderRegistry
 from vinu_stock.storage import parquet as parquet_storage
+from vinu_stock.storage.backend import MetaBackend
 from vinu_stock.storage.paths import archive_year_path, live_dir, live_year_path
 
 LOG = logging.getLogger(__name__)
@@ -80,13 +81,20 @@ def _backfill_symbol(
     sym: str,
     *,
     data_root: Path,
-    catalog: CatalogStore,
+    backend: MetaBackend,
     registry: ProviderRegistry,
     from_year: int | None,
     end_year: int,
     summary_lock: threading.Lock,
     summary: BackfillSummary,
 ) -> None:
+    # Resolve the catalog store in *this* worker thread — SQLiteBackend
+    # hands out one connection per thread via threading.local(), but only
+    # if each thread fetches it itself. Passing an already-resolved
+    # CatalogStore in from the caller thread would reuse a connection
+    # created there, and sqlite3 forbids cross-thread use of a connection
+    # opened with the default check_same_thread=True.
+    catalog = backend.catalog
     entry = catalog.get_symbol(sym)
     if entry and entry.backfill_status == "complete" and from_year is None:
         with summary_lock:
@@ -246,7 +254,7 @@ def run_backfill(
     symbols: list[str],
     *,
     data_root: Path,
-    catalog: CatalogStore,
+    backend: MetaBackend,
     registry: ProviderRegistry,
     from_year: int | None = None,
     to_year: int | None = None,
@@ -269,7 +277,7 @@ def run_backfill(
                 _backfill_symbol,
                 sym,
                 data_root=data_root,
-                catalog=catalog,
+                backend=backend,
                 registry=registry,
                 from_year=from_year,
                 end_year=end_year,
@@ -284,7 +292,7 @@ def run_backfill(
     rollover_and_consolidate(
         summary.symbols,
         data_root=data_root,
-        catalog=catalog,
+        catalog=backend.catalog,
         summary_lock=summary_lock,
         summary=summary,
     )

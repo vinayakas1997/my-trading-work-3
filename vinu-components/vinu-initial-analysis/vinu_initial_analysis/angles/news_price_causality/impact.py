@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from bisect import bisect_left, bisect_right
 from typing import Any
 
 from vinu_initial_analysis.clients.price_client import PriceClient
@@ -30,7 +31,8 @@ def parse_tickers(tickers_raw: str | list) -> tuple[str, list[str]]:
 
 def compute_impact_for_article(
     article: dict,
-    price_client: PriceClient,
+    price_client: PriceClient | None = None,
+    candles_by_ticker: dict[str, list[dict]] | None = None,
     windows: list[int] | None = None,
     session_aware: bool = True,
     impact_high_threshold: float = 2.0,
@@ -53,7 +55,12 @@ def compute_impact_for_article(
     to_ts = ts + max_window
     ticker_candles: dict[str, list[dict]] = {}
     for ticker in all_tickers:
-        ticker_candles[ticker] = price_client.get_candles(ticker, from_ts=ts, to_ts=to_ts)
+        if candles_by_ticker and ticker in candles_by_ticker:
+            ticker_candles[ticker] = candles_by_ticker[ticker]
+        elif price_client is not None:
+            ticker_candles[ticker] = price_client.get_candles(ticker, from_ts=ts, to_ts=to_ts)
+        else:
+            ticker_candles[ticker] = []
 
     results = []
     for ticker, weight in zip(all_tickers, weights):
@@ -78,6 +85,7 @@ def compute_impact_for_article(
         )
 
         event = {
+            "type": "impact",
             "article_id": article.get("id", ""),
             "symbol": ticker,
             "is_primary": ticker == primary_ticker,
@@ -106,7 +114,9 @@ def compute_impact_for_article(
 
 
 def _compute_price_change(candles: list[dict], from_ts: int, to_ts: int) -> float | None:
-    filtered = [c for c in candles if from_ts <= c.get("bar_ts", 0) <= to_ts]
+    # candles must be sorted ascending by bar_ts; bisect avoids full scans.
+    ts = [c.get("bar_ts", 0) for c in candles]
+    filtered = candles[bisect_left(ts, from_ts):bisect_right(ts, to_ts)]
     if len(filtered) < 2:
         return None
     open_price = filtered[0].get("open", 0)

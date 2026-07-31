@@ -7,7 +7,14 @@ from pathlib import Path
 from vinu_tools.storage.models import FeatureRequest
 
 
-def write_manifest(path: Path, request: FeatureRequest, *, row_count: int, parquet_name: str) -> None:
+def write_manifest(
+    path: Path,
+    request: FeatureRequest,
+    *,
+    row_count: int,
+    parquet_name: str,
+    status: str | None = None,
+) -> None:
     lines = [
         f"# {request.title}",
         "",
@@ -24,7 +31,7 @@ def write_manifest(path: Path, request: FeatureRequest, *, row_count: int, parqu
         "## Run",
         f"- **Created:** {request.created_at}",
         f"- **Completed:** {request.updated_at}",
-        f"- **Status:** {request.status}",
+        f"- **Status:** {status or request.status}",
         "",
         "## Output",
         f"- **File:** {parquet_name}",

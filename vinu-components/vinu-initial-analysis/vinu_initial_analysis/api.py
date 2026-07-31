@@ -99,11 +99,20 @@ class CorrelationAPI:
         if df.empty:
             result = {"symbol": symbol, "news_return_corr": None, "sample_size": 0}
         else:
-            records = df.to_dict("records")
+            # Rows are written per time_format (15min, 1H, 1D); the 1D
+            # correlation is often NaN (daily bars at midnight UTC barely
+            # overlap news hours). Surface the best-sampled time format
+            # instead of the last-written row (Bug-5).
+            records = sorted(
+                df.to_dict("records"),
+                key=lambda r: (r.get("sample_size") or 0),
+                reverse=True,
+            )
+            best = records[0]
             result = {
                 "symbol": symbol,
-                "news_return_corr": records[-1].get("news_return_corr"),
-                "sample_size": records[-1].get("sample_size", 0),
+                "news_return_corr": best.get("news_return_corr"),
+                "sample_size": best.get("sample_size", 0),
             }
         self._cache.set_correlation(symbol, from_ts, to_ts, result)
         return result

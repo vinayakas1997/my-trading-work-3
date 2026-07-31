@@ -34,6 +34,9 @@ class QueryMemoryTool(BaseTool):
     }
     is_readonly = True
 
+    def __init__(self):
+        self._unified_memory = None
+
     def execute(self, **kwargs) -> str:
         memory = getattr(self, "_unified_memory", None)
         if memory is None:

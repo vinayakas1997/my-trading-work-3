@@ -22,13 +22,19 @@ class PriceClient:
     def _map_interval(self, interval: str) -> str:
         return _INTERVAL_MAP.get(interval, interval)
 
+    def get_watchlist(self) -> list[str]:
+        resp = request("GET", f"{self._base}/stock/watchlist/tickers")
+        resp.raise_for_status()
+        body = resp.json()
+        return body.get("tickers", []) if isinstance(body, dict) else body
+
     def get_candles(
         self,
         symbol: str,
         from_ts: int | None = None,
         to_ts: int | None = None,
         interval: str | None = None,
-        limit: int = 5000,
+        limit: int = 50000,
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {"adjusted": True}
         if from_ts is not None:
@@ -39,7 +45,7 @@ class PriceClient:
             params["interval"] = self._map_interval(interval)
         if limit is not None:
             params["limit"] = limit
-        resp = request("GET", f"{self._base}/candles/{symbol.upper()}", params=params)
+        resp = request("GET", f"{self._base}/stock/candles/{symbol.upper()}", params=params)
         resp.raise_for_status()
         body = resp.json()
         return body.get("data", body) if isinstance(body, dict) else body

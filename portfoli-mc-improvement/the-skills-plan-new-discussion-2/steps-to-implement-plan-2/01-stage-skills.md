@@ -138,6 +138,26 @@ object is not iterable` at runtime when BENCHING artifacts were present.
 - [x] `ShadowEvaluator` test file exists with at least 3 test cases.
 - [x] ShadowEvaluator is callable on demand (CLI or route).
 
+## Addendum — 2026-07-31
+
+This step's DoD confirmed skills are staged and readable via
+`SkillsLoader` directly — that claim is still true. It did **not** confirm
+they're reachable through the actual runtime path the agent uses:
+`build_registry()`'s dependency injection into `LoadSkillTool`. A
+separate, real bug (found while working Step 06's blocking prerequisite,
+logged in that step's AGENTS.md entry) meant `build_registry()` never
+actually injected `_skills_loader` into `LoadSkillTool` — `hasattr()`
+checked before the tool declared the attribute in `__init__`, so the
+`if skills_loader and hasattr(tool, "_skills_loader")` condition never
+fired, and `load_skill` silently returned "Skills loader not available"
+in production regardless of staging. Same root cause hit `RememberTool`,
+`SessionSearchTool`, `QueryMemoryTool`, and the two Step 06 workflow
+tools. Fixed by adding `self._skills_loader = None` (etc.) to each tool's
+`__init__`, matching the existing convention other tools already used.
+"Skills are staged" and "skills are usable by the agent at runtime" were
+not the same claim until this fix — see `06-agent-integration.md`'s
+AGENTS.md entry for the full trace.
+
 ## Open risks / assumptions
 
 - The missing endpoint name (`/broker/performance/{artifact_id}`) was

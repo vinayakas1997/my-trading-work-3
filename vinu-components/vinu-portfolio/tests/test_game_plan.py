@@ -95,6 +95,8 @@ class TestComputeDailyGamePlan:
         result = asyncio.run(svc.compute_daily_game_plan())
         assert result["readiness_score"] == 0.0
         assert result["readiness_flags"]["n_with_plan"] == 0
+        assert result["readiness_flags"]["regime_available"] is False
+        assert result["readiness_flags"]["equity_available"] is False
         assert result["readiness_flags"]["game_ready"] is False
 
     def test_readiness_score_partial_when_some_have_plans(self) -> None:
@@ -125,11 +127,69 @@ class TestComputeDailyGamePlan:
             ]
         )
         result = asyncio.run(svc.compute_daily_game_plan())
-        assert result["readiness_score"] == 0.5
+        # 1/2 symbols have plans, regime and equity both unavailable: 1 of 4 data points live.
+        assert result["readiness_score"] == 0.25
         assert result["readiness_flags"]["n_with_plan"] == 1
+        assert result["readiness_flags"]["regime_available"] is False
+        assert result["readiness_flags"]["equity_available"] is False
         assert result["symbols"][0]["plan_status"] == "no_plan"
         assert result["symbols"][1]["plan_status"] == "found"
         assert result["symbols"][1]["p_failure"] == 0.2
+
+    def test_readiness_score_reflects_regime_and_equity_availability(self) -> None:
+        svc = _service()
+        svc.compute_daily_allocation = AsyncMock(
+            return_value={
+                "status": "ok",
+                "n_strategies": 1,
+                "strategies": [
+                    {"name": "s1", "kind": "yaml"},
+                ],
+                "weights": [
+                    {"name": "s1", "kind": "yaml", "symbol": "AAPL", "target_weight": 1.0},
+                ],
+                "correlation_matrix": None,
+                "shock_correlation": None,
+                "timestamp": "2026-07-31T12:00:00",
+                "regime": None,
+                "account_equity": None,
+            }
+        )
+        result = asyncio.run(svc.compute_daily_game_plan())
+        assert result["readiness_flags"]["regime_available"] is False
+        assert result["readiness_flags"]["equity_available"] is False
+        # No plan, no regime, no equity: 0 of 3 data points live.
+        assert result["readiness_score"] == 0.0
+
+    def test_all_data_unavailable_edge_case(self) -> None:
+        svc = _service()
+        svc.compute_daily_allocation = AsyncMock(
+            return_value={
+                "status": "ok",
+                "n_strategies": 2,
+                "strategies": [
+                    {"name": "s1", "kind": "llm_python", "artifact_id": "art_1"},
+                    {"name": "s2", "kind": "llm_python", "artifact_id": "art_2"},
+                ],
+                "weights": [
+                    {"name": "s1", "kind": "llm_python", "symbol": "AAPL", "target_weight": 0.5},
+                    {"name": "s2", "kind": "llm_python", "symbol": "MSFT", "target_weight": 0.5},
+                ],
+                "correlation_matrix": None,
+                "shock_correlation": None,
+                "timestamp": "2026-07-31T12:00:00",
+                "regime": {"status": "unavailable", "regime": None},
+                "account_equity": None,
+            }
+        )
+        svc._fetch_trade_plan = AsyncMock(return_value=(None, False))
+        result = asyncio.run(svc.compute_daily_game_plan())
+        assert result["readiness_score"] == 0.0
+        assert result["readiness_flags"]["n_with_plan"] == 0
+        assert result["readiness_flags"]["regime_available"] is False
+        assert result["readiness_flags"]["equity_available"] is False
+        assert result["readiness_flags"]["game_ready"] is False
+        assert all(s["plan_status"] == "no_plan" for s in result["symbols"])
 
     def test_readiness_score_full_when_all_have_plans(self) -> None:
         svc = _service()
@@ -146,8 +206,8 @@ class TestComputeDailyGamePlan:
                 "correlation_matrix": None,
                 "shock_correlation": None,
                 "timestamp": "2026-07-31T12:00:00",
-                "regime": None,
-                "account_equity": None,
+                "regime": {"status": "ok", "regime": "bull"},
+                "account_equity": 100_000.0,
             }
         )
         svc._fetch_trade_plan = AsyncMock(
@@ -155,5 +215,7 @@ class TestComputeDailyGamePlan:
         )
         result = asyncio.run(svc.compute_daily_game_plan())
         assert result["readiness_score"] == 1.0
+        assert result["readiness_flags"]["regime_available"] is True
+        assert result["readiness_flags"]["equity_available"] is True
         assert result["readiness_flags"]["game_ready"] is True
         assert result["symbols"][0]["forecast"]["direction"] == "bearish"

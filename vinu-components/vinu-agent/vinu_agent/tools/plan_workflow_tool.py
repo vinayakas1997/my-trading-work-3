@@ -14,6 +14,9 @@ class PlanWorkflowTool(BaseTool):
     }
     is_readonly = True
 
+    def __init__(self):
+        self._workflow_tracker = None
+
     def execute(self, **kwargs) -> str:
         tracker = getattr(self, "_workflow_tracker", None)
         if tracker is None:

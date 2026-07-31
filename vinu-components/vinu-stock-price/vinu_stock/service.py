@@ -148,7 +148,7 @@ class StockService:
         summary = run_backfill(
             syms,
             data_root=self.data_root,
-            catalog=self._backend.catalog,
+            backend=self._backend,
             registry=self._registry,
             from_year=from_year,
             to_year=to_year,

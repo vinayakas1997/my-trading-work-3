@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
 import sys
 from datetime import datetime, timezone
@@ -131,10 +132,17 @@ class AngleRunner:
 
         for tf in time_formats:
             bars = self._fetch_bars(symbol, tf, from_ts, to_ts) if needs_bars else pd.DataFrame()
-            df = module.compute(
-                symbol, bars=bars, news=news,
-                from_ts=from_ts, to_ts=to_ts, time_format=tf,
-            )
+            compute_kwargs: dict[str, Any] = {
+                "symbol": symbol,
+                "bars": bars,
+                "news": news,
+                "from_ts": from_ts,
+                "to_ts": to_ts,
+                "time_format": tf,
+            }
+            if "price_client" in inspect.signature(module.compute).parameters:
+                compute_kwargs["price_client"] = self._price_client
+            df = module.compute(**compute_kwargs)
 
             if not isinstance(df, pd.DataFrame) or df.empty:
                 continue

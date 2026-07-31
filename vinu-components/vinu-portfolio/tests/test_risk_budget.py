@@ -111,6 +111,38 @@ class TestComputeRiskBudget:
         assert budget.symbols[0]["tier"] == TIER_REDUCE
         assert budget.symbols[0]["suggested_size_multiplier"] == pytest.approx(0.5)
 
+    def test_regime_shift_tightening_is_distinct_from_budget_breach(self) -> None:
+        """Regime-shift tightening (no P&L breach) must apply on its own,
+        distinct from a tier-driven budget breach with no regime change."""
+        positions = [{"symbol": "AAPL", "unrealized_pl": 100.0}]  # profitable: tier 0
+
+        neutral = compute_risk_budget(positions, equity=100_000.0, regime="bull")
+        assert neutral.symbols[0]["tier"] == 0
+        assert neutral.symbols[0]["suggested_size_multiplier"] == pytest.approx(1.0)
+
+        tightened = compute_risk_budget(positions, equity=100_000.0, regime="high_vol")
+        assert tightened.symbols[0]["tier"] == 0  # no budget breach
+        assert tightened.symbols[0]["regime_band_multiplier"] == 0.6
+        # Regime alone (no tier reduction) drives the suggested size down.
+        assert tightened.symbols[0]["suggested_size_multiplier"] == pytest.approx(0.6)
+
+    def test_regime_tightening_composes_multiplicatively_with_tier_reduce(self) -> None:
+        """When both a budget breach (tier >= REDUCE) and a tightened regime
+        apply together, the two multipliers compose rather than one masking
+        the other."""
+        positions = [{"symbol": "AAPL", "unrealized_pl": -2500.0}]  # tier REDUCE
+        budget = compute_risk_budget(positions, equity=100_000.0, regime="high_vol")
+        assert budget.symbols[0]["tier"] == TIER_REDUCE
+        assert budget.symbols[0]["regime_band_multiplier"] == 0.6
+        # band_mult(0.6) * tier-reduce factor(0.5) = 0.3
+        assert budget.symbols[0]["suggested_size_multiplier"] == pytest.approx(0.3)
+
+    def test_halt_tier_zeroes_size_regardless_of_regime(self) -> None:
+        positions = [{"symbol": "AAPL", "unrealized_pl": -5000.0}]  # tier HALT
+        budget = compute_risk_budget(positions, equity=100_000.0, regime="bull")
+        assert budget.symbols[0]["tier"] == TIER_HALT
+        assert budget.symbols[0]["suggested_size_multiplier"] == 0.0
+
 
 class TestComputeRiskStatus:
     def _service(**overrides) -> PortfolioService:
@@ -139,3 +171,28 @@ class TestComputeRiskStatus:
         assert result["regime"] == "bull"
         assert result["aggregate"]["n_positions"] == 1
         assert result["game_plan_readiness"] == 0.5
+
+    def test_daily_pnl_does_not_accumulate_across_repeated_calls(self) -> None:
+        """Documents a known gap (see live-safety/SKILL.md's 'Daily risk
+        budget' section): compute_risk_status() builds a fresh
+        DailyPositionTracker on every call, so repeated polling never
+        accumulates P&L the way DailyPositionTracker itself supports —
+        each call just reflects that call's unrealized_pl snapshot."""
+        svc = TestComputeRiskStatus._service()
+        svc.compute_daily_game_plan = AsyncMock(
+            return_value={
+                "status": "ok",
+                "readiness_score": 1.0,
+                "account_equity": 100_000.0,
+                "regime": {"regime": "bull"},
+            }
+        )
+        svc._fetch_positions = AsyncMock(
+            return_value=[{"symbol": "AAPL", "unrealized_pl": 500.0}]
+        )
+        first = asyncio.run(svc.compute_risk_status())
+        second = asyncio.run(svc.compute_risk_status())
+        # If daily_pnl accumulated across calls (as DailyPositionTracker
+        # supports in isolation), the second call would show 1000.0, not 500.0.
+        assert first["symbols"][0]["daily_pnl"] == 500.0
+        assert second["symbols"][0]["daily_pnl"] == 500.0

@@ -1,6 +1,6 @@
 ---
 name: 06-agent-integration
-status: Not Started
+status: Completed
 phase: 4
 code: D6
 depends_on: [01-stage-skills]
@@ -93,16 +93,89 @@ what's available, and decide what to do — the original vision.
 
 ## What was actually built
 
-*(To be filled in after implementation.)*
+Most of substeps 1-3's design (Option C: on-demand `load_skill` +
+`plan_workflow`/`complete_step` for multi-skill tasks, wired through
+`WorkflowTracker` and `build_registry()`) already existed uncommitted
+before this session. What was actually missing was (a) a real bug that
+silently broke the whole path in production, (b) end-to-end test
+coverage, and (c) the governor DoD item never being traced against what
+`governor/SKILL.md` (from the first plan) actually specifies.
+
+- **The blocking bug (found while starting this step, fixed first since
+  it undermined this step's entire premise):** `build_registry()`
+  (`vinu_agent/tools/__init__.py`) only injects a dependency when
+  `hasattr(tool, "_x")` is `True` *before* injection. `LoadSkillTool`,
+  `RememberTool`, `SessionSearchTool`, `QueryMemoryTool`,
+  `CompleteStepTool`, and `PlanWorkflowTool` only referenced their
+  dependency via `getattr(self, "_x", None)` inside `execute()`, with no
+  `__init__` declaring a default — so the `hasattr` check was always
+  `False` and injection silently never fired, even though
+  `session/service.py::_run_with_agent` was already passing real
+  `skills_loader`/`unified_memory`/`session_service`/`workflow_tracker`
+  values into `build_registry()`. Fixed by adding `__init__` to each tool
+  setting its dependency attribute to `None`, matching the existing
+  `_services_config = {}` convention. Full trace in this file's AGENTS.md
+  entry.
+- **Substep 1 (read the loop):** confirmed the ReAct cycle, the
+  50-iteration cap + 80%-nudge, the 3-tier context management, and that
+  `AgentLoop` already carries its own `WorkflowTracker` instance
+  (`self._workflow_tracker`), which `service.py` overwrites with the same
+  instance passed into `build_registry()` — so the loop's
+  `<workflow>`-block rendering and the tools' state mutation already
+  operate on one shared object, not two copies.
+- **Substep 2/3 (design + minimal integration):** Option C was already
+  chosen and built — `load_skill` is on-demand (not preloaded), and
+  `plan_workflow`/`complete_step` let the agent declare and progress
+  through a multi-skill plan, with the tracker's state rendered into the
+  system prompt every iteration via `WorkflowTracker.to_context_block()`.
+- **Substep 4 (governor wiring) — traced, not built, with rationale:**
+  `governor/SKILL.md` (written for the first plan's Step 08, paired with
+  `optimizer-rules`) explicitly documents that its Layer 1 hard limit
+  **is** the ReAct loop's `max_iterations` cap — already real, already
+  enforced (`while iteration < self.max_iterations`), confirmed by
+  reading that skill's own text against `loop.py`. Layer 2's adaptive
+  heuristics (progress, expectancy) are, by that same skill's explicit
+  design, **not** meant to be loop-level code — they're logic the agent
+  applies itself by reading the hypothesis/evidence trail through
+  existing tools (`query_hypotheses`/`add_hypothesis_evidence`), matching
+  this plan's "skills are a knowledge library, not scripts" principle
+  throughout. No `governor.py` module enforcing Layer 2 was built, and
+  none is needed for this DoD item to be honestly checked — the intended
+  design was already documented before this step touched it, and this
+  step traced it rather than silently assuming a gap or silently building
+  unwanted code. Written up in `agent-self/SKILL.md`'s new "Governor"
+  section so this reasoning isn't lost.
+- **Substep 5 (tests):** `tests/test_agent_integration.py` (new) —
+  end-to-end test using a real `build_registry()` (with a real
+  `SkillsLoader` pointed at `vinu-agent/skills/`) and a real `AgentLoop`,
+  scripted through `plan_workflow` → `load_skill` → `complete_step`,
+  asserting: `load_skill` returns real file content (not a DI-bug "not
+  available" error), the shared `WorkflowTracker` reaches
+  `all_completed()`, and the loop actually injects a live `<workflow>`
+  block into an LLM call mid-run — not just that the tracker object looks
+  right after the fact. Plus a negative-path test confirming a registry
+  built with no `skills_loader` fails cleanly. `test_tools_discovery.py`
+  (Step 06's DI-fix prerequisite) separately covers injection at the unit
+  level for all six previously-broken tools.
+- **Substep 6 (skill doc):** `agent-self/SKILL.md` updated with sections
+  on how skills/workflow tools work at runtime, the DI bug and its fix,
+  and the governor-tracing finding above.
 
 ## Definition of done
 
-- [ ] Current loop fully read and understood.
-- [ ] Integration approach chosen, designed, and documented.
-- [ ] Integration implemented (skills loadable, agent can compose plan).
-- [ ] Governor constraints enforced at loop level.
-- [ ] Tests cover skill discovery, content retrieval, governor enforcement.
-- [ ] System skill doc updated.
+- [x] Current loop fully read and understood.
+- [x] Integration approach chosen, designed, and documented.
+- [x] Integration implemented (skills loadable, agent can compose plan).
+- [x] Governor constraints enforced at loop level — Layer 1 (hard limit)
+      confirmed enforced; Layer 2 (heuristics) confirmed intentionally
+      agent-composed, not loop-level, per `governor/SKILL.md`'s own
+      design. See "What was actually built" for the trace.
+- [x] Tests cover skill discovery, content retrieval, governor enforcement
+      (Layer 1's `max_iterations` cap already had coverage in
+      `test_loop.py::test_max_iterations_reached`; skill/workflow
+      discovery and retrieval now covered by
+      `test_agent_integration.py`).
+- [x] System skill doc updated.
 
 ## Open risks / assumptions
 

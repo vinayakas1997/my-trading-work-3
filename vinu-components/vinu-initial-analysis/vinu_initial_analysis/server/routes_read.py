@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
+import numpy as np
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
@@ -31,6 +34,13 @@ def get_events(ticker: str, from_ts: int | None = Query(None), to_ts: int | None
     return svc.get_events(ticker.upper(), from_ts, to_ts)
 
 
+@router.get("/correlation/batch")
+def get_batch(symbols: str, from_ts: int | None = Query(None), to_ts: int | None = Query(None)):
+    svc = _get_svc()
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    return svc.get_batch(sym_list, from_ts, to_ts)
+
+
 @router.get("/correlation/{ticker}")
 def get_correlation(ticker: str, from_ts: int | None = Query(None), to_ts: int | None = Query(None)):
     svc = _get_svc()
@@ -49,13 +59,6 @@ def get_story(ticker: str, from_ts: int | None = Query(None), to_ts: int | None 
     return svc.get_story(ticker.upper(), from_ts, to_ts)
 
 
-@router.get("/correlation/batch")
-def get_batch(symbols: str, from_ts: int | None = Query(None), to_ts: int | None = Query(None)):
-    svc = _get_svc()
-    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
-    return svc.get_batch(sym_list, from_ts, to_ts)
-
-
 # -- new initial-analysis endpoints ----------------------------------------
 
 
@@ -65,15 +68,30 @@ def list_angles():
     return {"angles": svc.list_angles()}
 
 
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return [_json_safe(v) for v in value.tolist()]
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (pd.Timestamp, datetime)):
+        return None if pd.isna(value) else value.isoformat()
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return None if np.isnan(value) else float(value)
+    if isinstance(value, float) and value != value:
+        return None
+    return value
+
+
 @router.get("/angle/{angle_name}/{ticker}")
 def get_angle(angle_name: str, ticker: str):
     svc = _get_svc()
     df = svc.storage.read(ticker.upper(), angle_name)
     records = df.to_dict("records") if not df.empty else []
-    for rec in records:
-        for k, v in rec.items():
-            if isinstance(v, float) and (v != v):
-                rec[k] = None
+    records = [{k: _json_safe(v) for k, v in rec.items()} for rec in records]
     return {
         "symbol": ticker.upper(),
         "angle": angle_name,

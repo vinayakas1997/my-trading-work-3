@@ -29,6 +29,12 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/news/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   # =========================================================================
   # vinu-stock-price (Port: 8081) — API + ingest worker
@@ -58,6 +64,12 @@ services:
     cpus: 1
     pids_limit: 256
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/stock/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   # =========================================================================
   # vinu-tools (Port: 8082) — API + feature worker
@@ -86,8 +98,15 @@ services:
     cpus: 1
     pids_limit: 256
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/features/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
-      - stock-api
+      stock-api:
+        condition: service_healthy
 
   # =========================================================================
   # vinu-initial-analysis (Port: 8083) — API + compute worker
@@ -116,9 +135,17 @@ services:
     cpus: 1
     pids_limit: 256
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/analysis/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
-      - news-api
-      - stock-api
+      news-api:
+        condition: service_healthy
+      stock-api:
+        condition: service_healthy
 
   # =========================================================================
   # vinu-strategy (Port: 8084)
@@ -148,9 +175,17 @@ services:
     cpus: 1
     pids_limit: 256
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8084/strategy/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
-      - features-api
-      - initial-analysis-api
+      features-api:
+        condition: service_healthy
+      initial-analysis-api:
+        condition: service_healthy
 
   # =========================================================================
   # vinu-simulator (Port: 8085)
@@ -180,9 +215,17 @@ services:
     cpus: 1
     pids_limit: 256
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8085/simulator/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
-      - strategy-api
-      - stock-api
+      strategy-api:
+        condition: service_healthy
+      stock-api:
+        condition: service_healthy
 
   # =========================================================================
   # vinu-portfolio (Port: 8090) — API + drawdown monitor
@@ -211,10 +254,19 @@ services:
     cpus: 1
     pids_limit: 256
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/portfolio/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
-      - strategy-api
-      - research-api
-      - simulator-api
+      strategy-api:
+        condition: service_healthy
+      research-api:
+        condition: service_healthy
+      simulator-api:
+        condition: service_healthy
 
   # =========================================================================
   # vinu-research (Port: 8087) — API + decay scan
@@ -245,11 +297,21 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8087/research/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
-      - features-api
-      - simulator-api
-      - initial-analysis-api
-      - stock-api
+      features-api:
+        condition: service_healthy
+      simulator-api:
+        condition: service_healthy
+      initial-analysis-api:
+        condition: service_healthy
+      stock-api:
+        condition: service_healthy
 
   # =========================================================================
   # vinu-live (Port: 8091) — API + live worker
@@ -278,10 +340,19 @@ services:
     cpus: 1
     pids_limit: 256
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8091/live/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
-      - portfolio-api
-      - agent-api
-      - stock-api
+      portfolio-api:
+        condition: service_healthy
+      agent-api:
+        condition: service_healthy
+      stock-api:
+        condition: service_healthy
 
   # =========================================================================
   # vinu-agent (Port: 8086)
@@ -314,11 +385,24 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8086/agent/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
-      - stock-api
-      - features-api
-      - news-api
-      - initial-analysis-api
-      - strategy-api
-      - simulator-api
-      - research-api
+      stock-api:
+        condition: service_healthy
+      features-api:
+        condition: service_healthy
+      news-api:
+        condition: service_healthy
+      initial-analysis-api:
+        condition: service_healthy
+      strategy-api:
+        condition: service_healthy
+      simulator-api:
+        condition: service_healthy
+      research-api:
+        condition: service_healthy

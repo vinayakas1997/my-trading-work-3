@@ -1,6 +1,6 @@
 ---
 name: 05-risk-budget
-status: Not Started
+status: Completed
 phase: 3
 code: D5
 depends_on: [04-daily-plan-document]
@@ -128,24 +128,75 @@ Shift from trim to exit level when alignment_score < 0.3.
 
 ## What was actually built
 
-*(To be filled in after implementation.)*
+Like Step 04, the core (`risk_budget.py`, route, CLI, initial tests)
+already existed uncommitted before this session. This entry closes the
+remaining DoD gaps and documents the two real findings from tracing the
+implementation against this file's own research notes.
+
+- `compute_risk_budget()` (`vinu_portfolio/risk_budget.py`) implements the
+  3-tier structure from the research notes (warning/-1%, reduce/-2%,
+  halt/-3% of equity — configurable), `DailyPositionTracker` for
+  per-symbol accumulation, and `REGIME_SIZING_MULTIPLIERS` for
+  regime-based band tightening.
+- `PortfolioService.compute_risk_status()` integrates it with the daily
+  game plan (Step 04) and is exposed via `GET /portfolio/risk/status` and
+  `vinu-portfolio risk-status`.
+- **Finding, not a bug:** the implemented regime-tightening
+  (`REGIME_SIZING_MULTIPLIERS`) is a flat portfolio-wide multiplier keyed
+  only on the current regime label — it does **not** implement this file's
+  own research-notes formula (`alignment_score` scaling each strategy's
+  position limit and invalidation distance by tag-vs-regime alignment).
+  Documented in `live-safety/SKILL.md`'s new "Daily risk budget" section
+  as a deliberate v1 simplification, not silently left unmentioned.
+  Composing per-strategy tag alignment into this is future work.
+- **Gap found and closed this session:** test coverage only checked
+  `regime_band_multiplier` in isolation, never how it composes with a
+  tier-driven size reduction, and budget-breach vs. regime-shift weren't
+  clearly asserted as distinct cases. Added
+  `test_regime_shift_tightening_is_distinct_from_budget_breach`,
+  `test_regime_tightening_composes_multiplicatively_with_tier_reduce`,
+  and `test_halt_tier_zeroes_size_regardless_of_regime` to
+  `test_risk_budget.py`.
+- **Real gap found, documented (not fixed) per this file's own "Open
+  risks" note:** traced `DailyPositionTracker`'s only production caller
+  (`compute_risk_status()` in `service.py`) and confirmed it constructs a
+  **fresh tracker on every call** — so the accumulate-across-calls
+  behavior the class supports (and is unit-tested doing, in isolation) is
+  never exercised in production. Each call's `daily_pnl` is just that
+  call's `unrealized_pl` snapshot, not a true running intraday total.
+  Pinned with a regression test
+  (`test_daily_pnl_does_not_accumulate_across_repeated_calls`) and
+  documented in `live-safety/SKILL.md` with the fix this would need
+  (hold one tracker instance across requests) if a true accumulator is
+  wanted later — left as a flagged follow-up, not fixed here, since fixing
+  it changes production risk-signal behavior and deserves its own
+  deliberate review rather than a side-effect of a doc-reconciliation pass.
+- `live-safety/SKILL.md` and `daily-allocation/SKILL.md` both updated
+  (substep 6) — both were untouched before this session.
 
 ## Definition of done
 
-- [ ] Research done and documented in this file.
-- [ ] Daily risk budget implemented and tested (metric, threshold, action).
-- [ ] Regime-tightening logic implemented and tested.
-- [ ] Both integrated into the daily allocation/plan pipeline.
-- [ ] Tests cover normal operation, budget breach, regime-shift tightening.
-- [ ] Skill docs updated.
+- [x] Research done and documented in this file.
+- [x] Daily risk budget implemented and tested (metric, threshold, action).
+- [x] Regime-tightening logic implemented and tested.
+- [x] Both integrated into the daily allocation/plan pipeline.
+- [x] Tests cover normal operation, budget breach, regime-shift tightening.
+- [x] Skill docs updated.
 
 ## Open risks / assumptions
 
-- The daily risk budget concept assumes the system can track intraday P&L.
-  Verify that `vinu-live`'s feedback loop or the broker route provides
-  enough data to compute "how much have we lost today" — if not, this
-  step may need to also build a simple intraday tracker.
+- **Resolved (traced, not fixed) this session:** the daily risk budget
+  does track intraday P&L via `DailyPositionTracker`, but the tracker is
+  reconstructed fresh on every `compute_risk_status()` call — so in
+  production it never actually accumulates across repeated calls the way
+  it's designed to; each response is just the latest `unrealized_pl`
+  snapshot. See the "What was actually built" section above and
+  `live-safety/SKILL.md` for the fix this would need if a true running
+  total is required. Left open deliberately, flagged for a dedicated pass.
 - Regime-tightening depends on regime classification being available at
   plan time — Step 10's `classify_current_regime()` does this but it
   runs once per allocation. If intraday regime shifts aren't detectable,
-  tightening only applies at the daily planning moment, not mid-day.
+  tightening only applies at the daily planning moment, not mid-day. Also
+  confirmed this session: the implemented tightening is a flat
+  regime-only multiplier, not the tag-alignment formula from this file's
+  own research notes above — see "What was actually built."

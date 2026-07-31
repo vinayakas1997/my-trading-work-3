@@ -1,6 +1,6 @@
 ---
 name: 04-daily-plan-document
-status: Not Started
+status: Completed
 phase: 3
 code: D4
 depends_on: [02-shock-clustering, 03-probabilistic-exit]
@@ -85,16 +85,48 @@ far exists in disconnected pieces.
 
 ## What was actually built
 
-*(To be filled in after implementation.)*
+The core of this step (dataclasses, merge function, route, CLI, initial
+tests) already existed uncommitted in the repo before this session — this
+entry documents it against the real DoD, closes the two gaps found, and
+flips the status from the stale "Not Started" it had been logged as.
+
+- `SymbolPlan` / `DailyGamePlan` dataclasses (`vinu_portfolio/game_plan.py`)
+  define the document shape from substep 1: per-symbol weights/multipliers,
+  forecast/invalidation/`p_failure` from the TradePlan, `plan_status`, plus
+  portfolio-level readiness flags.
+- `PortfolioService.compute_daily_game_plan()` (`service.py`) is the merge
+  function from substep 2 — calls `compute_daily_allocation()`, fetches
+  each symbol's TradePlan via `_fetch_trade_plan()`, merges into the shape
+  above.
+- `GET /portfolio/daily-game-plan` (`server/app.py`) and
+  `vinu-portfolio daily-game-plan` (`cli.py`) expose it, per substep 3.
+- **Gap found and closed this session:** the readiness score originally
+  only counted per-symbol TradePlan coverage (`n_with_plan / n_total`),
+  not the regime-fetch and account-equity fail-open paths that
+  `compute_daily_allocation()` already has. Broadened to count all three
+  as live-or-not data points (`readiness_flags.regime_available` /
+  `.equity_available` added) — see `daily-allocation/SKILL.md`'s
+  "Unified daily game plan" section for the exact formula. This changes
+  `readiness_score`'s value and the `game_ready` gate's behavior; existing
+  tests asserting old score values were updated to match, not just left
+  broken.
+- **Gap found and closed this session:** no test covered the
+  all-data-unavailable edge case (substep 4). Added
+  `test_all_data_unavailable_edge_case` and
+  `test_readiness_score_reflects_regime_and_equity_availability` to
+  `test_game_plan.py`.
+- `daily-allocation/SKILL.md` updated with a new section describing the
+  unified plan and the readiness formula (substep 5) — was untouched
+  before this session.
 
 ## Definition of done
 
-- [ ] Document shape designed and documented.
-- [ ] Merge function implemented and tested.
-- [ ] Route and/or CLI exposes the unified plan.
-- [ ] Readiness score correctly reflects data source availability.
-- [ ] Tests cover normal, degraded, and empty-portfolio cases.
-- [ ] Skill doc updated.
+- [x] Document shape designed and documented.
+- [x] Merge function implemented and tested.
+- [x] Route and/or CLI exposes the unified plan.
+- [x] Readiness score correctly reflects data source availability.
+- [x] Tests cover normal, degraded, and empty-portfolio cases.
+- [x] Skill doc updated.
 
 ## Open risks / assumptions
 

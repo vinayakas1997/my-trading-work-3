@@ -13,7 +13,7 @@ from vinu_tools.client.stock_price import CandleClient, StockPriceClient
 from vinu_tools.compute.registry import apply_indicators, expand_features, warmup_bars_for_features
 from vinu_tools.constants import SECONDS_PER_DAY
 from vinu_tools.engine.manifest import write_manifest
-from vinu_tools.storage.models import FeatureRequest
+from vinu_tools.storage.models import STATUS_DONE, FeatureRequest
 
 _PARQUET_NAME = "features.parquet"
 _OUTPUT_COLUMNS = ("ts", "symbol", "open", "high", "low", "close", "volume")
@@ -99,6 +99,7 @@ class FeatureEngine:
             request,
             row_count=total_rows,
             parquet_name=_PARQUET_NAME,
+            status=STATUS_DONE,
         )
         return run_dir, total_rows
 

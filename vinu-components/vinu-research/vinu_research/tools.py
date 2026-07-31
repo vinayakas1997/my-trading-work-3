@@ -212,7 +212,7 @@ class ResearchTools:
             params["indicators"] = recipe
         try:
             resp = await self._features_client.get(
-                f"/features/{symbol.upper()}",
+                f"/{symbol.upper()}",
                 params=params,
             )
             if isinstance(resp, dict):

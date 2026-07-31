@@ -26,7 +26,7 @@ def _detect_shock_dates(
 
     shock_dates = []
     for i in range(len(bars)):
-        date = bars.index[i] if hasattr(bars.index, '__getitem__') else str(bars.index[i])
+        ts = int(bars["bar_ts"].iloc[i])
         is_shock = False
         if not pd.isna(gaps.iloc[i]) and gap_std > 0:
             gap_z = (gaps.iloc[i] - gap_mean) / gap_std
@@ -37,7 +37,7 @@ def _detect_shock_dates(
             if vol_z > vol_z_threshold:
                 is_shock = True
         if is_shock:
-            shock_dates.append(str(date))
+            shock_dates.append(str(pd.Timestamp(ts, unit="s").normalize().date()))
     return shock_dates
 
 
@@ -96,6 +96,7 @@ def compute(
     from_ts: int | None = None,
     to_ts: int | None = None,
     time_format: str | None = None,
+    price_client: Any = None,
 ) -> pd.DataFrame:
     if bars is None or bars.empty:
         return pd.DataFrame([{
@@ -107,7 +108,36 @@ def compute(
 
     analysis_at = datetime.now(timezone.utc).isoformat()
     shock_dates = _detect_shock_dates(bars)
-    universe_prices = {symbol: bars["close"].astype(float).values}
+
+    # Build a multi-symbol universe (watchlist) so clustering has something
+    # to cluster against (Bug-11). Fall back to single_symbol when the
+    # universe can't be built or only one symbol is available.
+    universe_prices: dict[str, np.ndarray] = {symbol: bars["close"].astype(float).values}
+    try:
+        if price_client is not None:
+            universe = {symbol}
+            watch = price_client.get_watchlist()
+            if watch:
+                universe = set(watch) | {symbol}
+            series_map: dict[str, pd.Series] = {}
+            for sym in sorted(universe):
+                candles = price_client.get_candles(
+                    sym, from_ts=from_ts, to_ts=to_ts, interval="1D", limit=50000,
+                )
+                if not candles:
+                    continue
+                series_map[sym] = pd.Series(
+                    [float(c["close"]) for c in candles],
+                    index=[int(c["bar_ts"]) for c in candles],
+                )
+            if len(series_map) > 1:
+                aligned = pd.DataFrame(series_map).dropna()
+                if aligned.shape[1] > 1 and aligned.shape[0] >= 31:
+                    universe_prices = {
+                        col: aligned[col].astype(float).values for col in aligned.columns
+                    }
+    except Exception:
+        pass
 
     result = _compute_shock_clusters(symbol, universe_prices, shock_dates, bars.index)
     result["analysis_at"] = analysis_at

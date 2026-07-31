@@ -185,3 +185,69 @@ agent invokes on purpose rather than a silent background loop. Allocation
 weight changes are comparably consequential; hooking this into an
 automatic scheduler is a deliberate, separate, higher-scrutiny decision —
 not something this step does implicitly by building the logic.
+
+## Unified daily game plan — `compute_daily_game_plan()` (Step 04, D4)
+
+`PortfolioService.compute_daily_game_plan()` (`vinu_portfolio/game_plan.py`,
+`service.py`) merges `compute_daily_allocation()`'s per-strategy weights
+with each symbol's `TradePlan` (forecast, invalidation conditions,
+`p_failure`) into one document — `GET /portfolio/daily-game-plan`,
+CLI `vinu-portfolio daily-game-plan`. This is the single artifact meant to
+answer "what's the plan for today, across all positions, with full
+context," instead of making a human reconcile allocation weights and
+per-symbol TradePlans by hand.
+
+Per symbol (`SymbolPlan`), the merged record carries: `ticker`,
+`target_weight`/`base_weight`/`regime_multiplier`/`outcome_multiplier`
+(from allocation), `direction`/`forecast`/`invalidation_conditions`/
+`p_failure` (from its TradePlan, when found), and `plan_status`
+(`"found"` or `"no_plan"` — a symbol with no LLM-authored TradePlan, e.g.
+a YAML strategy, is included with `plan_status: "no_plan"` rather than
+silently dropped or erroring).
+
+### Readiness score — reflects degradation across three data sources, not just plan coverage
+
+The naive version of this score would just be "fraction of symbols with a
+TradePlan." That undercounts real degradation: `compute_daily_allocation()`
+already fails open on two other sources — the benchmark regime read
+(`_fetch_benchmark_regime()`, see above) and live account equity
+(`_fetch_account_equity()`) — and a day where both of those are down looks
+identical to a fully-informed day if only plan coverage is counted.
+
+`readiness_score` instead treats three kinds of data points as live-or-not
+and reports the fraction actually live:
+
+```
+n_data_points     = n_symbols + 2          # +1 regime, +1 equity
+n_available       = n_symbols_with_plan + int(regime_available) + int(equity_available)
+readiness_score   = n_available / n_data_points
+```
+
+`regime_available` is `True` only when the regime fetch didn't fail open
+(`regime_info.get("regime") is not None`); `equity_available` is `True`
+only when a live broker equity figure came back. Both booleans are
+surfaced directly in `readiness_flags` alongside `n_total`/`n_with_plan`,
+so a caller can see *which* source degraded, not just the aggregate
+number. `game_ready` is `readiness_score >= game_plan_readiness_threshold`
+(config, default `0.5`) — a gate a caller can check before treating the
+plan as trustworthy enough to act on, not a value this module enforces
+itself.
+
+An empty portfolio (`compute_daily_allocation()` returns `status: "empty"`)
+short-circuits before any of this — the game plan is passed through
+unchanged, `readiness_score` is not computed for a portfolio with nothing
+in it.
+
+## Daily risk budget — `compute_risk_status()` (Step 05, D5)
+
+`PortfolioService.compute_risk_status()` (`GET /portfolio/risk/status`,
+CLI `vinu-portfolio risk-status`) layers a soft, graduated per-symbol risk
+response (warning/reduce/halt tiers on today's P&L, plus a regime-based
+sizing multiplier) on top of the game plan above — `game_plan_readiness`
+is echoed into its response so a caller can see both signals together.
+Full detail on the tier thresholds, the regime-tightening formula actually
+implemented (a flat portfolio-wide multiplier, not the tag-alignment
+formula from the step's original research notes), and a real gap found in
+`DailyPositionTracker`'s production wiring live in
+`live-safety/SKILL.md`'s "Daily risk budget" section — read that before
+assuming this module tracks true intraday P&L across repeated calls.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from typing import Any
 
 import numpy as np
@@ -50,14 +51,12 @@ def compute_abnormal_return(
     window_sec: int = 1800,
     estimation_window_sec: int = 604800,
 ) -> dict[str, Any]:
-    pre_candles = [
-        c for c in candles
-        if event_ts - estimation_window_sec <= c.get("bar_ts", 0) < event_ts
-    ]
-    event_candles = [
-        c for c in candles
-        if event_ts <= c.get("bar_ts", 0) <= event_ts + window_sec
-    ]
+    # candles must be sorted ascending by bar_ts; bisect keeps the
+    # per-event windows O(log n) instead of full-list scans (Bug-7 fix).
+    ts = [c.get("bar_ts", 0) for c in candles]
+    lo = bisect_left(ts, event_ts - estimation_window_sec)
+    pre_candles = candles[lo:bisect_left(ts, event_ts)]
+    event_candles = candles[bisect_left(ts, event_ts):bisect_right(ts, event_ts + window_sec)]
 
     if len(pre_candles) < 10 or len(event_candles) < 2:
         return {

@@ -10,6 +10,9 @@ class LoadSkillTool(BaseTool):
     }
     is_readonly = True
 
+    def __init__(self):
+        self._skills_loader = None
+
     def execute(self, **kwargs) -> str:
         skills_loader = getattr(self, "_skills_loader", None)
         if skills_loader is None:

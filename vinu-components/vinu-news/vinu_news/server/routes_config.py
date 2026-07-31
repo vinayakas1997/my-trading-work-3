@@ -211,7 +211,7 @@ def trigger_backfill(ticker: str | None = None) -> dict:
     return {"results": result if isinstance(result, list) else [result]}
 
 
-@router.post("/news/analyze/backfill")
+@router.post("/analyze/backfill")
 def trigger_analysis_backfill(body: AnalysisBackfillRequest = AnalysisBackfillRequest()) -> dict:
     """Submit all unanalyzed articles to the LLM analysis queue."""
     service = get_service()

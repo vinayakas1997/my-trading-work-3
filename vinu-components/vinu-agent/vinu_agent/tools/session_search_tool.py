@@ -10,6 +10,9 @@ class SessionSearchTool(BaseTool):
     }
     is_readonly = True
 
+    def __init__(self):
+        self._session_service = None
+
     def execute(self, **kwargs) -> str:
         session_service = getattr(self, "_session_service", None)
         if session_service is None:

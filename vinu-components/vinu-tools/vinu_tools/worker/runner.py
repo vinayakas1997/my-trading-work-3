@@ -68,6 +68,10 @@ class FeatureWorker:
             if run_dir.exists():
                 shutil.rmtree(run_dir)
             completed, row_count = self.engine.process(request, data_root=self.config.data_dir)
+            if row_count == 0:
+                raise ValueError(
+                    "No candle data returned for any requested symbol in the given range"
+                )
             if request.ml_model and request.ml_label:
                 from vinu_tools.compute.ml.models.runner import run_ml_step
 

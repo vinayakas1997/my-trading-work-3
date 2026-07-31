@@ -472,11 +472,18 @@ class PortfolioService:
             if plan_found:
                 n_available += 1
 
-        readiness_score = n_available / max(n_total, 1)
+        regime_available = bool(regime_info) and regime_info.get("regime") is not None
+        equity_available = equity is not None
+
+        n_data_points = n_total + 2  # + regime + equity, each counted once per plan
+        n_available_points = n_available + int(regime_available) + int(equity_available)
+        readiness_score = n_available_points / max(n_data_points, 1)
         ready = readiness_score >= self._config.game_plan_readiness_threshold
         readiness_flags = {
             "n_total": n_total,
             "n_with_plan": n_available,
+            "regime_available": regime_available,
+            "equity_available": equity_available,
             "readiness_score": round(readiness_score, 4),
             "game_ready": ready,
         }

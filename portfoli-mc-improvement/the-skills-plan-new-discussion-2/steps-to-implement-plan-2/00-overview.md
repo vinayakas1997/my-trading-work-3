@@ -85,10 +85,10 @@ Three new realities shape this plan differently from the first:
 | 1 | [01-stage-skills.md](01-stage-skills.md) | D1 | nothing | 02, 03, 06 | Completed |
 | 2 | [02-shock-clustering.md](02-shock-clustering.md) | D2 | 01 | 04 | Completed |
 | 2 | [03-probabilistic-exit.md](03-probabilistic-exit.md) | D3 | 01 | 04 | Completed |
-| 3 | [04-daily-plan-document.md](04-daily-plan-document.md) | D4 | 02, 03 | 05 | Not Started |
-| 3 | [05-risk-budget.md](05-risk-budget.md) | D5 | 04 | 07 | Not Started |
-| 4 | [06-agent-integration.md](06-agent-integration.md) | D6 | 01 | 07 | Not Started |
-| 5 | [07-validation.md](07-validation.md) | D7 | 05, 06 | — | Not Started |
+| 3 | [04-daily-plan-document.md](04-daily-plan-document.md) | D4 | 02, 03 | 05 | Completed |
+| 3 | [05-risk-budget.md](05-risk-budget.md) | D5 | 04 | 07 | Completed |
+| 4 | [06-agent-integration.md](06-agent-integration.md) | D6 | 01 | 07 | Completed |
+| 5 | [07-validation.md](07-validation.md) | D7 | 05, 06 | — | In Progress |
 
 **Reading the table:** Phase 2's two steps (02, 03) can run in parallel —
 both depend on 01 but not on each other. Phase 3's `04` needs both `02` and

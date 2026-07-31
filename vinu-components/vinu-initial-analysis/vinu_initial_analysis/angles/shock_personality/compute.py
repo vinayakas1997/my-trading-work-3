@@ -23,7 +23,8 @@ def _detect_gap_shocks(
         z = (gaps.iloc[i] - gap_mean) / max(gap_std, 1e-12)
         if abs(z) > gap_std_threshold:
             shocks.append({
-                "date": bars.index[i] if hasattr(bars.index, '__getitem__') else str(bars.index[i]),
+                "date": int(bars["bar_ts"].iloc[i]),
+                "idx": i,
                 "type": "gap",
                 "magnitude": float(gaps.iloc[i]),
                 "z_score": float(z),
@@ -49,7 +50,8 @@ def _detect_vol_shocks(
         z = (daily_range.iloc[i] - rolling_mean.iloc[i]) / max(rolling_std.iloc[i], 1e-12)
         if z > vol_z_threshold:
             shocks.append({
-                "date": bars.index[i] if hasattr(bars.index, '__getitem__') else str(bars.index[i]),
+                "date": int(bars["bar_ts"].iloc[i]),
+                "idx": i,
                 "type": "vol_spike",
                 "magnitude": float(z),
                 "z_score": float(z),
@@ -66,17 +68,21 @@ def _cross_reference_news(
         return shocks
     news_dates = set()
     for article in news:
-        ts = article.get("published_at") or article.get("timestamp") or article.get("date", "")
-        if ts:
-            try:
+        ts = article.get("sort_ts") or article.get("published_at") or article.get("timestamp") or article.get("date")
+        if ts is None or ts == "":
+            continue
+        try:
+            if isinstance(ts, (int, float, np.integer, np.floating)):
+                d = pd.Timestamp(int(ts), unit="s").normalize()
+            else:
                 d = pd.Timestamp(ts).normalize()
-                news_dates.add(d)
-            except Exception:
-                pass
+            news_dates.add(d)
+        except Exception:
+            pass
 
     for shock in shocks:
         try:
-            shock_date = pd.Timestamp(shock["date"]).normalize()
+            shock_date = pd.Timestamp(int(shock["date"]), unit="s").normalize()
         except Exception:
             continue
         for nd in news_dates:
@@ -122,11 +128,8 @@ def _compute_gap_fill_rate(
     for shock in shocks:
         if shock["type"] != "gap":
             continue
-        try:
-            idx = bars.index.get_loc(pd.Timestamp(shock["date"]))
-        except Exception:
-            continue
-        if idx + fill_window >= len(close):
+        idx = shock.get("idx")
+        if idx is None or idx + fill_window >= len(close):
             continue
         gap_size = abs(shock["magnitude"])
         if gap_size <= 0:
@@ -192,9 +195,8 @@ def _compute_drift_persistence(
 
     drift_lengths = []
     for shock in shocks:
-        try:
-            idx = bars.index.get_loc(pd.Timestamp(shock["date"]))
-        except Exception:
+        idx = shock.get("idx")
+        if idx is None:
             continue
         post_shock = returns.iloc[idx: idx + max_lag]
         if len(post_shock) < 3:

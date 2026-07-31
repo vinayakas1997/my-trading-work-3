@@ -147,7 +147,7 @@ def articles_since(
     return DataResponse(count=len(rows), data=rows)
 
 
-@router.post("/news/analyze", response_model=AnalyzeResponse)
+@router.post("/analyze", response_model=AnalyzeResponse)
 def analyze_news(body: AnalyzeRequest) -> AnalyzeResponse:
     service = get_service()
     try:

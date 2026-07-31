@@ -1,5 +1,7 @@
 """News-Price Causality — Granger, Pearson correlation, lag analysis, impact scoring."""
 
+from typing import Any
+
 import pandas as pd
 from datetime import datetime, timezone
 
@@ -19,18 +21,40 @@ def compute(
     from_ts: int | None = None,
     to_ts: int | None = None,
     time_format: str | None = None,
+    price_client: Any = None,
 ) -> pd.DataFrame:
     now = datetime.now(timezone.utc).isoformat()
     articles = news or []
     candles = bars_to_candle_list(bars)
     rows: list[dict] = []
 
+    # Per-article event study (impact labels, price changes, abnormal
+    # returns) — driven by the highest-resolution bars already fetched for
+    # this angle (15m) so it needs no per-article HTTP and no 1m cache
+    # (Bug-7). Run once, under the 15min pass, to avoid triplicating rows.
+    if time_format == "15min" and articles and candles:
+        from .impact import compute_impact_for_article
+
+        candles_by_ticker = {symbol: sorted(candles, key=lambda c: c.get("bar_ts", 0))}
+        for article in articles:
+            events = compute_impact_for_article(
+                article,
+                price_client=price_client,
+                candles_by_ticker=candles_by_ticker,
+            )
+            for ev in events:
+                ev.setdefault("symbol", symbol)
+                ev["analysis_at"] = now
+                ev["angle"] = "news_price_causality"
+                rows.append(ev)
+
     if not articles or not candles:
-        rows.append({
-            "symbol": symbol, "analysis_at": now, "angle": "news_price_causality",
-            "type": "status", "granger_causes_prices": False,
-            "news_return_corr": 0.0, "best_lag_minutes": 0, "event_count": 0,
-        })
+        if not any(r.get("type") == "impact" for r in rows):
+            rows.append({
+                "symbol": symbol, "analysis_at": now, "angle": "news_price_causality",
+                "type": "status", "granger_causes_prices": False,
+                "news_return_corr": 0.0, "best_lag_minutes": 0, "event_count": 0,
+            })
         return pd.DataFrame(rows)
 
     # Granger causality

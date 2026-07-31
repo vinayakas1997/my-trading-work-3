@@ -22,6 +22,9 @@ class RememberTool(BaseTool):
     }
     is_readonly = False
 
+    def __init__(self):
+        self._unified_memory = None
+
     def execute(self, **kwargs) -> str:
         unified = getattr(self, "_unified_memory", None)
         if unified is None:

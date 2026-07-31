@@ -170,3 +170,61 @@ capital differently based on paper-trading confirmation, that requires
 Stage 2 to actually run first; building around its absence (e.g. treating
 every ACTIVE artifact as equally trusted) silently inherits this gap
 rather than accounting for it.
+
+### Daily risk budget — soft graduated response, between Stage 3 and per-position exits (Step 05, D5)
+
+`vinu_portfolio/risk_budget.py::compute_risk_budget()`
+(`GET /portfolio/risk/status`, CLI `vinu-portfolio risk-status`) adds a
+softer, graduated layer that sits between the probabilistic per-position
+exit (Step 03) and Stage 3's all-or-nothing -20% circuit breaker above.
+Per symbol it computes a 3-tier response based on today's P&L as a
+fraction of account equity:
+
+| Tier | Threshold (default) | Effect |
+|---|---|---|
+| 0 (none) | above -1% | no change |
+| `TIER_WARNING` (1) | ≤ -1% | flagged, no size change |
+| `TIER_REDUCE` (2) | ≤ -2% | `suggested_size_multiplier` halved |
+| `TIER_HALT` (3) | ≤ -3% | `suggested_size_multiplier` → 0.0 |
+
+These are *suggestions* returned in the response (`suggested_size_multiplier`,
+`halted`) — unlike Stage 3/4, this module does not itself call
+`POST /broker/halt` or block an order. Nothing currently reads
+`compute_risk_budget()`'s output to act on it automatically; it is a
+decision-support signal for whatever places the next order (human or
+agent), not an enforcement point. Treat it as informational until
+something is wired to consume it the way Stage 4 consumes Stage 3.
+
+**Regime tightening is a flat portfolio-wide multiplier, not the
+tag-alignment formula from this step's research notes.** The step file's
+research notes describe `alignment_score` (1.0 when regime matches a
+strategy's tag, down to 0.3 when opposing) tightening each strategy's own
+position limit and invalidation distance individually. What's actually
+implemented, `REGIME_SIZING_MULTIPLIERS` (`{"bull": 1.0, "bear": 0.8,
+"sideways": 0.9, "high_vol": 0.6}`), is simpler: one multiplier per
+portfolio based only on the current regime label, applied uniformly to
+every symbol's `regime_band_multiplier` — it does not look at any
+strategy's tag alignment (`strategy-tags/tags.yaml`) at all. This is a
+real, deliberate simplification for v1, not a bug — but it means "regime
+tightening" here is coarser than what the research notes originally
+scoped. Composing per-strategy tag alignment into this multiplier (like
+`daily-allocation`'s `_REGIME_TO_TAGS` mapping does for allocation
+weights) is future work, not done here.
+
+**`DailyPositionTracker` does not accumulate across calls in production —
+confirmed by tracing the only caller.** `compute_risk_status()`
+(`service.py`) instantiates a fresh `DailyPositionTracker()` on every
+single call before passing it into `compute_risk_budget()`. The tracker
+class itself supports accumulating P&L across repeated
+`record_daily_pnl()` calls through the day (and is unit-tested doing so),
+but because a new, empty tracker is created per request, `daily_pnl` in
+production is always just the latest snapshot of each position's
+`unrealized_pl` from `/agent/broker/positions` for that one call — never
+a running total built from polling `compute_risk_status()` repeatedly
+through the day. Whether this matters depends on what `unrealized_pl`
+itself represents (open-position mark-to-market vs. day's total P&L
+including closed trades) — that wasn't traced further here. If a true
+intraday accumulator is needed, `PortfolioService` needs to hold one
+`DailyPositionTracker` instance across requests (e.g. as an instance
+attribute, mirroring how `drawdown_scheduler.py` holds monitor state
+across polls) instead of constructing one per call.
