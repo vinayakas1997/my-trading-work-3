@@ -43,7 +43,12 @@ class RulesEngine:
         results = []
         for cond in conditions:
             source_data = ctx.get(cond.source, {})
-            actual = source_data.get(cond.key)
+            actual = source_data
+            for part in cond.key.split("."):
+                if not isinstance(actual, dict) or part not in actual:
+                    actual = None
+                    break
+                actual = actual[part]
             met = self._check_condition(cond.operator, actual, cond.value)
             results.append({
                 "source": cond.source,

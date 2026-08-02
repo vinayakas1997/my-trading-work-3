@@ -1,6 +1,6 @@
 # vinu-news — Test Log
 
-**Status:** Passed — full checklist verified 2026-07-31 (see "Verification results" below; 3 bugs found & fixed: Bug-2/3/4)
+**Status:** Passed — full checklist verified 2026-07-31 (see "Verification results" below; 3 bugs found & fixed: Bug-2/3/4); Bug-5 (news backfill sync→async) found & fixed 2026-08-01
 
 ## What will be tested
 
@@ -211,4 +211,63 @@
   LLM analysis; `POST /news/analyze/backfill` → 200 (`{"submitted":5}`).
   `run_pipeline.py` continues to work: it calls `{base}/news/analyze` where
   base already includes `/news`.
+- **Status:** fixed.
+
+### Bug-5 — `POST /backfill/trigger` blocks the HTTP request for the full backfill duration (no job tracking, unlike stock-price)
+
+- **Found during:** Stage 1 checklist — about to trigger the AAPL news
+  backfill (`POST /backfill/trigger?ticker=AAPL`) and noticed
+  `vinu-stock-price`'s equivalent endpoint returns a `job_id` immediately
+  (async, poll `GET /backfill/status/{job_id}`), while news's does not.
+- **Date:** 2026-08-01
+- **Symptom:** `routes_config.py`'s `trigger_backfill` called
+  `NewsService.run_backfill_single`/`run_backfill_all` directly inline in
+  the request handler — a multi-year, multi-chunk fetch loop — so the HTTP
+  response only returns once the entire backfill finishes. A full-history
+  backfill (per this log's own verification results above: AAPL 9,225
+  articles across 2021-11-01 → 2026-06-30) can run for minutes; any client
+  or reverse-proxy timeout in front of it kills the connection with no way
+  to check whether the backfill actually completed. There was also no
+  guard preventing two overlapping triggers for the same ticker from
+  racing on `backfilled_up_to_ts`.
+- **Reproduction:** `curl -X POST localhost:8080/news/backfill/trigger?ticker=AAPL`
+  (before fix) — call blocks until the full backfill loop finishes; no
+  `job_id`, no way to poll progress from another request.
+- **Root cause (confirmed):** `vinu-news/vinu_news/server/routes_config.py`
+  had no thread/job-tracking layer around the backfill call, unlike
+  `vinu-stock-price/vinu_stock/server/routes_config.py:103-148`, which
+  spawns a daemon thread, tracks `job_id` → status in an in-memory dict,
+  and guards against concurrent runs with a non-blocking lock.
+- **Severity:** major (usability/reliability — long blocking request with
+  no progress visibility and a real race-condition path, though not a
+  correctness bug on its own).
+- **Fix applied:**
+  - `vinu-news/vinu_news/server/routes_config.py`: `POST /backfill/trigger`
+    now spawns a daemon thread, returns
+    `{"ok": true, "summary": {"job_id": ..., "status": "running"}}`
+    immediately, records `running`/`done`/`failed` + `results`/`error` in
+    an in-memory `_background_jobs` dict, and returns `409` (with the
+    running job's id) if a second trigger arrives while one is in flight.
+    Added `GET /backfill/job/{job_id}` for polling.
+  - `vinu-news/web/src/App.jsx`: `triggerBackfillSingle`/`triggerBackfillAll`
+    now read `job_id` from the trigger response and poll
+    `/backfill/job/{job_id}` every 2s instead of reading `results` directly
+    off the trigger response.
+  - `vinu-news/docs/book/part-4-operations/ch22-http-api.md`: documented
+    the new async contract and the previously-undocumented backfill routes.
+- **Verification:** rebuilt `news-api` (`docker compose build news-api &&
+  docker compose up -d --no-deps news-api`) — container came up healthy.
+  Against the live container:
+  `curl -X POST localhost:8080/news/backfill/trigger?ticker=AAPL` → `200`,
+  returns `{"job_id":"6110ba4c9641","status":"running"}` immediately (not
+  blocked); `GET /news/backfill/job/6110ba4c9641` → `200`,
+  `{"status":"running","results":[]}`; a second trigger
+  (`?ticker=TSLA`) while the first was still running → `409`
+  `{"detail":"Backfill already running (job_id=6110ba4c9641)"}`, confirming
+  the concurrency guard. `python -m pytest -q` (vinu-news): 87/87 pass, no
+  regressions. Full job completion (`status: done`) not observed in this
+  session — the AAPL job was still processing multi-year history when
+  verification concluded; this is expected given the historical depth
+  confirmed above, and is consistent with the endpoint no longer blocking
+  the caller while it runs.
 - **Status:** fixed.

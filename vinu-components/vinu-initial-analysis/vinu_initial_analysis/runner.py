@@ -39,6 +39,7 @@ class AngleRunner:
         self._price_client = price_client
         self._angles: list[dict[str, Any]] = []
         self._bar_cache: dict[tuple[str, str], pd.DataFrame] = {}
+        self._news_cache: dict[tuple[str, int | None, int | None], list[dict]] = {}
         self._discover()
 
     # -- discovery ----------------------------------------------------------
@@ -89,6 +90,7 @@ class AngleRunner:
         Returns a summary dict keyed by angle_name.
         """
         self._bar_cache.clear()
+        self._news_cache.clear()
         results: dict[str, Any] = {}
         to_run = [a for a in self._angles if angle_names is None or a["name"] in angle_names]
 
@@ -208,14 +210,20 @@ class AngleRunner:
         from_ts: int | None,
         to_ts: int | None,
     ) -> list[dict]:
-        """Fetch news articles for the symbol."""
+        """Fetch news articles for the symbol (cached once per run)."""
         if self._news_client is None:
             return []
+        key = (symbol.upper(), from_ts, to_ts)
+        cached = self._news_cache.get(key)
+        if cached is not None:
+            return cached
         try:
             articles = self._news_client.get_ticker_news(symbol, from_ts=from_ts, to_ts=to_ts)
+            self._news_cache[key] = articles or []
             return articles or []
         except Exception:
             LOG.exception("Failed to fetch news for %s", symbol)
+            self._news_cache[key] = []
             return []
 
     # -- helpers ------------------------------------------------------------

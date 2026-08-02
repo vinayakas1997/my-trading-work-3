@@ -59,8 +59,11 @@ class TestAngleStorageRead:
             storage = _storage(tmp)
             _write_runs(storage, "AAPL", "test", 12)
             df = storage.read("AAPL", "test")
-            # 10 surviving runs, each with 1 data row + 8 fixed columns = 9 cols
-            assert len(df) == 10
+            # read() surfaces only the latest run — older runs are superseded
+            # results for the same angle, not additional data points, so they
+            # must not be concatenated in (that silently double-counts events
+            # on every re-run).
+            assert len(df) == 1
 
     def test_read_latest_returns_most_recent(self):
         with TemporaryDirectory() as tmp:

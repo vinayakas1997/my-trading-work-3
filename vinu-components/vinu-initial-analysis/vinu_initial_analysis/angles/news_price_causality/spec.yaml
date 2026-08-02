@@ -2,6 +2,7 @@ title: News-Price Causality
 purpose: Statistical proof of news impact on price — Granger causality, Pearson correlation,
   lag analysis, event study
 time_formats:
+- 1min
 - 15min
 - 1H
 - 1D

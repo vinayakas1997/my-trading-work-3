@@ -137,7 +137,7 @@ async def get_feature_or_symbol(symbol_or_kind: str, indicators: str | None = No
             for attempt in range(_REATTEMPTS):
                 try:
                     async with httpx.AsyncClient() as client:
-                        resp = await client.get(url, params=params, timeout=10.0)
+                        resp = await client.get(url, params=params, timeout=60.0)
                     resp.raise_for_status()
                     data = resp.json()
                     candles = data.get("data", [])

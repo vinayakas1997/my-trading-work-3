@@ -1,6 +1,45 @@
 # vinu-simulator — Test Log
 
-**Status:** Not started
+**Status:** VERIFIED (2026-08-02) — custom backtest runs on real OHLCV +
+indicators across 2022-2026; metrics/equity/trades reconcile. Benchmark
+baseline gap noted below.
+
+## Verification results (2026-08-02)
+
+- **`POST /simulate` (replay stored weights):** gated on strategy weight
+  history being dated within the range. `vinu-strategy` writes weights at
+  the *current* rebalance date only (no historical rebalance backfill), so
+  there are no weight rows dated 2022-01-01→2026-06-30 yet. This returns
+  `"No weight data found for strategy ... in range ..."` — expected, not
+  a crash; it confirms the dependency on strategy weight history.
+- **`POST /simulate/custom` (code strategy + real data):** validated the
+  full engine with real OHLCV + indicators (sma_20/sma_50/adx_14/
+  volatility_20d) over 2022-01-03→2026-06-30 for AAPL/TSLA/JNJ.
+  - `run_id`: `1487b17d-3894-43c0-ae56-d2d47ff46e6e`
+  - **Metrics (full):** total_return `+84.6%`, CAGR `14.8%`, Sharpe
+    `0.65`, Sortino `0.84`, max drawdown `-38.9%`, Calmar `0.38`, win
+    rate `51.9%`, VaR95 `-2.6%`, CVaR95 `-3.6%` — no NaN/inf.
+  - **P&L reconcile:** equity curve end value `184,649.89` =
+    `100,000 × (1 + 0.8465)` ✓. Equity has `1124` daily points, last
+    `2026-06-29`.
+  - `GET /results/{run_id}/metrics`, `/equity`, `/trades` all return
+    (trades: 261 rows).
+  - **Baseline:** `benchmark_metrics` is empty — see gap below (SPY/QQQ
+    aren't in the fetched price columns for the custom path, and stock-api
+    doesn't have QQQ cached at all — catalog = AAPL/JNJ/SPY/TSLA only).
+  - Cost/slippage params applied (transaction_cost_pct 0.001, slippage_pct
+    0.001, slippage_model almgren_chriss) — included in the run config and
+    fills.
+
+## Benchmark baseline gap
+
+- stock-api catalog has SPY but **no QQQ**. Even SPY isn't compared
+  because `_compute_benchmark_metrics` only iterates `price_data.columns`,
+  which for the custom/simulate path is the strategy universe (AAPL/TSLA/
+  JNJ), not the benchmark tickers. So `benchmark_metrics == {}`. To get a
+  real SPY/QQQ comparison we'd need to (a) add QQQ to stock catalog, and
+  (b) ensure benchmark tickers are fetched into the price frame. Logged as
+  a follow-up; the core engine metrics are already verified above.
 
 ## What will be tested
 

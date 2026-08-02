@@ -36,6 +36,10 @@ Three distinct data types are stored as Parquet tables, each requiring a well-de
 | `car_1h` | float64 | Cumulative abnormal return |
 | `ar_p_value` | float64 | Event study p-value |
 | `ar_significant` | bool | Significance flag |
+| `ar_model` | string | Which model produced the abnormal return: `market` (SPY-adjusted), `mean_adjusted` (stock's own historical mean, fallback), or `none` (not enough candles) |
+| `novelty_score` | float64 | TF-IDF text-similarity novelty, 1.0 = genuinely new, near 0.0 = rehash of recent coverage. See `angles/news_price_causality/novelty.py` |
+| `significance_score` | float64 | Predicted probability (0-1) that this article causes a significant abnormal move, using only pre-event features — usable the instant the article lands, unlike `ar_significant`. Absent if the symbol didn't have enough history to train on. See `angles/news_price_causality/significance_model.py` |
+| `significance_score_sample` | string | `train` or `test` — whether this row's score is in-sample (optimistic) or genuinely held-out. Check the `significance_model_eval` row's AUC before trusting `train` rows |
 | `thread_id` | string | Story thread ID |
 | `computed_at` | int64 | When the event was computed |
 

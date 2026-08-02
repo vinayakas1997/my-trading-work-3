@@ -23,7 +23,9 @@ CREATE TABLE IF NOT EXISTS articles (
     entities_json   TEXT NOT NULL DEFAULT '{}',
     cluster_id      TEXT,
     is_lead         INTEGER NOT NULL DEFAULT 1,
-    thread_id       TEXT
+    thread_id       TEXT,
+    finbert_score   REAL,
+    finbert_label   TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_articles_sort_ts ON articles(sort_ts DESC);

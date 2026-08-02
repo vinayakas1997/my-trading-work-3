@@ -5,7 +5,7 @@
 | **Package** | vinu-news |
 | **Module** | `vinu_news/server/routes_read.py`, `routes_config.py`, `app.py` |
 | **Status** | REVIEW |
-| **Verified** | 2026-07-01 |
+| **Verified** | 2026-08-01 |
 | **Prerequisites** | Ch 01, Ch 06 |
 
 ## Learning objectives
@@ -66,6 +66,7 @@ flowchart LR
 4. Read routes query repository with limits (typically max 500).
 5. Config routes mutate settings/watchlist in DB.
 6. `POST /ingest/trigger` runs one full ingestion cycle synchronously.
+7. `POST /backfill/trigger` is async: it spawns a background thread and returns `{"job_id": ...}` immediately; poll `GET /backfill/job/{job_id}` for status/results. A second trigger while one is running gets `409`.
 
 ## 6. Configuration
 
@@ -141,6 +142,11 @@ curl -X POST http://localhost:8080/news/analyze \
 | DELETE | `/watchlist/tickers/{symbol}` | — | `WatchlistResponse` |
 | POST | `/watchlist/sync` | — | sync result dict |
 | POST | `/ingest/ticker-news` | `days=7` | Yahoo ticker news summary (delegates to `run_ingestion_cycle(source="ticker_news")`) |
+| GET | `/backfill/status` | — | Per-ticker backfill enabled/progress state |
+| POST | `/backfill/{ticker}/toggle` | body: `{"enabled": bool}` | Enable/disable backfill for ticker |
+| POST | `/backfill/trigger` | `ticker?` (single ticker, else all enabled) | Async — `{"ok": true, "summary": {"job_id": ..., "status": "running"}}`; `409` if a backfill job is already running |
+| GET | `/backfill/job/{job_id}` | — | Job status: `running` \| `done` \| `failed`, plus `results` (list of per-ticker outcomes) or `error` |
+| POST | `/analyze/backfill` | body: `{"limit": 500}` | Submit unanalyzed articles to LLM analysis queue |
 
 ### App route (`app.py`)
 

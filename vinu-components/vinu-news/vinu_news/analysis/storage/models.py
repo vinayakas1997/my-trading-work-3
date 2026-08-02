@@ -32,6 +32,8 @@ class ArticleRecord:
     cluster_id: str | None = None
     is_lead: int = 1
     thread_id: str | None = None
+    finbert_score: float | None = None
+    finbert_label: str | None = None
 
     def tickers_list(self) -> list[str]:
         return json.loads(self.tickers)

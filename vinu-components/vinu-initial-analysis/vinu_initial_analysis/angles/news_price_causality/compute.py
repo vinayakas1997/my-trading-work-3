@@ -1,5 +1,6 @@
 """News-Price Causality — Granger, Pearson correlation, lag analysis, impact scoring."""
 
+import logging
 from typing import Any
 
 import pandas as pd
@@ -12,6 +13,10 @@ from .correlation import (
     resample_news_to_hourly, resample_returns_to_hourly,
 )
 from .granger import run_granger_causality_test
+from .novelty import compute_novelty_scores
+from .significance_model import score_significance
+
+LOG = logging.getLogger(__name__)
 
 
 def compute(
@@ -30,23 +35,69 @@ def compute(
 
     # Per-article event study (impact labels, price changes, abnormal
     # returns) — driven by the highest-resolution bars already fetched for
-    # this angle (15m) so it needs no per-article HTTP and no 1m cache
-    # (Bug-7). Run once, under the 15min pass, to avoid triplicating rows.
-    if time_format == "15min" and articles and candles:
+    # this angle (1m, added to fix Bug-8: price_change_5m/15m were unusable
+    # from 15m bars, which can't resolve a 5-15 minute window) so it needs
+    # no per-article HTTP and no separate cache. Run once, under the 1min
+    # pass, to avoid triplicating rows.
+    if time_format == "1min" and articles and candles:
         from .impact import compute_impact_for_article
 
         candles_by_ticker = {symbol: sorted(candles, key=lambda c: c.get("bar_ts", 0))}
+
+        # Market-factor control: fit abnormal returns against SPY instead of
+        # the stock's own historical mean, so a market-wide move (e.g. a Fed
+        # announcement) doesn't get misattributed to whatever news article
+        # happens to land in the same window. Best-effort — if SPY isn't
+        # backfilled or the fetch fails, compute_abnormal_return() falls
+        # back to the mean-adjusted model automatically (market_candles=None).
+        market_candles: list[dict] | None = None
+        if price_client is not None and symbol != "SPY":
+            try:
+                spy = price_client.get_candles(
+                    "SPY", from_ts=from_ts, to_ts=to_ts, interval="1min",
+                )
+                if spy:
+                    market_candles = sorted(spy, key=lambda c: c.get("bar_ts", 0))
+            except Exception:
+                LOG.warning("SPY fetch failed for market-model abnormal returns; falling back to mean-adjusted model", exc_info=True)
+
         for article in articles:
             events = compute_impact_for_article(
                 article,
                 price_client=price_client,
                 candles_by_ticker=candles_by_ticker,
+                market_candles=market_candles,
             )
             for ev in events:
                 ev.setdefault("symbol", symbol)
                 ev["analysis_at"] = now
                 ev["angle"] = "news_price_causality"
                 rows.append(ev)
+
+        # Novelty score + significance classifier — both are pre-event
+        # features (computable the instant the article lands, unlike
+        # ar_significant which needs the post-event price window). See
+        # novelty.py and significance_model.py docstrings for what these
+        # scores mean and how to use them; this is deliberately the only
+        # place they're wired in, so future changes to the feature set
+        # only need to happen in those two modules.
+        impact_rows = [r for r in rows if r.get("type") == "impact"]
+        if impact_rows:
+            novelty_map = compute_novelty_scores(articles)
+            articles_by_id = {a.get("id"): a for a in articles}
+            for r in impact_rows:
+                r["novelty_score"] = novelty_map.get(r.get("article_id"), 1.0)
+
+            scores, sample_labels, sig_eval = score_significance(impact_rows, articles_by_id)
+            for i, r in enumerate(impact_rows):
+                if i in scores:
+                    r["significance_score"] = scores[i]
+                    r["significance_score_sample"] = sample_labels[i]
+            if sig_eval is not None:
+                rows.append({
+                    "symbol": symbol, "analysis_at": now, "angle": "news_price_causality",
+                    "type": "significance_model_eval", **sig_eval,
+                })
 
     if not articles or not candles:
         if not any(r.get("type") == "impact" for r in rows):

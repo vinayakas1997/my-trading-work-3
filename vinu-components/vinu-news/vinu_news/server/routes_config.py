@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import threading
+import uuid
+from typing import Any
+
 from fastapi import APIRouter, HTTPException
 
 from vinu_news.server.schemas import (
@@ -16,6 +20,26 @@ from vinu_news.server.schemas import BackfillToggleRequest, IngestTriggerRespons
 from vinu_news.service import NewsService
 
 router = APIRouter(tags=["config"])
+
+_background_jobs: dict[str, dict[str, Any]] = {}
+_jobs_lock = threading.Lock()
+_backfill_lock = threading.Lock()
+_JOBS_MAX = 50
+
+
+def _cleanup_old_jobs() -> None:
+    """Remove oldest entries when dict exceeds max size (caller must hold _jobs_lock)."""
+    while len(_background_jobs) > _JOBS_MAX:
+        oldest = next(iter(_background_jobs))
+        del _background_jobs[oldest]
+
+
+def _get_running_job_id(job_type: str) -> str | None:
+    with _jobs_lock:
+        for jid, job in _background_jobs.items():
+            if job.get("type") == job_type and job.get("status") == "running":
+                return jid
+    return None
 
 
 def get_service() -> NewsService:
@@ -201,14 +225,57 @@ def trigger_ingest():
     )
 
 
-@router.post("/backfill/trigger")
-def trigger_backfill(ticker: str | None = None) -> dict:
-    service = get_service()
-    if ticker:
-        result = service.run_backfill_single(ticker)
-    else:
-        result = service.run_backfill_all()
-    return {"results": result if isinstance(result, list) else [result]}
+@router.post("/backfill/trigger", response_model=IngestTriggerResponse)
+def trigger_backfill(ticker: str | None = None) -> IngestTriggerResponse:
+    if not _backfill_lock.acquire(blocking=False):
+        running_job_id = _get_running_job_id("backfill")
+        detail = "Backfill already running"
+        if running_job_id:
+            detail = f"Backfill already running (job_id={running_job_id})"
+        raise HTTPException(status_code=409, detail=detail)
+    job_id = uuid.uuid4().hex[:12]
+    with _jobs_lock:
+        _background_jobs[job_id] = {"type": "backfill", "status": "running", "results": []}
+        _cleanup_old_jobs()
+
+    def _run() -> None:
+        try:
+            service = get_service()
+            if ticker:
+                result = service.run_backfill_single(ticker)
+            else:
+                result = service.run_backfill_all()
+            results = result if isinstance(result, list) else [result]
+            with _jobs_lock:
+                _background_jobs[job_id] = {
+                    "type": "backfill",
+                    "status": "done",
+                    "results": results,
+                }
+                _cleanup_old_jobs()
+        except Exception as exc:
+            with _jobs_lock:
+                _background_jobs[job_id] = {
+                    "type": "backfill",
+                    "status": "failed",
+                    "results": [],
+                    "error": str(exc),
+                }
+                _cleanup_old_jobs()
+        finally:
+            _backfill_lock.release()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return IngestTriggerResponse(ok=True, summary={"job_id": job_id, "status": "running"})
+
+
+@router.get("/backfill/job/{job_id}")
+def backfill_job_status(job_id: str) -> dict:
+    with _jobs_lock:
+        job = _background_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 @router.post("/analyze/backfill")
@@ -217,3 +284,57 @@ def trigger_analysis_backfill(body: AnalysisBackfillRequest = AnalysisBackfillRe
     service = get_service()
     result = service.backfill_analysis(limit=body.limit)
     return result
+
+
+_finbert_lock = threading.Lock()
+
+
+@router.post("/finbert/backfill", response_model=IngestTriggerResponse)
+def trigger_finbert_backfill(batch_size: int = 500) -> IngestTriggerResponse:
+    """Score all articles missing finbert_score, in batches, until none remain."""
+    if not _finbert_lock.acquire(blocking=False):
+        running_job_id = _get_running_job_id("finbert")
+        detail = "FinBERT backfill already running"
+        if running_job_id:
+            detail = f"FinBERT backfill already running (job_id={running_job_id})"
+        raise HTTPException(status_code=409, detail=detail)
+    job_id = uuid.uuid4().hex[:12]
+    with _jobs_lock:
+        _background_jobs[job_id] = {"type": "finbert", "status": "running", "scored_total": 0}
+        _cleanup_old_jobs()
+
+    def _run() -> None:
+        try:
+            service = get_service()
+            total = 0
+            while True:
+                result = service.backfill_finbert_sentiment(limit=batch_size)
+                total += result["scored"]
+                with _jobs_lock:
+                    _background_jobs[job_id] = {
+                        "type": "finbert", "status": "running", "scored_total": total,
+                        "remaining": result["remaining"],
+                    }
+                if result["scored"] == 0 or result["remaining"] == 0:
+                    break
+            with _jobs_lock:
+                _background_jobs[job_id] = {"type": "finbert", "status": "done", "scored_total": total}
+                _cleanup_old_jobs()
+        except Exception as exc:
+            with _jobs_lock:
+                _background_jobs[job_id] = {"type": "finbert", "status": "failed", "error": str(exc)}
+                _cleanup_old_jobs()
+        finally:
+            _finbert_lock.release()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return IngestTriggerResponse(ok=True, summary={"job_id": job_id, "status": "running"})
+
+
+@router.get("/finbert/job/{job_id}")
+def finbert_job_status(job_id: str) -> dict:
+    with _jobs_lock:
+        job = _background_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job

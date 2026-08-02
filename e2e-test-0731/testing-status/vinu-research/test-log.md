@@ -1,51 +1,54 @@
 # vinu-research — Test Log
 
-**Status:** Not started
+**Status:** VERIFIED (2026-08-02) — LLM connectivity confirmed; real
+trade plans generated for AAPL/TSLA/JNJ via `qwen36-35B`; calibration loop
+works. One config fix needed (LLM timeout), logged below.
 
-## What will be tested
+## Verification results (2026-08-02)
 
-**This is where the complex tier's entire test lives** — there is no
-`vinu-strategy` YAML for it (see
-[../../scope-responsibilities/vinu-strategy.md](../../scope-responsibilities/vinu-strategy.md)).
-Testing means calling this service's real endpoints directly for AAPL,
-TSLA, JNJ and inspecting the output, not writing rule conditions:
+- **Prereq `VINU_RESEARCH_LLM_ENABLED`:** already `true` in `.env`; confirmed
+  inside container.
+- **LLM connectivity (container→host):** success. `host.docker.internal:8009`
+  reachable from `research-api`; verified model `qwen36-35B` (n_ctx 32000).
+  Note: model is a *reasoning* model — with too-small `max_tokens` it fills
+  `reasoning_content` and returns empty `content`. Service uses
+  `VINU_LLM_MAX_TOKENS=8000`, fine.
+- **`POST /research/trade-plan/{symbol}`** (complex tier core):
+  - `AAPL` → `art_86803b85d69c`, **long**, confidence **0.55**,
+    magnitude **0.5%**, 1-day horizon, real reasoning about
+    win-rate/Kelly/vol-persistence/gap-fill; risk_bands,
+    contingency_rules, invalidation_conditions all populated.
+  - `TSLA` → `art_07af597dd6c25`, **neutral**, conf **0.38**.
+  - `JNJ` → `art_2022...`, **neutral**, conf **0.45`.
+  - Each plan is distinct + data-driven (not a template), and forecast
+    includes direction/magnitude/confidence/reasoning extracted from the
+    actual model output.
+- **`POST /trade-plan/{id}/record-outcome`:** recorded `forward_return_pct 0.6`
+  on AAPL → returns `directional_correct: true`, `brier_score 0.2025`,
+  `magnitude_error 0.167`.
+- **`GET /trade-plan/{id}/calibration`:** n_entries 1, accuracy 1.0,
+  brier_mean 0.2025, magnitude_mape 0.167; `passed:false` with reason
+  `insufficient calibration entries (1 < 10)` — promotion gate working.
 
-1. **Prerequisite check:** `VINU_RESEARCH_LLM_ENABLED` must be `true` in
-   `vinu-components/.env` (currently `false` — flip before testing this
-   component, otherwise the LLM path likely never gets exercised).
-2. **LLM connectivity:** local OpenAI-compatible server on the host at
-   port 8009 (`qwen36-35B`), reachable from inside the `research-api`
-   container via `http://host.docker.internal:8009/v1`. Confirm this
-   actually connects before trusting any generated output — `extra_hosts`
-   is configured in `docker-compose.yml` but has never been exercised.
-3. **`POST /trade-plan/{symbol}`** for each of AAPL, TSLA, JNJ — the core
-   call. Internally this should invoke the LLM (`forecast_skill.py`) to
-   produce a forecast, then use calibration data
-   (`judgment_store.py`) to compute a probability-scored exit level
-   (`trade_plan_authoring.py` — built in Step 03 of the prior audit plan).
-4. **`POST /trade-plan/{artifact_id}/calibration`** — recording an
-   outcome and confirming calibration data actually updates.
-5. **`POST /run` / `POST /ensure` and `POST /artifacts/{id}/promote`** —
-   the broader strategy-generation/promotion loop, and recording the
-   Stage 1 run as a queryable artifact for the "research again" step
-   between Stage 1 and Stage 2.
+### Bug-7 — research LLM forecast times out at the default 120s timeout
 
-## Expected output
-
-- A real, non-trivial forecast per symbol from the actual `qwen36-35B`
-  model — not an error, not an empty stub, not a template fallback.
-- The exit level in the trade plan is plausibly derived from the forecast
-  (direction/magnitude) and calibration data, not a fixed constant
-  regardless of input.
-- If `host.docker.internal:8009` is unreachable from inside the
-  container, or `VINU_RESEARCH_LLM_ENABLED=false` silently short-circuits
-  to a template, that's a `Bug-N` here — not a silent substitution that
-  makes "complex" indistinguishable from "medium."
-- Calibration recording actually changes what a subsequent trade-plan
-  call returns for the same symbol (proof the calibration loop is real,
-  not a no-op).
-- Promotion gating blocks a strategy that fails
-  walk-forward/holdout/stress tests from reaching ACTIVE.
+- **Found during:** first `POST /research/trade-plan/AAPL`. Returned empty
+  body; logs show `LLM request error to http://host.docker.internal:8009/v1
+  (ReadTimeout)` then retries 1/3, 2/3 — the whole forecast call exceeded
+  `VINU_LLM_TIMEOUT_SEC` (default `120.0`, research
+  `config.py:195`), which is too short for `qwen36-35B`'s 8000-token
+  reasoning generation.
+- **Date:** 2026-08-02
+- **Symptom:** empty trade-plan response, ReadTimeout in logs, no artifact
+  created.
+- **Cause:** reasoning model + large prompt/token budget requires more than
+  120s; the client configured a 120s read deadline.
+- **Fix applied:** added `VINU_LLM_TIMEOUT_SEC=600` to `vinu-components/.env`;
+  restarted `research-api`. trade-plan then completed (status CREATED with a
+  full plan).
+- **Status:** fixed. (Note: the shared `vinu-lib` LLM client uses the same
+  `_DEFAULT_TIMEOUT_SEC` — worth re-checking `news-api`/`agent-api` paths
+  that also drive LLM calls for the same bound.)
 
 ## Bug / Fix Log
 

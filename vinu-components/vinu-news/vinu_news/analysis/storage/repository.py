@@ -24,6 +24,7 @@ ARTICLE_COLUMNS = (
     "category", "priority", "sentiment", "sentiment_score", "impact", "tickers",
     "lang", "threat_level", "threat_cat", "threat_conf", "source_flag",
     "entities_json", "cluster_id", "is_lead", "thread_id",
+    "finbert_score", "finbert_label",
 )
 
 THREAD_COLUMNS = (
@@ -47,6 +48,8 @@ _MIGRATION_COLUMNS = (
     ("cluster_id", "TEXT"),
     ("is_lead", "INTEGER NOT NULL DEFAULT 1"),
     ("thread_id", "TEXT"),
+    ("finbert_score", "REAL"),
+    ("finbert_label", "TEXT"),
 )
 
 

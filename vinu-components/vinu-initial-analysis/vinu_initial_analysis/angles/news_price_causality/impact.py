@@ -37,6 +37,7 @@ def compute_impact_for_article(
     session_aware: bool = True,
     impact_high_threshold: float = 2.0,
     impact_medium_threshold: float = 0.5,
+    market_candles: list[dict] | None = None,
 ) -> list[dict]:
     if windows is None:
         windows = list(IMPACT_WINDOWS.values())
@@ -74,7 +75,7 @@ def compute_impact_for_article(
                 frm, to = ts, ts + win_sec
             price_changes[win_name] = _compute_price_change(candles, frm, to)
 
-        abnormal = compute_abnormal_return(candles, ts, window_sec=1800)
+        abnormal = compute_abnormal_return(candles, ts, window_sec=1800, market_candles=market_candles)
         sig_label = classify_significance(abnormal["ar_p_value"])
 
         impact_label = _classify_impact(
@@ -105,6 +106,12 @@ def compute_impact_for_article(
             "car_1h": abnormal["car"],
             "ar_p_value": abnormal["ar_p_value"],
             "ar_significant": abnormal["significant"],
+            # "market" = fit against SPY (Brown & Warner event-study model),
+            # "mean_adjusted" = fell back to the stock's own historical mean
+            # (SPY unavailable or insufficient timestamp overlap), "none" =
+            # not enough candles to compute at all. Lets downstream readers
+            # tell a real market-adjusted signal from a degraded fallback.
+            "ar_model": abnormal["model"],
             "thread_id": article.get("thread_id", ""),
             "computed_at": int(__import__("time").time()),
         }

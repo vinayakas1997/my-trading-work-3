@@ -701,6 +701,34 @@ class NewsService:
         submitted = self._auto_analysis_worker.backfill_unanalyzed(limit=limit)
         return {"submitted": submitted}
 
+    def backfill_finbert_sentiment(self, limit: int = 500) -> dict[str, Any]:
+        """Score articles missing finbert_score with FinBERT (batched inference)."""
+        from vinu_news.analysis.enrichment.finbert_sentiment import score_finbert_batch
+
+        conn = self._storage.repo.conn
+        rows = conn.execute(
+            "SELECT id, headline, summary FROM articles WHERE finbert_score IS NULL "
+            "ORDER BY sort_ts DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        if not rows:
+            return {"scored": 0, "remaining": 0}
+
+        ids = [r["id"] for r in rows]
+        texts = [f"{r['headline']} {r['summary'] or ''}".strip() for r in rows]
+        results = score_finbert_batch(texts)
+
+        conn.executemany(
+            "UPDATE articles SET finbert_score = ?, finbert_label = ? WHERE id = ?",
+            [(r["finbert_score"], r["finbert_label"], aid) for r, aid in zip(results, ids)],
+        )
+        conn.commit()
+
+        remaining = conn.execute(
+            "SELECT COUNT(*) AS n FROM articles WHERE finbert_score IS NULL"
+        ).fetchone()["n"]
+        return {"scored": len(ids), "remaining": remaining}
+
     def get_watchlist_news(
         self,
         *,

@@ -51,7 +51,7 @@ def _allocate_by_expression(
     signal_context: dict[str, dict[str, Any]],
 ) -> dict[str, float]:
     weights = {}
-    total_abs = 0.0
+    total = 0.0
     for sym in candidates:
         ctx = signal_context.get(sym, {}).get("features", {})
         try:
@@ -59,13 +59,14 @@ def _allocate_by_expression(
         except ExpressionError as e:
             LOG.warning("Expression eval failed for '%s': %s", sym, e)
             val = 0.0
-        weights[sym] = val
-        total_abs += abs(val)
+        long_val = max(0.0, val) if val is not None else 0.0
+        weights[sym] = long_val
+        total += long_val
 
-    if total_abs <= 0:
+    if total <= 0:
         return allocate_equal(candidates)
 
-    return {sym: val / total_abs for sym, val in weights.items()}
+    return {sym: w / total for sym, w in weights.items()}
 
 
 ALLOCATION_METHODS = {

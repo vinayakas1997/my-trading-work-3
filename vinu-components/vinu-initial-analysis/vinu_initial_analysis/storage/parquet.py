@@ -66,15 +66,20 @@ class AngleStorage:
         return run_id
 
     def read(self, symbol: str, angle_name: str, filters: Any = None) -> pd.DataFrame:
-        """Read stored parquet files for a symbol+angle, with optional PyArrow filter pushdown."""
-        angle_dir = self._root / symbol / angle_name
-        files = sorted(angle_dir.glob("*.parquet")) if angle_dir.exists() else []
+        """Read a symbol+angle's most recent run, with optional PyArrow filter pushdown.
+
+        Up to `cleanup_max_runs` old runs are kept on disk for history/debugging,
+        but only the latest is authoritative — older runs are superseded results
+        for the same angle, not additional data points, so mixing them in would
+        double-count events every time an angle gets re-run (Bug: previously
+        concatenated every retained run, silently inflating counts like
+        event_count/bearish/bullish on each re-run).
+        """
+        files = self._list_files(symbol, angle_name)
         if not files:
             return pd.DataFrame()
-        dfs = [pq.read_table(f, filters=filters).to_pandas() for f in files]
-        if not dfs:
-            return pd.DataFrame()
-        return pd.concat(dfs, ignore_index=True, sort=False)
+        latest = max(files, key=lambda f: f.stat().st_mtime)
+        return pq.read_table(latest, filters=filters).to_pandas()
 
     def read_latest(self, symbol: str, angle_name: str) -> pd.DataFrame:
         """Read only the most recent run for a symbol+angle."""

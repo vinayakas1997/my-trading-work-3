@@ -19,6 +19,7 @@ SUPPORTED_INDICATORS = frozenset(
         "macd_signal",
         "daily_return",
         "volatility_20d",
+        "adx_14",
     }
 )
 
@@ -77,6 +78,12 @@ def apply_indicators(rows: list[dict], names: Sequence[str]) -> list[dict]:
                 out[i][name] = v
         elif name == "volatility_20d":
             vals = _rolling_std(_daily_return(closes), 20)
+            for i, v in enumerate(vals):
+                out[i][name] = v
+        elif name == "adx_14":
+            highs = [float(r.get("high")) if r.get("high") is not None else float(r["close"]) for r in rows]
+            lows = [float(r.get("low")) if r.get("low") is not None else float(r["close"]) for r in rows]
+            vals = _adx(highs, lows, closes, 14)
             for i, v in enumerate(vals):
                 out[i][name] = v
 
@@ -171,6 +178,58 @@ def _rolling_std(values: list[float | None], period: int) -> list[float | None]:
         if not np.any(np.isnan(window)):
             result[i] = np.std(window, ddof=1)
     return [_nan_to_none(v) for v in result.tolist()]
+
+
+def _adx(highs: list[float], lows: list[float], closes: list[float], period: int) -> list[float | None]:
+    n = len(closes)
+    if n < period * 2 + 1:
+        return [None] * n
+    alpha = 1.0 / period
+
+    plus_dm = np.zeros(n)
+    minus_dm = np.zeros(n)
+    tr = np.zeros(n)
+    for i in range(1, n):
+        h, l, pc = highs[i], lows[i], closes[i - 1]
+        up_move = highs[i] - highs[i - 1]
+        down_move = lows[i - 1] - lows[i]
+        plus_dm[i] = up_move if (up_move > down_move and up_move > 0) else 0.0
+        minus_dm[i] = down_move if (down_move > up_move and down_move > 0) else 0.0
+        tr[i] = max(h - l, abs(h - pc), abs(l - pc))
+
+    atr = _wilders_ema(tr, period)
+    plus_di = np.zeros(n)
+    minus_di = np.zeros(n)
+    plus_em = _wilders_ema(plus_dm, period)
+    minus_em = _wilders_ema(minus_dm, period)
+    for i in range(n):
+        if atr[i] > 0:
+            plus_di[i] = 100.0 * plus_em[i] / atr[i]
+            minus_di[i] = 100.0 * minus_em[i] / atr[i]
+
+    dx = np.zeros(n)
+    for i in range(n):
+        s = plus_di[i] + minus_di[i]
+        if s > 0:
+            dx[i] = 100.0 * abs(plus_di[i] - minus_di[i]) / s
+
+    adx_raw = _wilders_ema(dx, period)
+    result: list[float | None] = [None] * n
+    for i in range(period * 2, n):
+        if adx_raw[i] > 0:
+            result[i] = _nan_to_none(float(adx_raw[i]))
+    return result
+
+
+def _wilders_ema(values: np.ndarray, period: int) -> np.ndarray:
+    alpha = 1.0 / period
+    out = np.zeros(len(values))
+    window = values[:period]
+    valid = window[window > 0]
+    out[period - 1] = valid.mean() if len(valid) else 0.0
+    for i in range(period, len(values)):
+        out[i] = alpha * values[i] + (1 - alpha) * out[i - 1]
+    return out
 
 
 def apply_adjusted_prices(rows: list[dict]) -> list[dict]:

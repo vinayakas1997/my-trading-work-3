@@ -60,8 +60,13 @@ plus:
 - `POST /broker/order`, `/broker/halt`, `/broker/resume`, `/broker/account`,
   `/broker/positions` — paper/live order execution, deferred to Stage 2.
 
-## Known gap as of this document
+## Known gap as of this document — CORRECTED 2026-08-02, this was wrong
 
-Broker credential wiring for `AlpacaBroker` has not been done — explicitly
-deferred until Stage 2 starts, per the earlier scope decision in this
-session.
+This section previously claimed broker credential wiring had not been
+done. Checked directly against the running system while drafting the
+Stage 2 plan: `ALPACA_API_KEY`/`ALPACA_API_SECRET` already exist in
+`vinu-components/.env`, `agent-api` already has `env_file: .env`, and
+`GET /agent/broker/account` returns a live, connected $100k paper
+account (`{"configured":true,"equity":100000.0,...}`). The broker is
+already wired and working — see `../stage-2-plan.md` for the correction
+record. Nothing left to do here.

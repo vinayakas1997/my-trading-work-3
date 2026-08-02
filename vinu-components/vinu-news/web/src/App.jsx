@@ -311,6 +311,16 @@ export default function App() {
     }
   };
 
+  // Backfill: poll a background job until it finishes
+  const pollBackfillJob = async (jobId) => {
+    while (true) {
+      await new Promise(r => setTimeout(r, 2000));
+      const job = await api(`/backfill/job/${encodeURIComponent(jobId)}`);
+      if (job.status === 'running') continue;
+      return job;
+    }
+  };
+
   // Backfill: trigger single ticker
   const triggerBackfillSingle = async (ticker) => {
     setBackfillingTickers(prev => ({ ...prev, [ticker]: true }));
@@ -318,8 +328,14 @@ export default function App() {
       const data = await api(`/backfill/trigger?ticker=${encodeURIComponent(ticker)}`, {
         method: 'POST',
       });
-      const result = data.results && data.results[0];
-      showToast(`${ticker}: ${result.status} (${result.articles_fetched || 0} articles)`);
+      const jobId = data.summary && data.summary.job_id;
+      const job = await pollBackfillJob(jobId);
+      if (job.status === 'failed') {
+        showToast(`${ticker}: backfill failed (${job.error || 'unknown error'})`);
+      } else {
+        const result = job.results && job.results[0];
+        showToast(`${ticker}: ${result?.status} (${result?.articles_fetched || 0} articles)`);
+      }
       loadBackfillStatus();
     } catch (e) {
       showToast('Backfill failed: ' + e.message);
@@ -337,10 +353,16 @@ export default function App() {
     });
     try {
       const data = await api('/backfill/trigger', { method: 'POST' });
-      const results = data.results || [];
-      const done = results.filter(r => r.status === 'completed').length;
-      const total = results.length;
-      showToast(`Backfill complete: ${done}/${total} tickers done`);
+      const jobId = data.summary && data.summary.job_id;
+      const job = await pollBackfillJob(jobId);
+      if (job.status === 'failed') {
+        showToast(`Backfill all failed: ${job.error || 'unknown error'}`);
+      } else {
+        const results = job.results || [];
+        const done = results.filter(r => r.status === 'completed').length;
+        const total = results.length;
+        showToast(`Backfill complete: ${done}/${total} tickers done`);
+      }
       loadBackfillStatus();
     } catch (e) {
       showToast('Backfill all failed: ' + e.message);

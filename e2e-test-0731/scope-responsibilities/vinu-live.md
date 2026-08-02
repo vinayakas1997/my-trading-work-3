@@ -28,14 +28,18 @@ Depends on `vinu-portfolio`, `vinu-agent`, `vinu-stock-price`
 the top of the dependency chain along with `vinu-agent` — everything else
 must be working first.
 
-## Where data is stored
+## Where data is stored — CORRECTED 2026-08-02, this was wrong
 
-`VINU_LIVE_DATA_ROOT` (default `./data`) is configured, but no explicit
-local database/JSON persistence was found in the scheduler/feedback-loop
-modules examined — position state (`book/positions.py`) appears to be
-tracked in-memory or reconstructed from upstream services rather than
-persisted locally. This should be re-verified before Stage 2, since paper
-trading for a week needs durable position tracking across restarts.
+This section previously claimed position state might be in-memory only.
+Checked directly: `vinu_live/book/positions.py`'s `BookBackend` is a real
+`SQLiteBackend` (`open_positions`/`closed_positions`/`fills` tables,
+`data/book.db`), and `docker-compose.yml` mounts `./data/live:/data` as a
+genuine host bind-mount (`read_only: true` with `tmpfs` only on `/tmp`
+and `/home/app/.cache` — `/data` itself is not tmpfs). Position state is
+durable and will survive a container restart. See `../stage-2-plan.md`
+for the correction record. One live restart smoke-test is still worth
+doing before Stage 2 starts (reading code isn't the same as observing
+it), but this is not a blocker.
 
 ## Dependencies
 

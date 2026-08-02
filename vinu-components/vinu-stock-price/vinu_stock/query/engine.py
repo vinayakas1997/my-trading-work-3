@@ -1,15 +1,95 @@
-"""DuckDB query engine over Parquet archive + live."""
+"""Candle query engine over Parquet archive + live.
+
+The full dataset per symbol is loaded once into an in-memory frame (it is only
+a few MB per symbol).  Parquet is only re-read when the underlying files change
+(live ingest appends).  Range filtering and interval aggregation happen in
+pandas, so steady-state candle queries are milliseconds.
+"""
 
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
+from typing import Any
 
 import duckdb
 
 from vinu_stock.query.aggregate import aggregate_bars, interval_to_seconds
 from vinu_stock.query.cache import get_cache
 from vinu_stock.query.indicators import apply_adjusted_prices, apply_indicators
-from vinu_stock.storage.paths import parquet_globs_by_range
+from vinu_stock.storage.paths import parquet_globs
+
+# symbol -> (file_signature, pandas DataFrame, last_signature_check_monotonic)
+_CACHED_FRAMES: dict[str, tuple[tuple, Any, float]] = {}
+_FRAME_LOCK = threading.Lock()
+_SIGNATURE_COOLDOWN_SEC = 30.0
+
+
+def _file_signature(patterns: list[str]) -> tuple:
+    """Signature of parquet files (path + mtime + size) for cache invalidation."""
+    sig: list[tuple] = []
+    for pattern in patterns:
+        try:
+            for p in sorted(Path(pattern).parent.glob(Path(pattern).name)):
+                st = p.stat()
+                sig.append((str(p), st.st_mtime_ns, st.st_size))
+        except OSError:
+            continue
+    return tuple(sig)
+
+
+def _load_symbol_frame(data_root: Path, symbol: str) -> Any:
+    """Return a deduped in-memory frame of the full symbol dataset (cached)."""
+    sym = symbol.strip().upper()
+    patterns = parquet_globs(data_root, sym)
+    if not patterns:
+        return None
+
+    now = time.monotonic()
+    with _FRAME_LOCK:
+        cached = _CACHED_FRAMES.get(sym)
+        if cached is not None and (now - cached[2]) < _SIGNATURE_COOLDOWN_SEC:
+            return cached[1]
+
+    sig = _file_signature(patterns)
+    with _FRAME_LOCK:
+        cached = _CACHED_FRAMES.get(sym)
+        if cached is not None and cached[0] == sig:
+            _CACHED_FRAMES[sym] = (cached[0], cached[1], now)
+            return cached[1]
+
+    placeholders = ", ".join(f"'{p}'" for p in patterns)
+    conn = duckdb.connect()
+    try:
+        df = conn.execute(
+            f"""
+            SELECT symbol, provider, bar_ts, open, high, low, close, volume,
+                   COALESCE(adj_factor, 1.0) AS adj_factor
+            FROM read_parquet([{placeholders}], union_by_name=true)
+            WHERE symbol = ?
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY symbol, provider, bar_ts ORDER BY bar_ts DESC) = 1
+            """,
+            [sym],
+        ).fetchdf()
+    finally:
+        conn.close()
+
+    if df is not None and not df.empty:
+        df["bar_ts"] = df["bar_ts"].astype("int64")
+        df["adj_factor"] = df["adj_factor"].astype("float64")
+
+    with _FRAME_LOCK:
+        _CACHED_FRAMES[sym] = (sig, df, now)
+    return df
+
+
+def invalidate_symbol_cache(symbol: str | None = None) -> None:
+    with _FRAME_LOCK:
+        if symbol is None:
+            _CACHED_FRAMES.clear()
+        else:
+            _CACHED_FRAMES.pop(symbol.strip().upper(), None)
 
 
 def fetch_candles(
@@ -25,120 +105,55 @@ def fetch_candles(
     adjusted: bool = True,
     connection: duckdb.DuckDBPyConnection | None = None,
 ) -> list[dict]:
-    patterns = parquet_globs_by_range(data_root, symbol, from_ts=from_ts, to_ts=to_ts)
-    if not patterns:
+    sym = symbol.strip().upper()
+    df = _load_symbol_frame(data_root, sym)
+    if df is None or df.empty:
         return []
 
-    sym = symbol.strip().upper()
-    own_conn = False
-    if connection is not None:
-        conn = connection.cursor()
+    mask = df["symbol"] == sym
+    if from_ts is not None:
+        mask &= df["bar_ts"] >= from_ts
+    if to_ts is not None:
+        mask &= df["bar_ts"] <= to_ts
+    if provider:
+        mask &= df["provider"] == provider.strip().lower()
+    sub = df[mask].sort_values("bar_ts")
+
+    is_raw = interval.lower() == "1m"
+    if is_raw:
+        rows = sub.to_dict(orient="records")
+        for rec in rows:
+            rec["bar_ts"] = int(rec["bar_ts"])
+            rec["adj_factor"] = float(rec.get("adj_factor", 1.0) or 1.0)
+        records = rows[:limit]
+        if adjusted:
+            records = apply_adjusted_prices(records)
     else:
-        conn = duckdb.connect()
-        own_conn = True
+        rows = sub.to_dict(orient="records")
+        for rec in rows:
+            rec["bar_ts"] = int(rec["bar_ts"])
+            rec["adj_factor"] = float(rec.get("adj_factor", 1.0) or 1.0)
+        if adjusted:
+            adjusted_rows = []
+            for rec in rows:
+                factor = float(rec.get("adj_factor", 1.0) or 1.0)
+                if factor != 1.0:
+                    rec = dict(rec)
+                    for key in ("open", "high", "low", "close"):
+                        if rec[key] is not None:
+                            rec[key] = float(rec[key]) * factor
+                    rec["adj_factor"] = 1.0
+                adjusted_rows.append(rec)
+            rows = adjusted_rows
+        records = aggregate_bars(rows, interval)[:limit]
 
-    try:
-        placeholders = ", ".join(f"'{p}'" for p in patterns)
-        is_raw = interval.lower() == "1m"
-
-        if is_raw:
-            # No aggregation needed — fetch raw 1m bars. Dedup via QUALIFY.
-            sql = f"""
-                SELECT symbol, provider, bar_ts, open, high, low, close, volume,
-                       COALESCE(adj_factor, 1.0) AS adj_factor
-                FROM read_parquet([{placeholders}], union_by_name=true)
-                WHERE symbol = ?
-            """
-            params: list = [sym]
-            if from_ts is not None:
-                sql += " AND bar_ts >= ?"
-                params.append(from_ts)
-            if to_ts is not None:
-                sql += " AND bar_ts <= ?"
-                params.append(to_ts)
-            if provider:
-                sql += " AND provider = ?"
-                params.append(provider.strip().lower())
-            sql += """
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY symbol, provider, bar_ts ORDER BY bar_ts DESC) = 1
-            """
-            sql += " ORDER BY bar_ts ASC"
-
-            rows = conn.execute(sql, params).fetchdf()
-            records = rows.to_dict(orient="records")
-            for rec in records:
-                rec["bar_ts"] = int(rec["bar_ts"])
-                rec["adj_factor"] = float(rec.get("adj_factor", 1.0) or 1.0)
-            records = records[:limit]
-            if adjusted:
-                records = apply_adjusted_prices(records)
+    if indicators:
+        indicator_set = frozenset(indicators)
+        cache = get_cache()
+        cached = cache.get(sym, interval, from_ts, to_ts, indicator_set, adjusted)
+        if cached is not None:
+            records = cached
         else:
-            # Push aggregation + adjusted prices + LIMIT into DuckDB SQL.
-            # First pass: dedup raw 1m rows via CTE, then GROUP BY bucket_ts.
-            interval_sec = interval_to_seconds(interval)
-            raw_from = from_ts
-            raw_to = to_ts
-
-            dedup_sql = f"""
-                WITH raw AS (
-                    SELECT *, ROW_NUMBER() OVER (PARTITION BY symbol, provider, bar_ts ORDER BY bar_ts DESC) AS rn
-                    FROM read_parquet([{placeholders}], union_by_name=true)
-                    WHERE symbol = ?
-            """
-            params = [sym]
-            if raw_from is not None:
-                dedup_sql += " AND bar_ts >= ?"
-                params.append(raw_from)
-            if raw_to is not None:
-                dedup_sql += " AND bar_ts <= ?"
-                params.append(raw_to)
-            if provider:
-                dedup_sql += " AND provider = ?"
-                params.append(provider.strip().lower())
-
-            if adjusted:
-                ohlc_cols = """
-                       FIRST(open * COALESCE(adj_factor, 1.0) ORDER BY bar_ts ASC) AS open,
-                       MAX(high * COALESCE(adj_factor, 1.0)) AS high,
-                       MIN(low * COALESCE(adj_factor, 1.0)) AS low,
-                       LAST(close * COALESCE(adj_factor, 1.0) ORDER BY bar_ts ASC) AS close"""
-            else:
-                ohlc_cols = """
-                       FIRST(open ORDER BY bar_ts ASC) AS open,
-                       MAX(high) AS high,
-                       MIN(low) AS low,
-                       LAST(close ORDER BY bar_ts ASC) AS close"""
-
-            dedup_sql += f"""
-                )
-                SELECT symbol, provider,
-                       (bar_ts // {interval_sec}) * {interval_sec} AS bar_ts,
-                       {ohlc_cols},
-                       SUM(volume) AS volume,
-                       LAST(COALESCE(adj_factor, 1.0) ORDER BY bar_ts ASC) AS adj_factor
-                FROM raw
-                WHERE rn = 1
-                GROUP BY symbol, provider, (bar_ts // {interval_sec}) * {interval_sec}
-                ORDER BY bar_ts ASC
-                LIMIT {limit}
-            """
-
-            rows = conn.execute(dedup_sql, params).fetchdf()
-            records = rows.to_dict(orient="records")
-            for rec in records:
-                rec["bar_ts"] = int(rec["bar_ts"])
-                rec["adj_factor"] = float(rec.get("adj_factor", 1.0) or 1.0)
-
-        if indicators:
-            indicator_set = frozenset(indicators)
-            cache = get_cache()
-            cached = cache.get(sym, interval, from_ts, to_ts, indicator_set, adjusted)
-            if cached is not None:
-                records = cached
-            else:
-                records = apply_indicators(records, indicators)
-                cache.set(sym, interval, from_ts, to_ts, indicator_set, adjusted, records)
-        return records
-    finally:
-        conn.close()
-
+            records = apply_indicators(records, indicators)
+            cache.set(sym, interval, from_ts, to_ts, indicator_set, adjusted, records)
+    return records

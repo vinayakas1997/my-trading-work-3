@@ -169,10 +169,27 @@ class StrategyService:
         ctx: dict[str, Any] = {}
         for angle_name in angles:
             try:
-                ctx[angle_name] = self._correlation_client.get_angle(sym, angle_name)
+                ctx[angle_name] = self._reduce_angle(angle_name, self._correlation_client.get_angle(sym, angle_name))
             except Exception:
                 LOG.warning("Failed to fetch angle %s for %s", angle_name, sym)
         return ctx
+
+    def _reduce_angle(self, angle_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if angle_name != "regime_analysis":
+            return payload
+        rows = (payload or {}).get("data") or []
+        best: dict[str, Any] | None = None
+        for row in rows:
+            if row.get("metric") != "regime_stats":
+                continue
+            if best is None or (row.get("pct_of_time") or 0) > (best.get("pct_of_time") or 0):
+                best = row
+        if best is None:
+            return payload
+        return {
+            "regime": best.get("regime"),
+            **payload,
+        }
 
     def _fetch_correlation_for_symbol(self, sym: str, required: list[str]) -> dict[str, Any]:
         ctx: dict[str, Any] = {}
