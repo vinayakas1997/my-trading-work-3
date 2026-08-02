@@ -60,6 +60,16 @@ LOG = logging.getLogger(__name__)
 FEATURES_NUMERIC = ["sentiment_score", "finbert_score", "novelty_score", "ticker_count"]
 FEATURES_CATEGORICAL = ["category", "priority", "session", "is_primary"]
 
+# Optional pre-event regime/volatility features (Item 2 of the post-Stage-1
+# plan). These are built by build_point_in_time_features() from bars strictly
+# up to each article's timestamp, so they are leakage-safe (the stored
+# `regime_analysis` label is NOT used — its threshold is a full-sample
+# constant; see regime_features.py docstring). Set ANY_* to True to enable;
+# both toggled together is the intended combination.
+ENABLE_REGIME_FEATURES = True
+FEATURES_NUMERIC_REGIME = ["vol_21d", "ret_20d"]
+FEATURES_CATEGORICAL_REGIME = ["regime_feature"]
+
 MIN_TRAIN_POSITIVES = 10
 MIN_TEST_POSITIVES = 3
 TRAIN_FRACTION = 0.7
@@ -68,8 +78,17 @@ TRAIN_FRACTION = 0.7
 def score_significance(
     impact_rows: list[dict],
     articles_by_id: dict[str, dict[str, Any]],
+    regime_features: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[dict[int, float], dict[int, str], dict[str, Any] | None]:
     """Train + score in one pass over this run's impact rows.
+
+    Args:
+        impact_rows: impact events (each has 'ts', 'article_id', ...).
+        articles_by_id: {article_id: article} for finbert/category/priority.
+        regime_features: optional {article_id: {"regime_feature", "vol_21d",
+            "ret_20d"}} pre-event features from `build_point_in_time_features`
+            (Item 2). When present and `ENABLE_REGIME_FEATURES`, they are
+            joined in as additional classifier features.
 
     Returns (scores, sample_labels, eval_metrics):
       scores        {row_index_in_impact_rows: significance_score}
@@ -79,6 +98,12 @@ def score_significance(
     Row indices are positions into `impact_rows`, so callers zip scores
     back onto the same list they passed in.
     """
+    numeric = list(FEATURES_NUMERIC)
+    categorical = list(FEATURES_CATEGORICAL)
+    if ENABLE_REGIME_FEATURES and regime_features:
+        numeric += list(FEATURES_NUMERIC_REGIME)
+        categorical += list(FEATURES_CATEGORICAL_REGIME)
+
     if not impact_rows:
         return {}, {}, None
 
@@ -94,13 +119,18 @@ def score_significance(
         lambda aid: articles_by_id.get(aid, {}).get("priority")
     )
 
+    if ENABLE_REGIME_FEATURES and regime_features:
+        rf = pd.DataFrame.from_dict(regime_features, orient="index")
+        rf["article_id"] = rf.index
+        df = df.merge(rf, on="article_id", how="left")
+
     df = df.sort_values("ts").reset_index(drop=True)
-    usable = df.dropna(subset=FEATURES_NUMERIC + ["ar_significant"])
+    usable = df.dropna(subset=numeric + ["ar_significant"])
     if len(usable) < (MIN_TRAIN_POSITIVES + MIN_TEST_POSITIVES) * 10:
         LOG.info("Not enough rows with complete features to train significance model (%d)", len(usable))
         return {}, {}, None
 
-    X = pd.get_dummies(usable[FEATURES_NUMERIC + FEATURES_CATEGORICAL], columns=FEATURES_CATEGORICAL, dummy_na=True)
+    X = pd.get_dummies(usable[numeric + categorical], columns=categorical, dummy_na=True)
     y = usable["ar_significant"].astype(int)
 
     split = int(len(usable) * TRAIN_FRACTION)

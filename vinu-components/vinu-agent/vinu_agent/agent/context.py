@@ -62,6 +62,13 @@ class ContextBuilder:
             else "No skills loaded."
         )
         memory_summary = self.memory.to_summary() if self.memory else ""
+        current_datetime = self.as_of or _utc_now_iso()
+        replay_marker = (
+            "\n**REPLAY MODE — this is historical data as of the following date, not live.**"
+            + " Treat every tool result as current to that time only; never assume anything happened after it."
+            if self.as_of
+            else ""
+        )
 
         return _SYSTEM_PROMPT.format(
             tool_count=tool_count,
@@ -69,7 +76,7 @@ class ContextBuilder:
             tool_descriptions=tool_descriptions,
             skill_descriptions=skill_descriptions,
             memory_section=memory_summary,
-            current_datetime=_utc_now_iso(),
+            current_datetime=current_datetime + replay_marker,
         )
 
     def _extract_symbols(self, text: str) -> list[str]:
@@ -89,6 +96,7 @@ class ContextBuilder:
         persistent_memory: Any = None,
         unified_memory: Any = None,
         max_memory_tokens: int = 2000,
+        as_of: str | None = None,
     ) -> None:
         self.registry = registry
         self.memory = memory
@@ -96,6 +104,7 @@ class ContextBuilder:
         self.persistent_memory = persistent_memory
         self.unified_memory = unified_memory
         self.max_memory_tokens = max_memory_tokens
+        self.as_of = as_of
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:

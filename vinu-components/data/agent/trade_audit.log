@@ -1,0 +1,1 @@
+{"timestamp": "2026-08-02T14:00:10.928935+00:00", "action": "order_rejected", "symbol": "AAPL", "side": "buy", "qty": 1.0, "reason": "AAPL has no ACTIVE strategy artifact \u2014 it has not cleared the research promotion gate (deflated Sharpe / holdout / stress test). Set require_active_artifact: false in the mandate to override."}

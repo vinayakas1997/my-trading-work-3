@@ -1,0 +1,11 @@
+{
+  "date": "2026-07-29",
+  "final_content": "I see the issue - I keep forgetting to pass the `symbol` parameter. Let me try once more with the correct format:",
+  "summary": {
+    "action": "none",
+    "symbol": null,
+    "qty": null,
+    "side": null,
+    "reasoning_excerpt": "I see the issue - I keep forgetting to pass the `symbol` parameter. Let me try once more with the correct format:"
+  }
+}

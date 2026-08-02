@@ -1,0 +1,20 @@
+title: Peer Relative Strength
+purpose: >
+  Measures how a symbol performs relative to its watchlist peer basket over
+  time using rolling correlation and relative (excess) returns. Stands apart
+  from shock_clustering (which only answers "which symbols shock together on
+  shock dates") by computing peer co-movement and relative strength as a
+  continuous, windowed signal across the full requested range.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+  price_client: price_client | None
+outputs:
+- column: angle_data
+  type: dict
+  description: >
+    Rolling peer correlation and excess-return rows per sampled bar: date,
+    peer_symbol, correlation (63-day rolling), relative_return_20d.

@@ -6,6 +6,10 @@ from pydantic import BaseModel, Field
 
 class CreateSessionRequest(BaseModel):
     title: str = ""
+    as_of: str | None = Field(
+        default=None,
+        description="ISO 8601 UTC time (e.g. 2026-07-06T13:30:00Z). When set, the session runs in historical replay mode: the system clock is pinned to as_of and all date-sensitive tools clamp to data on or before it.",
+    )
 
 
 class CreateSessionResponse(BaseModel):
@@ -16,6 +20,10 @@ class CreateSessionResponse(BaseModel):
 
 class SendMessageRequest(BaseModel):
     content: str
+    as_of: str | None = Field(
+        default=None,
+        description="Optional. For replay sessions, set/advance the simulated clock before processing this message.",
+    )
 
 
 class SendMessageResponse(BaseModel):

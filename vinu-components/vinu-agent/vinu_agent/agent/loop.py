@@ -411,4 +411,5 @@ class AgentLoop:
                 "completion": token_usage.completion,
             },
             "history": history[-10:],
+            "trace": history,
         }

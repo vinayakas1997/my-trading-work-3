@@ -43,11 +43,15 @@ class SessionService:
         return session
 
     async def send_message(
-        self, session_id: str, content: str, role: str = "user"
+        self, session_id: str, content: str, role: str = "user", as_of: str | None = None
     ) -> Dict:
         session = self.store.get_session(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
+
+        if as_of is not None:
+            session.config["as_of"] = as_of
+            self.store.update_session(session)
 
         msg = Message(
             session_id=session_id,
@@ -102,6 +106,16 @@ class SessionService:
             )
             self.store.append_message(session_id, assistant_msg)
 
+            trace = result.get("trace") or []
+            attempt.react_trace = [
+                {
+                    "role": step.get("role"),
+                    "content": step.get("content"),
+                    "tool_calls": step.get("tool_calls"),
+                }
+                for step in trace
+            ]
+
             attempt.mark_completed(summary=result.get("content", "")[:500])
             self.store.save_attempt(session_id, attempt)
 
@@ -126,6 +140,9 @@ class SessionService:
         from ..agent.workflow import WorkflowTracker
         from ..tools import build_registry
 
+        session = self.store.get_session(session_id)
+        as_of = (session.config or {}).get("as_of") if session else None
+
         workflow_tracker = WorkflowTracker()
 
         registry = build_registry(
@@ -136,6 +153,7 @@ class SessionService:
             skills_loader=self._skills_loader,
             session_service=self,
             workflow_tracker=workflow_tracker,
+            as_of=as_of,
         )
 
         context_builder = ContextBuilder(
@@ -144,6 +162,7 @@ class SessionService:
             skills_loader=self._skills_loader,
             persistent_memory=self._persistent_memory,
             unified_memory=self._unified_memory,
+            as_of=as_of,
         )
         self._context_builder = context_builder
 

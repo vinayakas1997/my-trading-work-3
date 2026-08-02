@@ -70,5 +70,18 @@ Three distinct data types are stored as Parquet tables, each requiring a well-de
 | `corr_ci_upper` | float64 | Bootstrap CI upper |
 | `granger_p_value` | float64 | Granger test p-value |
 | `granger_best_lag_mins` | int64 | Best Granger lag |
-| `sentiment_return_corr` | float64 | Sentiment vs return r |
+| `sentiment_return_corr` | float64 | Sentiment vs return rank |
 | `news_volume_corr` | float64 | News volume vs abs(return) r |
+
+### Peer Relative Strength (`peer_relative_strength`)
+
+Rolling peer co-movement and excess-return rows, one per (sampled bar, peer).
+See `angles/peer_relative_strength/compute.py`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `date` | string | Sampling date (YYYY-MM-DD) of the rolling window |
+| `bar_ts` | int64 | Bar timestamp (Unix seconds) |
+| `peer_symbol` | string | Peer ticker compared against the symbol |
+| `correlation` | float64 | 63-day rolling Pearson correlation to the peer |
+| `relative_return_20d` | float64 | 20-day compounded excess return of symbol vs the equal-weight peer basket (null until 20 bars accumulate) |

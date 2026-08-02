@@ -127,6 +127,7 @@ class Attempt:
             "prompt": self.prompt,
             "run_dir": self.run_dir,
             "summary": self.summary,
+            "react_trace": self.react_trace,
             "error": self.error,
             "metrics": self.metrics,
             "created_at": self.created_at,

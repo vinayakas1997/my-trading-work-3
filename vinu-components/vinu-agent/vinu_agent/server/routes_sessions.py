@@ -20,7 +20,7 @@ _get_service: Any = lambda: None
 @router.post("/sessions", response_model=CreateSessionResponse)
 async def create_session(req: CreateSessionRequest) -> CreateSessionResponse:
     svc: AgentService = _get_service()
-    session = await svc.create_session(title=req.title)
+    session = await svc.create_session(title=req.title, as_of=req.as_of)
     return CreateSessionResponse(
         session_id=session.session_id,
         title=session.title,
@@ -73,7 +73,7 @@ async def delete_session(session_id: str):
 async def send_message(session_id: str, req: SendMessageRequest):
     svc: AgentService = _get_service()
     try:
-        result = await svc.send_message(session_id, req.content)
+        result = await svc.send_message(session_id, req.content, as_of=req.as_of)
         return SendMessageResponse(
             message_id=result["message_id"],
             attempt_id=result["attempt_id"],

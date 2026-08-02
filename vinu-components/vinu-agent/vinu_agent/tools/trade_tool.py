@@ -1,13 +1,29 @@
 import json
 import logging
+import os
 
 from ..agent.tools import BaseTool
 from ..broker.alpaca import AlpacaBroker
+from ..broker.historical_broker import HistoricalFillBroker
 from ..broker.kill_switch import AuditLogger
 from ..broker.mandate import TradingMandate
 from ..broker.order_guard import OrderGuard
 
 logger = logging.getLogger(__name__)
+
+
+def _replay_state_path(session_id: str) -> str:
+    root = os.environ.get("VINU_AGENT_DATA_ROOT", "/data")
+    return os.path.join(root, "replay_state", f"{session_id}.json")
+
+
+def _make_broker(as_of: str | None, session_id: str = ""):
+    if as_of:
+        return HistoricalFillBroker(
+            as_of=as_of,
+            state_path=_replay_state_path(session_id),
+        )
+    return AlpacaBroker()
 
 
 class TradeTool(BaseTool):
@@ -53,6 +69,8 @@ class TradeTool(BaseTool):
         },
     }
     is_readonly = False
+    _as_of: str | None = None
+    _session_id: str = ""
 
     def execute(self, **kwargs) -> str:
         symbol = kwargs["symbol"].upper()
@@ -65,13 +83,51 @@ class TradeTool(BaseTool):
         take_profit_price = kwargs.get("take_profit_price")
         stop_loss_price = kwargs.get("stop_loss_price")
         stop_loss_limit_price = kwargs.get("stop_loss_limit_price")
+        session_id = getattr(self, "_session_id", "")
 
-        broker = AlpacaBroker()
+        broker = _make_broker(self._as_of, session_id)
         if not broker.is_configured():
             return json.dumps({
                 "status": "error",
                 "error": "Alpaca API credentials not configured",
             })
+
+        # Replay mode: fill against the historical broker directly. No mandate /
+        # guard / confirmation — this is a simulation into a past date, not a live
+        # order, so real-time side-effects (kill switch, market clock, active
+        # artifact, human confirmation) are not applicable.
+        if self._as_of:
+            try:
+                order = broker.submit_order(
+                    symbol=symbol, qty=qty, side=side, order_type=order_type,
+                    limit_price=limit_price, stop_price=stop_price,
+                    time_in_force=time_in_force,
+                    take_profit_price=take_profit_price,
+                    stop_loss_price=stop_loss_price,
+                    stop_loss_limit_price=stop_loss_limit_price,
+                )
+                account = broker.get_account()
+                positions = broker.get_positions()
+                return json.dumps({
+                    "status": "replay_filled",
+                    "order": order,
+                    "account": {
+                        "cash": account.cash,
+                        "equity": account.equity,
+                        "portfolio_value": account.portfolio_value,
+                    },
+                    "positions": [
+                        {
+                            "symbol": p.symbol, "qty": p.qty,
+                            "market_value": round(p.market_value, 2),
+                            "unrealized_pl": round(p.unrealized_pl, 2),
+                        }
+                        for p in positions
+                    ],
+                }, indent=2)
+            except Exception as exc:
+                logger.error("Replay order failed: %s", exc)
+                return json.dumps({"status": "error", "error": str(exc)})
 
         mandate = TradingMandate.load()
         guard = OrderGuard(mandate=mandate, broker=broker)
@@ -156,10 +212,12 @@ class CancelOrderTool(BaseTool):
         "order_id": {"type": "string", "description": "The order ID to cancel"},
     }
     is_readonly = False
+    _as_of: str | None = None
+    _session_id: str = ""
 
     def execute(self, **kwargs) -> str:
         order_id = kwargs["order_id"]
-        broker = AlpacaBroker()
+        broker = _make_broker(self._as_of, getattr(self, "_session_id", ""))
 
         if not broker.is_configured():
             return json.dumps({

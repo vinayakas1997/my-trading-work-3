@@ -69,11 +69,12 @@ class AgentService:
     def unified_memory(self) -> UnifiedMemoryStore:
         return self._unified_memory
 
-    async def create_session(self, title: str = "") -> Session:
-        return await self._session_service.create_session(title=title)
+    async def create_session(self, title: str = "", as_of: str | None = None) -> Session:
+        config = {"as_of": as_of} if as_of else None
+        return await self._session_service.create_session(title=title, config=config)
 
-    async def send_message(self, session_id: str, content: str) -> dict:
-        return await self._session_service.send_message(session_id, content)
+    async def send_message(self, session_id: str, content: str, as_of: str | None = None) -> dict:
+        return await self._session_service.send_message(session_id, content, as_of=as_of)
 
     def cancel(self, session_id: str) -> bool:
         return self._session_service.cancel_current(session_id)

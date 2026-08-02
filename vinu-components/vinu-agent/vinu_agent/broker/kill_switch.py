@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -54,9 +55,22 @@ def is_trading_halted(scope: str | None = None) -> bool:
 
 
 class AuditLogger:
-    """Structured audit logging for every trading action."""
+    """Structured audit logging for every trading action.
 
-    LOG_PATH = Path("/var/log/vinu/trade_audit.log")
+    Writes under the container data root (VINU_AGENT_DATA_ROOT=/data in the
+    Docker stack) — the only writable mount — never a hardcoded absolute path
+    like /var/log/vinu, which is read-only in the container (rootfs is
+    immutable; only /data is bind-mounted rw). Before the fix, every order
+    (rejected or executed) raised OSError writing the audit entry and masked
+    the real trade response with a 500.
+    """
+
+    LOG_PATH = Path(
+        os.environ.get(
+            "VINU_AGENT_AUDIT_LOG",
+            os.environ.get("VINU_AGENT_DATA_ROOT", str(Path.home() / ".vinu")) + "/trade_audit.log",
+        )
+    )
 
     @classmethod
     def log(cls, action: str, details: dict) -> None:

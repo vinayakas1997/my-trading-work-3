@@ -33,6 +33,7 @@ def build_registry(
     skills_loader: Any = None,
     session_service: Any = None,
     workflow_tracker: Any = None,
+    as_of: Optional[str] = None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
     subclasses = _discover_subclasses()
@@ -57,6 +58,8 @@ def build_registry(
             tool._session_service = session_service
         if workflow_tracker and hasattr(tool, "_workflow_tracker"):
             tool._workflow_tracker = workflow_tracker
+        if as_of is not None and hasattr(tool, "_as_of"):
+            tool._as_of = as_of
         registry.register(tool)
 
     return registry

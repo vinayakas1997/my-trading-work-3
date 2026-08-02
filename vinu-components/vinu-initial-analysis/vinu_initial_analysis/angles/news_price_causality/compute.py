@@ -15,6 +15,7 @@ from .correlation import (
 from .granger import run_granger_causality_test
 from .novelty import compute_novelty_scores
 from .significance_model import score_significance
+from .regime_features import build_point_in_time_features
 
 LOG = logging.getLogger(__name__)
 
@@ -88,7 +89,10 @@ def compute(
             for r in impact_rows:
                 r["novelty_score"] = novelty_map.get(r.get("article_id"), 1.0)
 
-            scores, sample_labels, sig_eval = score_significance(impact_rows, articles_by_id)
+            scores, sample_labels, sig_eval = score_significance(
+                impact_rows, articles_by_id,
+                regime_features=build_point_in_time_features(candles, impact_rows),
+            )
             for i, r in enumerate(impact_rows):
                 if i in scores:
                     r["significance_score"] = scores[i]

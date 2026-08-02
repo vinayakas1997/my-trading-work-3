@@ -2,9 +2,16 @@ import json
 import logging
 
 from ..broker.alpaca import AlpacaBroker
+from ..broker.historical_broker import HistoricalFillBroker
 from ..agent.tools import BaseTool
 
 logger = logging.getLogger(__name__)
+
+
+def _make_broker(as_of: str | None, session_id: str = ""):
+    if as_of:
+        return HistoricalFillBroker(as_of=as_of, state_path=f"/data/replay_state/{session_id}.json")
+    return AlpacaBroker()
 
 
 class PortfolioTool(BaseTool):
@@ -18,10 +25,12 @@ class PortfolioTool(BaseTool):
         },
     }
     is_readonly = True
+    _as_of: str | None = None
+    _session_id: str = ""
 
     def execute(self, **kwargs) -> str:
         section = kwargs.get("section", "all")
-        broker = AlpacaBroker()
+        broker = _make_broker(self._as_of, getattr(self, "_session_id", ""))
 
         if not broker.is_configured():
             return json.dumps({
