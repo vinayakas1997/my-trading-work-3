@@ -15,10 +15,11 @@ WHAT THIS IS FOR (read this before touching it):
   significance classifier in significance_model.py — see that module's
   docstring for how the two combine.
 
-METHOD (matches the validated approach in
-  news-analysis-code/04_real_novelty_score.py — do not let this module
-  drift from that one without re-validating; that script is the record of
-  why this design was chosen over simpler alternatives):
+METHOD (this design was chosen over a simpler "first article in a thread
+  = novel" proxy specifically because thread-order is an artifact of
+  which provider vinu-news happened to scrape first, not a measure of
+  actual content novelty — validated against real AAPL/TSLA/JNJ data
+  before being ported into production):
   1. TF-IDF vectorize all headlines for the ticker's article set (bag-of-
      words; no local embedding model is available in this environment).
   2. Walk articles in time order. For each one, compare it only against

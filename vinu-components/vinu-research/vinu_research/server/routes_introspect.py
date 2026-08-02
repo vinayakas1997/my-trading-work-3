@@ -2,11 +2,11 @@
 but, before this file, had no HTTP surface: hypothesis/evidence history,
 per-symbol research-exhaustion state, and iteration checkpoints.
 
-Added as part of portfoli-mc-improvement Step 02 (tool-wiring) — see
-portfoli-mc-improvement/the-skills-plan-new-discussion/steps-to-implement-plan/02-tool-wiring.md.
-The underlying data (HypothesisRegistry, ResearchStorage's catalog/checkpoint
-tables) was already written by the research loop; nothing here changes what
-gets recorded, only what can be read back over HTTP.
+Added to give agent tools (and the LLM directly) read access to state that
+was already being written but had no HTTP surface. The underlying data
+(HypothesisRegistry, ResearchStorage's catalog/checkpoint tables) was
+already written by the research loop; nothing here changes what gets
+recorded, only what can be read back over HTTP.
 """
 
 from __future__ import annotations

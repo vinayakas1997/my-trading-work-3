@@ -10,7 +10,7 @@ Usage:
     python scripts/generate_tool_catalog.py
 
 Output:
-    project-understanding/skills/vinu-tools-catalog/tools.yaml
+    vinu-agent/skills/vinu-tools-catalog/tools.yaml
     (agent_tools section only — the services section in that file is
     hand-maintained; this script never touches it, see SKILL.md)
 """
@@ -25,10 +25,7 @@ import yaml
 _VINU_AGENT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_VINU_AGENT_ROOT))
 
-OUTPUT_PATH = (
-    _VINU_AGENT_ROOT.parent.parent
-    / "project-understanding" / "skills" / "vinu-tools-catalog" / "tools.yaml"
-)
+OUTPUT_PATH = _VINU_AGENT_ROOT / "skills" / "vinu-tools-catalog" / "tools.yaml"
 
 _AGENT_TOOLS_KEY = "agent_tools"
 _SERVICES_KEY = "services"

@@ -340,10 +340,12 @@ class PortfolioService:
         """Load strategy-tags/tags.yaml once and cache it on the instance.
 
         This is a dev-time knowledge-library file, not guaranteed to be
-        present in every deployment (e.g. a container image that doesn't
-        include project-understanding/) -- missing/unreadable is treated
-        as "no tags known", not a fatal error, consistent with this whole
-        pipeline's fail-open-on-tilt-data convention.
+        present in every deployment (the default path resolves to a host
+        location outside this container's build context, so it's already
+        absent in the running Docker deployment today) -- missing/
+        unreadable is treated as "no tags known", not a fatal error,
+        consistent with this whole pipeline's fail-open-on-tilt-data
+        convention.
         """
         if self._tags_cache is not None:
             return self._tags_cache
@@ -382,10 +384,10 @@ class PortfolioService:
         This is a defensible v1, not a solved probability model: two
         bounded multiplicative tilts (regime alignment, outcome confidence)
         applied to the existing risk-parity base and renormalized. See
-        project-understanding/skills/daily-allocation/SKILL.md for the
-        full reasoning and known limitations (regime-vocabulary mapping,
-        YAML-strategy outcome blind spot, the still-open ShadowEvaluator
-        gap this only partially compensates for).
+        vinu-agent/skills/daily-allocation/SKILL.md for the full reasoning
+        and known limitations (regime-vocabulary mapping, YAML-strategy
+        outcome blind spot, the still-open ShadowEvaluator gap this only
+        partially compensates for).
         """
         base = await self.build_portfolio()
         if base["status"] != "ok":

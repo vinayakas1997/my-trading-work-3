@@ -5,8 +5,7 @@ Deliberately named "sweep", not "Monte Carlo" — vinu-simulator already has a
 `monte_carlo_permutation` function that means something else entirely
 (shuffling trade P&L order to compute a significance p-value). This module
 varies strategy PARAMETER VALUES (SMA period, RSI threshold, ...), which is
-a different operation. See
-portfoli-mc-improvement/the-skills-plan-new-discussion/steps-to-implement-plan/06-parameter-sweep-engine.md.
+a different operation.
 
 This module deliberately does NOT decide which parameter values to try next
 or when to stop — that adaptive, coarse-to-fine reasoning belongs to the

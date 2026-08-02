@@ -17,8 +17,8 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8090
 DEFAULT_BENCHMARK_SYMBOL = "SPY"
 DEFAULT_TAGS_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "project-understanding" / "skills" / "strategy-tags" / "tags.yaml"
+    Path(__file__).resolve().parents[2]
+    / "vinu-agent" / "skills" / "strategy-tags" / "tags.yaml"
 )
 
 _env_loaded = False

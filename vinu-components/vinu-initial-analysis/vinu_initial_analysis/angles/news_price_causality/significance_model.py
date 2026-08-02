@@ -16,18 +16,20 @@ WHAT THIS IS FOR AND HOW TO USE IT (read this before touching it):
   same post-event price window as ar_significant itself, so including
   them would leak the answer into the "prediction" and inflate the
   reported accuracy without producing anything usable in real time (this
-  was caught and removed during integration — see git history on this
-  file; the original research script 05_multivariate_model.py had this
-  leak and its 7-8x lift number was partly inflated by it).
+  was caught and fixed before shipping: an earlier exploratory pass
+  trained on a feature set that included impact_label and reported a
+  7-8x lift; removing the leak dropped that to the real, honest lift
+  reported below).
 
   Practical use: sort articles by significance_score to prioritize which
   ones are worth a human/downstream-system's attention before the price
   data confirms it either way. Do NOT treat this as a trading signal on
-  its own — it predicts MAGNITUDE/surprise, not DIRECTION (see
-  news-analysis-code/07_robustness_and_direction.py and
-  08_finbert_direction.py: neither the old rule-based sentiment nor
-  FinBERT sentiment predicts the sign of the reaction above a coin flip,
-  even on already-significant events).
+  its own — it predicts MAGNITUDE/surprise, not DIRECTION. Direction was
+  tested twice (rule-based sentiment_score, then FinBERT finbert_score)
+  against already-significant events on AAPL/TSLA/JNJ and neither
+  predicts the sign of the reaction above a coin flip (~50% sign-agreement
+  rate, all correlations p > 0.1) — a confirmed negative result, not an
+  untested gap.
 
 TRUST BUT VERIFY: a fresh model is trained per run on THIS run's own
   history via a chronological 70/30 split (never random — shuffling
