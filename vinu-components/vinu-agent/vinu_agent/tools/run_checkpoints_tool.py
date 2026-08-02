@@ -13,11 +13,15 @@ class RunCheckpointsTool(BaseTool):
         "caller makes explicitly using this data."
     )
     parameters = {
-        "run_id": {"type": "integer", "description": "Research run ID (from run_research's response or list_runs)"},
-        "latest_only": {
-            "type": "boolean",
-            "description": "Return only the most recent checkpoint instead of the full list (optional, default false)",
+        "type": "object",
+        "properties": {
+            "run_id": {"type": "integer", "description": "Research run ID (from run_research's response or list_runs)"},
+            "latest_only": {
+                "type": "boolean",
+                "description": "Return only the most recent checkpoint instead of the full list (optional, default false)",
+            },
         },
+        "required": ["run_id"],
     }
     is_readonly = True
 

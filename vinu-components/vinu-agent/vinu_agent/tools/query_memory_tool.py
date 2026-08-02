@@ -10,27 +10,31 @@ class QueryMemoryTool(BaseTool):
         "agent already knows about a symbol before starting new work."
     )
     parameters = {
-        "query": {
-            "type": "string",
-            "description": "Search text (can be a symbol, concept, or question)",
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Search text (can be a symbol, concept, or question)",
+            },
+            "symbol": {
+                "type": "string",
+                "description": "Filter by stock symbol (optional)",
+            },
+            "source": {
+                "type": "string",
+                "description": "Filter by source: research, simulator, stock_price, news, agent (optional)",
+                "enum": ["", "research", "simulator", "stock_price", "news", "agent"],
+            },
+            "memory_type": {
+                "type": "string",
+                "description": "Filter by type: research_run, strategy_artifact, simulation_run, price_summary, news_article, finding (optional)",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max results to return (default: 15, max: 50)",
+            },
         },
-        "symbol": {
-            "type": "string",
-            "description": "Filter by stock symbol (optional)",
-        },
-        "source": {
-            "type": "string",
-            "description": "Filter by source: research, simulator, stock_price, news, agent (optional)",
-            "enum": ["", "research", "simulator", "stock_price", "news", "agent"],
-        },
-        "memory_type": {
-            "type": "string",
-            "description": "Filter by type: research_run, strategy_artifact, simulation_run, price_summary, news_article, finding (optional)",
-        },
-        "limit": {
-            "type": "integer",
-            "description": "Max results to return (default: 15, max: 50)",
-        },
+        "required": ["query"],
     }
     is_readonly = True
 

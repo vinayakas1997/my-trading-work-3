@@ -9,16 +9,20 @@ class RememberTool(BaseTool):
     name = "remember"
     description = "Save an important finding or data point to persistent cross-session memory"
     parameters = {
-        "name": {"type": "string", "description": "A short unique name for this memory (e.g., aapl-momentum-decay)"},
-        "content": {"type": "string", "description": "The finding or data to remember"},
-        "symbol": {
-            "type": "string",
-            "description": "Stock symbol this memory relates to (optional)",
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "A short unique name for this memory (e.g., aapl-momentum-decay)"},
+            "content": {"type": "string", "description": "The finding or data to remember"},
+            "symbol": {
+                "type": "string",
+                "description": "Stock symbol this memory relates to (optional)",
+            },
+            "memory_type": {
+                "type": "string",
+                "description": "Type: finding, strategy, config, user_pref (default: finding)",
+            },
         },
-        "memory_type": {
-            "type": "string",
-            "description": "Type: finding, strategy, config, user_pref (default: finding)",
-        },
+        "required": ["name", "content"],
     }
     is_readonly = False
 

@@ -19,31 +19,35 @@ class RunSweepCandidateTool(BaseTool):
         "already-present numeric parameter in it."
     )
     parameters = {
-        "symbol": {"type": "string", "description": "Stock symbol"},
-        "from_date": {"type": "string", "description": "Start date YYYY-MM-DD"},
-        "to_date": {"type": "string", "description": "End date YYYY-MM-DD"},
-        "recipe": {
-            "type": "string",
-            "description": "Recipe-mode: a built-in strategy template key (see list_sweep_recipes). Requires `params`.",
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "Stock symbol"},
+            "from_date": {"type": "string", "description": "Start date YYYY-MM-DD"},
+            "to_date": {"type": "string", "description": "End date YYYY-MM-DD"},
+            "recipe": {
+                "type": "string",
+                "description": "Recipe-mode: a built-in strategy template key (see list_sweep_recipes). Requires `params`.",
+            },
+            "params": {
+                "type": "string",
+                "description": "Recipe-mode: JSON object of the full parameter set for this candidate, e.g. '{\"fast_period\": 9, \"slow_period\": 40}'",
+            },
+            "base_code": {
+                "type": "string",
+                "description": "Base-code-mode: existing strategy source to vary one parameter of. Requires `param_name`/`param_value`.",
+            },
+            "param_name": {"type": "string", "description": "Base-code-mode: the parameter name to vary"},
+            "param_value": {"type": "number", "description": "Base-code-mode: the new value for param_name"},
+            "indicators": {
+                "type": "string",
+                "description": "Comma-separated indicator kinds to make available, e.g. 'sma_20,rsi_14' (optional)",
+            },
+            "initial_capital": {
+                "type": "number",
+                "description": "Starting capital for the backtest (optional, defaults to service config)",
+            },
         },
-        "params": {
-            "type": "string",
-            "description": "Recipe-mode: JSON object of the full parameter set for this candidate, e.g. '{\"fast_period\": 9, \"slow_period\": 40}'",
-        },
-        "base_code": {
-            "type": "string",
-            "description": "Base-code-mode: existing strategy source to vary one parameter of. Requires `param_name`/`param_value`.",
-        },
-        "param_name": {"type": "string", "description": "Base-code-mode: the parameter name to vary"},
-        "param_value": {"type": "number", "description": "Base-code-mode: the new value for param_name"},
-        "indicators": {
-            "type": "string",
-            "description": "Comma-separated indicator kinds to make available, e.g. 'sma_20,rsi_14' (optional)",
-        },
-        "initial_capital": {
-            "type": "number",
-            "description": "Starting capital for the backtest (optional, defaults to service config)",
-        },
+        "required": ["symbol", "from_date", "to_date"],
     }
     is_readonly = False
 
@@ -88,7 +92,7 @@ class ListSweepRecipesTool(BaseTool):
         "recipe mode, each with its tunable parameter names and default "
         "values. Read this before picking a recipe + params."
     )
-    parameters = {}
+    parameters = {"type": "object", "properties": {}, "required": []}
     is_readonly = True
 
     def __init__(self):

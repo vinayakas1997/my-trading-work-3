@@ -6,9 +6,13 @@ class StrategyTool(BaseTool):
     name = "run_strategy"
     description = "Evaluate a YAML-defined strategy from the strategy service"
     parameters = {
-        "strategy_name": {"type": "string", "description": "Name of the registered strategy"},
-        "symbol": {"type": "string", "description": "Stock symbol"},
-        "date": {"type": "string", "description": "Evaluation date YYYY-MM-DD"},
+        "type": "object",
+        "properties": {
+            "strategy_name": {"type": "string", "description": "Name of the registered strategy"},
+            "symbol": {"type": "string", "description": "Stock symbol"},
+            "date": {"type": "string", "description": "Evaluation date YYYY-MM-DD (optional, currently unused)"},
+        },
+        "required": ["strategy_name", "symbol"],
     }
     is_readonly = False
 

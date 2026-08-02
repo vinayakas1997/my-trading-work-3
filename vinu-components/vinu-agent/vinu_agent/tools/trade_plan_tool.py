@@ -54,20 +54,24 @@ class TradePlanTool(BaseTool):
         "sentiment, and market regime data — no broker execution."
     )
     parameters = {
-        "symbol": {"type": "string", "description": "Stock symbol"},
-        "timeframe": {
-            "type": "string",
-            "description": "Trading timeframe",
-            "enum": ["intraday", "daily", "swing"],
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "Stock symbol"},
+            "timeframe": {
+                "type": "string",
+                "description": "Trading timeframe (optional, default daily)",
+                "enum": ["intraday", "daily", "swing"],
+            },
+            "preset": {
+                "type": "string",
+                "description": "Feature preset recipe (optional, defaults to timeframe-appropriate preset)",
+            },
+            "days": {
+                "type": "integer",
+                "description": "Lookback days for analysis (optional, defaults to 365)",
+            },
         },
-        "preset": {
-            "type": "string",
-            "description": "Feature preset recipe (optional, defaults to timeframe-appropriate preset)",
-        },
-        "days": {
-            "type": "integer",
-            "description": "Lookback days for analysis (optional, defaults to 365)",
-        },
+        "required": ["symbol"],
     }
     is_readonly = True
 

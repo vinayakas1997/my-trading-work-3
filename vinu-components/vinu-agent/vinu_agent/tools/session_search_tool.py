@@ -6,7 +6,11 @@ class SessionSearchTool(BaseTool):
     name = "search_sessions"
     description = "Search across all past conversation sessions using full-text search"
     parameters = {
-        "query": {"type": "string", "description": "Search query text"},
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query text"},
+        },
+        "required": ["query"],
     }
     is_readonly = True
 

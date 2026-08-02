@@ -11,7 +11,11 @@ class SymbolResearchStateTool(BaseTool):
         "exhausted, a new run will return early without doing real work."
     )
     parameters = {
-        "symbol": {"type": "string", "description": "Stock symbol"},
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "Stock symbol"},
+        },
+        "required": ["symbol"],
     }
     is_readonly = True
 

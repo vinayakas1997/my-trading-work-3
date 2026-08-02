@@ -18,11 +18,15 @@ class PortfolioTool(BaseTool):
     name = "get_portfolio"
     description = "Fetch the current Alpaca paper trading portfolio: account summary, open positions, and pending orders"
     parameters = {
-        "section": {
-            "type": "string",
-            "description": "Which section to fetch: account, positions, orders, or all (default: all)",
-            "enum": ["account", "positions", "orders", "all"],
+        "type": "object",
+        "properties": {
+            "section": {
+                "type": "string",
+                "description": "Which section to fetch: account, positions, orders, or all (default: all)",
+                "enum": ["account", "positions", "orders", "all"],
+            },
         },
+        "required": [],
     }
     is_readonly = True
     _as_of: str | None = None

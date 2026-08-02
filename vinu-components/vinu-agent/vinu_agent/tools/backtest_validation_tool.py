@@ -16,7 +16,11 @@ class BacktestValidationTool(BaseTool):
         "prior simulate/research call."
     )
     parameters = {
-        "run_id": {"type": "string", "description": "Backtest run ID (from a simulate or research call's result)"},
+        "type": "object",
+        "properties": {
+            "run_id": {"type": "string", "description": "Backtest run ID (from a simulate or research call's result)"},
+        },
+        "required": ["run_id"],
     }
     is_readonly = True
 

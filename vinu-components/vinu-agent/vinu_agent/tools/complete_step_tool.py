@@ -5,7 +5,7 @@ from ..agent.tools import BaseTool
 class CompleteStepTool(BaseTool):
     name = "complete_step"
     description = "Mark the current workflow step as completed and move to the next one. Call this after finishing each skill in your plan."
-    parameters = {}
+    parameters = {"type": "object", "properties": {}, "required": []}
     is_readonly = True
 
     def __init__(self):

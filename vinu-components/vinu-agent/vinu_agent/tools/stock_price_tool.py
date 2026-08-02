@@ -17,13 +17,17 @@ class StockPriceTool(BaseTool):
     name = "get_stock_price"
     description = "Fetch historical OHLCV price data for a symbol"
     parameters = {
-        "symbol": {"type": "string", "description": "Stock symbol"},
-        "start_date": {"type": "string", "description": "Start date YYYY-MM-DD (defaults to 30 days back)"},
-        "end_date": {"type": "string", "description": "End date YYYY-MM-DD (defaults to the decision date)"},
-        "interval": {
-            "type": "string",
-            "description": "Bar interval: 1m, 5m, 15m, 1h, 1D (default: 1D)",
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "Stock symbol"},
+            "start_date": {"type": "string", "description": "Start date YYYY-MM-DD (defaults to 30 days back)"},
+            "end_date": {"type": "string", "description": "End date YYYY-MM-DD (defaults to the decision date)"},
+            "interval": {
+                "type": "string",
+                "description": "Bar interval: 1m, 5m, 15m, 1h, 1D (default: 1D)",
+            },
         },
+        "required": ["symbol"],
     }
     is_readonly = True
     _as_of: str | None = None
@@ -52,7 +56,7 @@ class StockPriceTool(BaseTool):
             start_epoch = end_epoch - 30 * 86400
             clamped = True
         resp = httpx.get(
-            f"{url}/candles/{kwargs['symbol'].upper()}",
+            f"{url}/stock/candles/{kwargs['symbol'].upper()}",
             params={
                 "from": start_epoch,
                 "to": end_epoch,

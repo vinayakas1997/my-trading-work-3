@@ -124,15 +124,19 @@ class OptionsGreeksTool(BaseTool):
         "implied volatility, per contract. Live snapshot only (today's data, no historical lookup)."
     )
     parameters = {
-        "symbol": {"type": "string", "description": "Underlying stock symbol (e.g., AAPL)"},
-        "expiration": {
-            "type": "string",
-            "description": "Optional: filter to a single expiration date (YYYY-MM-DD)",
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "Underlying stock symbol (e.g., AAPL)"},
+            "expiration": {
+                "type": "string",
+                "description": "Optional: filter to a single expiration date (YYYY-MM-DD)",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max contracts to return (default 100)",
+            },
         },
-        "limit": {
-            "type": "integer",
-            "description": "Max contracts to return (default 100)",
-        },
+        "required": ["symbol"],
     }
     is_readonly = True
     _as_of: str | None = None

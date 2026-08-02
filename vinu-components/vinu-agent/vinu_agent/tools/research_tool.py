@@ -10,26 +10,30 @@ class ResearchTool(BaseTool):
         "check before committing to a full run."
     )
     parameters = {
-        "idea": {"type": "string", "description": "Research hypothesis or trading idea"},
-        "symbol": {"type": "string", "description": "Stock symbol"},
-        "from_date": {"type": "string", "description": "Start date YYYY-MM-DD"},
-        "to_date": {"type": "string", "description": "End date YYYY-MM-DD"},
-        "indicators": {
-            "type": "string",
-            "description": "Comma-separated indicator kinds to make available, e.g. 'sma_20,rsi_14' (optional)",
+        "type": "object",
+        "properties": {
+            "idea": {"type": "string", "description": "Research hypothesis or trading idea"},
+            "symbol": {"type": "string", "description": "Stock symbol"},
+            "from_date": {"type": "string", "description": "Start date YYYY-MM-DD"},
+            "to_date": {"type": "string", "description": "End date YYYY-MM-DD"},
+            "indicators": {
+                "type": "string",
+                "description": "Comma-separated indicator kinds to make available, e.g. 'sma_20,rsi_14' (optional)",
+            },
+            "initial_capital": {
+                "type": "number",
+                "description": "Starting capital for the backtest (optional, defaults to service config)",
+            },
+            "universe": {
+                "type": "string",
+                "description": "Comma-separated tickers to backtest as a portfolio alongside symbol, e.g. 'MSFT,GOOGL' (optional)",
+            },
+            "dry_run": {
+                "type": "boolean",
+                "description": "If true, validate inputs and return without running the full loop (optional, default false)",
+            },
         },
-        "initial_capital": {
-            "type": "number",
-            "description": "Starting capital for the backtest (optional, defaults to service config)",
-        },
-        "universe": {
-            "type": "string",
-            "description": "Comma-separated tickers to backtest as a portfolio alongside symbol, e.g. 'MSFT,GOOGL' (optional)",
-        },
-        "dry_run": {
-            "type": "boolean",
-            "description": "If true, validate inputs and return without running the full loop (optional, default false)",
-        },
+        "required": ["idea", "symbol", "from_date", "to_date"],
     }
     is_readonly = False
 

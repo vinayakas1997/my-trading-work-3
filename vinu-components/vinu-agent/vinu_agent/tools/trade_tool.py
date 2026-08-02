@@ -30,43 +30,47 @@ class TradeTool(BaseTool):
     name = "submit_order"
     description = "Submit a trade order to Alpaca paper trading. Every order is validated against the trading mandate before execution."
     parameters = {
-        "symbol": {"type": "string", "description": "Ticker symbol (e.g., AAPL)"},
-        "qty": {"type": "number", "description": "Number of shares"},
-        "side": {
-            "type": "string",
-            "description": "Order side",
-            "enum": ["buy", "sell"],
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "Ticker symbol (e.g., AAPL)"},
+            "qty": {"type": "number", "description": "Number of shares"},
+            "side": {
+                "type": "string",
+                "description": "Order side",
+                "enum": ["buy", "sell"],
+            },
+            "order_type": {
+                "type": "string",
+                "description": "Order type (default: market)",
+                "enum": ["market", "limit", "stop", "stop_limit"],
+            },
+            "limit_price": {
+                "type": "number",
+                "description": "Limit price (required for limit/stop_limit orders)",
+            },
+            "stop_price": {
+                "type": "number",
+                "description": "Stop price (required for stop/stop_limit orders)",
+            },
+            "time_in_force": {
+                "type": "string",
+                "description": "Time in force (default: day)",
+                "enum": ["day", "gtc", "opg", "cls", "ioc", "fok"],
+            },
+            "take_profit_price": {
+                "type": "number",
+                "description": "Optional profit-target exit price. With stop_loss_price, attaches a real bracket order at entry so the exit is a resting order, not a manual follow-up.",
+            },
+            "stop_loss_price": {
+                "type": "number",
+                "description": "Optional stop-loss trigger price. Attaches a real stop order at entry so the exit is a resting order, not a manual follow-up.",
+            },
+            "stop_loss_limit_price": {
+                "type": "number",
+                "description": "Optional limit price for the stop-loss leg (stop-limit instead of stop-market). Only used if stop_loss_price is set.",
+            },
         },
-        "order_type": {
-            "type": "string",
-            "description": "Order type (default: market)",
-            "enum": ["market", "limit", "stop", "stop_limit"],
-        },
-        "limit_price": {
-            "type": "number",
-            "description": "Limit price (required for limit/stop_limit orders)",
-        },
-        "stop_price": {
-            "type": "number",
-            "description": "Stop price (required for stop/stop_limit orders)",
-        },
-        "time_in_force": {
-            "type": "string",
-            "description": "Time in force (default: day)",
-            "enum": ["day", "gtc", "opg", "cls", "ioc", "fok"],
-        },
-        "take_profit_price": {
-            "type": "number",
-            "description": "Optional profit-target exit price. With stop_loss_price, attaches a real bracket order at entry so the exit is a resting order, not a manual follow-up.",
-        },
-        "stop_loss_price": {
-            "type": "number",
-            "description": "Optional stop-loss trigger price. Attaches a real stop order at entry so the exit is a resting order, not a manual follow-up.",
-        },
-        "stop_loss_limit_price": {
-            "type": "number",
-            "description": "Optional limit price for the stop-loss leg (stop-limit instead of stop-market). Only used if stop_loss_price is set.",
-        },
+        "required": ["symbol", "qty", "side"],
     }
     is_readonly = False
     _as_of: str | None = None
@@ -209,7 +213,11 @@ class CancelOrderTool(BaseTool):
     name = "cancel_order"
     description = "Cancel an open order by its order ID"
     parameters = {
-        "order_id": {"type": "string", "description": "The order ID to cancel"},
+        "type": "object",
+        "properties": {
+            "order_id": {"type": "string", "description": "The order ID to cancel"},
+        },
+        "required": ["order_id"],
     }
     is_readonly = False
     _as_of: str | None = None

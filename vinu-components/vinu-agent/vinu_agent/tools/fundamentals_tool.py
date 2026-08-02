@@ -6,12 +6,16 @@ class FundamentalsTool(BaseTool):
     name = "get_fundamentals"
     description = "Fetch fundamental data for a symbol: financial ratios, income statement summary, balance sheet, and valuation metrics"
     parameters = {
-        "symbol": {"type": "string", "description": "Stock symbol (e.g., AAPL)"},
-        "metric": {
-            "type": "string",
-            "description": "Metric type: summary, income, balance, cashflow, ratios, all (default: summary)",
-            "enum": ["summary", "income", "balance", "cashflow", "ratios", "all"],
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "Stock symbol (e.g., AAPL)"},
+            "metric": {
+                "type": "string",
+                "description": "Metric type: summary, income, balance, cashflow, ratios, all (default: summary)",
+                "enum": ["summary", "income", "balance", "cashflow", "ratios", "all"],
+            },
         },
+        "required": ["symbol"],
     }
     is_readonly = True
 

@@ -10,30 +10,34 @@ class BacktestTool(BaseTool):
         "Returns metrics (sharpe, max_drawdown, total_return) and trade count."
     )
     parameters = {
-        "strategy_code": {
-            "type": "string",
-            "description": "Python code defining a Strategy class with generate_weights method",
+        "type": "object",
+        "properties": {
+            "strategy_code": {
+                "type": "string",
+                "description": "Python code defining a Strategy class with generate_weights method",
+            },
+            "symbol": {
+                "type": "string",
+                "description": "Stock symbol (e.g., AAPL, 600519.SH, BTC-USDT)",
+            },
+            "start_date": {
+                "type": "string",
+                "description": "Start date in YYYY-MM-DD format",
+            },
+            "end_date": {
+                "type": "string",
+                "description": "End date in YYYY-MM-DD format",
+            },
+            "interval": {
+                "type": "string",
+                "description": "Bar interval: 1m, 5m, 15m, 1h, 1D (default: 1D)",
+            },
+            "initial_capital": {
+                "type": "number",
+                "description": "Starting capital in USD (default: 100000)",
+            },
         },
-        "symbol": {
-            "type": "string",
-            "description": "Stock symbol (e.g., AAPL, 600519.SH, BTC-USDT)",
-        },
-        "start_date": {
-            "type": "string",
-            "description": "Start date in YYYY-MM-DD format",
-        },
-        "end_date": {
-            "type": "string",
-            "description": "End date in YYYY-MM-DD format",
-        },
-        "interval": {
-            "type": "string",
-            "description": "Bar interval: 1m, 5m, 15m, 1h, 1D (default: 1D)",
-        },
-        "initial_capital": {
-            "type": "number",
-            "description": "Starting capital in USD (default: 100000)",
-        },
+        "required": ["strategy_code", "symbol", "start_date", "end_date"],
     }
     is_readonly = False
 

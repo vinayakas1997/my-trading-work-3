@@ -11,10 +11,14 @@ class CreateHypothesisTool(BaseTool):
         "expectation correct' is checkable afterward via query_hypotheses."
     )
     parameters = {
-        "title": {"type": "string", "description": "Short label for this expectation"},
-        "thesis": {"type": "string", "description": "The actual expectation/reasoning, in prose"},
-        "symbol": {"type": "string", "description": "Primary ticker this hypothesis is about (optional)"},
-        "strategy_type": {"type": "string", "description": "Strategy/recipe this hypothesis concerns (optional)"},
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "Short label for this expectation"},
+            "thesis": {"type": "string", "description": "The actual expectation/reasoning, in prose"},
+            "symbol": {"type": "string", "description": "Primary ticker this hypothesis is about (optional)"},
+            "strategy_type": {"type": "string", "description": "Strategy/recipe this hypothesis concerns (optional)"},
+        },
+        "required": ["title", "thesis"],
     }
     is_readonly = False
 
@@ -45,13 +49,17 @@ class AddHypothesisEvidenceTool(BaseTool):
         "makes a past expectation checkable later."
     )
     parameters = {
-        "hypothesis_id": {"type": "string", "description": "From a prior create_hypothesis call"},
-        "metric": {"type": "string", "description": "Which metric this evidence is about, e.g. 'sharpe'"},
-        "value": {"type": "number", "description": "The observed value of that metric"},
-        "conclusion": {"type": "string", "description": "'supports' or 'contradicts' the hypothesis"},
-        "reasoning": {"type": "string", "description": "Why this outcome supports/contradicts the expectation (optional)"},
-        "run_id": {"type": "integer", "description": "Associated research run id, if any (optional)"},
-        "iteration": {"type": "integer", "description": "Associated iteration/round number, if any (optional)"},
+        "type": "object",
+        "properties": {
+            "hypothesis_id": {"type": "string", "description": "From a prior create_hypothesis call"},
+            "metric": {"type": "string", "description": "Which metric this evidence is about, e.g. 'sharpe'"},
+            "value": {"type": "number", "description": "The observed value of that metric"},
+            "conclusion": {"type": "string", "description": "'supports' or 'contradicts' the hypothesis"},
+            "reasoning": {"type": "string", "description": "Why this outcome supports/contradicts the expectation (optional)"},
+            "run_id": {"type": "integer", "description": "Associated research run id, if any (optional)"},
+            "iteration": {"type": "integer", "description": "Associated iteration/round number, if any (optional)"},
+        },
+        "required": ["hypothesis_id", "metric", "value", "conclusion"],
     }
     is_readonly = False
 

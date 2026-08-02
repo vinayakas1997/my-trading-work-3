@@ -17,10 +17,14 @@ class NewsTool(BaseTool):
     name = "get_news"
     description = "Fetch news articles for a symbol over a date range"
     parameters = {
-        "symbol": {"type": "string", "description": "Stock symbol"},
-        "start_date": {"type": "string", "description": "Start date YYYY-MM-DD"},
-        "end_date": {"type": "string", "description": "End date YYYY-MM-DD"},
-        "limit": {"type": "integer", "description": "Max articles to return (default: 20)"},
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "Stock symbol"},
+            "start_date": {"type": "string", "description": "Start date YYYY-MM-DD (optional)"},
+            "end_date": {"type": "string", "description": "End date YYYY-MM-DD (optional)"},
+            "limit": {"type": "integer", "description": "Max articles to return (default: 20)"},
+        },
+        "required": ["symbol"],
     }
     is_readonly = True
     _as_of: str | None = None
@@ -48,7 +52,7 @@ class NewsTool(BaseTool):
             params["from"] = from_epoch
         params["to"] = to_epoch
         resp = httpx.get(
-            f"{url}/ticker/{kwargs['symbol'].upper()}",
+            f"{url}/news/ticker/{kwargs['symbol'].upper()}",
             params=params,
             timeout=30,
         )

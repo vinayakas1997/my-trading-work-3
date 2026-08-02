@@ -6,11 +6,15 @@ class PlanWorkflowTool(BaseTool):
     name = "plan_workflow"
     description = "Plan a multi-step workflow by listing skill names in execution order. Call this before loading skills to declare your plan."
     parameters = {
-        "skills": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Ordered list of skill names to execute (e.g., ['research-strategy', 'generate-trade-plan'])",
+        "type": "object",
+        "properties": {
+            "skills": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Ordered list of skill names to execute (e.g., ['research-strategy', 'generate-trade-plan'])",
+            },
         },
+        "required": ["skills"],
     }
     is_readonly = True
 

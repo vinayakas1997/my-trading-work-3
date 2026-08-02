@@ -12,14 +12,18 @@ class QueryHypothesesTool(BaseTool):
         "been tried and concluded."
     )
     parameters = {
-        "symbol": {
-            "type": "string",
-            "description": "Filter to hypotheses whose universe includes this ticker (optional — omit to list all)",
+        "type": "object",
+        "properties": {
+            "symbol": {
+                "type": "string",
+                "description": "Filter to hypotheses whose universe includes this ticker (optional — omit to list all)",
+            },
+            "status": {
+                "type": "string",
+                "description": "Filter by status: exploring|testing|validated|rejected|monitoring|mc_gate_failed (optional)",
+            },
         },
-        "status": {
-            "type": "string",
-            "description": "Filter by status: exploring|testing|validated|rejected|monitoring|mc_gate_failed (optional)",
-        },
+        "required": [],
     }
     is_readonly = True
 

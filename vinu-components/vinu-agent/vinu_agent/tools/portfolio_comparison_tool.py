@@ -17,11 +17,15 @@ class PortfolioComparisonTool(BaseTool):
     name = "compare_portfolio"
     description = "Compare current live/paper positions and P&L against each strategy's backtest expectations"
     parameters = {
-        "format": {
-            "type": "string",
-            "description": "Output format: 'text' for human-readable, 'json' for raw data",
-            "enum": ["text", "json"],
+        "type": "object",
+        "properties": {
+            "format": {
+                "type": "string",
+                "description": "Output format: 'text' for human-readable, 'json' for raw data (optional, default text)",
+                "enum": ["text", "json"],
+            },
         },
+        "required": [],
     }
     is_readonly = True
 

@@ -17,6 +17,7 @@ dependencies = [
     "openai>=1.0",
     "discord.py>=2.3",
     "python-telegram-bot>=20",
+    "yfinance>=0.2",
 ]
 
 [project.scripts]

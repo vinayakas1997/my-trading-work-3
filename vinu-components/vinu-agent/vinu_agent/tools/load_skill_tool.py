@@ -6,7 +6,11 @@ class LoadSkillTool(BaseTool):
     name = "load_skill"
     description = "Load full documentation for a specialized research skill or methodology"
     parameters = {
-        "name": {"type": "string", "description": "Skill name (e.g., strategy-generate, research-discipline)"},
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Skill name (e.g., strategy-generate, research-discipline)"},
+        },
+        "required": ["name"],
     }
     is_readonly = True
 

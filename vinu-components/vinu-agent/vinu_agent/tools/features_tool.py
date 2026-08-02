@@ -11,13 +11,17 @@ class FeaturesTool(BaseTool):
     name = "get_features"
     description = "Compute technical indicators (SMA, RSI, MACD, etc.) for a symbol over a date range"
     parameters = {
-        "symbol": {"type": "string", "description": "Stock symbol"},
-        "indicators": {
-            "type": "string",
-            "description": "Comma-separated indicator names (e.g., sma_20,rsi_14,macd)",
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "Stock symbol"},
+            "indicators": {
+                "type": "string",
+                "description": "Comma-separated indicator names (e.g., sma_20,rsi_14,macd)",
+            },
+            "start_date": {"type": "string", "description": "Start date YYYY-MM-DD"},
+            "end_date": {"type": "string", "description": "End date YYYY-MM-DD"},
         },
-        "start_date": {"type": "string", "description": "Start date YYYY-MM-DD"},
-        "end_date": {"type": "string", "description": "End date YYYY-MM-DD"},
+        "required": ["symbol", "start_date", "end_date"],
     }
     is_readonly = True
 
@@ -28,7 +32,7 @@ class FeaturesTool(BaseTool):
         import httpx
         url = self._services_config.get("vinu_tools", "http://localhost:8082")
         resp = httpx.post(
-            f"{url}/requests",
+            f"{url}/features/requests",
             json={
                 "symbol": kwargs["symbol"],
                 "indicators": kwargs.get("indicators", "sma_20,rsi_14").split(","),

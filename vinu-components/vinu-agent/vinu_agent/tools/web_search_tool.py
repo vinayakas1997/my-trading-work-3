@@ -6,7 +6,11 @@ class WebSearchTool(BaseTool):
     name = "web_search"
     description = "Search the web for current information on a query"
     parameters = {
-        "query": {"type": "string", "description": "Search query"},
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query"},
+        },
+        "required": ["query"],
     }
     is_readonly = True
 
