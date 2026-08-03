@@ -138,6 +138,7 @@ class SessionService:
     def _run_with_agent(self, session_id: str, attempt: Attempt) -> Dict:
         from ..agent.loop import AgentLoop
         from ..agent.workflow import WorkflowTracker
+        from ..audit.ground_truth import GroundTruthInjector, _get_held_symbols
         from ..tools import build_registry
 
         session = self.store.get_session(session_id)
@@ -156,6 +157,12 @@ class SessionService:
             as_of=as_of,
         )
 
+        held_symbols = _get_held_symbols(as_of, session_id)
+        ground_truth_injector = GroundTruthInjector(
+            registry=registry, as_of=as_of,
+            services_config=self._services_config,
+        )
+
         context_builder = ContextBuilder(
             registry=registry,
             memory=None,
@@ -163,6 +170,8 @@ class SessionService:
             persistent_memory=self._persistent_memory,
             unified_memory=self._unified_memory,
             as_of=as_of,
+            ground_truth_injector=ground_truth_injector,
+            held_symbols=held_symbols,
         )
         self._context_builder = context_builder
 
@@ -181,6 +190,7 @@ class SessionService:
             persistent_memory=self._persistent_memory,
         )
         agent_loop._workflow_tracker = workflow_tracker
+        agent_loop._ground_truth_system_msg = context_builder.last_ground_truth_msg
         self._active_loops[session_id] = agent_loop
 
         try:
@@ -191,7 +201,7 @@ class SessionService:
             ]
             user_msg = history[-1]["content"] if history else ""
             messages_with_system = context_builder.build_messages(
-                history[:-1], user_msg
+                history[:-1], user_msg, session_id=session_id,
             )
             result = agent_loop.run(
                 messages=messages_with_system,

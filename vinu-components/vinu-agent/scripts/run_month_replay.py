@@ -86,27 +86,33 @@ def as_of_for(day: str) -> str:
 
 
 def _parse_action(content: str) -> dict:
-    """Best-effort structured summary of the final decision from its text."""
+    """Best-effort structured summary of the final decision from its text.
+
+    Deliberately narrow: generic vocabulary like "closing price" or "close
+    to" must not be mistaken for "close the position", or every day's price
+    recap gets mislabeled as a trade (found 2026-08-03 reviewing
+    run-2026-07-06-2026-07-31-v2 — the old broad `close|exit|reduce` word
+    list matched "Latest close: 308.43" on a pure no-op day). This is a
+    narrative aid only; the trade log / P&L come from the broker's real
+    ledger, never from this parse.
+    """
     txt = content or ""
     summary: dict = {"action": "none", "symbol": None, "qty": None, "side": None}
     lower = txt.lower()
-    if re.search(r"\b(buy|buying|long)\b", lower):
+    buy_re = re.compile(r"\b(bought|buying|i(?:'ll| will)?\s*buy|submit(?:ted|ting)?\s+(?:a\s+)?buy)\b")
+    sell_re = re.compile(r"\b(sold|selling|i(?:'ll| will)?\s*sell|close(?:d|ing)?\s+(?:the|my|out)\s+position|exit(?:ed|ing)?\s+(?:the|my)\s+position|reduc(?:e|ed|ing)\s+(?:the|my)\s+position)\b")
+    if buy_re.search(lower):
         summary["action"] = "trade"
-    if re.search(r"\b(sell|selling|close|exit|reduce)\b", lower):
-        if summary["action"] == "trade":
-            summary["action"] = "trade"
-        else:
-            summary["action"] = "trade"
+        summary["side"] = "buy"
+    if sell_re.search(lower):
+        summary["action"] = "trade"
+        summary["side"] = "sell"
     sym = re.search(r"\b(AAPL|TSLA|JNJ)\b", txt)
     if sym:
         summary["symbol"] = sym.group(1)
-    qty = re.search(r"\b(?:qty|quantity|shares?)?\s*[:=]?\s*(\d{1,6})\b", txt)
+    qty = re.search(r"\b(\d{1,5})\s*shares?\b", lower)
     if qty:
         summary["qty"] = int(qty.group(1))
-    if re.search(r"\bbuy\b", lower):
-        summary["side"] = "buy"
-    elif re.search(r"\bsell\b", lower):
-        summary["side"] = "sell"
     summary["reasoning_excerpt"] = txt[:2500]
     return summary
 
@@ -205,7 +211,10 @@ class ReplayRunner:
         state_file = self.data_root / "replay_state" / f"{self.session_id}.json"
         if state_file.exists():
             return json.loads(state_file.read_text("utf-8"))
-        from vinu_agent.broker.historical_broker import DEFAULT_INITIAL_CASH
+        try:
+            from vinu_agent.broker.historical_broker import DEFAULT_INITIAL_CASH
+        except ImportError:
+            DEFAULT_INITIAL_CASH = 100_000.0
         return {
             "cash": DEFAULT_INITIAL_CASH,
             "positions": {},

@@ -41,12 +41,21 @@ class ContextBuilder:
         skills_loader: Any = None,
         persistent_memory: Any = None,
         unified_memory: Any = None,
+        max_memory_tokens: int = 2000,
+        as_of: str | None = None,
+        ground_truth_injector: Any = None,
+        held_symbols: list[str] | None = None,
     ) -> None:
         self.registry = registry
         self.memory = memory
         self.skills_loader = skills_loader
         self.persistent_memory = persistent_memory
         self.unified_memory = unified_memory
+        self.max_memory_tokens = max_memory_tokens
+        self.as_of = as_of
+        self._ground_truth_injector = ground_truth_injector
+        self._held_symbols = held_symbols or []
+        self._last_ground_truth_msg: dict | None = None
 
     def build_system_prompt(self) -> str:
         tool_count = len(self.registry.tool_names)
@@ -88,32 +97,31 @@ class ContextBuilder:
                 symbols.append(c)
         return symbols[:5]
 
-    def __init__(
-        self,
-        registry: ToolRegistry,
-        memory: Any = None,
-        skills_loader: Any = None,
-        persistent_memory: Any = None,
-        unified_memory: Any = None,
-        max_memory_tokens: int = 2000,
-        as_of: str | None = None,
-    ) -> None:
-        self.registry = registry
-        self.memory = memory
-        self.skills_loader = skills_loader
-        self.persistent_memory = persistent_memory
-        self.unified_memory = unified_memory
-        self.max_memory_tokens = max_memory_tokens
-        self.as_of = as_of
+    @property
+    def last_ground_truth_msg(self) -> dict | None:
+        return self._last_ground_truth_msg
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
         return len(text) // 4
 
     def build_messages(
-        self, history: List[Dict], user_message: str
+        self, history: List[Dict], user_message: str, *, session_id: str = ""
     ) -> List[Dict]:
-        messages = [{"role": "system", "content": self.build_system_prompt()}]
+        messages: list[dict] = [{"role": "system", "content": self.build_system_prompt()}]
+
+        if self._ground_truth_injector:
+            _, gt_msg = self._ground_truth_injector.build_block(
+                self._held_symbols, session_id=session_id,
+            )
+            if gt_msg is not None:
+                messages.append(gt_msg)
+                self._last_ground_truth_msg = gt_msg
+            else:
+                self._last_ground_truth_msg = None
+        else:
+            self._last_ground_truth_msg = None
+
         messages.extend(history)
 
         combined_context = []

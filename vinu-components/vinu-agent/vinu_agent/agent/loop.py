@@ -55,9 +55,11 @@ class AgentLoop:
         self.tool_timeout: int = 60
         self._workflow_tracker: WorkflowTracker = WorkflowTracker()
         self._workflow_injected: bool = False
+        self._ground_truth_system_msg: dict | None = None
 
     def run(self, messages: List[Dict], session_id: str = "") -> Dict:
         self._cancel_event.clear()
+        self._session_id = session_id
         iteration = 0
         full_history = list(messages)
         token_usage = TokenUsage()
@@ -353,13 +355,21 @@ class AgentLoop:
             if self._previous_summary:
                 summary = self._iterative_update(self._previous_summary, summary)
             self._previous_summary = summary
-            return [
+            result: list[dict] = [
                 {"role": "system", "content": messages[0]["content"]},
-                {"role": "system", "content": f"<compacted-summary>\n{summary}\n</compacted-summary>"},
-                messages[-1],
             ]
+            if self._ground_truth_system_msg is not None:
+                result.append(self._ground_truth_system_msg)
+            result.append(
+                {"role": "system", "content": f"<compacted-summary>\n{summary}\n</compacted-summary>"}
+            )
+            result.append(messages[-1])
+            return result
         except Exception:
-            return messages[-6:]
+            result = list(messages[-6:])
+            if self._ground_truth_system_msg is not None:
+                result.insert(1, self._ground_truth_system_msg)
+            return result
 
     def _iterative_update(self, prev: str, new_info: str) -> str:
         try:
@@ -401,6 +411,18 @@ class AgentLoop:
         token_usage: TokenUsage,
         history: List[Dict],
     ) -> Dict:
+        audit_findings: list[dict] = []
+        if status in ("completed", "max_iterations") and content:
+            try:
+                from ..audit.fact_audit import FactAuditor
+                auditor = FactAuditor()
+                audit_findings = auditor.audit(
+                    content, history,
+                    session_id=getattr(self, "_session_id", ""),
+                )
+            except Exception:
+                pass
+
         return {
             "status": status,
             "content": content,
@@ -412,4 +434,5 @@ class AgentLoop:
             },
             "history": history[-10:],
             "trace": history,
+            "audit": audit_findings,
         }

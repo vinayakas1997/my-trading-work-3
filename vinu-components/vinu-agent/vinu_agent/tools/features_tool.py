@@ -31,15 +31,37 @@ class FeaturesTool(BaseTool):
     def execute(self, **kwargs) -> str:
         import httpx
         url = self._services_config.get("vinu_tools", "http://localhost:8082")
+        symbol = kwargs["symbol"].upper()
+        indicators = [
+            i.strip()
+            for i in kwargs.get("indicators", "sma_20,rsi_14").split(",")
+            if i.strip()
+        ]
+        from_ts = _date_to_epoch(kwargs["start_date"])
+        to_ts = _date_to_epoch(kwargs["end_date"])
+        title = f"agent_{symbol}_{from_ts}_{to_ts}"
         resp = httpx.post(
             f"{url}/features/requests",
             json={
-                "symbol": kwargs["symbol"],
-                "indicators": kwargs.get("indicators", "sma_20,rsi_14").split(","),
-                "from_ts": _date_to_epoch(kwargs["start_date"]),
-                "to_ts": _date_to_epoch(kwargs["end_date"]),
+                "title": title,
+                "symbols": [symbol],
+                "from_ts": from_ts,
+                "to_ts": to_ts,
+                "features": indicators,
+                "run_immediately": True,
             },
             timeout=60,
         )
         resp.raise_for_status()
-        return resp.text
+        created = resp.json()
+        request_id = created.get("id")
+        if created.get("status") != "done" or request_id is None:
+            return json.dumps(
+                {"status": "error", "tool": "get_features", "request": created}
+            )
+        data_resp = httpx.get(
+            f"{url}/features/requests/{request_id}/data",
+            timeout=60,
+        )
+        data_resp.raise_for_status()
+        return data_resp.text

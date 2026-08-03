@@ -111,22 +111,37 @@ class AutoAnalysisWorker:
 
     def backfill_unanalyzed(self, limit: int = 500) -> int:
         """Find articles missing LLM analysis and submit them to the queue.
-        
+
+        Only articles that mention a watchlist ticker are queued, so the LLM
+        is not spent analyzing irrelevant general-news articles.
+
         Returns the number of articles submitted.
         """
         from vinu_news.analysis.storage.repository import NewsRepository
 
         repo = NewsRepository(self.db_path)
         try:
+            watchlist = [
+                row["ticker"]
+                for row in repo.conn.execute(
+                    "SELECT ticker FROM watchlist_tickers"
+                ).fetchall()
+            ]
+            if not watchlist:
+                LOG.info("Backfill: no watchlist tickers, skipping analysis backfill")
+                return 0
+            placeholders = ",".join("?" for _ in watchlist)
             rows = repo.conn.execute(
-                """
-                SELECT a.link FROM articles a
+                f"""
+                SELECT DISTINCT a.link FROM articles a
+                JOIN article_ticker_mentions m ON a.id = m.article_id
                 LEFT JOIN news_analysis n ON a.link = n.url
                 WHERE n.url IS NULL
+                  AND m.ticker IN ({placeholders})
                 ORDER BY a.sort_ts DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (*watchlist, limit),
             ).fetchall()
         finally:
             repo.close()
@@ -273,8 +288,27 @@ class NewsService:
         if self._auto_analysis_worker is None:
             return
 
+        # Only analyze articles that mention a watchlist ticker, so the LLM is
+        # not spent on irrelevant general-news articles the watchlist never uses.
+        watchlist = set(self._storage.get_watchlist())
+        if not watchlist:
+            return
+        placeholders = ",".join("?" for _ in watchlist)
+        rows = self._storage.repo.conn.execute(
+            f"""
+            SELECT DISTINCT a.link FROM articles a
+            JOIN article_ticker_mentions m ON a.id = m.article_id
+            WHERE a.link IN ({placeholders})
+              AND m.ticker IN ({placeholders})
+            """,
+            (*links, *watchlist),
+        ).fetchall()
+        relevant_links = {row["link"] for row in rows}
+
         # Submit links to the shared analysis queue
         for link in links:
+            if link not in relevant_links:
+                continue
             if not self._auto_analysis_worker.submit(link):
                 LOG.warning("Analysis queue full, skipping analysis for remaining links")
                 break

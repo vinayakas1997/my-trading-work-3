@@ -15,8 +15,10 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 
 # Bake FinBERT into the image at build time — the container's filesystem is
 # read-only at runtime except /data and tmpfs (wiped on restart), so the
 # model can't be downloaded lazily on first use without network access and
-# a re-download on every restart.
-RUN python3 -c "\
+# a re-download on every restart. The --mount=type=cache keeps the HF hub
+# download across builds, so only the first build pays the ~430MB fetch.
+RUN --mount=type=cache,target=/root/.cache/huggingface \
+    python3 -c "\
 from transformers import AutoTokenizer, AutoModelForSequenceClassification; \
 tok = AutoTokenizer.from_pretrained('ProsusAI/finbert'); \
 model = AutoModelForSequenceClassification.from_pretrained('ProsusAI/finbert'); \

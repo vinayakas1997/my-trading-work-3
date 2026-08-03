@@ -1,0 +1,18 @@
+{
+  "run_id": "features-news-fix-smoke-test",
+  "tickers": [
+    "AAPL",
+    "TSLA",
+    "JNJ"
+  ],
+  "confirmed_window": {
+    "start": "2026-07-06",
+    "end": "2026-07-06"
+  },
+  "days": [
+    "2026-07-06"
+  ],
+  "prompt_template": "It's the start of the trading session on {date}. Review your current positions, account state, and any relevant signals for AAPL, TSLA, and JNJ. Decide what action, if any, to take today, and explain your reasoning before acting.",
+  "model": null,
+  "runtime": {}
+}

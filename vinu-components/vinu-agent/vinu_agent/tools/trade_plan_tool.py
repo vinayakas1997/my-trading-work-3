@@ -154,6 +154,8 @@ class TradePlanTool(BaseTool):
         )
         self._last_plan_data = plan_data
 
+        self._schedule_journal_write(research_url, plan_data)
+
         markdown = self._render_plan(
             symbol=symbol,
             timeframe=timeframe,
@@ -990,3 +992,66 @@ class TradePlanTool(BaseTool):
         else:
             lines.append(f"Validation data unavailable.")
         lines.append(f"")
+
+    def _schedule_journal_write(self, research_url: str, plan_data: dict) -> None:
+        """Fire-and-forget write of the trade-plan thesis into
+        vinu-research's HypothesisRegistry as a structured journal entry.
+        Best-effort — failure does not block the plan response."""
+        try:
+            asyncio.ensure_future(self._write_trade_journal_async(research_url, plan_data))
+        except Exception:
+            pass
+
+    async def _write_trade_journal_async(self, research_url: str, plan_data: dict) -> None:
+        import json as _json
+        try:
+            import httpx as _httpx
+            from datetime import timezone as _tz, datetime as _dt
+
+            symbol = plan_data.get("symbol", "")
+            timeframe = plan_data.get("timeframe", "daily")
+            direction = plan_data.get("direction", "neutral")
+            trend_stage = plan_data.get("trend_stage", "")
+            trend_bias = plan_data.get("trend_bias", "")
+            entry_rules = plan_data.get("entry_rules", [])
+            exit_rules = plan_data.get("exit_rules", [])
+
+            met_conditions = [r["condition"] for r in entry_rules if r.get("status") == "met"]
+            caution_conditions = [r["condition"] for r in entry_rules if r.get("status") == "caution"]
+            exit_actions = [f"{r['condition']} → {r['action']}" for r in exit_rules]
+
+            thesis_lines: list[str] = [
+                f"Direction: {direction}",
+                f"Trend stage: {trend_stage}, bias: {trend_bias}",
+                f"Entry conditions met: {', '.join(met_conditions) or 'none'}",
+                f"Caution flags: {', '.join(caution_conditions) or 'none'}",
+                f"Exit rules: {'; '.join(exit_actions) or 'none'}",
+            ]
+            thesis = "\n".join(thesis_lines)
+
+            title = f"{symbol} {timeframe.title()} TradePlan {_dt.now(_tz.utc).strftime('%Y-%m-%d')}"
+
+            async with _httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    f"{research_url}/hypotheses",
+                    json={
+                        "title": title,
+                        "thesis": thesis,
+                        "universe": [symbol],
+                        "strategy_type": f"trade_plan_{timeframe}",
+                    },
+                )
+                if resp.status_code == 200:
+                    result = resp.json()
+                    hypothesis_id = result.get("hypothesis_id", "")
+                    try:
+                        from ..broker.kill_switch import AuditLogger
+                        AuditLogger.log(
+                            AuditLogger.JOURNAL_ENTRY_CREATED,
+                            details={"hypothesis_id": hypothesis_id, "symbol": symbol, "direction": direction},
+                            symbol=symbol,
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass

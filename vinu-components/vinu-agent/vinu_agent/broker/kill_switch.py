@@ -55,7 +55,7 @@ def is_trading_halted(scope: str | None = None) -> bool:
 
 
 class AuditLogger:
-    """Structured audit logging for every trading action.
+    """Structured audit logging for every trading and agent-governor action.
 
     Writes under the container data root (VINU_AGENT_DATA_ROOT=/data in the
     Docker stack) — the only writable mount — never a hardcoded absolute path
@@ -63,6 +63,9 @@ class AuditLogger:
     immutable; only /data is bind-mounted rw). Before the fix, every order
     (rejected or executed) raised OSError writing the audit entry and masked
     the real trade response with a 500.
+
+    Schema (mirrors ref-fincept-terminal's AuditEntry):
+      {id, action, session_id, symbol, details, metadata, paper_trading, timestamp}
     """
 
     LOG_PATH = Path(
@@ -72,16 +75,47 @@ class AuditLogger:
         )
     )
 
+    # --- action constants ---
+    RISK_CHECK_PASSED = "RiskCheckPassed"
+    RISK_CHECK_FAILED = "RiskCheckFailed"
+    ORDER_PLACED = "OrderPlaced"
+    ORDER_FILLED = "OrderFilled"
+    ORDER_REJECTED = "order_rejected"
+    ORDER_PENDING_CONFIRMATION = "order_pending_confirmation"
+    ORDER_EXECUTING = "order_executing"
+    ORDER_ERROR = "order_error"
+    GROUND_TRUTH_INJECTED = "GroundTruthInjected"
+    AUDIT_VERDICT_FAIL = "AuditVerdictFail"
+    AUDIT_VERDICT_STALE = "AuditVerdictStale"
+    JOURNAL_ENTRY_CREATED = "JournalEntryCreated"
+    JOURNAL_STATUS_CHANGED = "JournalStatusChanged"
+
     @classmethod
-    def log(cls, action: str, details: dict) -> None:
+    def log(
+        cls,
+        action: str,
+        details: dict | None = None,
+        *,
+        session_id: str = "",
+        symbol: str = "",
+        metadata: dict | None = None,
+        paper_trading: bool = False,
+    ) -> None:
         """Write a structured audit entry."""
+        import uuid
         from datetime import datetime, timezone
-        entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+
+        entry: dict = {
+            "id": uuid.uuid4().hex[:16],
             "action": action,
-            **details,
+            "session_id": session_id,
+            "symbol": symbol,
+            "details": details or {},
+            "metadata": metadata or {},
+            "paper_trading": paper_trading,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         cls.LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with cls.LOG_PATH.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
-        logger.info("AUDIT: %s %s", action, json.dumps(details))
+            f.write(json.dumps(entry, default=str) + "\n")
+        logger.info("AUDIT: %s %s", action, json.dumps(details or {}))

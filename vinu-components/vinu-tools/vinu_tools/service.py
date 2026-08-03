@@ -134,6 +134,24 @@ class FeatureService:
     def get_request(self, request_id: int) -> FeatureRequest | None:
         return self.storage.get_request(request_id)
 
+    def get_request_data(self, request_id: int) -> dict[str, Any]:
+        """Return computed feature rows for a done request as JSON-friendly records."""
+        req = self.storage.get_request(request_id)
+        if req is None:
+            raise KeyError(f"Request {request_id} not found")
+        if req.status != STATUS_DONE:
+            return {"count": 0, "status": req.status, "data": []}
+        if not req.file_path:
+            return {"count": 0, "status": req.status, "data": []}
+        parquet_path = Path(req.file_path) / "features.parquet"
+        if not parquet_path.exists():
+            raise FileNotFoundError(f"Feature parquet missing: {parquet_path}")
+        import pandas as pd
+
+        df = pd.read_parquet(parquet_path)
+        records = df.where(pd.notnull(df), None).to_dict(orient="records")
+        return {"count": len(records), "status": req.status, "data": records}
+
     def get_by_title(self, title: str) -> FeatureRequest | None:
         return self.storage.get_latest_by_title(title)
 

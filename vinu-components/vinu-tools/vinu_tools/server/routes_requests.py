@@ -107,6 +107,18 @@ async def get_by_title(title: str) -> FeatureRequestOut:
     return FeatureRequestOut.from_model(req)
 
 
+@router.get("/requests/{request_id}/data")
+async def get_request_data(request_id: int) -> dict:
+    try:
+        return await _run_sync(get_service().get_request_data, request_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.post("/requests/{request_id}/run", response_model=FeatureRequestOut)
 async def run_request(request_id: int) -> FeatureRequestOut:
     req = await _run_sync(get_service().run_request, request_id)

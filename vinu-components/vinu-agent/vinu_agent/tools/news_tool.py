@@ -45,6 +45,8 @@ class NewsTool(BaseTool):
                 to_epoch = as_of_epoch
                 clamped = True
         from_epoch = _date_to_epoch(kwargs.get("start_date", "")) if kwargs.get("start_date") else None
+        if from_epoch is None and self._as_of:
+            from_epoch = to_epoch - 30 * 86400
         params = {
             "limit": kwargs.get("limit", 20),
         }
