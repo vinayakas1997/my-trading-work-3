@@ -5,6 +5,7 @@ from .agent.context import ContextBuilder
 from .agent.llm import create_llm
 from .agent.skills import SkillsLoader
 from .config import AgentConfig, load_config
+from .facts import FactsRegistry, seed_if_empty
 from .memory.persistent import PersistentMemory
 from .memory.unified_store import UnifiedMemoryStore
 from .session.events import EventBus
@@ -32,6 +33,8 @@ class AgentService:
         self._unified_memory = UnifiedMemoryStore(
             data_root / "unified_memory.db"
         )
+        self._facts_registry = FactsRegistry(data_root / "facts_registry.db")
+        seed_if_empty(self._facts_registry)
         self._skills_loader = SkillsLoader(
             skills_dir=Path(self._config.skills_dir) if self._config.skills_dir else None,
             user_skills_dir=Path(self._config.user_skills_dir) if self._config.user_skills_dir else None,
@@ -43,6 +46,7 @@ class AgentService:
             skills_loader=self._skills_loader,
             persistent_memory=self._memory,
             unified_memory=self._unified_memory,
+            facts_registry=self._facts_registry,
             services_config=self._config.services,
         )
         self._swarm_store = SwarmStore(
@@ -95,6 +99,8 @@ class AgentService:
     def close(self) -> None:
         if hasattr(self, "_unified_memory"):
             self._unified_memory.close()
+        if hasattr(self, "_facts_registry"):
+            self._facts_registry.close()
 
     def __enter__(self):
         return self

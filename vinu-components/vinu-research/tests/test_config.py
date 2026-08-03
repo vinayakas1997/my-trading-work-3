@@ -71,3 +71,4 @@ def test_research_config_defaults():
     assert cfg.initial_capital == 1_000_000.0
     assert cfg.transaction_cost_pct == 0.001
     assert cfg.slippage_pct == 0.0005
+    assert cfg.regime_recompute_interval_days == 1

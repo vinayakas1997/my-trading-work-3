@@ -81,12 +81,14 @@ class ScheduledResearchExecutor:
                 pass
 
             # Run actual research loop
-            await self.service.run_research(
+            run_response = await self.service.run_research(
                 user_idea=user_idea,
                 symbol=symbol,
                 from_date=from_date,
                 to_date=to_date,
             )
+            job.last_run_id = run_response.get("id")
+            job.last_summary = run_response.get("summary_text", "")
 
             job.status = "PENDING"
             if job.interval_ms > 0:
@@ -95,7 +97,7 @@ class ScheduledResearchExecutor:
             elif job.schedule:
                 job.next_run_at = next_run(job.schedule).isoformat()
             job.last_error = ""
-            result = {"success": True, "job_id": job.id}
+            result = {"success": True, "job_id": job.id, "run_id": job.last_run_id, "summary_text": job.last_summary}
         except Exception as exc:
             LOG.error("Job %s failed: %s", job.id, exc, exc_info=True)
             job.status = "PENDING"
@@ -173,6 +175,50 @@ class ScheduledResearchExecutor:
             LOG.error("Revalidation scan failed: %s", e)
         return revalidated_count
 
+    async def regime_recompute_scan(self) -> int:
+        """Freshness Contract's recompute trigger for the regime/correlation
+        angle (04-agentic-still-refinement's either/or with
+        vinu-initial-analysis — hosted here since it's the cheaper option:
+        no new executor, just one more scan on this loop's existing
+        cadence). For each symbol with an ACTIVE/MONITORING strategy artifact
+        (same universe-discovery pattern as decay_scan/revalidation_scan),
+        POSTs to vinu-initial-analysis's own recompute route — a
+        cross-service HTTP call, not a local import, since these are
+        separate services in this stack. Returns count of symbols recomputed."""
+        recomputed_count = 0
+        debug_log("regime_recompute_scan: starting", level=1)
+        try:
+            if self.service.config.regime_recompute_interval_days <= 0:
+                return 0
+            artifacts = await asyncio.to_thread(
+                self.service.strategy_store.list_artifacts_by_statuses,
+                [ArtifactStatus.ACTIVE, ArtifactStatus.MONITORING],
+            )
+            symbols = sorted({s for art in artifacts for s in (art.universe or [])})
+            debug_log(f"regime_recompute_scan: {len(symbols)} symbols from ACTIVE/MONITORING artifacts", level=1)
+
+            import httpx
+
+            base_url = self.service.config.correlation_api_url
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                for symbol in symbols:
+                    try:
+                        resp = await client.post(
+                            f"{base_url}/analysis/run/{symbol}",
+                            params={"angle_names": "regime_analysis"},
+                        )
+                        if resp.status_code == 200:
+                            recomputed_count += 1
+                        else:
+                            LOG.warning(
+                                "regime_recompute_scan: %s returned %s", symbol, resp.status_code,
+                            )
+                    except Exception as e:
+                        LOG.warning("regime_recompute_scan: failed for %s: %s", symbol, e)
+        except Exception as e:
+            LOG.error("Regime recompute scan failed: %s", e)
+        return recomputed_count
+
     async def start(self) -> None:
         self._running = True
         recovered = self.recover_stale()
@@ -192,8 +238,10 @@ class ScheduledResearchExecutor:
     async def _run_loop(self) -> None:
         decay_interval = 3600.0  # once per hour
         revalidation_interval = 3600.0  # once per hour
+        regime_recompute_interval = 86400.0  # once per day — regime moves slower than Sharpe
         last_decay_scan = 0.0
         last_revalidation_scan = 0.0
+        last_regime_recompute_scan = 0.0
         startup = True
         while self._running:
             try:
@@ -206,6 +254,7 @@ class ScheduledResearchExecutor:
                 now = asyncio.get_event_loop().time()
                 last_decay_scan = now
                 last_revalidation_scan = now
+                last_regime_recompute_scan = now
                 startup = False
             await asyncio.sleep(self._poll_interval)
             now = asyncio.get_event_loop().time()
@@ -219,6 +268,11 @@ class ScheduledResearchExecutor:
                 if n:
                     LOG.info("Revalidation scan completed: %d artifacts re-validated", n)
                 last_revalidation_scan = now
+            if now - last_regime_recompute_scan >= regime_recompute_interval:
+                n = await self.regime_recompute_scan()
+                if n:
+                    LOG.info("Regime recompute scan completed: %d symbols recomputed", n)
+                last_regime_recompute_scan = now
 
     @property
     def is_running(self) -> bool:

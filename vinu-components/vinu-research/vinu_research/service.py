@@ -110,6 +110,7 @@ class ResearchService:
                 "holdout_passed": None,
                 "stress_test_passed": None,
                 "report_md": "",
+                "summary_text": "",
             }
 
         memory_context = ""
@@ -185,13 +186,30 @@ class ResearchService:
             )
             if best_rec:
                 record.strategy_code = best_rec.strategy_code
-            await self._run_in_thread(self._storage.update_run, record)
 
-            total_trials = prior_trials + result.total_iterations
             validated = (
                 (result.holdout is not None and result.holdout.passed)
                 or (result.stress_test is not None and result.stress_test.passed)
             )
+
+            if self._config.llm_enabled:
+                llm = ResearchLlmClient(self._config)
+                try:
+                    record.summary_text = await llm.summarize_run(
+                        user_idea=user_idea, symbol=symbol.upper(),
+                        from_date=from_date, to_date=to_date,
+                        total_iterations=result.total_iterations,
+                        best_sharpe=record.best_sharpe, best_max_dd=record.best_max_dd,
+                        holdout_passed=record.holdout_passed,
+                        stress_test_passed=record.stress_test_passed,
+                        promoted=validated,
+                    )
+                finally:
+                    await llm.close()
+
+            await self._run_in_thread(self._storage.update_run, record)
+
+            total_trials = prior_trials + result.total_iterations
             await self._run_in_thread(
                 self._storage.update_catalog_after_run,
                 symbol, record.id or 0, total_trials,
@@ -216,6 +234,7 @@ class ResearchService:
                 "holdout_passed": record.holdout_passed,
                 "stress_test_passed": record.stress_test_passed,
                 "report_md": result.report_md,
+                "summary_text": record.summary_text,
             }
             if result.portfolio is not None:
                 response["portfolio"] = {

@@ -5,6 +5,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
+from typing import Any
 
 from ..agent.tools import ToolRegistry
 
@@ -13,18 +14,20 @@ logger = logging.getLogger(__name__)
 _GROUND_TRUTH_SENTINEL = "<ground-truth"
 
 
+def _build_broker(as_of: str | None, session_id: str) -> Any:
+    from ..broker.alpaca import AlpacaBroker
+    from ..broker.historical_broker import HistoricalFillBroker
+
+    if as_of:
+        root = os.environ.get("VINU_AGENT_DATA_ROOT", "/data")
+        state_path = os.path.join(root, "replay_state", f"{session_id}.json")
+        return HistoricalFillBroker(as_of=as_of, state_path=state_path)
+    return AlpacaBroker()
+
+
 def _get_held_symbols(as_of: str | None, session_id: str) -> list[str]:
     try:
-        from ..broker.alpaca import AlpacaBroker
-        from ..broker.historical_broker import HistoricalFillBroker
-
-        if as_of:
-            root = os.environ.get("VINU_AGENT_DATA_ROOT", "/data")
-            state_path = os.path.join(root, "replay_state", f"{session_id}.json")
-            broker = HistoricalFillBroker(as_of=as_of, state_path=state_path)
-        else:
-            broker = AlpacaBroker()
-
+        broker = _build_broker(as_of, session_id)
         if not broker.is_configured():
             return []
 
@@ -163,16 +166,21 @@ class GroundTruthInjector:
         result: dict[str, list[dict]] = {}
         try:
             resp = httpx.get(
-                f"{research_url}/hypotheses",
+                f"{research_url}/research/hypotheses",
                 params={},
                 timeout=5.0,
             )
             if resp.status_code != 200:
                 return {}
-            all_hypotheses = resp.json()
+            payload = resp.json()
         except Exception:
             return {}
 
+        # GET /hypotheses returns {"count": N, "hypotheses": [...]}, not a
+        # bare list (routes_introspect.py:list_hypotheses) — this previously
+        # always fell through to {} below, silently disabling the "Active
+        # Trade Theses" block.
+        all_hypotheses = payload.get("hypotheses") if isinstance(payload, dict) else payload
         if not isinstance(all_hypotheses, list):
             return {}
 

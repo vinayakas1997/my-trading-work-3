@@ -16,6 +16,7 @@ from .granger import run_granger_causality_test
 from .novelty import compute_novelty_scores
 from .significance_model import score_significance
 from .regime_features import build_point_in_time_features
+from vinu_initial_analysis.angles.signal_contract import tag_row
 
 LOG = logging.getLogger(__name__)
 
@@ -97,6 +98,7 @@ def compute(
                 if i in scores:
                     r["significance_score"] = scores[i]
                     r["significance_score_sample"] = sample_labels[i]
+                    tag_row(r, "significance_score")
             if sig_eval is not None:
                 rows.append({
                     "symbol": symbol, "analysis_at": now, "angle": "news_price_causality",

@@ -17,6 +17,12 @@ class ScheduledResearchJob:
     last_error: str = ""
     created_at: str = ""
     updated_at: str = ""
+    # The last completed run's human-readable summary (ResearchRunRecord's
+    # summary_text) — dispatch() used to call run_research() and discard its
+    # entire return value, so a scheduled run's outcome was unrecoverable
+    # without separately guessing which /research/runs row it produced.
+    last_run_id: int | None = None
+    last_summary: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -30,6 +36,8 @@ class ScheduledResearchJob:
             "last_error": self.last_error,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "last_run_id": self.last_run_id,
+            "last_summary": self.last_summary,
         }
 
     @classmethod
@@ -45,6 +53,8 @@ class ScheduledResearchJob:
             last_error=d.get("last_error", ""),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
+            last_run_id=d.get("last_run_id"),
+            last_summary=d.get("last_summary", ""),
         )
 
     @classmethod

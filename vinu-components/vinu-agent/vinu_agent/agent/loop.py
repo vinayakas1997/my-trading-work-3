@@ -56,6 +56,9 @@ class AgentLoop:
         self._workflow_tracker: WorkflowTracker = WorkflowTracker()
         self._workflow_injected: bool = False
         self._ground_truth_system_msg: dict | None = None
+        self._facts_system_msg: dict | None = None
+        self._freshness_system_msg: dict | None = None
+        self._research_digest_system_msg: dict | None = None
 
     def run(self, messages: List[Dict], session_id: str = "") -> Dict:
         self._cancel_event.clear()
@@ -360,6 +363,12 @@ class AgentLoop:
             ]
             if self._ground_truth_system_msg is not None:
                 result.append(self._ground_truth_system_msg)
+            if self._facts_system_msg is not None:
+                result.append(self._facts_system_msg)
+            if self._freshness_system_msg is not None:
+                result.append(self._freshness_system_msg)
+            if self._research_digest_system_msg is not None:
+                result.append(self._research_digest_system_msg)
             result.append(
                 {"role": "system", "content": f"<compacted-summary>\n{summary}\n</compacted-summary>"}
             )
@@ -369,6 +378,12 @@ class AgentLoop:
             result = list(messages[-6:])
             if self._ground_truth_system_msg is not None:
                 result.insert(1, self._ground_truth_system_msg)
+            if self._facts_system_msg is not None:
+                result.insert(1, self._facts_system_msg)
+            if self._freshness_system_msg is not None:
+                result.insert(1, self._freshness_system_msg)
+            if self._research_digest_system_msg is not None:
+                result.insert(1, self._research_digest_system_msg)
             return result
 
     def _iterative_update(self, prev: str, new_info: str) -> str:

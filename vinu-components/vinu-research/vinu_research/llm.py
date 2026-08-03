@@ -280,6 +280,43 @@ Return JSON with this exact schema:
 }"""
 
 
+RUN_SUMMARY_SYSTEM_PROMPT = """You are a senior quantitative analyst writing a short status update for a colleague who has not been following this research run.
+
+Write 2-4 plain-English sentences: what was tried, what the result was, and what happens next (promoted, rejected, or needs another look). No jargon-only numbers without context, no markdown, no bullet points — this replaces a metrics table, it does not repeat one.
+Only cite specific numbers that appear in the data provided above — do not estimate or invent values that weren't given to you.
+
+Return JSON with exactly this schema, no markdown, no extra text:
+{
+  "summary": "2-4 sentence plain-English summary"
+}"""
+
+
+def _build_run_summary_prompt(
+    user_idea: str,
+    symbol: str,
+    from_date: str,
+    to_date: str,
+    total_iterations: int,
+    best_sharpe: float,
+    best_max_dd: float,
+    holdout_passed: bool | None,
+    stress_test_passed: bool | None,
+    promoted: bool,
+) -> str:
+    lines = [
+        f"Strategy idea: {user_idea or '(none given — generator picked one)'}",
+        f"Symbol: {symbol}",
+        f"Period: {from_date} → {to_date}",
+        f"Iterations tried: {total_iterations}",
+        f"Best Sharpe found: {best_sharpe:.2f}",
+        f"Best max drawdown: {best_max_dd:.1%}",
+        f"Holdout passed: {holdout_passed}",
+        f"Stress test passed: {stress_test_passed}",
+        f"Promoted to an active strategy artifact: {promoted}",
+    ]
+    return "\n".join(lines)
+
+
 class ResearchTraceWriter:
     def __init__(self, data_root: Path, run_id: int) -> None:
         self._path = data_root / "traces" / f"{run_id}.jsonl"
@@ -420,6 +457,33 @@ Stock profile:
 
 Is this approach suitable?"""
         return await self._traced_chat("validate_idea", VALIDATION_SYSTEM_PROMPT, prompt)
+
+    async def summarize_run(
+        self,
+        user_idea: str,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+        total_iterations: int,
+        best_sharpe: float,
+        best_max_dd: float,
+        holdout_passed: bool | None,
+        stress_test_passed: bool | None,
+        promoted: bool,
+    ) -> str:
+        """Best-effort plain-English summary of a completed run — distinct
+        from report_md's metrics table. Returns "" if the LLM isn't
+        configured or the call fails; never raises."""
+        if not self.is_configured():
+            return ""
+        prompt = _build_run_summary_prompt(
+            user_idea, symbol, from_date, to_date, total_iterations,
+            best_sharpe, best_max_dd, holdout_passed, stress_test_passed, promoted,
+        )
+        result = await self._traced_chat("summarize_run", RUN_SUMMARY_SYSTEM_PROMPT, prompt)
+        if not result:
+            return ""
+        return str(result.get("summary", "")).strip()
 
     async def characterize_stock(
         self,

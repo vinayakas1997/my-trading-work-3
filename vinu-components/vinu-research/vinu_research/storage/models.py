@@ -40,6 +40,12 @@ class ResearchRunRecord:
     holdout_passed: bool | None = None
     # None when no stress window had usable price data.
     stress_test_passed: bool | None = None
+    # Short, plain-English narrative of what happened and why — distinct
+    # from report_md (a metrics-table markdown report). Best-effort LLM
+    # call; empty if the LLM wasn't configured or the call failed. See
+    # end-to-end-test's gap writeup: this is what makes a run's outcome
+    # readable by a human/agent without them parsing report_md themselves.
+    summary_text: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,4 +69,5 @@ class ResearchRunRecord:
             "deflated_sharpe": self.deflated_sharpe,
             "holdout_passed": self.holdout_passed,
             "stress_test_passed": self.stress_test_passed,
+            "summary_text": self.summary_text,
         }

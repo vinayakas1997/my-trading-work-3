@@ -5,6 +5,7 @@ import json
 import logging
 import statistics
 from datetime import datetime, timezone, timedelta
+from typing import Any
 
 import httpx
 
@@ -77,7 +78,9 @@ class TradePlanTool(BaseTool):
 
     def __init__(self):
         self._services_config = {}
+        self._session_id = ""
         self._last_plan_data: dict | None = None
+        self._last_audit_findings: list[dict] | None = None
 
     def execute(self, **kwargs) -> str:
         return asyncio.run(self._execute_async(**kwargs))
@@ -154,8 +157,6 @@ class TradePlanTool(BaseTool):
         )
         self._last_plan_data = plan_data
 
-        self._schedule_journal_write(research_url, plan_data)
-
         markdown = self._render_plan(
             symbol=symbol,
             timeframe=timeframe,
@@ -170,9 +171,76 @@ class TradePlanTool(BaseTool):
         )
 
         output = markdown + "\n\n" + self._render_plan_json_block(plan_data)
+
+        audit_findings = self._prospective_fact_check(
+            output, angles=angles, features=features, validation=validation,
+            liquidity=liquidity, news=news,
+        )
+        self._last_audit_findings = audit_findings
+        blocking = [f for f in audit_findings if f["verdict"] == "Fail"]
+
+        if blocking:
+            output = self._render_fact_check_warning(blocking) + "\n\n" + output
+        else:
+            self._schedule_journal_write(research_url, plan_data)
+
         if frozen_plan.get("status") == "available":
             output += "\n\n" + self._render_frozen_plan_block(frozen_plan)
         return output
+
+    def _prospective_fact_check(
+        self, output: str, *, angles: Any, features: Any, validation: Any,
+        liquidity: Any, news: Any,
+    ) -> list[dict]:
+        """Run FactAuditor against the rendered plan BEFORE it's journaled —
+        catching a fabricated symbol-tied number at the point a plan is about
+        to be committed to, not only after a final answer is composed (item
+        1's post-hoc check). Evidence is the same fetched artifacts the plan
+        was actually built from (angles/features/validation/liquidity/news),
+        wrapped as pseudo tool-result messages so FactAuditor's existing
+        extract -> verdict logic needs no changes.
+
+        Named acceptance test (implementation-plan-from-04/AGENTS.md): the
+        JNJ-reconstruction scenario — a plan about to state a price with no
+        matching tool call this session — must be caught here."""
+        from ..audit.fact_audit import FactAuditor
+
+        pseudo_history = [
+            {"role": "tool", "name": name, "content": json.dumps(payload, default=str)}
+            for name, payload in (
+                ("angles", angles), ("features", features), ("validation", validation),
+                ("liquidity", liquidity), ("news", news),
+            )
+        ]
+        findings = FactAuditor().audit(output, pseudo_history, session_id=self._session_id)
+
+        if any(f["verdict"] == "Fail" for f in findings):
+            try:
+                from ..broker.kill_switch import AuditLogger
+                AuditLogger.log(
+                    AuditLogger.AUDIT_VERDICT_FAIL,
+                    details={"stage": "prospective", "findings": findings},
+                    session_id=self._session_id,
+                )
+            except Exception:
+                pass
+
+        return findings
+
+    @staticmethod
+    def _render_fact_check_warning(blocking: list[dict]) -> str:
+        lines = [
+            "## ⚠️ Prospective Fact-Check Failed — Plan NOT journaled",
+            "",
+            "The following symbol-tied number(s) in this plan don't match any "
+            "data actually fetched this call. This plan was NOT written to the "
+            "decision journal. Re-run with fresh data before acting on it.",
+            "",
+        ]
+        for f in blocking:
+            lines.append(f"- {f['symbol'] or '?'} {f['claim_type']}={f['claimed_value']} (`{f['raw_match']}`)")
+        lines.append("")
+        return "\n".join(lines)
 
     async def _symbol_has_analysis(
         self, client: httpx.AsyncClient, base_url: str, symbol: str,
@@ -1033,7 +1101,7 @@ class TradePlanTool(BaseTool):
 
             async with _httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(
-                    f"{research_url}/hypotheses",
+                    f"{research_url}/research/hypotheses",
                     json={
                         "title": title,
                         "thesis": thesis,

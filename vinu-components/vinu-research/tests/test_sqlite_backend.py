@@ -84,6 +84,16 @@ class TestUpdateAndDelete:
         assert fetched.total_iterations == 5
         assert fetched.best_sharpe == 1.5
 
+    def test_summary_text_round_trips_through_insert_and_update(self, storage: ResearchStorage, sample_record):
+        sample_record.summary_text = ""
+        inserted = storage.insert_run(sample_record)
+        assert storage.get_run(inserted.id).summary_text == ""
+
+        inserted.summary_text = "Tried a momentum breakout; Sharpe 1.4, promoted to active."
+        storage.update_run(inserted)
+        fetched = storage.get_run(inserted.id)
+        assert fetched.summary_text == "Tried a momentum breakout; Sharpe 1.4, promoted to active."
+
     def test_delete_soft_deletes(self, storage: ResearchStorage, inserted_run):
         assert storage.delete_run(inserted_run.id) is True
         run = storage.get_run(inserted_run.id)

@@ -33,6 +33,11 @@ def _utc_now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+_KNOWN_CONSTRAINTS_SENTINEL = "<known-constraints"
+_FRESHNESS_WARNINGS_SENTINEL = "<freshness-warnings"
+_RECENT_RESEARCH_SENTINEL = "<recent-research"
+
+
 class ContextBuilder:
     def __init__(
         self,
@@ -45,6 +50,9 @@ class ContextBuilder:
         as_of: str | None = None,
         ground_truth_injector: Any = None,
         held_symbols: list[str] | None = None,
+        facts_registry: Any = None,
+        freshness_checker: Any = None,
+        research_digest_reader: Any = None,
     ) -> None:
         self.registry = registry
         self.memory = memory
@@ -56,6 +64,12 @@ class ContextBuilder:
         self._ground_truth_injector = ground_truth_injector
         self._held_symbols = held_symbols or []
         self._last_ground_truth_msg: dict | None = None
+        self.facts_registry = facts_registry
+        self._last_facts_msg: dict | None = None
+        self.freshness_checker = freshness_checker
+        self.research_digest_reader = research_digest_reader
+        self._last_research_digest_msg: dict | None = None
+        self._last_freshness_msg: dict | None = None
 
     def build_system_prompt(self) -> str:
         tool_count = len(self.registry.tool_names)
@@ -101,6 +115,33 @@ class ContextBuilder:
     def last_ground_truth_msg(self) -> dict | None:
         return self._last_ground_truth_msg
 
+    @property
+    def last_facts_msg(self) -> dict | None:
+        return self._last_facts_msg
+
+    @property
+    def last_freshness_msg(self) -> dict | None:
+        return self._last_freshness_msg
+
+    @property
+    def last_research_digest_msg(self) -> dict | None:
+        return self._last_research_digest_msg
+
+    @staticmethod
+    def is_known_constraints_msg(msg: dict) -> bool:
+        content = msg.get("content", "")
+        return isinstance(content, str) and content.startswith(_KNOWN_CONSTRAINTS_SENTINEL)
+
+    @staticmethod
+    def is_freshness_warnings_msg(msg: dict) -> bool:
+        content = msg.get("content", "")
+        return isinstance(content, str) and content.startswith(_FRESHNESS_WARNINGS_SENTINEL)
+
+    @staticmethod
+    def is_recent_research_msg(msg: dict) -> bool:
+        content = msg.get("content", "")
+        return isinstance(content, str) and content.startswith(_RECENT_RESEARCH_SENTINEL)
+
     @staticmethod
     def _estimate_tokens(text: str) -> int:
         return len(text) // 4
@@ -121,6 +162,76 @@ class ContextBuilder:
                 self._last_ground_truth_msg = None
         else:
             self._last_ground_truth_msg = None
+
+        if self.facts_registry:
+            lookup_symbols = sorted(set(self._held_symbols) | set(self._extract_symbols(user_message)))
+            facts = self.facts_registry.active_facts_for(symbols=lookup_symbols)
+            if facts:
+                lines = [
+                    f"{_KNOWN_CONSTRAINTS_SENTINEL}>",
+                    "Facts already established in this project — do not "
+                    "silently re-derive, contradict, or repeat a mistake "
+                    "these already cover without new evidence.",
+                    "",
+                ]
+                for f in facts:
+                    lines.append(f"- [{f.kind}] {f.statement}")
+                lines.append("</known-constraints>")
+                facts_msg = {"role": "system", "content": "\n".join(lines)}
+                messages.append(facts_msg)
+                self._last_facts_msg = facts_msg
+            else:
+                self._last_facts_msg = None
+        else:
+            self._last_facts_msg = None
+
+        if self.freshness_checker:
+            lookup_symbols = sorted(set(self._held_symbols) | set(self._extract_symbols(user_message)))
+            findings = self.freshness_checker.check_symbols(lookup_symbols) if lookup_symbols else []
+            if findings:
+                lines = [
+                    f"{_FRESHNESS_WARNINGS_SENTINEL}>",
+                    "The following symbols' regime/correlation data is STALE — "
+                    "older than the recompute schedule allows. Treat conclusions "
+                    "drawn from this angle for these symbols with reduced "
+                    "confidence until it refreshes.",
+                    "",
+                ]
+                for f in findings:
+                    lines.append(
+                        f"- {f['symbol']} [{f['angle']}]: last computed {f['analysis_at']} "
+                        f"({f['age_days']} days ago)"
+                    )
+                lines.append("</freshness-warnings>")
+                freshness_msg = {"role": "system", "content": "\n".join(lines)}
+                messages.append(freshness_msg)
+                self._last_freshness_msg = freshness_msg
+            else:
+                self._last_freshness_msg = None
+        else:
+            self._last_freshness_msg = None
+
+        if self.research_digest_reader:
+            lookup_symbols = sorted(set(self._held_symbols) | set(self._extract_symbols(user_message)))
+            digests = self.research_digest_reader.check_symbols(lookup_symbols) if lookup_symbols else []
+            if digests:
+                lines = [
+                    f"{_RECENT_RESEARCH_SENTINEL}>",
+                    "A research run finished for the following symbols since "
+                    "you last saw them. This is a one-time notice — it will "
+                    "not repeat on later turns.",
+                    "",
+                ]
+                for d in digests:
+                    lines.append(f"- {d['symbol']} (run {d['run_id']}): {d['summary_text']}")
+                lines.append("</recent-research>")
+                digest_msg = {"role": "system", "content": "\n".join(lines)}
+                messages.append(digest_msg)
+                self._last_research_digest_msg = digest_msg
+            else:
+                self._last_research_digest_msg = None
+        else:
+            self._last_research_digest_msg = None
 
         messages.extend(history)
 

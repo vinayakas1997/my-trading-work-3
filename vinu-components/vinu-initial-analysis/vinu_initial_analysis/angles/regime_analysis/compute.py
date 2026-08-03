@@ -5,6 +5,7 @@ import numpy as np
 from datetime import datetime, timezone
 
 from vinu_initial_analysis.angles._helpers import ann_factor
+from vinu_initial_analysis.angles.signal_contract import tag_row
 
 
 def classify_regime(ret: float, vol: float, vol_thresh: float) -> str:
@@ -57,7 +58,7 @@ def compute(
 
     for rg, grp in rf.groupby("regime"):
         sr = (grp["ret"].mean() / grp["ret"].std() * af) if grp["ret"].std() > 0 else 0.0
-        rows.append({
+        row = {
             "symbol": symbol,
             "analysis_at": analysis_at,
             "angle": "regime_analysis",
@@ -70,7 +71,9 @@ def compute(
             "sharpe": round(sr, 4),
             "win_rate": float((grp["ret"] > 0).mean()),
             "pct_of_time": float(len(grp) / len(rf)),
-        })
+        }
+        tag_row(row, "regime_feature")
+        rows.append(row)
 
     transitions = (rf["regime"] != rf["regime"].shift(1)).sum()
     rows.append({

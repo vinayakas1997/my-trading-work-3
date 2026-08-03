@@ -10,6 +10,7 @@ from vinu_research.llm import (
     LlmCache,
     ResearchLlmClient,
     _build_risk_critic_prompt,
+    _build_run_summary_prompt,
 )
 from vinu_research.models import BacktestMetrics, BacktestResult, CriticFeedback
 from vinu_research.loop import StrategyResearchLoop
@@ -229,3 +230,60 @@ class TestRuleBasedCheck:
         )
         feedback = loop._rule_based_check(good_result, sample_story, None, iteration=1)
         assert feedback.verdict == "PASS"
+
+
+class TestSummarizeRun:
+    """Piece added after the end-to-end-test folder found that no
+    human-readable summary of a research run was ever produced or surfaced —
+    report_md is a metrics table, not a narrative explanation."""
+
+    def _client(self, llm_base_url: str = "", llm_model: str = "") -> ResearchLlmClient:
+        return ResearchLlmClient(ResearchConfig(llm_base_url=llm_base_url, llm_model=llm_model))
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_llm_not_configured(self):
+        client = self._client(llm_base_url="", llm_model="")
+        summary = await client.summarize_run(
+            user_idea="momentum breakout", symbol="AAPL",
+            from_date="2022-01-01", to_date="2026-06-30",
+            total_iterations=5, best_sharpe=1.4, best_max_dd=-0.1,
+            holdout_passed=True, stress_test_passed=True, promoted=True,
+        )
+        assert summary == ""
+
+    @pytest.mark.asyncio
+    async def test_returns_parsed_summary_on_success(self):
+        client = self._client(llm_base_url="http://fake:1234/v1", llm_model="fake-model")
+        client._traced_chat = AsyncMock(return_value={"summary": "Tried momentum, Sharpe 1.4, promoted."})
+        summary = await client.summarize_run(
+            user_idea="momentum breakout", symbol="AAPL",
+            from_date="2022-01-01", to_date="2026-06-30",
+            total_iterations=5, best_sharpe=1.4, best_max_dd=-0.1,
+            holdout_passed=True, stress_test_passed=True, promoted=True,
+        )
+        assert summary == "Tried momentum, Sharpe 1.4, promoted."
+        client._traced_chat.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_llm_call_returns_none(self):
+        client = self._client(llm_base_url="http://fake:1234/v1", llm_model="fake-model")
+        client._traced_chat = AsyncMock(return_value=None)
+        summary = await client.summarize_run(
+            user_idea="momentum breakout", symbol="AAPL",
+            from_date="2022-01-01", to_date="2026-06-30",
+            total_iterations=5, best_sharpe=1.4, best_max_dd=-0.1,
+            holdout_passed=True, stress_test_passed=True, promoted=True,
+        )
+        assert summary == ""
+
+
+def test_build_run_summary_prompt_includes_key_metrics():
+    prompt = _build_run_summary_prompt(
+        user_idea="momentum breakout", symbol="AAPL",
+        from_date="2022-01-01", to_date="2026-06-30",
+        total_iterations=5, best_sharpe=1.4, best_max_dd=-0.1,
+        holdout_passed=True, stress_test_passed=True, promoted=True,
+    )
+    assert "AAPL" in prompt
+    assert "1.40" in prompt
+    assert "Promoted to an active strategy artifact: True" in prompt

@@ -149,6 +149,13 @@ class ResearchConfig:
     revalidation_interval_days: int = 30
     revalidation_lookback_days: int = 180
 
+    # Freshness Contract's regime/correlation recompute (04-agentic-still-
+    # refinement's either/or with vinu-initial-analysis — hosted here since
+    # it's the cheaper option: no new executor, one more scan on the
+    # existing hourly loop's cadence). Daily, not hourly — regime moves
+    # slower than a strategy's rolling Sharpe. Set to 0 to disable.
+    regime_recompute_interval_days: int = 1
+
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
 
@@ -244,6 +251,9 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         ),
         revalidation_lookback_days=int(
             os.environ.get("VINU_RESEARCH_REVALIDATION_LOOKBACK_DAYS", "180")
+        ),
+        regime_recompute_interval_days=int(
+            os.environ.get("VINU_RESEARCH_REGIME_RECOMPUTE_INTERVAL_DAYS", "1")
         ),
         host=os.environ.get("VINU_RESEARCH_HOST", DEFAULT_HOST),
         port=int(os.environ.get("VINU_RESEARCH_PORT", str(DEFAULT_PORT))),

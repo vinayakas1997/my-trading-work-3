@@ -89,6 +89,7 @@ class AuditLogger:
     AUDIT_VERDICT_STALE = "AuditVerdictStale"
     JOURNAL_ENTRY_CREATED = "JournalEntryCreated"
     JOURNAL_STATUS_CHANGED = "JournalStatusChanged"
+    FACT_REGISTRY_WRITE = "FactRegistryWrite"
 
     @classmethod
     def log(

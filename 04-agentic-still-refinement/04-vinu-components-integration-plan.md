@@ -125,12 +125,30 @@ new infrastructure category, only a new job definition.
 
 ## 4. Where the four `01-plan-and-implementations` items land — confirmed, not just proposed
 
-| Item | Confirmed plug-in point |
+**Update: all four items are now implemented** (224 tests passing) —
+table below updated from "planned" to "actual," including two corrections
+to what this file originally guessed:
+
+| Item | Actual plug-in point (as built) |
 |---|---|
-| 1 — Fact-verification audit | `AgentLoop.run()` (`vinu_agent/agent/loop.py`), after the final message is composed — unchanged from the original plan, no new finding here |
-| 2 — Forced ground-truth injection | `ContextBuilder.build_messages()` (§1 above) — confirmed to be an easy, existing-pattern extension, **provided it reads real position state, not `_extract_symbols()`** (the gap found in §1) |
-| 3 — Structured decision journal | New `SQLiteBackend`-pattern store (§2), populated from `trade_plan_tool.py`'s already-real `generate_trade_plan` output |
-| 4 — Audit-log schema | New `SQLiteBackend`-pattern store (§2); first task remains grep-confirming `TradingMandate`/`OrderGuard` (`vinu_agent/broker/mandate.py`) is still genuinely wired into the live order path before anything new is added |
+| 1 — Fact-verification audit | `FactAuditor` (`vinu_agent/audit/fact_audit.py`), run from `AgentLoop._build_result`, verdicts stored in `result["audit"]` — matches this file's original plug-in guess |
+| 2 — Forced ground-truth injection | `GroundTruthInjector` (`vinu_agent/audit/ground_truth.py`) wired into `ContextBuilder.build_messages()` via `session/service.py::_run_with_agent`, resolving held symbols from the real broker (**not** `_extract_symbols()` — the gap flagged in §1 was correctly avoided) |
+| 3 — Structured decision journal | **Correction from this file's original guess**: no new store was built. Reused `vinu-research`'s existing `HypothesisRegistry` (already had a status lifecycle + evidence, just aimed at research hypotheses) — `trade_plan_tool.py`'s `_schedule_journal_write` populates it |
+| 4 — Audit-log schema | **Correction from this file's original guess**: no new store was built here either. Extended the existing `AuditLogger` in `vinu_agent/broker/kill_switch.py:57` (already wired into `trade_tool.py:143-208`) with the fixed schema fields and 13 action constants, rather than inventing a parallel log |
+
+The lesson from both corrections: §2's "reuse the existing SQLite pattern"
+was right in spirit, wrong in specifics — the actual reuse target wasn't
+"build a new store following an existing pattern," it was "there's already
+a working store doing 80% of this, extend it." Worth internalizing before
+the next round of planning: check harder for an existing near-miss before
+assuming greenfield, even after a codebase pass already happened once.
+
+**Still to verify, not yet done**: none of the above has been re-run
+against the actual replay failure it was built to fix. 224 passing unit
+tests confirm the mechanisms work in isolation; they don't confirm the
+16-of-20-day tool-call dropout or the JNJ `$162.45` fabrication would
+actually be caught if replayed today. That's the real acceptance test,
+still outstanding.
 
 ## 5. What's still open after this check
 

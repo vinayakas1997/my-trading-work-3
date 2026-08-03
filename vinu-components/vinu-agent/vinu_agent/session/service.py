@@ -20,6 +20,7 @@ class SessionService:
         skills_loader: Any = None,
         persistent_memory: Any = None,
         unified_memory: Any = None,
+        facts_registry: Any = None,
         services_config: Optional[dict] = None,
     ) -> None:
         self.store = store
@@ -28,6 +29,7 @@ class SessionService:
         self._skills_loader = skills_loader
         self._persistent_memory = persistent_memory
         self._unified_memory = unified_memory
+        self._facts_registry = facts_registry
         self._services_config = services_config or {}
         self._active_loops: Dict[str, Any] = {}
         self._context_builder: Optional[ContextBuilder] = None
@@ -136,9 +138,14 @@ class SessionService:
             ))
 
     def _run_with_agent(self, session_id: str, attempt: Attempt) -> Dict:
+        import os
+
         from ..agent.loop import AgentLoop
         from ..agent.workflow import WorkflowTracker
-        from ..audit.ground_truth import GroundTruthInjector, _get_held_symbols
+        from ..audit.freshness import FreshnessChecker
+        from ..audit.ground_truth import GroundTruthInjector, _build_broker, _get_held_symbols
+        from ..audit.research_digest import ResearchDigestReader
+        from ..broker.debrief import PositionCloseDetector
         from ..tools import build_registry
 
         session = self.store.get_session(session_id)
@@ -163,6 +170,30 @@ class SessionService:
             services_config=self._services_config,
         )
 
+        # Freshness checking compares a value's `analysis_at` against real
+        # wall-clock time — meaningless in replay mode, where "now" is a
+        # simulated past date, so this only runs live.
+        freshness_checker = FreshnessChecker(services_config=self._services_config) if as_of is None else None
+
+        data_root = os.environ.get("VINU_AGENT_DATA_ROOT", "/data")
+        digest_state_file = f"{session_id}.json" if as_of else "live.json"
+        research_digest_reader = ResearchDigestReader(
+            services_config=self._services_config,
+            state_path=os.path.join(data_root, "research_digest_state", digest_state_file),
+        )
+
+        try:
+            broker = _build_broker(as_of, session_id)
+            if broker.is_configured():
+                state_path = os.path.join(data_root, "debrief_state", digest_state_file)
+                debrief_detector = PositionCloseDetector(
+                    registry=registry, state_path=state_path,
+                    services_config=self._services_config,
+                )
+                debrief_detector.check_and_debrief(broker, session_id=session_id)
+        except Exception:
+            pass
+
         context_builder = ContextBuilder(
             registry=registry,
             memory=None,
@@ -172,6 +203,9 @@ class SessionService:
             as_of=as_of,
             ground_truth_injector=ground_truth_injector,
             held_symbols=held_symbols,
+            facts_registry=self._facts_registry,
+            freshness_checker=freshness_checker,
+            research_digest_reader=research_digest_reader,
         )
         self._context_builder = context_builder
 
@@ -191,6 +225,9 @@ class SessionService:
         )
         agent_loop._workflow_tracker = workflow_tracker
         agent_loop._ground_truth_system_msg = context_builder.last_ground_truth_msg
+        agent_loop._facts_system_msg = context_builder.last_facts_msg
+        agent_loop._freshness_system_msg = context_builder.last_freshness_msg
+        agent_loop._research_digest_system_msg = context_builder.last_research_digest_msg
         self._active_loops[session_id] = agent_loop
 
         try:

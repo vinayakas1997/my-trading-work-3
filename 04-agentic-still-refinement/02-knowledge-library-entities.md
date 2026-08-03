@@ -64,7 +64,13 @@ that mapping exercise.
 
 - Generated trade plans (entry/exit/invalidation rules)
 - The structured decision journal itself (thesis, invalidation level,
-  status, predicted vs. actual)
+  status, predicted vs. actual) — **implemented** since this file was
+  first written: `01-plan-and-implementations/03-structured-decision-
+  journal.md` reused `vinu-research`'s existing `HypothesisRegistry`
+  rather than building new storage; `trade_plan_tool.py` now writes each
+  generated plan into it, surfaced back every session via item 2's
+  ground-truth block. Predicted-vs-actual on position close is not yet
+  confirmed built — verify before assuming this entity is fully closed.
 - Risk mandate / risk-budget tiers — the governor's current state, not
   just its existence
 
