@@ -81,12 +81,25 @@ example file itself) and has real values for:
   — a research/news call that silently degrades because the LLM is
   unreachable is a much harder failure to notice than one that fails to
   start at all.
+- `VINU_AGENT_DATA_ROOT=/data` — **easy to miss because every other
+  service's `.env-example` entry for its own `*_DATA_ROOT` var already
+  existed before this was found; `vinu-agent`'s did not.** `agent-api`'s
+  container is `read_only: true` with only `/data` (bind-mounted from
+  `./data/agent`) and two `tmpfs` paths writable. Without this var set,
+  `config.py`/`kill_switch.py` fall back to `Path.home()/".vinu"`, which is
+  not a writable mount — session storage, the Facts Registry, and the
+  trade-audit log will all fail on first write, likely surfacing as
+  `agent-api` never reaching `healthy` in step 2 below, or a 500 on the
+  first session/trade call in `05`. Confirm it's actually in your `.env`,
+  not just `.env-example`.
 
 ## What to confirm before moving on to `02`
 
 - [ ] `docker compose ps` shows all 10 services `healthy`
 - [ ] `data/shared/watchlist.json` contains exactly `AAPL`, `TSLA`, `JNJ`
 - [ ] `.env` exists (not just `.env-example`) with real Alpaca + LLM values
+- [ ] `.env` has `VINU_AGENT_DATA_ROOT=/data` — not just present in
+      `.env-example`, actually copied into your real `.env`
 - [ ] The configured LLM endpoint responds to a basic request (a plain
       curl/health check against it, not through any vinu-* service)
 

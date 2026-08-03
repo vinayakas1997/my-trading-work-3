@@ -1,0 +1,15 @@
+{
+  "attempt_id": "dc2fdf1b66d3",
+  "session_id": "5466372e1212",
+  "parent_attempt_id": null,
+  "status": "pending",
+  "prompt": "It's the start of the trading session on 2026-06-05. Review your current positions, account state, and any relevant signals for AAPL, TSLA, and JNJ. Decide what action, if any, to take today, and explain your reasoning before acting.",
+  "run_dir": null,
+  "summary": null,
+  "react_trace": [],
+  "error": null,
+  "metrics": null,
+  "created_at": "2026-08-03T16:54:50Z",
+  "started_at": null,
+  "completed_at": null
+}

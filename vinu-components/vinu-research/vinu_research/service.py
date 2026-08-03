@@ -67,7 +67,7 @@ class ResearchService:
 
     async def run_research(
         self,
-        user_idea: str,
+        user_idea: str | None,
         symbol: str,
         from_date: str,
         to_date: str,
@@ -78,6 +78,20 @@ class ResearchService:
         universe: list[str] | None = None,
         goal: Goal | None = None,
     ) -> dict[str, Any]:
+        # `RunResearchRequest.user_idea` (the /research/run request model) is
+        # documented as "If None, auto-proposed from angle context" -- that
+        # fallback used to only be implemented in ensure_strategy(), so a
+        # direct /research/run call with user_idea omitted/null (exactly the
+        # payload shape this project's own end-to-end-test runbook uses)
+        # crashed on user_idea.lower() below before reaching here. Resolving
+        # it the same way ensure_strategy() already does keeps both callers
+        # consistent; ensure_strategy() itself still resolves user_idea
+        # before calling this, so this is a no-op on that path.
+        if user_idea is None:
+            user_idea = await self._propose_idea(symbol)
+        if not user_idea:
+            raise ValueError(f"could not propose a strategy idea for {symbol} — no user_idea given and auto-proposal returned nothing")
+
         _live_execution_patterns = ["place order", "execute trade", "buy now", "sell now", "live trade"]
         if any(p in user_idea.lower() for p in _live_execution_patterns):
             LOG.warning("user_idea contains live-execution language — marked as research-only: %s", user_idea)

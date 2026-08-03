@@ -65,6 +65,8 @@ def compute_abnormal_return(
     window_sec: int = 1800,
     estimation_window_sec: int = 604800,
     market_candles: list[dict] | None = None,
+    candles_ts_index: list[int] | None = None,
+    market_returns_indexed: dict[int, float] | None = None,
 ) -> dict[str, Any]:
     """Event-study abnormal return.
 
@@ -79,10 +81,20 @@ def compute_abnormal_return(
     the event window. This is the standard event-study upgrade (Brown &
     Warner 1985) and only activates when a market benchmark is available;
     callers that don't pass one keep today's behavior unchanged.
+
+    `candles_ts_index`/`market_returns_indexed` let a caller that invokes
+    this once per article (e.g. `compute_impact_for_article`, thousands of
+    times per symbol against the same `candles`/`market_candles`) precompute
+    these once outside that loop instead of paying for them on every call —
+    rebuilding `ts` and re-sorting/re-indexing `market_candles` per call was
+    an O(articles * total_bars) blowup that never finished for a
+    several-thousand-article symbol over a multi-year range. Both are
+    optional and computed on the fly if omitted, so single-call use
+    (tests, other callers) is unaffected.
     """
     # candles must be sorted ascending by bar_ts; bisect keeps the
     # per-event windows O(log n) instead of full-list scans (Bug-7 fix).
-    ts = [c.get("bar_ts", 0) for c in candles]
+    ts = candles_ts_index if candles_ts_index is not None else [c.get("bar_ts", 0) for c in candles]
     lo = bisect_left(ts, event_ts - estimation_window_sec)
     pre_candles = candles[lo:bisect_left(ts, event_ts)]
     event_candles = candles[bisect_left(ts, event_ts):bisect_right(ts, event_ts + window_sec)]
@@ -104,6 +116,7 @@ def compute_abnormal_return(
     if market_candles:
         market_result = _try_market_model(
             pre_candles, event_candles, market_candles,
+            market_returns_indexed=market_returns_indexed,
         )
 
     if market_result is not None:
@@ -140,13 +153,14 @@ def _try_market_model(
     pre_candles: list[dict],
     event_candles: list[dict],
     market_candles: list[dict],
+    market_returns_indexed: dict[int, float] | None = None,
 ) -> tuple[list[float], float, float, int, float] | None:
     """OLS market-model fit. Returns (abnormal_returns, car, estimation_std,
     df, mean_expected_return) or None if there isn't enough timestamp-
     aligned overlap with the market series to fit a regression.
     """
     pre_stock = _compute_returns_series_indexed(pre_candles)
-    market = _compute_returns_series_indexed(market_candles)
+    market = market_returns_indexed if market_returns_indexed is not None else _compute_returns_series_indexed(market_candles)
     event_stock = _compute_returns_series_indexed(event_candles)
 
     aligned_ts = sorted(set(pre_stock) & set(market))

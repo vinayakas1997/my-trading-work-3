@@ -75,6 +75,46 @@ class TestApprove:
         assert history[0].sharpe == 1.8
 
 
+class TestRunResearchNoneUserIdea:
+    """`RunResearchRequest.user_idea` (the /research/run request model) is
+    documented as "If None, auto-proposed from angle context" -- this used to
+    only be implemented in ensure_strategy(), so a direct run_research(None, ...)
+    call (the exact payload shape end-to-end-test/03's own example curl uses)
+    crashed with `AttributeError: 'NoneType' object has no attribute 'lower'`
+    before ever reaching the propose-idea/backtest pipeline.
+    """
+
+    async def test_none_user_idea_calls_propose_idea(self, service, monkeypatch):
+        proposed = []
+
+        async def fake_propose_idea(symbol):
+            proposed.append(symbol)
+            return "a proposed idea"
+
+        monkeypatch.setattr(service, "_propose_idea", fake_propose_idea)
+
+        async def fake_generate(*args, **kwargs):
+            return "class UserStrategy: pass"
+
+        monkeypatch.setattr(service, "_generate_strategy_code", fake_generate, raising=False)
+
+        try:
+            await service.run_research(None, "AAPL", "2022-01-01", "2022-02-01", dry_run=True)
+        except AttributeError as e:
+            pytest.fail(f"run_research(None, ...) should auto-propose, not crash on .lower(): {e}")
+
+        assert proposed == ["AAPL"]
+
+    async def test_none_user_idea_and_propose_returns_none_raises_valueerror(self, service, monkeypatch):
+        async def fake_propose_idea(symbol):
+            return None
+
+        monkeypatch.setattr(service, "_propose_idea", fake_propose_idea)
+
+        with pytest.raises(ValueError, match="could not propose"):
+            await service.run_research(None, "AAPL", "2022-01-01", "2022-02-01", dry_run=True)
+
+
 class TestEnsureStrategy:
     async def test_runs_when_no_existing_strategy(self, service, storage, sample_record):
         assert await service.has_active_strategy(sample_record.symbol) is False

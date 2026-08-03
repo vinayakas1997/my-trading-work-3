@@ -113,10 +113,16 @@ too, even after items 1-3 shipped.
 - On close, look up the open `HypothesisRegistry` entry for that symbol
   (`status: testing`) and write the actual outcome (realized P&L, whether
   the invalidation condition was the reason for exit or something else)
-  using the registry's existing evidence/status-update mechanism
-  (`add_hypothesis_evidence`-style call, per the other agent's summary of
-  what already exists) — transition status to whatever the registry's
-  lifecycle calls "resolved," not leave it at `testing`.
+  using the registry's existing evidence mechanism (`POST
+  .../evidence`).
+- **Correction from this file's original guess, confirmed during the
+  build (see [`status.md`](status.md))**: `HypothesisRegistry` has no
+  literal "resolved" state, and only `POST .../evidence` is exposed over
+  HTTP — there is no `reject_with_reason`-style route to force a terminal
+  status change. The shipped behavior records the outcome as evidence and
+  leaves status wherever it was; it does **not** transition the hypothesis
+  to a closed/resolved state. A real gap in the existing registry API, not
+  something this piece was scoped to fix.
 - Log the write through the existing `AuditLogger`
   (`JournalStatusChanged` action, already defined per item 4).
 

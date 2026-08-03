@@ -43,6 +43,7 @@ def compute(
     # pass, to avoid triplicating rows.
     if time_format == "1min" and articles and candles:
         from .impact import compute_impact_for_article
+        from vinu_initial_analysis.angles._helpers import _compute_returns_series_indexed
 
         candles_by_ticker = {symbol: sorted(candles, key=lambda c: c.get("bar_ts", 0))}
 
@@ -63,12 +64,29 @@ def compute(
             except Exception:
                 LOG.warning("SPY fetch failed for market-model abnormal returns; falling back to mean-adjusted model", exc_info=True)
 
+        # compute_impact_for_article() runs once per article (thousands of
+        # articles per symbol over a multi-year backfill) against these same
+        # candles_by_ticker/market_candles every time. Precomputing the
+        # bar_ts index and market's indexed-returns ONCE here, instead of
+        # inside that per-article call, turns an O(articles * total_bars)
+        # blowup (confirmed to never finish for AAPL/TSLA's ~10k articles
+        # over a 4.5-year 1-minute range) back into the O(log n) per-call
+        # cost the bisect-based lookups were originally meant to have.
+        ts_index_by_ticker = {
+            t: [c.get("bar_ts", 0) for c in cands] for t, cands in candles_by_ticker.items()
+        }
+        market_returns_indexed = (
+            _compute_returns_series_indexed(market_candles) if market_candles else None
+        )
+
         for article in articles:
             events = compute_impact_for_article(
                 article,
                 price_client=price_client,
                 candles_by_ticker=candles_by_ticker,
                 market_candles=market_candles,
+                ts_index_by_ticker=ts_index_by_ticker,
+                market_returns_indexed=market_returns_indexed,
             )
             for ev in events:
                 ev.setdefault("symbol", symbol)

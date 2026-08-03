@@ -94,11 +94,13 @@ together just because each piece passed its own unit tests.
 ## What this folder does not cover
 
 - Re-verifying the 4 items from `03-on-agent-consiuness/01-plan-and-implementations`
-  or the 4 pieces from `04-agentic-still-refinement/implementation-plan-from-04`
+  or the 3 components (`vinu-agent`'s 5 pieces, plus `vinu-initial-analysis`
+  and `vinu-research`) from `04-agentic-still-refinement/implementation-plan-from-04`
   individually — those already have their own unit/integration tests
-  (266 passing in `vinu-agent`, 489 in `vinu-research`, 4 in
-  `vinu-initial-analysis`). This folder is about the *system*, not
-  re-proving mechanisms already proven in isolation.
+  (280 passing in `vinu-agent`, 500 in `vinu-research`, 4 in
+  `vinu-initial-analysis`, per `implementation-plan-from-04/*/status.md`).
+  This folder is about the *system*, not re-proving mechanisms already
+  proven in isolation.
 - An agent replay over the **entire** 2022-01-01 → 2026-06-30 window —
   `05` runs one real month (2026-06), not the full 4.5 years, per the same
   "don't re-run the expensive thing beyond what's needed to check it"

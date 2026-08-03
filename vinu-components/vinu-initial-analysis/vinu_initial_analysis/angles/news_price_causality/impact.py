@@ -38,7 +38,14 @@ def compute_impact_for_article(
     impact_high_threshold: float = 2.0,
     impact_medium_threshold: float = 0.5,
     market_candles: list[dict] | None = None,
+    ts_index_by_ticker: dict[str, list[int]] | None = None,
+    market_returns_indexed: dict[int, float] | None = None,
 ) -> list[dict]:
+    # ts_index_by_ticker/market_returns_indexed: precomputed once per symbol
+    # by the caller (this function runs once per article -- thousands of
+    # times per symbol over a multi-year backfill -- against the same
+    # candles_by_ticker/market_candles every time, so rebuilding these here
+    # would repeat an O(total_bars) rebuild/re-sort on every single call).
     if windows is None:
         windows = list(IMPACT_WINDOWS.values())
 
@@ -66,6 +73,7 @@ def compute_impact_for_article(
     results = []
     for ticker, weight in zip(all_tickers, weights):
         candles = ticker_candles[ticker]
+        ticker_ts_index = ts_index_by_ticker.get(ticker) if ts_index_by_ticker else None
 
         price_changes: dict[str, float | None] = {}
         for win_name, win_sec in IMPACT_WINDOWS.items():
@@ -73,9 +81,12 @@ def compute_impact_for_article(
                 frm, to = impact_window_within_session(ts, win_sec)
             else:
                 frm, to = ts, ts + win_sec
-            price_changes[win_name] = _compute_price_change(candles, frm, to)
+            price_changes[win_name] = _compute_price_change(candles, frm, to, ts_index=ticker_ts_index)
 
-        abnormal = compute_abnormal_return(candles, ts, window_sec=1800, market_candles=market_candles)
+        abnormal = compute_abnormal_return(
+            candles, ts, window_sec=1800, market_candles=market_candles,
+            candles_ts_index=ticker_ts_index, market_returns_indexed=market_returns_indexed,
+        )
         sig_label = classify_significance(abnormal["ar_p_value"])
 
         impact_label = _classify_impact(
@@ -120,9 +131,11 @@ def compute_impact_for_article(
     return results
 
 
-def _compute_price_change(candles: list[dict], from_ts: int, to_ts: int) -> float | None:
+def _compute_price_change(candles: list[dict], from_ts: int, to_ts: int, ts_index: list[int] | None = None) -> float | None:
     # candles must be sorted ascending by bar_ts; bisect avoids full scans.
-    ts = [c.get("bar_ts", 0) for c in candles]
+    # ts_index lets a per-article caller pass a precomputed index instead of
+    # rebuilding it from `candles` on every call (see compute_impact_for_article).
+    ts = ts_index if ts_index is not None else [c.get("bar_ts", 0) for c in candles]
     filtered = candles[bisect_left(ts, from_ts):bisect_right(ts, to_ts)]
     if len(filtered) < 2:
         return None

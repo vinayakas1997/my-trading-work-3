@@ -12,7 +12,21 @@ from vinu_research.models import Evidence, Hypothesis, HypothesisStatus
 
 LOG = logging.getLogger(__name__)
 
-HYPOTHESES_DIR = Path.home() / ".vinu"
+# In Docker, research-api's container is read_only: true with only /data
+# (bind-mounted from ./data/research) and tmpfs writable -- Path.home()
+# resolves to a non-writable, sometimes nonexistent path there (confirmed:
+# `/nonexistent`, this environment's HOME for a container user with no
+# real passwd entry), so every one of this module's ~11 no-arg
+# `HypothesisRegistry()` call sites (service.py, routes_hypothesis.py,
+# routes_introspect.py, tools.py, cli.py) crashed with
+# `OSError: [Errno 30] Read-only file system` the first time a real
+# /research/run actually reached this code path. Respecting
+# VINU_RESEARCH_DATA_ROOT here -- the same env var vinu_research/config.py
+# already uses for its own data root -- fixes all of them from this one
+# place; Path.home() remains the fallback for host-mode (non-Docker) use
+# where that var isn't set.
+_data_root_env = os.environ.get("VINU_RESEARCH_DATA_ROOT", "").strip()
+HYPOTHESES_DIR = Path(_data_root_env) if _data_root_env else (Path.home() / ".vinu")
 HYPOTHESES_PATH = HYPOTHESES_DIR / "hypotheses.json"
 
 

@@ -8,14 +8,29 @@ status: definition-phase
 ## Why this gets its own file
 
 Unlike the services in `02`, this step is multi-stage (generate → backtest
-→ validate → promote), and it's the step most likely to *silently do
-nothing* rather than fail loudly — e.g. `POST /research/ensure` no-ops if a
-symbol already has an `ACTIVE`/`MONITORING` strategy artifact, which is
-correct behavior but easy to mistake for "it ran and found nothing worth
-generating." `vinu-strategy` itself has **no generation trigger at all** —
-it only exposes read/evaluate routes; all generation happens through
-`vinu-research`. Get this ordering wrong and you'll be debugging the wrong
-service.
+→ validate → **manually approve** → promote), and it's the step most likely
+to *silently do nothing* rather than fail loudly — e.g. `POST
+/research/ensure` no-ops if a symbol already has an `ACTIVE`/`MONITORING`
+strategy artifact, which is correct behavior but easy to mistake for "it ran
+and found nothing worth generating." `vinu-strategy` itself has **no
+generation trigger at all** — it only exposes read/evaluate routes; all
+generation happens through `vinu-research`. Get this ordering wrong and
+you'll be debugging the wrong service.
+
+**The approve step is not optional and is easy to skip**: `POST
+/research/run` only produces a *run* — it never creates an artifact by
+itself, regardless of how good the backtest looks. Promotion only happens
+via a separate, explicit `POST /research/runs/{run_id}/approve` call (step 3a
+below) — confirmed against the actual code
+(`vinu_research/service.py`'s `run_research()` vs. `approve_run()` →
+`_create_artifact_from_run()`), and against
+[`understanding-project/a-new-strategy-added.md`](../understanding-project/a-new-strategy-added.md),
+which names this exact skip as "the one people skip, because step 1 already
+returns a `completed` status that *looks* like the strategy is done." Miss
+this step and `/research/artifacts` will stay empty forever, `04`'s
+`vinu-strategy`/`vinu-portfolio` checks will have nothing to find, and `05`'s
+month-long replay will have no promoted strategy to trade against — not
+because anything is broken, but because this step never ran.
 
 ## 1. Confirm prerequisites are actually met first
 
@@ -30,8 +45,10 @@ tickers first.
 Two routes exist, both on `vinu-research` (port 8087), same payload shape:
 
 - `POST /research/run` — **always** runs the full generate → backtest →
-  promote pipeline, regardless of existing artifacts. Use this for the
-  first run of this e2e test, since there's nothing to skip yet.
+  validate pipeline, regardless of existing artifacts, and writes a
+  `ResearchRunRecord`. It does **not** promote anything on its own — see the
+  approve step (3a) below. Use this for the first run of this e2e test,
+  since there's nothing to skip yet.
 - `POST /research/ensure` — skips if the symbol already has an
   `ACTIVE`/`MONITORING` artifact. Use this on a re-run of this checklist,
   not the first time.
@@ -69,10 +86,6 @@ Confirm, per symbol:
 
 - At least one run in `/research/runs` with a completed (not failed/
   timed-out) status.
-- At least one artifact in `/research/artifacts` for that symbol — an
-  empty artifact list after a "completed" run means the pipeline ran but
-  nothing passed promotion criteria, which is a legitimate outcome but a
-  different one than "it worked" — document which one actually happened.
 - Read the run's actual backtest metrics (Sharpe, drawdown) rather than
   just its status — a "completed" run with a degenerate Sharpe (exactly 0,
   or identical across symbols) usually means something upstream (features
@@ -86,16 +99,63 @@ Confirm, per symbol:
   Empty `summary_text` with `llm_enabled: false` is expected — the feature
   is gated on that flag, not a bug.
 
-## 4. Trigger simulation
+## 3a. Approve each run — the mandatory, easy-to-skip step
 
-`vinu-simulator` (port 8085) needs a strategy name to simulate against —
-use one of the artifacts confirmed in step 3, not a placeholder:
+Nothing auto-approves a run, regardless of how the backtest metrics look.
+For each symbol, take the `run_id` from step 3's completed run and approve
+it explicitly:
 
 ```bash
-curl -X POST http://localhost:8085/simulator/simulate \
+curl -X POST http://localhost:8087/research/runs/{run_id}/approve
+```
+
+### Verify
+
+```bash
+curl -s http://localhost:8087/research/artifacts
+```
+
+Confirm each of the 3 symbols now has an artifact here. An empty artifact
+list **at this point** (after approving) means the run was genuinely
+rejected by promotion criteria (e.g. routed to `BENCHING` instead of
+`ACTIVE` on a correlation-blocked result) — a legitimate outcome, worth
+documenting, but different from an empty list before approving, which just
+means the approve call hasn't happened yet and proves nothing about
+promotion criteria either way.
+
+### Document
+
+- Whether the approve call actually returned an artifact per symbol, and if
+  not, what status it landed at instead (`ACTIVE` vs. `BENCHING` vs.
+  rejected) — don't collapse these into a single "didn't work" bucket.
+
+## 4. Trigger simulation
+
+**Use `/simulator/simulate/custom`, not `/simulator/simulate`.** The plain
+`POST /simulator/simulate` route takes a `strategy_name` and fetches its
+weight data from **`vinu-strategy`** — which, per
+[`understanding-project/a-new-strategy-added.md`](../understanding-project/a-new-strategy-added.md),
+has zero awareness of anything `vinu-research` produces (it's a separate
+YAML rule engine). Calling it with a research artifact's name (e.g.
+`AAPL_4`) always fails with `"No weight data found for strategy..."` — not
+a timing issue, a structural one; there is no path by which it could ever
+work for a research-generated strategy. Use
+`POST /simulator/simulate/custom` instead, with the approved run's own
+`strategy_code` verbatim:
+
+```bash
+# {run_id} is the numeric research run id from step 3a (e.g. 4), not the
+# artifact_id string. Fetch the approved run first to get its strategy_code:
+curl -s "http://localhost:8087/research/runs/{run_id}"
+```
+
+```bash
+curl -X POST http://localhost:8085/simulator/simulate/custom \
   -H "Content-Type: application/json" \
   -d '{
-    "strategy_name": "<artifact strategy name from step 3>",
+    "strategy_code": "<the approved runs strategy_code field, verbatim>",
+    "class_name": "UserStrategy",
+    "symbols": ["AAPL"],
     "start_date": "2022-01-01",
     "end_date": "2026-06-30",
     "run_validation": true,
@@ -103,6 +163,9 @@ curl -X POST http://localhost:8085/simulator/simulate \
   }'
 ```
 
+`class_name` is `UserStrategy` for every run observed so far (the fixed
+class name `vinu-research`'s codegen always emits) — confirm against the
+actual `strategy_code` string rather than assuming, if this ever changes.
 Note the field names here are `start_date`/`end_date`, not `from_date`/
 `to_date` like `vinu-research`'s payload — easy to transpose by copying the
 previous curl call without checking.
@@ -133,9 +196,11 @@ drawdown, trade count) rather than returning an empty metrics object.
 
 - [ ] All 3 tickers have at least one `vinu-research` run with real
       (non-degenerate) backtest metrics
+- [ ] The `POST /research/runs/{run_id}/approve` call (step 3a) was made
+      for all 3 tickers — not assumed to happen automatically
 - [ ] Documented, per ticker, whether a strategy artifact was actually
-      promoted — and if not, why (rejected by promotion criteria vs.
-      pipeline error are very different outcomes)
+      promoted after approving — and if not, why (rejected by promotion
+      criteria vs. pipeline error are very different outcomes)
 - [ ] All 3 tickers have a `vinu-simulator` run covering the full
       2022-01-01 → 2026-06-30 range with populated metrics
 

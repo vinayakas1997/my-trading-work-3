@@ -1,0 +1,113 @@
+{
+  "schema_version": "0.1",
+  "hypotheses": {
+    "hyp_1276b50d3fb4": {
+      "hypothesis_id": "hyp_1276b50d3fb4",
+      "title": "Trend-following strategy for sideways stage with medium risk regime",
+      "thesis": "Trend-following strategy for sideways stage with medium risk regime",
+      "status": "exploring",
+      "universe": [
+        "AAPL"
+      ],
+      "signal_definition": "",
+      "run_cards": [],
+      "strategy_type": "Trend-following strategy for sideways stage with medium risk regime",
+      "indicators_used": [],
+      "params_tested": {},
+      "evidence": [
+        {
+          "run_id": 4,
+          "iteration": 1,
+          "metric": "sharpe",
+          "value": -0.37982368515992976,
+          "conclusion": "contradicts",
+          "reasoning": "Monte Carlo validation gate failed: Trade-permutation p-value 0.0000 < 0.05 (PASS); Block-bootstrap p-value 0.1500 >= 0.05 (FAIL); Price-path resample p-value 0.4550 >= 0.1 (FAIL); Walk-forward consistency 0.40 < 0.60 (FAIL); Bootstrap Sharpe CI lower bound -1.2530 <= 0 (FAIL); BCa bootstrap CI lower bound -1.2830 <= 0 (FAIL); Placebo test p-value 0.9960 >= 0.05 (FAIL)",
+          "timestamp": "",
+          "metrics_snapshot": {
+            "sharpe": -0.37982368515992976,
+            "max_dd": -0.05856743258590721,
+            "trade_count": 117,
+            "win_rate": 0.44581005586592176
+          },
+          "report_path": null
+        }
+      ],
+      "invalidation_reason": null,
+      "best_sharpe": 0.0,
+      "created_at": "2026-08-03T16:18:49.328565+00:00",
+      "updated_at": "2026-08-03T16:18:53.511110+00:00"
+    },
+    "hyp_980f2debf793": {
+      "hypothesis_id": "hyp_980f2debf793",
+      "title": "Trend-following strategy for basing stage with low risk regime",
+      "thesis": "Trend-following strategy for basing stage with low risk regime",
+      "status": "exploring",
+      "universe": [
+        "TSLA"
+      ],
+      "signal_definition": "",
+      "run_cards": [],
+      "strategy_type": "Trend-following strategy for basing stage with low risk regime",
+      "indicators_used": [],
+      "params_tested": {},
+      "evidence": [
+        {
+          "run_id": 5,
+          "iteration": 1,
+          "metric": "sharpe",
+          "value": 0.26611067113122,
+          "conclusion": "contradicts",
+          "reasoning": "Monte Carlo validation gate failed: Trade-permutation p-value 1.0000 >= 0.05 (FAIL); Block-bootstrap p-value 0.6600 >= 0.05 (FAIL); Price-path resample p-value 0.4860 >= 0.1 (FAIL); Walk-forward consistency 0.80 >= 0.60 (PASS); Bootstrap Sharpe CI lower bound -0.6357 <= 0 (FAIL); BCa bootstrap CI lower bound -0.6977 <= 0 (FAIL); Placebo test p-value 1.0000 >= 0.05 (FAIL)",
+          "timestamp": "",
+          "metrics_snapshot": {
+            "sharpe": 0.26611067113122,
+            "max_dd": -0.168277059931165,
+            "trade_count": 321,
+            "win_rate": 0.4960893854748603
+          },
+          "report_path": null
+        }
+      ],
+      "invalidation_reason": null,
+      "best_sharpe": 0.26611067113122,
+      "created_at": "2026-08-03T16:19:05.898810+00:00",
+      "updated_at": "2026-08-03T16:19:08.726674+00:00"
+    },
+    "hyp_6710967b477e": {
+      "hypothesis_id": "hyp_6710967b477e",
+      "title": "Trend-following strategy for downtrend stage with high risk regime",
+      "thesis": "Trend-following strategy for downtrend stage with high risk regime",
+      "status": "exploring",
+      "universe": [
+        "JNJ"
+      ],
+      "signal_definition": "",
+      "run_cards": [],
+      "strategy_type": "Trend-following strategy for downtrend stage with high risk regime",
+      "indicators_used": [],
+      "params_tested": {},
+      "evidence": [
+        {
+          "run_id": 6,
+          "iteration": 1,
+          "metric": "sharpe",
+          "value": -0.5459475724025911,
+          "conclusion": "contradicts",
+          "reasoning": "Monte Carlo validation gate failed: Trade-permutation p-value 0.0000 < 0.05 (PASS); Block-bootstrap p-value 0.1250 >= 0.05 (FAIL); Price-path resample p-value 0.5100 >= 0.1 (FAIL); Walk-forward consistency 0.20 < 0.60 (FAIL); Bootstrap Sharpe CI lower bound -1.5141 <= 0 (FAIL); BCa bootstrap CI lower bound -1.5565 <= 0 (FAIL); Placebo test p-value 1.0000 >= 0.05 (FAIL)",
+          "timestamp": "",
+          "metrics_snapshot": {
+            "sharpe": -0.5459475724025911,
+            "max_dd": -0.018884843211318756,
+            "trade_count": 55,
+            "win_rate": 0.45861297539149887
+          },
+          "report_path": null
+        }
+      ],
+      "invalidation_reason": null,
+      "best_sharpe": 0.0,
+      "created_at": "2026-08-03T16:19:11.198888+00:00",
+      "updated_at": "2026-08-03T16:19:13.624618+00:00"
+    }
+  }
+}

@@ -56,9 +56,9 @@ re-derive or re-propose anything items 1-4 already closed.
 
 | Component | What it owns here | Status |
 |---|---|---|
-| [`vinu-agent/`](vinu-agent/plan.md) | The Facts & Limitations Registry, debrief-on-close, prospective fact-check, freshness-warnings reader, research-digest reader | All 5 pieces implemented (280 tests passing; +3 real pre-existing bugs found and fixed along the way) |
+| [`vinu-agent/`](vinu-agent/plan.md) | The Facts & Limitations Registry, debrief-on-close, prospective fact-check, freshness-warnings reader, research-digest reader | All 5 pieces implemented (280 tests passing; +2 real pre-existing bugs found and fixed along the way) |
 | [`vinu-initial-analysis/`](vinu-initial-analysis/plan.md) | The signal-usage contract (proven-for/not-for tags on `significance_score`/`regime_features`) | Implemented (4 tests passing). Recompute job hosted in `vinu-research` instead — see that row |
-| [`vinu-research/`](vinu-research/plan.md) | The daily regime/correlation recompute job, hosted on the existing `ScheduledResearchExecutor` (decided over a new executor in `vinu-initial-analysis`) | Implemented (4 new tests; 489 passed project-wide, 1 pre-existing unrelated failure) |
+| [`vinu-research/`](vinu-research/plan.md) | The daily regime/correlation recompute job, hosted on the existing `ScheduledResearchExecutor` (decided over a new executor in `vinu-initial-analysis`), plus the research-digest fix (`dispatch()` discarding `run_research()`'s return value) | Implemented (11 new tests; 500 passed project-wide (was 489), 1 pre-existing unrelated failure) |
 
 Each folder has `plan.md` (what, why, impact, connects-to, implementation)
 and `status.md` (files touched, bugs/fixes, filled in during build) — a

@@ -162,13 +162,25 @@ class ReplayRunner:
         then read the persisted attempt file (holding the full react trace)."""
         deadline = time.time() + MAX_WAIT_SEC
         while time.time() < deadline:
-            r = requests.get(
-                self._sessions_url(self.session_id, "messages"),
-                params={"limit": 200},
-                timeout=30,
-            )
-            r.raise_for_status()
-            full = r.json()
+            try:
+                r = requests.get(
+                    self._sessions_url(self.session_id, "messages"),
+                    params={"limit": 200},
+                    timeout=30,
+                )
+                r.raise_for_status()
+                full = r.json()
+            except requests.exceptions.RequestException as e:
+                # agent-api can be fully busy running the actual LLM call and
+                # too slow to service even this cheap status poll (found
+                # 2026-08-04: a single 30s poll timeout killed a whole 22-day
+                # run after only 4 days, well inside the real MAX_WAIT_SEC
+                # deadline). Transient poll failures aren't the same as the
+                # attempt itself timing out -- keep polling until the real
+                # deadline above is hit.
+                log.warning("poll request failed (%s), retrying", e)
+                time.sleep(POLL_SEC)
+                continue
             done = [m for m in full if m.get("linked_attempt_id") == attempt_id]
             if done:
                 attempt_file = (
