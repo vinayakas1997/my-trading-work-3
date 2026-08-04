@@ -205,6 +205,11 @@ raw JSON traces by hand the way `04`'s investigation had to.
 
 - [`status.md`](status.md) — the build log: what actually landed for
   steps 1-5 above, file:line, test counts.
+- [`observed-rates-and-build-timings.md`](observed-rates-and-build-timings.md)
+  — real, measured LLM call latency (`vinu-research` and `vinu-news`
+  separately), FinBERT scoring throughput, and per-service Docker build
+  timings from actually running this against the live stack on
+  2026-08-04 — not estimates.
 - [`end-to-end-test.md`](end-to-end-test.md) — the runbook for step 6,
   and [`bugs-fixes-while-test/`](bugs-fixes-while-test/AGENTS.md) — where
   findings from running it get written up.

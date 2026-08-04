@@ -128,7 +128,58 @@ pass.
     silently wasn't recalled into context. Fixed: unioned with
     `held_symbols`, same as the other three blocks; regression test added.
 
-## What these sixteen have in common
+### Found bringing the stack up for the telemetry layer's own verification (05-advanced-aim-1-1)
+
+17. [`data-dir-host-uid-ownership-after-rebuild.md`](data-dir-host-uid-ownership-after-rebuild.md) —
+    a fresh `docker compose down && up --build -d` (needed to pick up
+    `05`'s telemetry code) crash-looped 3 of 10 services with
+    `unable to open database file`: the host `data/` tree had drifted to
+    host-user ownership (`1000:1000`) while every container runs as
+    `uid=100`, and Docker auto-created one missing bind-mount source
+    directory as `root:root`. Fixed by re-`chown`ing the tree to `100:101`
+    via a throwaway root container and force-recreating the affected
+    services. Also found `.env` itself missing from disk entirely (only
+    `.env-example`, which has blank Alpaca credentials) — recovered the
+    real values from `alpaca-details/details.md` rather than guessing.
+    See also `18` below, found immediately after, on the same rebuild.
+18. See [`freshness-recompute-scan-never-started-in-production.md`](freshness-recompute-scan-never-started-in-production.md)'s
+    "Later correction" section — the `schedule-freshness` fix from `#15`
+    crashed on its actual first Docker run (`Path.home()` resolving to
+    `/nonexistent` for the same reason `vinu-agent` already had this
+    problem), and the fix's own prescribed log-based verification
+    (`docker compose logs vinu-research | grep schedule-freshness`) turned
+    out to structurally never work, for any service, because background
+    `&` worker processes' `print()` output is stdout-buffered when piped
+    and PYTHONUNBUFFERED is unset repo-wide. Fixed both: an explicit
+    `ScheduledResearchJobStore` path under `data_root`, and
+    `PYTHONUNBUFFERED=1` in `vinu-research/Dockerfile` (only — the same gap
+    in `vinu-live`/`vinu-news`/etc. is flagged, not fixed, to avoid
+    unrequested changes outside this session's scope).
+19. [`finbert-scoring-not-automatic.md`](finbert-scoring-not-automatic.md)'s
+    "Later fix (2026-08-04)" section — `#8`'s manual-only FinBERT route was
+    made automatic: wired into `vinu-news`'s existing background ingest
+    loop, same pattern as the LLM auto-analysis path. Found and fixed a
+    second, pre-existing, unrelated bug along the way: `_maybe_auto_analyze`
+    (`service.py:296`) reused one SQL placeholder string sized for 3
+    watchlist tickers across two different `IN (...)` clauses, one of
+    which needed to be sized to the current batch of links (100+) — any
+    ingest cycle with more than 3 new links crashed the whole background
+    loop silently (API stayed `healthy` throughout). Verified the scoring
+    logic end to end (`0/435` → `435/435` articles scored against the real
+    DB); the automatic per-cycle trigger itself wasn't observed firing
+    live, blocked by `#20`.
+20. [`news-ingest-loop-backfill-hang.md`](news-ingest-loop-backfill-hang.md) —
+    found investigating `#19`: the same background ingest loop hung for
+    90+ minutes inside `run_backfill_all()` with zero CPU usage and zero
+    log output — no crash, no partial progress, nothing. Ruled out (with
+    live tests, not guesses) the HTTP client timeout, the shared-watchlist
+    file lock, and the host-uid ownership issue from `#17`. Mitigated by
+    restarting the container (no data lost — backfill resumes from its
+    persisted checkpoint); **root cause not found**, flagged with specific
+    next steps (SQLite lock contention between the `serve` and `ingest`
+    processes is the leading suspect) for whoever picks this up next.
+
+## What these twenty have in common
 
 #1–4 are documentation-only, found by cross-reading planning files against
 each other (and, for #1, against the real `vinu-research` source) before
@@ -156,3 +207,15 @@ remembering for whatever gets built next: "has tests" and "is wired into
 production" are two different claims, and only the second one is checked
 by re-reading the docs — it has to be checked against the actual container
 entrypoint/startup path.
+
+#17–18 are a fourth category: not bugs in `04`'s own work at all, but real
+blockers hit while running this exact runbook again for `05`'s telemetry
+layer — a reminder that "the stack was healthy yesterday" says nothing
+about whether it will still start today. #17 is host-state drift (file
+ownership, a missing `.env`) rather than a code defect; #18 is `#15`'s own
+fix meeting a real container for the first time and immediately finding
+two things wrong with it, including that the fix's own prescribed
+verification step was unable to ever have worked. Together they're the
+clearest instance yet of this project's rule: a fix "made and tested
+outside Docker" is not verified until it has actually been run inside
+Docker, no matter how confident the surrounding prose sounds.

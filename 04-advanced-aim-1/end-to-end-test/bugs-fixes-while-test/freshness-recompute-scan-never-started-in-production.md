@@ -110,6 +110,57 @@ unit tests.
 
 ## What to check when this folder's Docker-based verification next runs
 
+**Later correction — confirmed against the real stack, and it crashed on
+first run.** When `01-setup-and-rebuild.md`'s rebuild was actually run
+against Docker (2026-08-04), `schedule-freshness` crashed on startup with
+`OSError: [Errno 30] Read-only file system: '/nonexistent'`. Root cause:
+`ScheduledResearchJobStore()` (`vinu-research/vinu_research/scheduled/store.py:14-15`)
+defaults to `Path.home() / ".vinu" / "scheduled_research"` when constructed
+with no explicit `path`, and `schedule_freshness_main` (this fix, above)
+called `ScheduledResearchExecutor(service=service)` without passing a
+`store=`, so it fell through to that default. Inside the container, the
+`app` user (uid 100, added via `addgroup`/`adduser --system`) has no real
+passwd home directory, so `Path.home()` resolves to `/nonexistent` —
+exactly the same failure shape `end-to-end-complete-status.md` already
+found for `vinu-agent` falling back to `Path.home()/".vinu"` when
+`VINU_AGENT_DATA_ROOT` was unset, just recurring here in code this fix
+itself added. Because this only crashed the background `&` process, not
+the `exec`'d foreground HTTP server, `docker compose ps` kept reporting
+`healthy` throughout — the crash was silent to every check except reading
+the container logs directly.
+
+Fixed in `vinu-research/vinu_research/cli.py`'s `schedule_freshness_main`:
+now calls `load_config().data_root` (already imported and used elsewhere
+in this file) and constructs an explicit
+`ScheduledResearchJobStore(data_root / "scheduled_research" / "jobs.json")`,
+passed to `ScheduledResearchExecutor(store=store, service=service)` instead
+of relying on the no-args default.
+
+**Second, separate bug found investigating why this fix's own log check
+(directly below) showed nothing even before the crash was noticed**: the
+`docker compose logs vinu-research | grep "schedule-freshness"` command
+this file itself prescribes found zero lines — not because the loop wasn't
+running, but because `vinu-research schedule-decay/schedule-freshness &`
+are separate Python processes whose stdout, when piped (as `docker logs`
+always is, never a tty), is fully block-buffered by default. Their
+`print()` startup banners (a few dozen bytes each) sit under Python's
+default buffer size and were never flushed — the check in this file would
+have reported "nothing happened" indefinitely even on a fully healthy
+loop. Confirmed the same pattern exists project-wide: `vinu-live`'s
+trade-plan/feedback/generic workers, `vinu-news`'s ingest loop, and every
+other `entrypoint.sh` background `&` job all use raw `print()` for their
+startup/cycle banners with no `PYTHONUNBUFFERED` set anywhere in the repo
+— only `vinu-research/Dockerfile` was fixed this pass (added
+`ENV PYTHONUNBUFFERED=1`), since it's the one this session's work depends
+on; the same fix for the other five services is flagged, not applied, to
+avoid unrequested changes to services outside this session's scope.
+Verified after the fix: both startup lines and the first `revalidation_scan:
+0 artifacts re-validated` line appeared in `docker compose logs` within
+seconds of container start.
+
+Original text below, describing the fix as made and tested outside Docker
+— left as-is for the record; superseded by the correction above.
+
 Not yet confirmed against the real running stack (this fix was made and
 tested outside Docker) — when `end-to-end-test/01-setup-and-rebuild.md` is
 next run, add this check:
