@@ -68,6 +68,22 @@ class TestContextMemoryIntegration:
         assert "<memory symbol=AAPL>" not in user_content
         assert "<memory symbol=TSLA>" not in user_content
 
+    def test_memory_recalled_for_held_but_unmentioned_symbol(self, store: UnifiedMemoryStore) -> None:
+        """A held position's memory must surface even on a turn that doesn't
+        mention its ticker — same held_symbols union the ground-truth/facts/
+        freshness/research-digest blocks already use (context.py:167/189/215).
+        Regression test for the gap where this block used only
+        _extract_symbols(user_message), silently dropping held-but-unmentioned
+        positions' long-term memory."""
+        registry = ToolRegistry()
+        builder = ContextBuilder(registry=registry, unified_memory=store, held_symbols=["AAPL"])
+        store.add_entry(_make_memory("research", "AAPL", "Strong trend", "AAPL has strong upward momentum"))
+
+        messages = builder.build_messages([], "What's going on in the market today?")
+        user_content = messages[-1]["content"]
+        assert "<memory symbol=AAPL>" in user_content
+        assert "Strong trend" in user_content
+
     def test_dedup_prevents_duplicate_source_id(self, store: UnifiedMemoryStore, builder: ContextBuilder) -> None:
         same_id = "dup-research-id"
         store.add_entry(MemoryEntry(

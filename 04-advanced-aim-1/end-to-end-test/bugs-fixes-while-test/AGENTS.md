@@ -104,7 +104,31 @@ pass.
     mitigated for free by the harness's existing resume-by-skip design
     rather than new code.
 
-## What these fourteen have in common
+### Found via static code review — cross-checking `04-advanced-aim-1`'s "implemented and wired" claims against the real code, not by running Docker
+
+15. [`freshness-recompute-scan-never-started-in-production.md`](freshness-recompute-scan-never-started-in-production.md) —
+    the big one: `regime_recompute_scan()` (the Freshness Contract's
+    recompute job) was fully implemented and tested inside
+    `ScheduledResearchExecutor`, but nothing in the deployed container ever
+    constructed or started that executor — `#4`'s doc fix confirmed the
+    code exists and is tested, but never checked whether it actually runs.
+    It didn't. Also surfaced a second decay-scan implementation
+    (`ScheduledResearchExecutor.decay_scan()`) diverging from the one
+    that's actually running (`cli.py`'s `schedule_decay_main`). Fixed:
+    added a narrower `schedule-freshness` CLI loop running only
+    `revalidation_scan()`/`regime_recompute_scan()`, wired into
+    `entrypoint.sh`, without touching the already-running decay path.
+16. [`unified-memory-missing-held-symbols-union.md`](unified-memory-missing-held-symbols-union.md) —
+    `04-vinu-components-integration-plan.md` already flagged
+    `_extract_symbols()`'s "only what's in today's message" blind spot as a
+    real risk and confirmed `GroundTruthInjector` avoids it — but the same
+    file's `unified_memory` long-term-recall block still had the exact
+    same gap, missed because the original check only verified the block it
+    was written to fix. A held-but-unmentioned position's long-term memory
+    silently wasn't recalled into context. Fixed: unioned with
+    `held_symbols`, same as the other three blocks; regression test added.
+
+## What these sixteen have in common
 
 #1–4 are documentation-only, found by cross-reading planning files against
 each other (and, for #1, against the real `vinu-research` source) before
@@ -120,3 +144,15 @@ checklist's first real attempt actually exercised — confirming this
 project's own repeated finding (`04-vinu-components-integration-plan.md`'s
 "check harder for an existing near-miss before assuming greenfield")
 applies just as much to bugs as it does to planning.
+
+#15–16 are a third category, distinct from both: real code gaps, but found
+by *static* review — reading the actual call sites of things
+`04-advanced-aim-1` claims are "implemented and wired," not by running
+anything. #15 is the sharpest example yet of this project's recurring
+"looks done, isn't" shape: a mechanism can be fully built and fully unit
+tested (passing the bar #4's doc-fix checked) and still never execute in
+the real deployed system, because nothing calls `.start()` on it. Worth
+remembering for whatever gets built next: "has tests" and "is wired into
+production" are two different claims, and only the second one is checked
+by re-reading the docs — it has to be checked against the actual container
+entrypoint/startup path.

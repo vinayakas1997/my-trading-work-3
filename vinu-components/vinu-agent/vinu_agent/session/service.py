@@ -222,6 +222,8 @@ class SessionService:
             event_callback=event_callback,
             max_iterations=50,
             persistent_memory=self._persistent_memory,
+            data_root=data_root,
+            service_name="vinu-agent",
         )
         agent_loop._workflow_tracker = workflow_tracker
         agent_loop._ground_truth_system_msg = context_builder.last_ground_truth_msg

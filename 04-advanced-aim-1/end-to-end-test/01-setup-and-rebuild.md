@@ -51,6 +51,35 @@ curl -s http://localhost:8087/research/health   # research
 curl -s http://localhost:8086/agent/health      # agent
 ```
 
+**Also confirm the two background schedule loops inside `research-api` actually
+started** — `docker compose ps`/the health endpoint only prove the HTTP
+server is up, not that its two background processes did (see
+[`bugs-fixes-while-test/freshness-recompute-scan-never-started-in-production.md`](bugs-fixes-while-test/freshness-recompute-scan-never-started-in-production.md) —
+`regime_recompute_scan()` was fully built and tested but never actually
+started in the deployed container until that fix):
+
+```bash
+docker compose logs vinu-research | grep -E "schedule-decay|schedule-freshness"
+```
+
+Expect to see both startup lines:
+
+```
+[schedule-decay] Running every 24h. Press Ctrl+C to stop.
+[schedule-freshness] revalidation every 1h, regime-recompute every 24h. Press Ctrl+C to stop.
+```
+
+`schedule-freshness` runs both scans immediately on startup (not just on
+its first interval), so within the first minute you should also see one
+`revalidation_scan: N artifacts re-validated` and one
+`regime_recompute_scan: N symbols recomputed` line — `N` will legitimately
+be `0` this early (no ACTIVE/MONITORING strategy artifacts exist yet before
+`03` runs), but the lines themselves must appear. If they don't appear at
+all, the background loop failed to start — check the container didn't exit
+early on an unhandled exception in `entrypoint.sh`'s first background
+command (a failure there would not fail `docker compose ps`'s health check,
+since that only polls the HTTP server).
+
 ## 3. Confirm the ticker set
 
 The three tickers for this run are `AAPL`, `TSLA`, `JNJ` — already the live
@@ -102,6 +131,9 @@ example file itself) and has real values for:
       `.env-example`, actually copied into your real `.env`
 - [ ] The configured LLM endpoint responds to a basic request (a plain
       curl/health check against it, not through any vinu-* service)
+- [ ] `docker compose logs vinu-research` shows both `[schedule-decay]` and
+      `[schedule-freshness]` startup lines — not just the HTTP server
+      responding healthy
 
 If any of these fail, stop here — every command in `02` will either error
 immediately or silently degrade in a way that's much harder to diagnose

@@ -123,6 +123,23 @@ cadence for whatever symbols are currently held/watchlisted. Which of the
 two hosts it is an implementation-time call; the mechanism itself needs no
 new infrastructure category, only a new job definition.
 
+**Correction, found later by static code review (see
+[`end-to-end-test/bugs-fixes-while-test/freshness-recompute-scan-never-started-in-production.md`](end-to-end-test/bugs-fixes-while-test/freshness-recompute-scan-never-started-in-production.md))**:
+this section's "a scheduler does exist" was true of the code, but
+`ScheduledResearchExecutor` — the class hosting `regime_recompute_scan()`,
+`revalidation_scan()`, and its own `decay_scan()` — was never actually
+instantiated or started anywhere in `vinu-research/vinu_research/server/app.py`
+or `entrypoint.sh`. It shipped fully built and fully unit-tested, and still
+never ran a single real cycle in the deployed system. Fixed by adding a
+`schedule-freshness` CLI loop (running only `revalidation_scan`/
+`regime_recompute_scan`, not the executor's own diverging `decay_scan`,
+which would have run concurrently with the separate decay-scan
+implementation already live via `schedule-decay`) to `entrypoint.sh`. The
+lesson for this file specifically: confirming a scheduler "exists" in the
+codebase is not the same claim as confirming it runs — the latter needs a
+check against the actual container startup path, not just the class
+definition.
+
 ## 4. Where the four `01-plan-and-implementations` items land — confirmed, not just proposed
 
 **Update: all four items are now implemented** (224 tests passing) —

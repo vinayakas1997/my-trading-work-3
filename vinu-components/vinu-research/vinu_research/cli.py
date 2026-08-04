@@ -154,6 +154,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     sched_decay_p.add_argument("--interval-hours", type=int, default=24, help="Hours between scans (default: 24)")
     sched_decay_p.set_defaults(func=schedule_decay_main)
 
+    sched_freshness_p = sub.add_parser(
+        "schedule-freshness",
+        help="Run revalidation-scan and regime-recompute-scan on a repeating interval "
+        "(the Freshness Contract's recompute trigger — see 04-advanced-aim-1/"
+        "03-question-entity-mapping-and-freshness.md §4). Deliberately does not run "
+        "decay-scan, which already runs separately via 'schedule-decay'.",
+    )
+    sched_freshness_p.add_argument("--revalidation-interval-hours", type=int, default=1, help="Hours between revalidation-scan runs (default: 1, matches ScheduledResearchExecutor._run_loop's built-in cadence)")
+    sched_freshness_p.add_argument("--regime-interval-hours", type=int, default=24, help="Hours between regime-recompute-scan runs (default: 24, matches ScheduledResearchExecutor._run_loop's built-in cadence)")
+    sched_freshness_p.add_argument("--poll-interval-sec", type=int, default=300, help="How often to check whether either scan is due (default: 300s)")
+    sched_freshness_p.set_defaults(func=schedule_freshness_main)
+
     promote_p = sub.add_parser(
         "promote-scan",
         help="List BENCHING artifacts and promote those clearing the deflated-Sharpe/holdout bar",
@@ -551,6 +563,52 @@ def schedule_decay_main(args: argparse.Namespace) -> None:
         print("\n[schedule-decay] Stopped.")
     finally:
         store.close()
+
+
+def schedule_freshness_main(args: argparse.Namespace) -> None:
+    """Run ScheduledResearchExecutor's revalidation_scan/regime_recompute_scan on a
+    loop — the Freshness Contract's actual recompute trigger.
+
+    Deliberately calls these two scans directly rather than starting the full
+    ScheduledResearchExecutor._run_loop(), because that loop also runs its own
+    decay_scan() — a second, independently-implemented decay policy that would
+    run concurrently with (and diverge from) the one already running via the
+    separate 'schedule-decay' CLI loop (see cli.py's _run_decay_scan). Until
+    those two decay implementations are reconciled, only the two scans this
+    project actually needs (revalidation, regime recompute) run here.
+    """
+    from vinu_research.scheduled.executor import ScheduledResearchExecutor
+    from vinu_research.service import ResearchService
+
+    revalidation_interval = max(1, args.revalidation_interval_hours) * 3600
+    regime_interval = max(1, args.regime_interval_hours) * 3600
+    poll_interval = max(1, args.poll_interval_sec)
+
+    async def _run() -> None:
+        async with ResearchService() as service:
+            executor = ScheduledResearchExecutor(service=service)
+            last_revalidation = 0.0
+            last_regime = 0.0
+            print(
+                f"[schedule-freshness] revalidation every {args.revalidation_interval_hours}h, "
+                f"regime-recompute every {args.regime_interval_hours}h. Press Ctrl+C to stop.\n"
+            )
+            while True:
+                now = time.monotonic()
+                if now - last_revalidation >= revalidation_interval:
+                    n = await executor.revalidation_scan()
+                    print(f"[schedule-freshness] revalidation_scan: {n} artifacts re-validated")
+                    last_revalidation = now
+                if now - last_regime >= regime_interval:
+                    n = await executor.regime_recompute_scan()
+                    print(f"[schedule-freshness] regime_recompute_scan: {n} symbols recomputed")
+                    last_regime = now
+                await asyncio.sleep(poll_interval)
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        print("\n[schedule-freshness] Stopped.")
 
 
 def promote_scan_main(args: argparse.Namespace) -> None:

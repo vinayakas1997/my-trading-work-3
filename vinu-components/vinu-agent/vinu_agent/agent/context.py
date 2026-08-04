@@ -245,7 +245,7 @@ class ContextBuilder:
                 combined_context.append("</agent-memories>")
 
         if self.unified_memory:
-            symbols = self._extract_symbols(user_message)
+            symbols = sorted(set(self._held_symbols) | set(self._extract_symbols(user_message)))
             budget_remaining = self.max_memory_tokens
 
             for sym in symbols:

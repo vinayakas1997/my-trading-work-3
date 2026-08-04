@@ -66,3 +66,9 @@ about the cross-component decision — and give an accurate picture:
 signal-usage contract done here, recompute job done, just not in this
 component's own codebase. No claim in this file contradicts its own
 `plan.md` anymore.
+
+**Later correction**: "done" here meant "implemented and tested," which
+this file verified correctly at the time — it did not mean "actually
+running in the deployed system." That further gap (the job existed and was
+tested but nothing ever started it) is a separate, later finding — see
+[`freshness-recompute-scan-never-started-in-production.md`](freshness-recompute-scan-never-started-in-production.md).

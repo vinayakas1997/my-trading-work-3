@@ -18,6 +18,7 @@ from vinu_lib.llm.docker import alternative_urls, is_running_in_docker
 from vinu_lib.llm.cost import CostEntry, TokenUsage, get_global_cost_tracker
 from vinu_lib.llm.providers import detect_provider, get_capabilities
 from vinu_lib.rate_limit import TokenBucket
+from vinu_lib.telemetry import LLMCallRecord, record_llm_call_safe
 
 LOG = logging.getLogger(__name__)
 
@@ -92,6 +93,7 @@ class AsyncLlmClient:
 
         data_root = Path(self._config.data_root) if self._config.data_root else Path.cwd() / "data"
         self._log_path = data_root / "llm_calls.jsonl"
+        self._telemetry_db_path = data_root / "telemetry.db"
 
         cache_path = self._config.cache_path or str(data_root / "llm_cache.db")
         self._cache = LlmCache(cache_path, ttl_sec=self._config.ttl_sec)
@@ -144,9 +146,11 @@ class AsyncLlmClient:
         candidates = alternative_urls(self._config.base_url) if self._in_docker else [self._config.base_url]
 
         last_error: Exception | None = None
+        total_attempts = 0
         for candidate_base in candidates:
             url = candidate_base.rstrip("/") + "/chat/completions"
             for attempt in range(self._config.retry_max):
+                total_attempts += 1
                 try:
                     resp = await self._http.post(url, headers=headers, json=payload)
                     resp.raise_for_status()
@@ -178,6 +182,22 @@ class AsyncLlmClient:
                         duration_sec=time.perf_counter() - start,
                         success=True,
                     ))
+                    record_llm_call_safe(
+                        LLMCallRecord(
+                            service=self._service,
+                            model=self._config.model,
+                            base_url=candidate_base,
+                            prompt_tokens=token_usage.prompt_tokens,
+                            completion_tokens=token_usage.completion_tokens,
+                            total_tokens=token_usage.total_tokens,
+                            token_count_source="provider",
+                            retry_count=total_attempts - 1,
+                            latency_sec=time.perf_counter() - start,
+                            success=True,
+                            outcome="completed",
+                        ),
+                        db_path=self._telemetry_db_path,
+                    )
                     return parsed
                 except httpx.ConnectError as e:
                     last_error = e
@@ -219,6 +239,23 @@ class AsyncLlmClient:
                         self._log_path, self._service, self._config.model, candidate_base,
                         system, user, time.perf_counter() - start, None, False, str(e),
                     )
+                    record_llm_call_safe(
+                        LLMCallRecord(
+                            service=self._service,
+                            model=self._config.model,
+                            base_url=candidate_base,
+                            prompt_tokens=0,
+                            completion_tokens=0,
+                            total_tokens=0,
+                            token_count_source="provider",
+                            retry_count=total_attempts - 1,
+                            latency_sec=time.perf_counter() - start,
+                            success=False,
+                            outcome="parse_error",
+                            error=str(e),
+                        ),
+                        db_path=self._telemetry_db_path,
+                    )
                     return None
 
         _log_llm_call(
@@ -228,6 +265,23 @@ class AsyncLlmClient:
         )
         LOG.warning("LLM call failed after trying %d endpoints x %d retries: %s",
                     len(candidates), self._config.retry_max, last_error)
+        record_llm_call_safe(
+            LLMCallRecord(
+                service=self._service,
+                model=self._config.model,
+                base_url=self._config.base_url,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                token_count_source="provider",
+                retry_count=total_attempts - 1,
+                latency_sec=time.perf_counter() - start,
+                success=False,
+                outcome="all_endpoints_failed",
+                error=str(last_error) if last_error else "all endpoints failed",
+            ),
+            db_path=self._telemetry_db_path,
+        )
         return None
 
     async def close(self) -> None:

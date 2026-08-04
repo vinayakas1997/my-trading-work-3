@@ -1,10 +1,13 @@
 import json
 import threading
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock
 
-from vinu_agent.agent.loop import AgentLoop, _estimate_tokens
+from vinu_agent.agent.loop import AgentLoop, _DEFAULT_MAX_CONTEXT_TOKENS, _estimate_tokens
 from vinu_agent.agent.tools import BaseTool, ToolRegistry
+from vinu_lib.telemetry import TelemetryStore
 
 
 class SimpleTool(BaseTool):
@@ -194,3 +197,84 @@ class TestAgentLoop:
             raise ValueError("oops")
         loop = AgentLoop(registry=self._make_registry(), llm=FakeLLM(), event_callback=broken_cb)
         loop._emit("test", {})
+
+    def test_max_context_tokens_falls_back_to_default_when_llm_has_no_context_window(self) -> None:
+        loop = AgentLoop(registry=self._make_registry(), llm=FakeLLM())
+        assert loop.max_context_tokens == _DEFAULT_MAX_CONTEXT_TOKENS
+
+    def test_max_context_tokens_resolved_from_llm_context_window(self) -> None:
+        llm = FakeLLM()
+        llm.context_window = 32000
+        loop = AgentLoop(registry=self._make_registry(), llm=llm)
+        assert loop.max_context_tokens == 32000
+
+    def test_max_context_tokens_explicit_param_wins_over_llm_context_window(self) -> None:
+        llm = FakeLLM()
+        llm.context_window = 32000
+        loop = AgentLoop(registry=self._make_registry(), llm=llm, max_context_tokens=5000)
+        assert loop.max_context_tokens == 5000
+
+    def test_uses_real_usage_from_provider_instead_of_estimate(self) -> None:
+        llm = FakeLLM([
+            {"content": "Hi", "usage": {"prompt_tokens": 999, "completion_tokens": 111, "total_tokens": 1110}},
+        ])
+        loop = AgentLoop(registry=self._make_registry(), llm=llm)
+        result = loop.run([{"role": "user", "content": "hi"}])
+        assert result["token_usage"]["prompt"] == 999
+        assert result["token_usage"]["completion"] == 111
+
+    def test_falls_back_to_estimate_when_no_usage_in_response(self) -> None:
+        llm = FakeLLM([{"content": "Hi"}])
+        loop = AgentLoop(registry=self._make_registry(), llm=llm)
+        result = loop.run([{"role": "user", "content": "hi"}])
+        # No "usage" key on FakeLLM's response — must fall back to the
+        # char/4 heuristic rather than reporting zero.
+        assert result["token_usage"]["prompt"] > 0
+        assert result["token_usage"]["completion"] > 0
+
+    def test_telemetry_recorded_when_data_root_set(self) -> None:
+        with TemporaryDirectory() as tmp:
+            llm = FakeLLM([
+                {"content": "Hi", "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}, "retry_count": 1},
+            ])
+            loop = AgentLoop(registry=self._make_registry(), llm=llm, data_root=tmp, service_name="vinu-agent-test")
+            loop.run([{"role": "user", "content": "hi"}])
+
+            store = TelemetryStore(Path(tmp) / "telemetry.db")
+            calls = store.recent_llm_calls(service="vinu-agent-test")
+            assert len(calls) == 1
+            assert calls[0]["prompt_tokens"] == 10
+            assert calls[0]["retry_count"] == 1
+            assert calls[0]["token_count_source"] == "provider"
+
+            steps = store.recent_steps(service="vinu-agent-test")
+            assert any(s["step_name"] == "agent_loop_run" and s["outcome"] == "completed" for s in steps)
+            store.close()
+
+    def test_telemetry_records_tool_call_steps(self) -> None:
+        with TemporaryDirectory() as tmp:
+            llm = FakeLLM([
+                {
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "call_1", "function": {"name": "echo", "arguments": '{"text": "hello"}'}},
+                    ],
+                },
+                {"content": "Done."},
+            ])
+            loop = AgentLoop(registry=self._make_registry(), llm=llm, data_root=tmp)
+            loop.run([{"role": "user", "content": "echo hello"}])
+
+            store = TelemetryStore(Path(tmp) / "telemetry.db")
+            steps = store.recent_steps()
+            assert any(s["step_name"] == "tool:echo" and s["outcome"] == "completed" for s in steps)
+            store.close()
+
+    def test_no_telemetry_written_when_data_root_empty(self) -> None:
+        # Default construction (no data_root) must not raise and must not
+        # attempt any filesystem write — this is the common case for every
+        # existing unit test in this file.
+        llm = FakeLLM([{"content": "Hi"}])
+        loop = AgentLoop(registry=self._make_registry(), llm=llm)
+        result = loop.run([{"role": "user", "content": "hi"}])
+        assert result["status"] == "completed"

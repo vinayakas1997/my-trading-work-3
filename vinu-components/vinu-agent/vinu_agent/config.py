@@ -13,6 +13,12 @@ class LLMConfig:
     api_key: str = ""
     base_url: str = ""
     timeout: int = 120
+    #: Explicit override for the model's real context window (tokens). 0
+    #: means "auto-detect via the backing server's /models endpoint" — see
+    #: agent/llm.py::resolve_context_window. Set this when the server
+    #: doesn't expose a queryable context length, or to pin a known value
+    #: without depending on a network call at startup.
+    context_window: int = 0
 
 
 @dataclass
@@ -54,6 +60,7 @@ def load_config() -> AgentConfig:
             api_key=os.environ.get("VINU_LLM_API_KEY", ""),
             base_url=os.environ.get("VINU_LLM_BASE_URL", ""),
             timeout=int(os.environ.get("VINU_LLM_TIMEOUT", "120")),
+            context_window=int(os.environ.get("VINU_LLM_CONTEXT_WINDOW", "0")),
         ),
         swarm=SwarmConfig(
             max_workers=int(os.environ.get("VINU_SWARM_MAX_WORKERS", "4")),
