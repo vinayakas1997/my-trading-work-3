@@ -12,6 +12,7 @@ WORKDIR /app/vinu-strategy
 RUN pip install --no-cache-dir -e ".[dev]"
 
 RUN addgroup --system app && adduser --system --ingroup app app
+RUN pip install --no-cache-dir py-spy
 USER app
 
 ENV VINU_STRATEGY_DATA_ROOT=/data

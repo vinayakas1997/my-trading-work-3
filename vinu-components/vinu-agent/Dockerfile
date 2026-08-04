@@ -9,6 +9,7 @@ COPY vinu-agent/ /app/vinu-agent/
 RUN pip install -e /app/vinu-agent
 
 RUN addgroup --system app && adduser --system --ingroup app app
+RUN pip install --no-cache-dir py-spy
 USER app
 
 EXPOSE 8086

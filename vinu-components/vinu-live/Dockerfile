@@ -18,6 +18,7 @@ COPY vinu-live/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 RUN addgroup --system app && adduser --system --ingroup app app
+RUN pip install --no-cache-dir py-spy
 USER app
 
 ENV VINU_LIVE_DATA_ROOT=/data

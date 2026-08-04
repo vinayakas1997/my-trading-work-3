@@ -24,9 +24,11 @@ COPY vinu-research/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 RUN addgroup --system app && adduser --system --ingroup app app
+RUN pip install --no-cache-dir py-spy
 USER app
 
 ENV VINU_RESEARCH_DATA_ROOT=/data
+ENV PYTHONUNBUFFERED=1
 
 VOLUME ["/data"]
 

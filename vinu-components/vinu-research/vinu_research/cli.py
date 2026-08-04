@@ -578,6 +578,7 @@ def schedule_freshness_main(args: argparse.Namespace) -> None:
     project actually needs (revalidation, regime recompute) run here.
     """
     from vinu_research.scheduled.executor import ScheduledResearchExecutor
+    from vinu_research.scheduled.store import ScheduledResearchJobStore
     from vinu_research.service import ResearchService
 
     revalidation_interval = max(1, args.revalidation_interval_hours) * 3600
@@ -585,8 +586,10 @@ def schedule_freshness_main(args: argparse.Namespace) -> None:
     poll_interval = max(1, args.poll_interval_sec)
 
     async def _run() -> None:
+        data_root = load_config().data_root
+        store = ScheduledResearchJobStore(data_root / "scheduled_research" / "jobs.json")
         async with ResearchService() as service:
-            executor = ScheduledResearchExecutor(service=service)
+            executor = ScheduledResearchExecutor(store=store, service=service)
             last_revalidation = 0.0
             last_regime = 0.0
             print(

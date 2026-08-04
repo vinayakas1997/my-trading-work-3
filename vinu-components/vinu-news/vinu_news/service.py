@@ -68,17 +68,26 @@ class AutoAnalysisWorker:
             self.workers.append(worker)
     
     def _worker_loop(self) -> None:
-        """Worker loop: pull links from queue and analyze."""
+        """Worker loop: pull links from queue and analyze.
+
+        Keeps draining the queue even after shutdown() sets running=False —
+        only exits once the queue is actually empty (checked via the
+        queue.Empty timeout, not by abandoning whatever's still queued the
+        moment shutdown() is called). This lets shutdown() return
+        immediately without either blocking the caller or silently
+        dropping already-submitted work; see shutdown()'s docstring.
+        """
         from vinu_news.analysis.llm.analyze import analyze_article
         from vinu_news.analysis.storage.repository import NewsRepository
-        
-        while self.running:
+
+        while True:
             try:
-                # Wait for work with timeout to allow graceful shutdown
                 link = self.queue.get(timeout=1.0)
             except queue.Empty:
+                if not self.running:
+                    return
                 continue
-            
+
             try:
                 repo = NewsRepository(self.db_path)
                 try:
@@ -100,14 +109,24 @@ class AutoAnalysisWorker:
             return False
     
     def shutdown(self) -> None:
-        """Gracefully shutdown workers."""
+        """Returns immediately, without waiting for the queue to drain —
+        workers keep running as daemon threads and finish draining
+        whatever's already queued on their own (see _worker_loop), they
+        just won't accept work submitted after this call. Workers are
+        daemon threads pulling from a queue shared only within this
+        process's lifetime, and
+        analyze_article() already swallows and logs its own failures
+        (_worker_loop's try/except) — nothing downstream depends on a
+        given NewsService() call's queued items finishing before that
+        call returns. Blocking here on self.queue.join() previously meant
+        every single `with NewsService()` use (there are several per
+        ingest cycle) synchronously waited for the *entire* backlog of
+        queued LLM-analysis calls to finish before returning — with real
+        LLM latency and a nontrivial backlog, that turned each NewsService
+        open into a multi-hour block, starving every step scheduled after
+        it in the same ingest-loop iteration (including FinBERT scoring).
+        """
         self.running = False
-        # Wait for queue to drain
-        self.queue.join()
-        # Wait for workers to finish
-        for worker in self.workers:
-            worker.join(timeout=5.0)
-        self.workers.clear()
 
     def backfill_unanalyzed(self, limit: int = 500) -> int:
         """Find articles missing LLM analysis and submit them to the queue.
@@ -293,13 +312,14 @@ class NewsService:
         watchlist = set(self._storage.get_watchlist())
         if not watchlist:
             return
-        placeholders = ",".join("?" for _ in watchlist)
+        link_placeholders = ",".join("?" for _ in links)
+        ticker_placeholders = ",".join("?" for _ in watchlist)
         rows = self._storage.repo.conn.execute(
             f"""
             SELECT DISTINCT a.link FROM articles a
             JOIN article_ticker_mentions m ON a.id = m.article_id
-            WHERE a.link IN ({placeholders})
-              AND m.ticker IN ({placeholders})
+            WHERE a.link IN ({link_placeholders})
+              AND m.ticker IN ({ticker_placeholders})
             """,
             (*links, *watchlist),
         ).fetchall()

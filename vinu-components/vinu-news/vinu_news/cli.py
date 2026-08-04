@@ -132,6 +132,48 @@ def ingest_main(argv: list[str] | None = None) -> None:
         logging.info("Woke after %ss (poll interval now %ss)", elapsed, current_interval)
 
 
+def finbert_main(argv: list[str] | None = None) -> None:
+    """Independent FinBERT-scoring loop — deliberately a separate process
+    from `ingest_main`'s loop, not a step inside it. FinBERT scoring has
+    no dependency on LLM analysis, but `ingest_main`'s `NewsService()`
+    calls can legitimately block for hours on a real LLM-analysis backlog
+    (see AutoAnalysisWorker.shutdown()'s docstring) — running here means
+    that never delays FinBERT, and vice versa. Same pattern as
+    vinu-research's `schedule-freshness`/`schedule-decay` CLI loops.
+    """
+    parser = argparse.ArgumentParser(description="Run vinu-news FinBERT backfill worker")
+    parser.add_argument(
+        "--interval-sec", type=int, default=60,
+        help="Seconds to wait between backfill sweeps once caught up (default: 60)",
+    )
+    parser.add_argument("--once", action="store_true", help="Run a single sweep and exit")
+    parser.add_argument("--verbose", action="store_true")
+    args = parser.parse_args(argv)
+
+    setup_logging("news-finbert", verbose=args.verbose)
+
+    def run_sweep() -> None:
+        with NewsService() as service:
+            while True:
+                result = service.backfill_finbert_sentiment(limit=500)
+                if result["scored"] == 0:
+                    break
+                logging.info(
+                    "[finbert] scored %d articles, %d remaining",
+                    result["scored"], result["remaining"],
+                )
+                if result["remaining"] == 0:
+                    break
+
+    if args.once:
+        run_sweep()
+        return
+
+    while True:
+        run_sweep()
+        time.sleep(args.interval_sec)
+
+
 def serve_main(argv: list[str] | None = None) -> None:
     import uvicorn
 

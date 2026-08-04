@@ -29,6 +29,7 @@ vinu-news-ingest = "vinu_news.cli:ingest_main"
 vinu-news-serve = "vinu_news.cli:serve_main"
 vinu-news-query = "vinu_news.cli:query_main"
 vinu-news-backfill = "vinu_news.cli:backfill_main"
+vinu-news-finbert = "vinu_news.cli:finbert_main"
 
 [tool.setuptools.packages.find]
 where = ["."]

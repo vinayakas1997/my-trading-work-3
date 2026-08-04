@@ -30,12 +30,28 @@
             "win_rate": 0.44581005586592176
           },
           "report_path": null
+        },
+        {
+          "run_id": 1,
+          "iteration": 1,
+          "metric": "sharpe",
+          "value": -0.37982368515992976,
+          "conclusion": "contradicts",
+          "reasoning": "Monte Carlo validation gate failed: Trade-permutation p-value 0.0000 < 0.05 (PASS); Block-bootstrap p-value 0.1560 >= 0.05 (FAIL); Price-path resample p-value 0.4950 >= 0.1 (FAIL); Walk-forward consistency 0.40 < 0.60 (FAIL); Bootstrap Sharpe CI lower bound -1.3241 <= 0 (FAIL); BCa bootstrap CI lower bound -1.2924 <= 0 (FAIL); Placebo test p-value 1.0000 >= 0.05 (FAIL)",
+          "timestamp": "",
+          "metrics_snapshot": {
+            "sharpe": -0.37982368515992976,
+            "max_dd": -0.05856743258590721,
+            "trade_count": 117,
+            "win_rate": 0.44581005586592176
+          },
+          "report_path": null
         }
       ],
       "invalidation_reason": null,
       "best_sharpe": 0.0,
       "created_at": "2026-08-03T16:18:49.328565+00:00",
-      "updated_at": "2026-08-03T16:18:53.511110+00:00"
+      "updated_at": "2026-08-04T07:28:11.754585+00:00"
     },
     "hyp_980f2debf793": {
       "hypothesis_id": "hyp_980f2debf793",
@@ -108,6 +124,25 @@
       "best_sharpe": 0.0,
       "created_at": "2026-08-03T16:19:11.198888+00:00",
       "updated_at": "2026-08-03T16:19:13.624618+00:00"
+    },
+    "hyp_9ddc37a1b175": {
+      "hypothesis_id": "hyp_9ddc37a1b175",
+      "title": "Implement a regime-filtered trend-following strategy that exclusively trades during the 'premarket' session (identified as the highest quality structure with superior recovery rates) to capitalize on the low-risk, dominant uptrend lifecycle; entry logic triggers on confirmed pullbacks or breakouts within the premarket window while strictly avoiding 'regular' session entries due to higher drawdown and lower recovery probability, with exits executed only upon the next deterministic 'hold' signal degradation or a peak signal reversal, utilizing the high Sharpe (0.79) and Sortino (1.79) metrics to validate the trend's robustness against news noise.",
+      "thesis": "Implement a regime-filtered trend-following strategy that exclusively trades during the 'premarket' session (identified as the highest quality structure with superior recovery rates) to capitalize on the low-risk, dominant uptrend lifecycle; entry logic triggers on confirmed pullbacks or breakouts within the premarket window while strictly avoiding 'regular' session entries due to higher drawdown and lower recovery probability, with exits executed only upon the next deterministic 'hold' signal degradation or a peak signal reversal, utilizing the high Sharpe (0.79) and Sortino (1.79) metrics to validate the trend's robustness against news noise.",
+      "status": "exploring",
+      "universe": [
+        "AAPL"
+      ],
+      "signal_definition": "",
+      "run_cards": [],
+      "strategy_type": "Implement a regime-filtered trend-following strategy that exclusively trades during the 'premarket' session (identified as the highest quality structure with superior recovery rates) to capitalize on the low-risk, dominant uptrend lifecycle; entry logic triggers on confirmed pullbacks or breakouts within the premarket window while strictly avoiding 'regular' session entries due to higher drawdown and lower recovery probability, with exits executed only upon the next deterministic 'hold' signal degradation or a peak signal reversal, utilizing the high Sharpe (0.79) and Sortino (1.79) metrics to validate the trend's robustness against news noise.",
+      "indicators_used": [],
+      "params_tested": {},
+      "evidence": [],
+      "invalidation_reason": null,
+      "best_sharpe": 0.0,
+      "created_at": "2026-08-04T07:32:04.902814+00:00",
+      "updated_at": "2026-08-04T07:32:04.902814+00:00"
     }
   }
 }

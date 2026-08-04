@@ -21,6 +21,7 @@ COPY vinu-initial-analysis/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 RUN addgroup --system app && adduser --system --ingroup app app
+RUN pip install --no-cache-dir py-spy
 USER app
 
 ENV VINU_INITIAL_ANALYSIS_DATA_ROOT=/data

@@ -30,9 +30,11 @@ COPY vinu-news/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 RUN addgroup --system app && adduser --system --ingroup app app
+RUN pip install --no-cache-dir py-spy
 USER app
 
 ENV VINU_NEWS_DB_PATH=/data/news.db
+ENV PYTHONUNBUFFERED=1
 
 VOLUME ["/data"]
 
