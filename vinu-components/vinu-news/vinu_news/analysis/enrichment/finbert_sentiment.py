@@ -19,10 +19,12 @@ work — NOT to replace the existing rule-based `sentiment`/`sentiment_score`
 columns used elsewhere (impact classification, priority, etc.), which stay
 as-is to avoid disturbing existing behavior.
 
-Model loading: the model is baked into the Docker image at build time
-(see Dockerfile) into MODEL_DIR, so no network access or writable cache
-is needed at runtime — the container's filesystem is read-only except
-/data and tmpfs paths, and tmpfs is wiped on every restart.
+Model loading: weights live in the shared models dir
+(`vinu-infra/models.py` — `{VINU_MODELS_DIR or data/models}/finbert`),
+downloaded once via `vinu-models` / `make models` and mounted read-only
+into the container at serve time. The model is no longer baked into the
+Docker image, and there is no writable HF cache to wipe on restart. If the
+local dir is missing, `ensure_model` auto-downloads it (fallback path).
 """
 
 from __future__ import annotations
@@ -33,8 +35,12 @@ from pathlib import Path
 
 LOG = logging.getLogger(__name__)
 
-MODEL_DIR = Path("/app/models/finbert")
-MODEL_NAME = "ProsusAI/finbert"  # used only if MODEL_DIR isn't baked in (local dev)
+
+def _model_dir() -> Path:
+    from vinu_infra.models import model_path
+
+    return model_path("finbert")
+
 
 _lock = threading.Lock()
 _tokenizer = None
@@ -51,7 +57,13 @@ def _load() -> tuple:
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-        source = str(MODEL_DIR) if MODEL_DIR.exists() else MODEL_NAME
+        local_dir = _model_dir()
+        if local_dir.is_dir() and any(local_dir.iterdir()):
+            source = str(local_dir)
+        else:
+            from vinu_infra.models import ensure_model
+
+            source = str(ensure_model("finbert"))
         LOG.info("Loading FinBERT from %s", source)
         _tokenizer = AutoTokenizer.from_pretrained(source)
         _model = AutoModelForSequenceClassification.from_pretrained(source)

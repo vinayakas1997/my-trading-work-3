@@ -7,11 +7,14 @@ services:
       context: .
       dockerfile: vinu-news/Dockerfile
     env_file: .env
+    environment:
+      VINU_MODELS_DIR: /models
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
       - ./data/news:/data
       - ./data/shared:/shared
+      - ./data/models:/models:ro
     cap_drop:
       - ALL
     cap_add:
@@ -119,10 +122,13 @@ services:
       context: .
       dockerfile: vinu-initial-analysis/Dockerfile
     env_file: .env
+    environment:
+      VINU_MODELS_DIR: /models
     ports:
       - "127.0.0.1:8083:8083"
     volumes:
       - ./data/initial-analysis:/data
+      - ./data/models:/models:ro
     cap_drop:
       - ALL
     cap_add:

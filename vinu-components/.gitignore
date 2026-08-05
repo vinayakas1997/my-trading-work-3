@@ -28,6 +28,9 @@ catboost_info/
 # Simulation results (regenerable)
 data/simulator/simulations/
 
+# Downloaded pretrained model weights (regenerable via `vinu-models` / `make models`)
+data/models/
+
 # OS
 .DS_Store
 Thumbs.db

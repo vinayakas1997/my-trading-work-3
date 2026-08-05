@@ -1,0 +1,22 @@
+title: Chronos Time-Series Foundation Model
+purpose: >
+  Zero-shot probabilistic forecast from Amazon's Chronos-T5 time-series
+  foundation model (method 10 of the 32-method plan, see
+  New-talk-/Final-implementation/01-present-considerations/10-chronos.md).
+  General-purpose, not finance-specific — a comparison baseline against
+  Kronos, not a first-choice signal (per the spec's own caveat that
+  general TSFMs tend to underperform finance-specific models on K-line
+  data).
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: >
+    Quantile forecast (p10/median/p90) for the next 5 periods, plus
+    model_backend ("pretrained" via amazon/chronos-t5-tiny, or
+    "fallback_proxy" if the real pipeline could not be loaded).

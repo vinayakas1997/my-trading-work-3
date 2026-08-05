@@ -1,0 +1,24 @@
+title: Kronos Financial K-Line Foundation Model
+purpose: >
+  Next-K-line forecast using the real Kronos pretrained model (method 9 of
+  the 32-method plan, see
+  New-talk-/Final-implementation/01-present-considerations/09-kronos.md) —
+  the flagship open-source financial K-line foundation model (AAAI 2026),
+  a tokenizer + autoregressive decoder-only transformer pretrained on 12B
+  K-line records from 45 exchanges. Weights + tokenizer are downloaded into
+  the shared models dir (`make models`); the custom model code is vendored
+  (MIT) into `_kronos_model/`. Falls back to an honestly-labeled
+  in-process-trained MLP proxy only if the weights or load are unavailable
+  at runtime. See compute.py's module docstring for the full explanation.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: >
+    Predicted next-bar OHLC plus a 5-step OHLC forecast, model_backend
+    ("pretrained" or "fallback_proxy") and fallback_reason explaining why.

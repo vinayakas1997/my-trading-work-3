@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vinu-lib"
+name = "vinu-infra"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
@@ -16,10 +16,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "httpx>=0.27"]
+models = ["huggingface_hub>=0.24"]
+
+[project.scripts]
+vinu-models = "vinu_infra.models:main"
 
 [tool.setuptools]
-packages = ["vinu_lib"]
-package-dir = {"vinu_lib" = "."}
+packages = ["vinu_infra"]
+package-dir = {"vinu_infra" = "."}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

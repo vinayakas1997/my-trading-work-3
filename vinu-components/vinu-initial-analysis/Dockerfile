@@ -5,8 +5,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY vinu-lib /app/vinu-lib
-RUN pip install --no-cache-dir -e /app/vinu-lib
+COPY vinu-infra /app/vinu-infra
+RUN pip install --no-cache-dir -e "/app/vinu-infra[models]"
 
 COPY vinu-tools /app/vinu-tools
 RUN pip install --no-cache-dir -e "/app/vinu-tools[ml]"
