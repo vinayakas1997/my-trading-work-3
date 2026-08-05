@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from vinu_lib.debug import setup_logging
+from vinu_infra.debug import setup_logging
 from vinu_initial_analysis.api import CorrelationAPI
 from vinu_initial_analysis.clients.news_client import NewsClient
 from vinu_initial_analysis.clients.price_client import PriceClient
@@ -58,8 +58,8 @@ def compute_main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     config = load_config()
-    storage = AngleStorage(config.data_root)
-    run_log = RunLog(config.data_root / "runs.db")
+    run_log = RunLog(config.runs_db_path)
+    storage = AngleStorage(config.data_root, run_log)
     news_client = NewsClient(config.news_api_url)
     price_client = PriceClient(config.stock_api_url)
     runner = AngleRunner(storage, run_log, news_client=news_client, price_client=price_client)
@@ -222,8 +222,8 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     config = load_config()
-    storage = AngleStorage(config.data_root)
-    run_log = RunLog(config.data_root / "runs.db")
+    run_log = RunLog(config.runs_db_path)
+    storage = AngleStorage(config.data_root, run_log)
     news_client = NewsClient(config.news_api_url)
     price_client = PriceClient(config.stock_api_url)
     runner = AngleRunner(storage, run_log, news_client=news_client, price_client=price_client)

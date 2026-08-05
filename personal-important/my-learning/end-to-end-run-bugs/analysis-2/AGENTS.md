@@ -10,7 +10,7 @@ These bugs were discovered while debugging `POST /research/run` returning
 
 1. **Simulator was working** — The 422 error was fixed by prepending required imports before `exec()`
 2. **LLM prompts were too large** — Refinement prompts (5,500 chars) caused 363s ReadTimeout
-3. **Container file placement** — `debug.py` needed to be at package root (`/app/vinu-lib/`), not nested (`/app/vinu-lib/vinu_lib/`)
+3. **Container file placement** — `debug.py` needed to be at package root (`/app/vinu-infra/`), not nested (`/app/vinu-infra/vinu_infra/`)
 4. **LLM server is single-threaded** — qwen36-35B processes requests sequentially, 3 concurrent calls queue up (30-35s each)
 
 ## Process
@@ -67,5 +67,5 @@ docker compose up -d --build research-api simulator-api
 
 - All containers use read-only rootfs — use `docker compose up -d --build` to deploy changes
 - The LLM server runs on `host.docker.internal:8009` (not localhost)
-- `pip install -e /app/vinu-lib` creates editable install — files at `/app/vinu-lib/` root level
-- Module placement matters: `debug.py` must be at `/app/vinu-lib/debug.py`, not `/app/vinu-lib/vinu_lib/debug.py`
+- `pip install -e /app/vinu-infra` creates editable install — files at `/app/vinu-infra/` root level
+- Module placement matters: `debug.py` must be at `/app/vinu-infra/debug.py`, not `/app/vinu-infra/vinu_infra/debug.py`

@@ -40,7 +40,7 @@ sqlite3 vinu-components/data/agent/telemetry.db \
 ```
 
 Swap `data/agent/` for `data/research/` to check `vinu-research`'s calls
-(wired via `vinu-lib/llm/client.py`/`client_async.py`, not `vinu-agent`'s
+(wired via `vinu-infra/llm/client.py`/`client_async.py`, not `vinu-agent`'s
 own client — see `status.md` §2).
 
 ## 1. During `04`'s step 3 (`vinu-research` strategy generation)
@@ -55,11 +55,11 @@ sqlite3 vinu-components/data/research/telemetry.db \
 ```
 
 - [ ] At least one row exists — if zero, the telemetry wiring in
-      `vinu-lib/llm/client.py` isn't actually being hit; check
+      `vinu-infra/llm/client.py` isn't actually being hit; check
       `vinu-research` is calling `LlmClient`/`AsyncLlmClient`, not some
       other path.
 - [ ] `token_count_source` is present and non-null on every row (it's
-      always `"provider"` for this client — `vinu-lib`'s client only ever
+      always `"provider"` for this client — `vinu-infra`'s client only ever
       reports real API-returned usage, never falls back to an estimate;
       if this assumption turns out wrong for some response shape, that's
       a real finding, write it up).

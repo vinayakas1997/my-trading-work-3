@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from vinu_lib.debug import setup_logging
+from vinu_infra.debug import setup_logging
 from vinu_strategy.api import StrategyAPI
 from vinu_strategy.config import load_config
 from vinu_strategy.server.app import create_app

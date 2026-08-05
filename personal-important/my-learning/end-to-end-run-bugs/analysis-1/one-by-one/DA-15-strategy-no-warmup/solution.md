@@ -11,7 +11,7 @@ This was the **only** component in the codebase still using lazy initialization 
 
 ## Solution
 
-Added a `lifespan` hook to `app.py` that eagerly calls `_get_api()` during FastAPI startup via `asyncio.to_thread()`. The `vinu_lib/server.py` `create_app()` already supports a `lifespan` parameter — app.py just wasn't using it.
+Added a `lifespan` hook to `app.py` that eagerly calls `_get_api()` during FastAPI startup via `asyncio.to_thread()`. The `vinu_infra/server.py` `create_app()` already supports a `lifespan` parameter — app.py just wasn't using it.
 
 ```python
 @asynccontextmanager

@@ -1,4 +1,18 @@
-"""News First Analysis — sentiment distribution, session baselines, priority scoring."""
+"""News First Analysis — sentiment distribution, session baselines, priority scoring.
+
+DEPRECATED, not deleted: per
+New-talk-/Final-implementation/03-actual-plan-findings/05-angle-reconciliation.md
+("Redundant"), this angle's ground (categorization, sentiment, event/
+priority scoring) is now covered by vinu-news's own Section-1 methods
+(vinu-news/vinu_news/analysis/methods/ — event_type_classification,
+vader_finance_tuned_sentiment, and vinu-news's pre-existing FinBERT/NER/
+category pipeline), which is where the reconciliation doc recommends
+this kind of news analysis live going forward, not duplicated here a
+third time. Left in place rather than removed — still correct, still
+tested, and deleting a working feature is a bigger decision than this
+pass is scoped to make unilaterally. Treat this as legacy/superseded;
+removing it outright is a follow-up decision, not done here.
+"""
 
 import pandas as pd
 from datetime import datetime, timezone

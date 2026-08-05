@@ -1,6 +1,6 @@
 """SQLite repository for enriched news articles and thread analytics.
 
-Uses vinu-lib's SQLiteBackend for thread-local connection management,
+Uses vinu-infra's SQLiteBackend for thread-local connection management,
 WAL mode, and schema lifecycle.
 """
 
@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
-from vinu_lib.sqlite import SQLiteBackend
+from vinu_infra.sqlite import SQLiteBackend
 from vinu_news.analysis.storage.fts import init_fts
 from vinu_news.analysis.storage.models import ArticleRecord, EnrichedArticle, TickerMention
 

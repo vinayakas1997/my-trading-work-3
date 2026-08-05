@@ -1,11 +1,11 @@
-# Phase 1 — Consolidate onto `vinu-lib`'s Shared Storage Primitives
+# Phase 1 — Consolidate onto `vinu-infra`'s Shared Storage Primitives
 
 Status: **not started** · Depends on: — · Blocks: Phase 2
 
 ## What it is
 
-Makes `vinu-lib`'s `SQLiteBackend` (`vinu-lib/sqlite.py`) and `ParquetStore`
-(`vinu-lib/parquet.py`) the actual shared foundation for the catalog/backfill pattern that
+Makes `vinu-infra`'s `SQLiteBackend` (`vinu-infra/sqlite.py`) and `ParquetStore`
+(`vinu-infra/parquet.py`) the actual shared foundation for the catalog/backfill pattern that
 `vinu-stock-price` and `vinu-news` each currently implement independently by hand. Both
 packages' designs are good — this phase does not change their behavior, data layout, or API
 surface. It replaces their duplicated low-level plumbing (thread-local WAL SQLite connections,
@@ -13,10 +13,10 @@ schema migration bookkeeping, dedup-on-write parquet logic) with calls into the 
 already-built, already-tested library that was clearly designed for exactly this.
 
 Confirmed today: `grep -rl "SQLiteBackend\|ParquetStore"` across the repo shows these classes
-are referenced **only in `vinu-lib`'s own tests**. `vinu-stock-price`'s `CatalogStore` and
+are referenced **only in `vinu-infra`'s own tests**. `vinu-stock-price`'s `CatalogStore` and
 `vinu-news`'s `BackfillStore` each open their own `sqlite3.connect`, manage their own WAL mode
 and thread-local state, and hand-roll their own migration/version tracking. Same for parquet:
-`vinu_stock/storage/parquet.py`'s dedupe-and-write logic and `vinu-lib/parquet.py`'s
+`vinu_stock/storage/parquet.py`'s dedupe-and-write logic and `vinu-infra/parquet.py`'s
 `ParquetStore.append(..., dedup_on=[...])` do the same job with separately-maintained code.
 
 ## Impact
@@ -39,16 +39,16 @@ Phase 2), and it doesn't yet build any cross-package memory view (Phase 3).
 
 ## Where changes occur
 
-- `vinu-lib/sqlite.py` — review `SQLiteBackend` against what `CatalogStore`/`BackfillStore`
+- `vinu-infra/sqlite.py` — review `SQLiteBackend` against what `CatalogStore`/`BackfillStore`
   actually need; it's likely already sufficient (thread-local WAL connections, `SCHEMA`/
   `SCHEMA_VERSION`/`MIGRATIONS` class-attribute pattern, `health_info()`), but confirm no gaps
   exist (e.g. `INSERT OR IGNORE`/upsert helpers, composite-key dedup support) before migrating
   callers onto it — add what's missing here rather than working around it downstream.
-- `vinu-lib/parquet.py` — same review for `ParquetStore.append(rel_path, records,
+- `vinu-infra/parquet.py` — same review for `ParquetStore.append(rel_path, records,
   dedup_on=[...])`/`read()`/`compact()` against `vinu_stock/storage/parquet.py`'s
   `write_bars()`/`append_bars()`/`consolidate_live_shards()` feature set (year-file writes, daily
   live shards, shard consolidation). If `ParquetStore` doesn't yet support sharded/consolidatable
-  writes, that's new work in `vinu-lib` before stock-price can migrate onto it without losing a
+  writes, that's new work in `vinu-infra` before stock-price can migrate onto it without losing a
   capability it currently has.
 - `vinu-stock-price/vinu_stock/catalog/store.py` — `CatalogStore` becomes a thin subclass/wrapper
   around `SQLiteBackend`, keeping its existing public methods (`upsert_symbol`, job-table
@@ -68,7 +68,7 @@ Phase 2), and it doesn't yet build any cross-package memory view (Phase 3).
   at implementation time) must continue to pass unmodified against the migrated implementation.
   This phase should not require rewriting existing test assertions, only possibly their setup/
   mocking if internals changed.
-- New `vinu-lib/tests/` coverage for any gaps found and filled in `SQLiteBackend`/`ParquetStore`
+- New `vinu-infra/tests/` coverage for any gaps found and filled in `SQLiteBackend`/`ParquetStore`
   during the review step above (e.g. new upsert/dedup helpers).
 - A migration-safety test: run the migrated `CatalogStore`/`BackfillStore` against an existing
   pre-migration `meta.db`/`backfill.db` file from a real (or realistic synthetic) prior version,

@@ -1,7 +1,7 @@
 """Regression test for a real bug found while building Piece 2
 (debrief-on-close): _write_trade_journal_async posted to
 `{research_url}/hypotheses`, but that route is actually mounted at
-`/research/hypotheses` (vinu_lib/server.py's route_prefix="research",
+`/research/hypotheses` (vinu_infra/server.py's route_prefix="research",
 confirmed by the already-correct CreateHypothesisTool). The mismatch meant
 every trade-plan journal write 404'd silently (fire-and-forget, swallowed by
 a bare except) — item 3's decision-journal write-side never actually landed

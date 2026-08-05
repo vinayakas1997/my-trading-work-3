@@ -13,7 +13,7 @@ from vinu_simulator.clients.features_client import FeaturesClient
 from vinu_simulator.clients.price_client import PriceClient
 from vinu_simulator.clients.strategy_client import StrategyClient
 from vinu_simulator.config import load_config
-from vinu_lib.debug import sync_timer
+from vinu_infra.debug import sync_timer
 from vinu_simulator.engine.custom_sim import simulate_custom as _run_custom_sim
 from vinu_simulator.engine.metrics import compute_performance_metrics, periods_per_year_for_interval
 from vinu_simulator.engine.run_card import write_run_card

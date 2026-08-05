@@ -1,7 +1,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from vinu_lib.sqlite import SQLiteBackend
+from vinu_infra.sqlite import SQLiteBackend
 
 
 class TestBackend(SQLiteBackend):

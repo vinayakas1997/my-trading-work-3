@@ -108,7 +108,7 @@ to which stage.
 | vinu-simulator | Backtesting strategies over the window |
 | vinu-research | The research engine — generates/refines strategies |
 | vinu-agent | The report producer — synthesizes the step-by-step report (the Option-A replay-validation angle) |
-| vinu-lib | Shared infrastructure (SQLite, debug) — all stages |
+| vinu-infra | Shared infrastructure (SQLite, debug) — all stages |
 
 ### Stage 2 (live trading) — not in stage 1
 

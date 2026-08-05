@@ -1,4 +1,4 @@
-# Phase 01: Harden vinu-lib Primitives (Example)
+# Phase 01: Harden vinu-infra Primitives (Example)
 
 **Status:** COMPLETED
 **Started:** 2026-07-24
@@ -7,16 +7,16 @@
 
 ## What It Delivers
 
-`vinu-lib`'s `SQLiteBackend` and `ParquetStore` are hardened with the missing primitives that stock-price/news need (upsert helpers, composite-key dedup, sharded parquet writes), thoroughly tested, and ready to serve as the shared foundation for everything downstream.
+`vinu-infra`'s `SQLiteBackend` and `ParquetStore` are hardened with the missing primitives that stock-price/news need (upsert helpers, composite-key dedup, sharded parquet writes), thoroughly tested, and ready to serve as the shared foundation for everything downstream.
 
 ## Files Touched
 
 | File | Service | Change Type |
 |------|---------|-------------|
-| `vinu-lib/sqlite.py` | vinu-lib | modify |
-| `vinu-lib/parquet.py` | vinu-lib | modify |
-| `vinu-lib/tests/test_sqlite.py` | vinu-lib | modify |
-| `vinu-lib/tests/test_parquet.py` | vinu-lib | modify |
+| `vinu-infra/sqlite.py` | vinu-infra | modify |
+| `vinu-infra/parquet.py` | vinu-infra | modify |
+| `vinu-infra/tests/test_sqlite.py` | vinu-infra | modify |
+| `vinu-infra/tests/test_parquet.py` | vinu-infra | modify |
 
 ## Tasks in this Phase
 
@@ -34,7 +34,7 @@
 ## Verification
 
 - [x] All four tasks completed
-- [x] All existing vinu-lib tests pass
+- [x] All existing vinu-infra tests pass
 - [x] New tests for upsert, composite-key dedup, and sharded writes pass
-- [x] Manual check: `vinu-stock-price`'s existing usage patterns are coverable without additional changes to vinu-lib
+- [x] Manual check: `vinu-stock-price`'s existing usage patterns are coverable without additional changes to vinu-infra
 - [x] `status.md` updated

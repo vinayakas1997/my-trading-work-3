@@ -1,4 +1,17 @@
-"""ML Model Pipeline — train/evaluate multiple models with OOS IC"""
+"""ML Model Pipeline — train/evaluate multiple models with OOS IC
+
+DEPRECATED, not deleted: per
+New-talk-/Final-implementation/03-actual-plan-findings/05-angle-reconciliation.md
+("Upgrade candidates"), the sequence/foundation-model family now built
+under angles/{dlinear,lstm,patchtst,itransformer,tft,lpatchtst,
+tips_regime_aware_transformer,kronos,chronos,timesfm,...}/ are purpose-
+built architectures for this exact price-forecasting job and are the
+recommended path going forward, not this generic-tabular-ML angle.
+Left in place rather than removed — still correct, still tested, and
+deleting a working feature is a bigger decision than this pass is
+scoped to make unilaterally. Treat this as legacy/superseded; removing
+it outright is a follow-up decision, not done here.
+"""
 
 import pandas as pd
 import numpy as np

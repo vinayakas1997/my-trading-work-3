@@ -14,9 +14,9 @@ Following the existing pattern in `sqlite.py`: a method on `SQLiteBackend` that 
 
 | File | Lines | What Changed |
 |------|-------|-------------|
-| `vinu-lib/sqlite.py` | 89-112 | Added `upsert(table, data, conflict_columns)` method |
-| `vinu-lib/sqlite.py` | 113-124 | Added `insert_or_ignore(table, data, conflict_columns)` method |
-| `vinu-lib/tests/test_sqlite.py` | 45-78 | Added `TestUpsertHelpers` test class |
+| `vinu-infra/sqlite.py` | 89-112 | Added `upsert(table, data, conflict_columns)` method |
+| `vinu-infra/sqlite.py` | 113-124 | Added `insert_or_ignore(table, data, conflict_columns)` method |
+| `vinu-infra/tests/test_sqlite.py` | 45-78 | Added `TestUpsertHelpers` test class |
 
 ## Verification
 

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 from vinu_agent.agent.loop import AgentLoop, _DEFAULT_MAX_CONTEXT_TOKENS, _estimate_tokens
 from vinu_agent.agent.tools import BaseTool, ToolRegistry
-from vinu_lib.telemetry import TelemetryStore
+from vinu_infra.telemetry import TelemetryStore, get_telemetry_store
 
 
 class SimpleTool(BaseTool):
@@ -250,6 +250,7 @@ class TestAgentLoop:
             steps = store.recent_steps(service="vinu-agent-test")
             assert any(s["step_name"] == "agent_loop_run" and s["outcome"] == "completed" for s in steps)
             store.close()
+            get_telemetry_store(Path(tmp) / "telemetry.db").close()
 
     def test_telemetry_records_tool_call_steps(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -269,6 +270,7 @@ class TestAgentLoop:
             steps = store.recent_steps()
             assert any(s["step_name"] == "tool:echo" and s["outcome"] == "completed" for s in steps)
             store.close()
+            get_telemetry_store(Path(tmp) / "telemetry.db").close()
 
     def test_no_telemetry_written_when_data_root_empty(self) -> None:
         # Default construction (no data_root) must not raise and must not

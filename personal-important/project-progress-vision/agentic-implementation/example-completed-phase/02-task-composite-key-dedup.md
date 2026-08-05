@@ -14,8 +14,8 @@ Extend `SQLiteBackend`'s table-creation helper to accept a `composite_pk: list[s
 
 | File | Lines | What Changed |
 |------|-------|-------------|
-| `vinu-lib/sqlite.py` | 22-28 | Added `composite_pk` param to `ensure_table()` |
-| `vinu-lib/tests/test_sqlite.py` | 80-105 | Added `TestCompositeKey` test class |
+| `vinu-infra/sqlite.py` | 22-28 | Added `composite_pk` param to `ensure_table()` |
+| `vinu-infra/tests/test_sqlite.py` | 80-105 | Added `TestCompositeKey` test class |
 
 ## Verification
 

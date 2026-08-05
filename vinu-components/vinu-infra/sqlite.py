@@ -1,7 +1,7 @@
 """Shared SQLite backend with thread-local connections, WAL mode, and schema management.
 
 Usage:
-    from vinu_lib.sqlite import SQLiteBackend
+    from vinu_infra.sqlite import SQLiteBackend
 
     class MyBackend(SQLiteBackend):
         SCHEMA = "CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY, value TEXT)"
@@ -45,7 +45,7 @@ class SQLiteBackend:
         if self.SCHEMA:
             conn.executescript(self.SCHEMA)
         if self.MIGRATIONS:
-            from vinu_lib.db import migrate_schema
+            from vinu_infra.db import migrate_schema
             migrate_schema(conn, self.SCHEMA_VERSION, self.MIGRATIONS)
         conn.commit()
 

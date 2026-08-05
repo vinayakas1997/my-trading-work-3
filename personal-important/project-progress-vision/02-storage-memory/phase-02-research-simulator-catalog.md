@@ -39,7 +39,7 @@ derived by scanning.
 ## Where changes occur
 
 - New `vinu-research/vinu_research/storage/catalog.py` (or extend `sqlite_backend.py`),
-  subclassing `vinu_lib.SQLiteBackend` (Phase 1): a `research_catalog` table, one row per
+  subclassing `vinu_infra.SQLiteBackend` (Phase 1): a `research_catalog` table, one row per
   symbol, tracking `lifetime_trial_count`, `last_run_id`, `last_run_ts`, `last_validated_ts`
   (watermark), `best_sharpe_ever`, `status` (e.g. `active`/`stale`/`needs_revalidation`).
   Mirrors `vinu-stock-price`'s `symbol_catalog` table shape.
@@ -52,7 +52,7 @@ derived by scanning.
   startup (mirroring `orchestrator.py`'s `_backfill_symbol()` resume check in stock-price) and
   resumes rather than restarting when one exists.
 - `vinu-simulator/vinu_simulator/storage/meta.py` and `results.py` — rebuilt on
-  `vinu_lib.SQLiteBackend`/`ParquetStore` (Phase 1) with an analogous `simulation_catalog` table
+  `vinu_infra.SQLiteBackend`/`ParquetStore` (Phase 1) with an analogous `simulation_catalog` table
   (per strategy+symbol: `last_run_ts`, `last_validated_ts`, `run_count`) alongside the existing
   per-run `simulation_runs` records — the catalog is a fast-lookup summary layer on top of, not a
   replacement for, per-run detail.

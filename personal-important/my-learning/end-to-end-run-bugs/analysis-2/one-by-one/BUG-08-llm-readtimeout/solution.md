@@ -1,6 +1,6 @@
 # BUG-08 🟠 LLM ReadTimeout on Refinement Prompts
 
-**Component:** `vinu-research`, `vinu-lib`
+**Component:** `vinu-research`, `vinu-infra`
 **Files Changed:** None yet (root cause identified, fix pending)
 **Date Found:** 2026-07-23
 **Date Fixed:** Pending

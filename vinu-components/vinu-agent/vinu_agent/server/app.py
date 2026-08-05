@@ -71,7 +71,7 @@ def create_app(service: Any = None) -> FastAPI:
             except Exception as e:
                 logger.warning("Failed to stop channel %s: %s", ch.name, e)
 
-    from vinu_lib.server import create_app as _create_base
+    from vinu_infra.server import create_app as _create_base
 
     return _create_base(
         service_name="vinu-agent",

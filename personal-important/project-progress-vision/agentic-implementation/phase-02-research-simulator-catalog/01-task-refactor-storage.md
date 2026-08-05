@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Replace `ResearchStorage`'s hand-rolled thread-local SQLite connection management with the shared `vinu_lib.SQLiteBackend` base class hardened in Phase 01. This eliminates a duplicated implementation of the same pattern and gives `ResearchStorage` access to `upsert()` and `insert_or_ignore()` for the new catalog and checkpoint tables.
+Replace `ResearchStorage`'s hand-rolled thread-local SQLite connection management with the shared `vinu_infra.SQLiteBackend` base class hardened in Phase 01. This eliminates a duplicated implementation of the same pattern and gives `ResearchStorage` access to `upsert()` and `insert_or_ignore()` for the new catalog and checkpoint tables.
 
 ## Approach
 

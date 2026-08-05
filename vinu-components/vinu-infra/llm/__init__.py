@@ -1,7 +1,7 @@
 """Shared LLM client module for all vinu services.
 
 Usage:
-    from vinu_lib.llm import LlmClient, AsyncLlmClient, LlmConfig
+    from vinu_infra.llm import LlmClient, AsyncLlmClient, LlmConfig
 
     # Sync (for vinu-news, vinu-agent)
     client = LlmClient()
@@ -12,8 +12,8 @@ Usage:
     result = await client.chat_json(system, user)
 """
 
-from vinu_lib.llm.config import LlmConfig
-from vinu_lib.llm.client import LlmClient
-from vinu_lib.llm.client_async import AsyncLlmClient
+from vinu_infra.llm.config import LlmConfig
+from vinu_infra.llm.client import LlmClient
+from vinu_infra.llm.client_async import AsyncLlmClient
 
 __all__ = ["LlmConfig", "LlmClient", "AsyncLlmClient"]

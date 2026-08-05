@@ -55,25 +55,25 @@ this layer correctly).
 The codebase is not starting from zero. Confirmed live in the repo (all
 paths verified to exist, not recalled from memory):
 
-- **`vinu-components/vinu-lib`** is a shared package already installed by
+- **`vinu-components/vinu-infra`** is a shared package already installed by
   most services (`vinu-news`, `vinu-research`, `vinu-initial-analysis`,
   `vinu-strategy` confirmed — each `COPY`s it in and `pip install -e`s it
   in their Dockerfile). This is where the new instrumentation module
   belongs, not a new package.
-- **`vinu-lib/llm/client.py`** and **`vinu-lib/llm/client_async.py`**
+- **`vinu-infra/llm/client.py`** and **`vinu-infra/llm/client_async.py`**
   already implement `LlmClient.chat_json` / `AsyncLlmClient.chat_json`
   with manual retry-with-backoff over multiple candidate URLs, and already
   log every call to `data/llm_calls.jsonl` (tokens, cost, duration,
   success) via an internal `_log_llm_call`.
-- **`vinu-lib/llm/cost.py`** has a `CostTracker` /
+- **`vinu-infra/llm/cost.py`** has a `CostTracker` /
   `get_global_cost_tracker()` singleton — in-memory only, not persisted,
   not queryable across a run.
-- **`vinu-lib/sqlite.py`** provides a shared `SQLiteBackend` base class
-  (thread-local connections, WAL mode) and **`vinu-lib/db.py`** provides
+- **`vinu-infra/sqlite.py`** provides a shared `SQLiteBackend` base class
+  (thread-local connections, WAL mode) and **`vinu-infra/db.py`** provides
   migration helpers (`migrate_schema`, `PRAGMA user_version`) — most
   services already have their own SQLite DB built on this base. This is
   the natural place to add a metrics table, not a new database engine.
-- **`vinu-lib/retry.py`** has a generic `retry_on_transient` decorator,
+- **`vinu-infra/retry.py`** has a generic `retry_on_transient` decorator,
   currently used for plain HTTP, not LLM-specific.
 - **No Prometheus, OpenTelemetry, or structlog anywhere in the repo** —
   confirmed by grep, zero matches. Only stdlib `logging` per module. This
@@ -82,7 +82,7 @@ paths verified to exist, not recalled from memory):
 
 ## The one gap that matters most: `vinu-agent` bypasses all of the above
 
-`vinu-agent/vinu_agent/agent/llm.py` does **not** use `vinu-lib`'s LLM
+`vinu-agent/vinu_agent/agent/llm.py` does **not** use `vinu-infra`'s LLM
 client. It has its own `OpenAIChatLLM.chat()` (lines 18-54) that hands
 `max_retries=3` straight to the raw `openai` SDK client (line 24) — which
 means retry attempts happen *inside the SDK*, invisible to any wrapping
@@ -96,7 +96,7 @@ one with zero visibility into its own retry count.
 
 **This means retry-count instrumentation cannot be bolted on from
 outside `vinu-agent`'s LLM call site — it requires either switching that
-call path onto the shared `vinu-lib` client, or setting `max_retries=0`
+call path onto the shared `vinu-infra` client, or setting `max_retries=0`
 on the SDK client and doing retries explicitly so they're observable.**
 This is not optional scope creep; without it, "LLM retry how many times"
 is unanswerable for the exact component that needs the answer most.
@@ -130,10 +130,10 @@ Stated once here:
    explains the one `Context size has been exceeded` day and stays silent
    on the other eight days that likely died from iteration-budget
    exhaustion caused by tool-call retries.
-3. **Persist to SQLite via the existing `vinu-lib/sqlite.py` base, not a
+3. **Persist to SQLite via the existing `vinu-infra/sqlite.py` base, not a
    new store**, mirroring the pattern every other service already uses for
    its own DB. Keep JSONL as a secondary append log (cheap, tailable) —
-   `vinu-lib/llm/client.py` already does this for LLM calls; extend the
+   `vinu-infra/llm/client.py` already does this for LLM calls; extend the
    pattern, don't replace it.
 4. **Don't let this become a third hand-maintained summary that drifts.**
    Two of `04`'s own bugs were exactly that: a rollup table quoting numbers
@@ -153,8 +153,8 @@ Stated once here:
 
 1. ~~Design the shared schema first~~ **Done** — `LLMCallRecord`/
    `StepRecord` + `TelemetryStore(SQLiteBackend)` in
-   `vinu-components/vinu-lib/telemetry.py`. See `status.md`.
-2. ~~Wire it into `vinu-lib/llm/client.py` / `client_async.py`~~ **Done.**
+   `vinu-components/vinu-infra/telemetry.py`. See `status.md`.
+2. ~~Wire it into `vinu-infra/llm/client.py` / `client_async.py`~~ **Done.**
 3. ~~Fix `vinu-agent/vinu_agent/agent/llm.py`~~ **Done** — explicit retry
    loops (SDK `max_retries=0`), real provider `usage` populated on every
    `ChatLLM` implementation, `resolve_context_window()` added.
@@ -180,7 +180,7 @@ Stated once here:
 
 ## What "done" looks like
 
-Every LLM call across every service that uses `vinu-lib` (and, after step
+Every LLM call across every service that uses `vinu-infra` (and, after step
 3 above, `vinu-agent` specifically) produces a queryable record with real
 tokenizer-based counts, real retry counts, latency, and an explicit
 outcome reason — queryable via SQL against one table, not by re-reading

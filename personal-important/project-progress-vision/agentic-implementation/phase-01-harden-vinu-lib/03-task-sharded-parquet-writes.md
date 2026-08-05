@@ -15,8 +15,8 @@ Add `read_shard()` and `consolidate()` methods to `ParquetStore` so it supports 
 
 | File | Lines | What Changed |
 |------|-------|-------------|
-| `vinu-components/vinu-lib/parquet.py` | 48-98 | Added `read_shard()`, `consolidate()` methods |
-| `vinu-components/vinu-lib/tests/test_parquet.py` | 67-121 | Added `TestReadShard` and `TestConsolidation` tests |
+| `vinu-components/vinu-infra/parquet.py` | 48-98 | Added `read_shard()`, `consolidate()` methods |
+| `vinu-components/vinu-infra/tests/test_parquet.py` | 67-121 | Added `TestReadShard` and `TestConsolidation` tests |
 
 ## Verification
 

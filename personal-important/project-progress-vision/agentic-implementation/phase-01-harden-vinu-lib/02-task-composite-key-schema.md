@@ -19,8 +19,8 @@ Test coverage was added via the `CompositeKeyBackend` subclass in `test_sqlite.p
 
 | File | Lines | What Changed |
 |------|-------|-------------|
-| `vinu-components/vinu-lib/tests/test_sqlite.py` | 12-22 | Added `CompositeKeyBackend` test subclass |
-| `vinu-components/vinu-lib/tests/test_sqlite.py` | 130-165 | Added `test_upsert_composite_key` and `test_insert_or_ignore_composite_key` tests |
+| `vinu-components/vinu-infra/tests/test_sqlite.py` | 12-22 | Added `CompositeKeyBackend` test subclass |
+| `vinu-components/vinu-infra/tests/test_sqlite.py` | 130-165 | Added `test_upsert_composite_key` and `test_insert_or_ignore_composite_key` tests |
 
 ## Verification
 

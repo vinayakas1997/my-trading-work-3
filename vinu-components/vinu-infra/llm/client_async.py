@@ -11,14 +11,14 @@ from typing import Any
 
 import httpx
 
-from vinu_lib.debug import debug_timer
-from vinu_lib.llm.cache import LlmCache
-from vinu_lib.llm.config import LlmConfig
-from vinu_lib.llm.docker import alternative_urls, is_running_in_docker
-from vinu_lib.llm.cost import CostEntry, TokenUsage, get_global_cost_tracker
-from vinu_lib.llm.providers import detect_provider, get_capabilities
-from vinu_lib.rate_limit import TokenBucket
-from vinu_lib.telemetry import LLMCallRecord, record_llm_call_safe
+from vinu_infra.debug import debug_timer
+from vinu_infra.llm.cache import LlmCache
+from vinu_infra.llm.config import LlmConfig
+from vinu_infra.llm.docker import alternative_urls, is_running_in_docker
+from vinu_infra.llm.cost import CostEntry, TokenUsage, get_global_cost_tracker
+from vinu_infra.llm.providers import detect_provider, get_capabilities
+from vinu_infra.rate_limit import TokenBucket
+from vinu_infra.telemetry import LLMCallRecord, record_llm_call_safe
 
 LOG = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ class AsyncLlmClient:
     def __init__(
         self,
         config: LlmConfig | None = None,
-        service: str = "vinu-lib",
+        service: str = "vinu-infra",
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._config = config or LlmConfig.from_env()

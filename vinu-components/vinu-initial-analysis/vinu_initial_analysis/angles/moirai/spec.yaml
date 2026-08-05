@@ -1,0 +1,23 @@
+title: MOIRAI Any-Variate Time-Series Foundation Model (fallback proxy)
+purpose: >
+  Forecast in the spirit of Salesforce's MOIRAI (method 13 of the
+  32-method plan, see
+  New-talk-/Final-implementation/01-present-considerations/13-moirai.md).
+  The real `uni2ts` package exists but would downgrade the shared
+  environment's torch build and can't exercise MOIRAI's any-variate
+  multi-ticker mechanism from this per-symbol interface anyway — this
+  angle uses an honestly-labeled AR(3) statistical fallback proxy. See
+  compute.py's module docstring.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: >
+    Point + p10/p90 forecast for the next 5 periods, plus model_backend
+    (always "fallback_proxy"), fallback_reason, and any_variate_note
+    explaining the single-ticker degeneration.

@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from vinu_lib.debug import debug_log
+from vinu_infra.debug import debug_log
 from vinu_research.config import ResearchConfig, load_config
 from vinu_research.hypothesis_registry import HypothesisRegistry
 from vinu_research.loop import StrategyResearchLoop

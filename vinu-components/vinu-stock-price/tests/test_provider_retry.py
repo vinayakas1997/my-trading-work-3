@@ -3,7 +3,7 @@
 import pytest
 import requests
 
-from vinu_lib.retry import http_get_with_retry
+from vinu_infra.retry import http_get_with_retry
 
 
 def test_http_get_with_retry_succeeds_after_transient(monkeypatch):

@@ -78,7 +78,7 @@ class MetaStorage:
                 PRIMARY KEY (symbol, strategy_name)
             );
         """)
-        from vinu_lib.db import add_columns
+        from vinu_infra.db import add_columns
         add_columns(conn, "simulation_catalog", [
             ("last_sharpe", "REAL NOT NULL DEFAULT 0.0"),
             ("last_max_dd", "REAL NOT NULL DEFAULT 0.0"),

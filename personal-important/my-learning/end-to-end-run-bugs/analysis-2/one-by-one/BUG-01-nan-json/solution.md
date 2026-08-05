@@ -1,7 +1,7 @@
 # BUG-01 🔴 NaN in JSON Responses
 
-**Component:** `vinu-lib`
-**Files Changed:** `vinu-lib/vinu_lib/server.py`
+**Component:** `vinu-infra`
+**Files Changed:** `vinu-infra/vinu_infra/server.py`
 **Date Found:** 2026-07-23
 **Date Fixed:** 2026-07-23
 
@@ -27,7 +27,7 @@ before serialization.
 
 ## Actual Fix
 
-A global monkey-patch was added at the top of `vinu_lib/server.py`:
+A global monkey-patch was added at the top of `vinu_infra/server.py`:
 
 ```python
 import json

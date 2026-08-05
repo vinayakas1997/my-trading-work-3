@@ -1,0 +1,23 @@
+title: Kalman Filter State Estimation
+purpose: >
+  Classical recursive state-estimation baseline (method 27 of the
+  32-method plan, see
+  New-talk-/Final-implementation/01-present-considerations/27-kalman-filters.md).
+  Recursively estimates a hidden underlying price level and local trend
+  from noisy close-price observations via a predict-then-correct cycle
+  (statsmodels' local-linear-trend structural time series model — a
+  two-state Kalman filter/smoother). Reports the present/recent filtered
+  and smoothed state plus its uncertainty (state covariance) — not a
+  forward forecast.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: >
+    Filtered and smoothed level/trend state estimates plus their standard
+    deviations (state covariance uncertainty)

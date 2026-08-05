@@ -38,7 +38,7 @@ VaR, greeks, or a clustered covariance estimate usable at decision time.
 authoring, Phase 5's circuit breaker — can call one shared, tested implementation for these
 numbers instead of each re-deriving its own, avoiding the exact duplication problem
 `02-storage-memory` flagged when `vinu-stock-price` and `vinu-news` each hand-rolled their own
-catalog/watermark logic instead of sharing `vinu-lib`.
+catalog/watermark logic instead of sharing `vinu-infra`.
 
 **What still won't work after this phase alone:** These are library functions, not a running
 system — nothing calls them yet, nothing enforces limits from them, nothing sizes off them.

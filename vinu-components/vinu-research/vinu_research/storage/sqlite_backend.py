@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from vinu_lib.sqlite import SQLiteBackend
+from vinu_infra.sqlite import SQLiteBackend
 from vinu_research.storage.models import ResearchRunRecord, STATUS_APPROVED, STATUS_DELETED, STATUS_DONE
 
 SCHEMA_VERSION = 4

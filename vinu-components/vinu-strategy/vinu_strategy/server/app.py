@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
-from vinu_lib.server import create_app as _create_app
+from vinu_infra.server import create_app as _create_app
 from vinu_strategy.server.routes_config import router as config_router
 from vinu_strategy.server.routes_read import router as read_router
 

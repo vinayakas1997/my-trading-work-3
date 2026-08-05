@@ -1,7 +1,7 @@
 """Shared Parquet store with append, dedup, and partition helpers.
 
 Usage:
-    from vinu_lib.parquet import ParquetStore
+    from vinu_infra.parquet import ParquetStore
 
     store = ParquetStore("/data/parquet")
     store.append("AAPL/2026.parquet", records, dedup_on=["article_id"])

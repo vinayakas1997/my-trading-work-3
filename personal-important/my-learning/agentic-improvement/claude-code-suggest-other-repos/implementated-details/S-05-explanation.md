@@ -16,7 +16,7 @@ A research-layer tracing enrichment added to `vinu_research/llm.py`.
 
 ## Layering Note
 
-The underlying infrastructure (`vinu_lib.llm.client_async._log_llm_call`) already writes a raw `llm_calls.jsonl` at the library level. The `ResearchTraceWriter` is a research-layer enrichment on top of that — it adds semantic context (symbol, iteration, call_type) that the raw log lacks.
+The underlying infrastructure (`vinu_infra.llm.client_async._log_llm_call`) already writes a raw `llm_calls.jsonl` at the library level. The `ResearchTraceWriter` is a research-layer enrichment on top of that — it adds semantic context (symbol, iteration, call_type) that the raw log lacks.
 
 ## Current Status: ✅ IMPLEMENTED
 

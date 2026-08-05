@@ -2,12 +2,12 @@
 
 ## Changes
 
-### Provider Pricing (`vinu-lib/llm/providers.py`)
+### Provider Pricing (`vinu-infra/llm/providers.py`)
 - Added `pricing: dict[str, dict[str, float]]` field to `ProviderCapabilities` — maps model name → `{"input_per_1m": ..., "output_per_1m": ...}`
 - `get_model_pricing(model)` — returns pricing for a specific model, falls back to `"default"` key
 - `estimate_cost(model, prompt_tokens, completion_tokens)` — computes USD cost from token counts and model pricing
 
-### Cost Tracker (`vinu-lib/llm/cost.py`)
+### Cost Tracker (`vinu-infra/llm/cost.py`)
 - `TokenUsage` dataclass — `prompt_tokens`, `completion_tokens`, `total_tokens`; `from_api_response(data)` extracts from OpenAI-style response dict
 - `CostEntry` dataclass — captures single LLM call metadata (service, model, provider, token counts, cost, duration, success)
 - `CostTracker` — thread-safe accumulator with `record()`, `summary()`, `reset()`, property accessors
@@ -31,7 +31,7 @@
 - `calibration_summary()` — returns accuracy breakdown by verdict category
 
 ## Test Results
-- `test_cost.py` (vinu-lib): 9 tests — TokenUsage parsing, CostTracker record/summary/totals/reset/calls-by-model, global singleton
-- `test_providers.py` (vinu-lib): 6 tests — empty pricing, model-specific, fallback to default, cost estimation, zero tokens, no pricing
+- `test_cost.py` (vinu-infra): 9 tests — TokenUsage parsing, CostTracker record/summary/totals/reset/calls-by-model, global singleton
+- `test_providers.py` (vinu-infra): 6 tests — empty pricing, model-specific, fallback to default, cost estimation, zero tokens, no pricing
 - `test_judgment_store.py` (research): 6 tests — record/count, calibration summary, persistence/load, reset
-- **All 21 new tests pass.** Full vinu-lib suite: 58/58 pass. Full research suite: 422/429 pass (7 pre-existing Windows/PermissionError failures excluded).
+- **All 21 new tests pass.** Full vinu-infra suite: 58/58 pass. Full research suite: 422/429 pass (7 pre-existing Windows/PermissionError failures excluded).

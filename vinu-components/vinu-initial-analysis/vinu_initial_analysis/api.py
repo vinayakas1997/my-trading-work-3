@@ -19,8 +19,8 @@ class CorrelationAPI:
         self._config = config or load_config()
         self._news_client = NewsClient(self._config.news_api_url)
         self._price_client = PriceClient(self._config.stock_api_url)
-        self._storage = AngleStorage(self._config.data_root)
-        self._run_log = RunLog(self._config.data_root / "runs.db")
+        self._run_log = RunLog(self._config.runs_db_path)
+        self._storage = AngleStorage(self._config.data_root, self._run_log)
         self._runner = AngleRunner(self._storage, self._run_log, news_client=self._news_client, price_client=self._price_client)
         self._cache = CorrelationCache(
             maxsize=self._config.cache_maxsize,
@@ -43,8 +43,12 @@ class CorrelationAPI:
         from_ts: int | None = None,
         to_ts: int | None = None,
         angle_names: list[str] | None = None,
+        run_id: str | None = None,
+        tier: str = "tier2",
     ) -> dict[str, Any]:
-        return self._runner.run(symbol, from_ts=from_ts, to_ts=to_ts, angle_names=angle_names)
+        return self._runner.run(
+            symbol, from_ts=from_ts, to_ts=to_ts, angle_names=angle_names, run_id=run_id, tier=tier
+        )
 
     # -- backward-compat single-angle query methods ------------------------
     # These read from the new parquet storage.

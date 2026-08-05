@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from vinu_lib.debug import sync_timer
+from vinu_infra.debug import sync_timer
 
 import numpy as np
 import pandas as pd

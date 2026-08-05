@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from vinu_lib.sqlite import SQLiteBackend
+from vinu_infra.sqlite import SQLiteBackend
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS facts (

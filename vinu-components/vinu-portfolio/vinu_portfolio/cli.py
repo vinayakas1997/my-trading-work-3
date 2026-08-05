@@ -8,7 +8,7 @@ import sys
 
 import pandas as pd
 
-from vinu_lib.debug import setup_logging
+from vinu_infra.debug import setup_logging
 from vinu_portfolio.config import load_config
 from vinu_portfolio.service import PortfolioService
 

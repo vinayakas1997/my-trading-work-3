@@ -1,7 +1,7 @@
 """Opt-in API key authentication for FastAPI services.
 
 Usage:
-    from vinu_lib.auth import require_auth
+    from vinu_infra.auth import require_auth
     @router.get("/protected", dependencies=[Depends(require_auth)])
 
 All routes are open when VINU_API_KEY is not set.

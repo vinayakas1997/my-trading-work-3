@@ -1,6 +1,6 @@
 """Meta SQLite backend: catalog, settings, watchlist.
 
-Uses vinu-lib's SQLiteBackend for thread-local connection management,
+Uses vinu-infra's SQLiteBackend for thread-local connection management,
 WAL mode, and schema lifecycle.
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from vinu_lib.sqlite import SQLiteBackend
+from vinu_infra.sqlite import SQLiteBackend
 from vinu_stock.catalog.store import CatalogStore
 from vinu_stock.config import settings_env_defaults
 from vinu_stock.settings.store import SettingsStore, SettingsView

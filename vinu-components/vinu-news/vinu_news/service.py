@@ -282,8 +282,13 @@ class NewsService:
             llm_analysis_concurrency = self._config.llm_analysis_concurrency
 
         if llm_analysis_mode == "auto":
+            # Use the actually-injected storage's db_path when available
+            # (e.g. a test-supplied SqliteBackend), not the config-derived
+            # one — the two only coincidentally pointed at the same file
+            # before storage roots became required, which masked this.
+            worker_db_path = getattr(self._storage, "db_path", None) or self._config.db_path
             self._auto_analysis_worker = AutoAnalysisWorker(
-                db_path=self._config.db_path,
+                db_path=worker_db_path,
                 config=self._config,
                 concurrency=llm_analysis_concurrency,
             )

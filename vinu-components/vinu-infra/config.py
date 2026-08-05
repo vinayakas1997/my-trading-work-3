@@ -1,7 +1,7 @@
 """Shared service configuration from environment variables.
 
 Usage:
-    from vinu_lib.config import ServiceConfig, from_env
+    from vinu_infra.config import ServiceConfig, from_env
 
     config = from_env("VINU_NEWS", {"host": "127.0.0.1", "port": 8080})
     # Reads VINU_NEWS_HOST, VINU_NEWS_PORT, VINU_NEWS_LOG_LEVEL from env
@@ -11,7 +11,30 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+
+class MissingDataRootError(RuntimeError):
+    """Raised when a service's required VINU_<PREFIX>_DATA_ROOT env var is unset."""
+
+
+def require_data_root(prefix: str) -> Path:
+    """Resolve a service's data root from its required env var.
+
+    Every vinu-* service must set VINU_<prefix>_DATA_ROOT explicitly (in the
+    environment or a loaded .env file) — there is no cwd-relative fallback.
+    A silent default is what let the Docker root and the local-dev root
+    drift apart in the first place; failing fast here is what prevents it.
+    """
+    var_name = f"VINU_{prefix}_DATA_ROOT"
+    raw = os.environ.get(var_name, "").strip()
+    if not raw:
+        raise MissingDataRootError(
+            f"{var_name} is not set. Set it explicitly (e.g. in a .env file) "
+            f"before starting this service — there is no default data root."
+        )
+    return Path(raw)
 
 
 @dataclass

@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from vinu_lib.debug import setup_logging
+from vinu_infra.debug import setup_logging
 from vinu_research.config import ResearchConfig, load_config
 from vinu_research.loop import StrategyResearchLoop
 from vinu_research.models import IterationRecord

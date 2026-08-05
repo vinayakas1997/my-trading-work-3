@@ -38,4 +38,4 @@ GET /features/AAPL → 200 OK → return data ✓
 
 1. `python -c "import ast; ast.parse(open('vinu-strategy/clients/base.py').read()); print('syntax OK')"` — passes
 2. `from vinu_strategy.clients.base import BaseClient` — resolves correctly
-3. `from vinu_lib.retry import TransientProviderError` — dependency on DA-48 fix confirmed
+3. `from vinu_infra.retry import TransientProviderError` — dependency on DA-48 fix confirmed

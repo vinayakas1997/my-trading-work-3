@@ -14,10 +14,10 @@ Follow stock-price's existing file layout convention (`{data_root}/prices/1m/{SY
 
 | File | Lines | What Changed |
 |------|-------|-------------|
-| `vinu-lib/parquet.py` | 134-178 | Added `write_shard(rel_path, records, dedup_on)` |
-| `vinu-lib/parquet.py` | 180-210 | Added `read_shard(rel_path_glob)` |
-| `vinu-lib/parquet.py` | 212-250 | Added `consolidate(archive_pattern, output_path, dedup_on)` |
-| `vinu-lib/tests/test_parquet.py` | 60-120 | Added `TestShardedWrites` and `TestConsolidation` test classes |
+| `vinu-infra/parquet.py` | 134-178 | Added `write_shard(rel_path, records, dedup_on)` |
+| `vinu-infra/parquet.py` | 180-210 | Added `read_shard(rel_path_glob)` |
+| `vinu-infra/parquet.py` | 212-250 | Added `consolidate(archive_pattern, output_path, dedup_on)` |
+| `vinu-infra/tests/test_parquet.py` | 60-120 | Added `TestShardedWrites` and `TestConsolidation` test classes |
 
 ## Verification
 

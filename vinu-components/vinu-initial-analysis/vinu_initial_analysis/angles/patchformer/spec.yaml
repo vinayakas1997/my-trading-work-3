@@ -1,0 +1,21 @@
+title: PatchFormer Patch-Based Foundation Model (fallback proxy)
+purpose: >
+  Patch-similarity forecast in the spirit of PatchFormer (method 17 of
+  the 32-method plan, see
+  New-talk-/Final-implementation/01-present-considerations/17-patchformer.md).
+  No PyPI package exists and the spec itself couldn't confirm the real
+  model's architecture — this angle uses an honestly-labeled k-NN
+  patch-similarity statistical proxy. See compute.py's module docstring.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: >
+    Point + p10/p90 forecast for the next 5 periods derived from
+    k-nearest-neighbor historical patch similarity, plus model_backend
+    (always "fallback_proxy") and fallback_reason.

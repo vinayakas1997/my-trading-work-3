@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
-DEFAULT_DATA_ROOT: Path = Path.cwd() / "data"
+from vinu_infra.config import require_data_root
 
 
 def _ensure_dotenv_loaded() -> None:
@@ -29,7 +29,10 @@ _ensure_dotenv_loaded._done = False  # type: ignore[attr-defined]
 
 @dataclass(frozen=True)
 class VinuInitialAnalysisConfig:
-    data_root: Path = field(default_factory=lambda: Path(os.getenv("VINU_INITIAL_ANALYSIS_DATA_ROOT", str(DEFAULT_DATA_ROOT))))
+    data_root: Path = field(default_factory=lambda: require_data_root("INITIAL_ANALYSIS"))
+    runs_db_path: Path = field(
+        default_factory=lambda: require_data_root("INITIAL_ANALYSIS") / "vinu_initial_analysis_runs.db"
+    )
     news_api_url: str = field(default_factory=lambda: os.getenv("VINU_NEWS_API_URL", "http://localhost:8080"))
     stock_api_url: str = field(default_factory=lambda: os.getenv("VINU_STOCK_API_URL", "http://localhost:8081"))
     host: str = field(default_factory=lambda: os.getenv("VINU_INITIAL_ANALYSIS_HOST", "0.0.0.0"))
@@ -40,4 +43,5 @@ class VinuInitialAnalysisConfig:
 
 
 def load_config() -> VinuInitialAnalysisConfig:
+    _ensure_dotenv_loaded()
     return VinuInitialAnalysisConfig()

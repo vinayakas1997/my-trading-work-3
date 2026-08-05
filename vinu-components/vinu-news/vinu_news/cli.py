@@ -8,7 +8,7 @@ import logging
 import sys
 import time
 
-from vinu_lib.debug import setup_logging
+from vinu_infra.debug import setup_logging
 from vinu_news.config import load_config
 from vinu_news.server.app import create_app
 from vinu_news.service import NewsService

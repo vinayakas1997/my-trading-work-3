@@ -13,7 +13,7 @@ import pandas as pd
 
 from vinu_initial_analysis.storage.parquet import AngleStorage
 from vinu_initial_analysis.storage.meta import RunLog
-from vinu_lib.debug import sync_timer
+from vinu_infra.debug import sync_timer
 
 LOG = logging.getLogger(__name__)
 
@@ -84,11 +84,28 @@ class AngleRunner:
         from_ts: int | None = None,
         to_ts: int | None = None,
         angle_names: list[str] | None = None,
+        run_id: str | None = None,
+        tier: str = "tier2",
     ) -> dict[str, Any]:
         """Run all (or selected) angles for a symbol.
 
+        `run_id`: pre-assign the run's ID rather than letting `_run_angle`
+        generate its own. Only meaningful when `angle_names` selects exactly
+        one angle — a caller that pre-assigns a single ID for a multi-angle
+        sweep would get that same ID recorded against every angle, which
+        breaks run_id's one-run-one-ID traceability guarantee (see
+        02-api-design.md's run_id design). Used by the v1 API's
+        `trigger/.../{method}` route, which is always single-angle.
+
+        `tier`: "tier2" (scheduled, the default — matches every existing
+        call site's behavior unchanged) or "tier3" (triggered/ad-hoc,
+        prunable). The v1 API's trigger route passes "tier3" explicitly.
+
         Returns a summary dict keyed by angle_name.
         """
+        if run_id is not None and (angle_names is None or len(angle_names) != 1):
+            raise ValueError("run_id can only be pre-assigned when angle_names selects exactly one angle")
+
         self._bar_cache.clear()
         self._news_cache.clear()
         results: dict[str, Any] = {}
@@ -97,7 +114,7 @@ class AngleRunner:
         for angle in to_run:
             try:
                 with sync_timer(f"angle.{angle['name']}"):
-                    count = self._run_angle(symbol, angle, from_ts, to_ts)
+                    count = self._run_angle(symbol, angle, from_ts, to_ts, run_id=run_id, tier=tier)
                 results[angle["name"]] = {
                     "status": "completed",
                     "row_count": count,
@@ -114,6 +131,8 @@ class AngleRunner:
         angle: dict[str, Any],
         from_ts: int | None,
         to_ts: int | None,
+        run_id: str | None = None,
+        tier: str = "tier2",
     ) -> int:
         """Run an angle for each of its time_formats. Returns total row count."""
         existing = self._run_log.has_existing_run(symbol, angle["name"], from_ts, to_ts)
@@ -127,7 +146,7 @@ class AngleRunner:
 
         time_formats = angle["spec"].get("time_formats", DEFAULT_TIME_FORMATS)
         needs_bars = angle["spec"].get("needs_bars", True)
-        run_id = uuid4().hex[:12]
+        run_id = run_id or uuid4().hex[:12]
         all_dfs: list[pd.DataFrame] = []
 
         news = self._fetch_news(symbol, from_ts, to_ts)
@@ -166,6 +185,7 @@ class AngleRunner:
             analysis_from=from_ts,
             analysis_until=to_ts,
             run_id=run_id,
+            tier=tier,
         )
         self._run_log.record_run(
             symbol=symbol,
@@ -173,6 +193,7 @@ class AngleRunner:
             run_id=run_id,
             analysis_from=from_ts,
             analysis_until=to_ts,
+            tier=tier,
             row_count=len(combined),
         )
         return len(combined)

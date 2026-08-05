@@ -4,7 +4,7 @@ import argparse
 import json
 import logging
 
-from vinu_lib.debug import setup_logging
+from vinu_infra.debug import setup_logging
 from vinu_simulator.api import SimulatorAPI
 from vinu_simulator.config import load_config
 from vinu_simulator.server.app import create_app

@@ -10,7 +10,7 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
-from vinu_lib.debug import debug_log, debug_timer
+from vinu_infra.debug import debug_log, debug_timer
 from vinu_research.comparison import rank_candidates
 from vinu_research.storage.sqlite_backend import ResearchStorage
 from vinu_research.config import ResearchConfig, load_config

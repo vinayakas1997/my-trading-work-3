@@ -1,7 +1,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from vinu_lib.telemetry import (
+from vinu_infra.telemetry import (
     LLMCallRecord,
     StepRecord,
     TelemetryStore,
@@ -136,6 +136,7 @@ def test_record_llm_call_safe_writes_via_global_cache():
         record_llm_call_safe(_call(), db_path=path)
         rows = get_telemetry_store(path).recent_llm_calls()
         assert len(rows) == 1
+        get_telemetry_store(path).close()
 
 
 def test_record_step_safe_never_raises_on_bad_path():

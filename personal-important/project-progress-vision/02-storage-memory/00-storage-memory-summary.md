@@ -13,14 +13,14 @@ the research/simulation pipeline and, ultimately, the agent's own memory of what
 
 But looking closely at *how* stock-price and news built that good design surfaced a real
 inefficiency worth fixing at the same time: **both packages independently hand-rolled the same
-catalog/watermark/dedup machinery from scratch**, instead of sharing it. There's a `vinu-lib`
-package (`vinu-lib/sqlite.py`'s `SQLiteBackend`, `vinu-lib/parquet.py`'s `ParquetStore`) that
+catalog/watermark/dedup machinery from scratch**, instead of sharing it. There's a `vinu-infra`
+package (`vinu-infra/sqlite.py`'s `SQLiteBackend`, `vinu-infra/parquet.py`'s `ParquetStore`) that
 was clearly built to be exactly this shared abstraction — thread-safe WAL SQLite backend with
 schema migrations, and a parquet store with built-in dedup-on-write — but grep across the whole
 repo shows **it is used only in its own tests**. Neither `vinu-stock-price`'s `CatalogStore`
 nor `vinu-news`'s `BackfillStore` imports or subclasses it. Two well-designed, independently
 debugged, subtly-different implementations of the same pattern exist side by side, and neither
-is `vinu-lib`'s.
+is `vinu-infra`'s.
 
 ## What's actually good (keep this)
 
@@ -47,7 +47,7 @@ key-value store.
    detection, a smarter dedup strategy) doesn't propagate to the other. Every *new* package that
    needs this pattern (the research/simulator storage from Phase 01 of this folder) is at risk of
    becoming a *third* independent reimplementation unless this gets consolidated first.
-2. **`vinu-lib`'s `SQLiteBackend`/`ParquetStore` are dormant.** They exist, are tested in
+2. **`vinu-infra`'s `SQLiteBackend`/`ParquetStore` are dormant.** They exist, are tested in
    isolation, and appear to be a genuine match for the pattern both packages need — but nothing
    in the codebase actually depends on them. This is the highest-leverage fix: making them the
    real shared foundation retroactively de-duplicates two packages and gives every future
@@ -90,7 +90,7 @@ calls, and a principled way to know when a conclusion is stale versus still trus
 
 | Phase | Delivers | Depends on |
 |---|---|---|
-| 1 | `vinu-lib`'s `SQLiteBackend`/`ParquetStore` become the real shared foundation; stock-price and news migrate onto it | — |
+| 1 | `vinu-infra`'s `SQLiteBackend`/`ParquetStore` become the real shared foundation; stock-price and news migrate onto it | — |
 | 2 | Catalog + watermark + job-table pattern applied to `vinu-simulator`/`vinu-research` results storage | Phase 1 |
 | 3 | Unified agent-memory layer: compact, queryable, freshness-stamped "what do we know" summaries spanning price/news/research | Phase 2 |
 | 4 | Agent/skill/tool retrieval patterns updated to query the memory layer instead of re-deriving or re-scanning | Phase 3 |

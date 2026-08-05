@@ -2,12 +2,12 @@
 
 **Status:** COMPLETED
 **Started:** 2026-07-24
-**Depends on:** Phase 01 (hardened vinu-lib primitives)
+**Depends on:** Phase 01 (hardened vinu-infra primitives)
 **Blocks:** Phase 04 (wire Monte Carlo gate), Phase 06 (comparative critique agent)
 
 ## What It Delivers
 
-Built on top of Step 1's hardened `vinu_lib.SQLiteBackend`, this phase delivers:
+Built on top of Step 1's hardened `vinu_infra.SQLiteBackend`, this phase delivers:
 
 1. **Research catalog** (`research_catalog` table) — one row per symbol tracking lifetime trial count, last run ID/timestamp, last validated timestamp, best Sharpe ever, and status. Replaces what 01-vision-plan Phase 1's storage design and Phase 3 were separately trying to build.
 

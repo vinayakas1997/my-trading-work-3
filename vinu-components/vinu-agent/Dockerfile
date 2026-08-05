@@ -2,8 +2,8 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY vinu-lib/ /app/vinu-lib/
-RUN pip install -e /app/vinu-lib
+COPY vinu-infra/ /app/vinu-infra/
+RUN pip install -e /app/vinu-infra
 
 COPY vinu-agent/ /app/vinu-agent/
 RUN pip install -e /app/vinu-agent

@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, TYPE_CHECKING
 
-from vinu_lib.debug import debug_log
+from vinu_infra.debug import debug_log
 from vinu_research.models import ArtifactStatus
 from vinu_research.scheduled.cron import next_run
 from vinu_research.scheduled.models import ScheduledResearchJob

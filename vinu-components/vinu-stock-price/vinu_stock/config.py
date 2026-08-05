@@ -8,7 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-DEFAULT_DATA_ROOT = Path.cwd() / "data"
+from vinu_infra.config import require_data_root
+
 DEFAULT_POLL_INTERVAL_SEC = 60
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8081
@@ -44,10 +45,8 @@ class VinuStockConfig:
 
 def load_config() -> VinuStockConfig:
     _ensure_dotenv_loaded()
-    data_root_raw = os.environ.get("VINU_STOCK_DATA_ROOT", "")
-    data_root = Path(data_root_raw) if data_root_raw else DEFAULT_DATA_ROOT
-    meta_raw = os.environ.get("VINU_STOCK_META_DB_PATH", "")
-    meta_db_path = Path(meta_raw) if meta_raw else data_root / "meta.db"
+    data_root = require_data_root("STOCK")
+    meta_db_path = data_root / "vinu_stock_price.db"
     shared_raw = os.environ.get("VINU_SHARED_WATCHLIST_PATH", "").strip()
     shared_path = Path(shared_raw) if shared_raw else None
     return VinuStockConfig(

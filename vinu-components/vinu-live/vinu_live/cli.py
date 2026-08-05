@@ -5,7 +5,7 @@ import asyncio
 import logging
 import time
 
-from vinu_lib.debug import setup_logging
+from vinu_infra.debug import setup_logging
 from vinu_live.config import load_config
 from vinu_live.scheduler import LiveScheduler
 from vinu_live.feedback_loop import FeedbackLoopWorker

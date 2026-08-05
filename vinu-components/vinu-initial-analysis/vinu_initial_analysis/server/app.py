@@ -7,8 +7,8 @@ from typing import AsyncIterator
 
 from vinu_initial_analysis.config import load_config
 from vinu_initial_analysis.service import InitialAnalysisService
-from vinu_initial_analysis.server import routes_config, routes_read
-from vinu_lib.server import create_app as _create_app
+from vinu_initial_analysis.server import routes_config, routes_read, routes_v1
+from vinu_infra.server import create_app as _create_app
 
 
 def create_app(service: InitialAnalysisService | None = None):
@@ -26,22 +26,27 @@ def create_app(service: InitialAnalysisService | None = None):
 
     routes_config.get_service = _get_service
     routes_read.get_service = _get_service
+    routes_v1.get_service = _get_service
 
     main_router = routes_read.router
     merged = __import__("fastapi").APIRouter()
     merged.include_router(main_router)
     merged.include_router(routes_config.router)
 
-    return _create_app(
+    app = _create_app(
         service_name="vinu-initial-analysis",
         version="0.2.0",
-        description="Foundational analysis pipeline — 25 deterministic angles for every stock",
+        description="Foundational analysis pipeline — 35 deterministic angles for every stock",
         router=merged,
         lifespan=lifespan,
         static_dir=Path(__file__).parent / "static",
         expose_health_on_root=False,
         route_prefix="analysis",
     )
+    # The redesigned positional API — additive, alongside /analysis/* above.
+    # See routes_v1.py's module docstring for the full design.
+    app.include_router(routes_v1.router, prefix="/v1/stage1/vinu-initial-analysis")
+    return app
 
 
 def main() -> None:

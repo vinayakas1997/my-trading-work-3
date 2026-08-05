@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from vinu_lib.server import create_app as _create_app
+from vinu_infra.server import create_app as _create_app
 from vinu_research.service import ResearchService
 from vinu_research.server import routes_config, routes_hypothesis, routes_introspect, routes_read, routes_sweep, routes_trade_plan
 from vinu_research.tools import ResearchTools

@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 from fastapi import APIRouter
 
-from vinu_lib.server import create_app
+from vinu_infra.server import create_app
 
 
 def test_create_app_health():

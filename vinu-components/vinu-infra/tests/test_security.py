@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from vinu_lib.security.network import validate_url_target
-from vinu_lib.security.scanner import scan_prompt_injection, with_security_warnings
+from vinu_infra.security.network import validate_url_target
+from vinu_infra.security.scanner import scan_prompt_injection, with_security_warnings
 
 
 class TestPromptInjectionScanner:
@@ -63,7 +63,7 @@ class TestSSRFGuard:
     @pytest.mark.asyncio
     async def test_resilient_client_ssrf_blocking(self):
         import pytest
-        from vinu_lib.client import ResilientClient
+        from vinu_infra.client import ResilientClient
         client = ResilientClient("http://localhost:8080", "test", allow_local=False)
         with pytest.raises(ValueError) as exc:
             await client.get("/health")

@@ -20,7 +20,7 @@ scratch to know what to expect.
 Source: `sqlite3` query against `vinu-components/data/research/
 telemetry.db`'s `llm_calls` table, 13 real calls made triggering one
 `POST /research/run` for AAPL with `VINU_RESEARCH_LLM_ENABLED=true`
-(model: `qwen36-35B`, via `vinu-lib`'s `LlmClient`).
+(model: `qwen36-35B`, via `vinu-infra`'s `LlmClient`).
 
 | Metric | Value |
 |---|---|

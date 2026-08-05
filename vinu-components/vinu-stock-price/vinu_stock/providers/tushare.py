@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 import requests
 
 from vinu_stock.providers.base import EarliestResult, FetchBarsResult
-from vinu_lib.retry import http_post_with_retry
+from vinu_infra.retry import http_post_with_retry
 from vinu_stock.storage.models import BarRecord
 
 LOG = logging.getLogger(__name__)

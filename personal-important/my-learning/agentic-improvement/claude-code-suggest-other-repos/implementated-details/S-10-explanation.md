@@ -3,7 +3,7 @@
 ## What It Requires
 
 1. **`ProviderCapabilities.supports_function_calling: bool`** — a new field on the
-   `@dataclass(frozen=True)` in `vinu-lib/llm/providers.py` (line 16), defaulting to `False`.
+   `@dataclass(frozen=True)` in `vinu-infra/llm/providers.py` (line 16), defaulting to `False`.
 2. **A provider-client adapter change** — `ResearchLlmClient.chat_json()` (the single
    funnel for all 7+ structured-output calls) currently delegates to
    `self._client.chat_json(...)`, which is a text-in/text-out call. To support
@@ -17,7 +17,7 @@
 ## Current Status: ⏸️ BLOCKED
 
 This suggestion is **deferred — not actionable without a provider-level API change**
-in `vinu-lib.llm`.
+in `vinu-infra.llm`.
 
 ### Why It's Blocked
 

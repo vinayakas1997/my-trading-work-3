@@ -27,12 +27,12 @@ Read through `vinu-stock-price/vinu_stock/catalog/store.py`, `vinu-stock-price/v
 | stock-price parquet | `consolidate_live_shards()` | Yes | Task 3's `consolidate()` |
 | news catalog | `backfill_status` with watermark updates per chunk | Yes | Task 1's `upsert` |
 | news catalog | Permanent failure marking | Yes | Standard SQL update via existing `execute()` |
-| news storage | URL-level + semantic dedup | Partial | URL-level dedup covered (composite key). Semantic dedup (story-thread matching) is higher-level logic that belongs in the news package, not in vinu-lib. No gap. |
+| news storage | URL-level + semantic dedup | Partial | URL-level dedup covered (composite key). Semantic dedup (story-thread matching) is higher-level logic that belongs in the news package, not in vinu-infra. No gap. |
 
 **Conclusion:** No gaps found. Phase 1 primitives cover everything needed.
 
 ## Verification
 
-- [x] All stock-price catalog methods mapped to vinu-lib equivalents
-- [x] All news backfill/storage methods mapped to vinu-lib equivalents
+- [x] All stock-price catalog methods mapped to vinu-infra equivalents
+- [x] All news backfill/storage methods mapped to vinu-infra equivalents
 - [x] No missing primitives identified

@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 def _make_test_config(tmp: str) -> VinuInitialAnalysisConfig:
     return VinuInitialAnalysisConfig(
         data_root=Path(tmp),
+        runs_db_path=Path(tmp) / "vinu_initial_analysis_runs.db",
         news_api_url="http://localhost:18080",
         stock_api_url="http://localhost:18081",
         host="127.0.0.1",

@@ -41,5 +41,5 @@ VINU_LLM_BASE_URL=http://host.docker.internal:8009/v1
 
 - `localhost` inside Docker ≠ host machine
 - Use `host.docker.internal` for host access (Linux requires `--add-host` flag)
-- The vinu-lib `client_async.py` has `alternative_urls()` that handles this fallback,
+- The vinu-infra `client_async.py` has `alternative_urls()` that handles this fallback,
   but the primary URL in `.env` should still be correct

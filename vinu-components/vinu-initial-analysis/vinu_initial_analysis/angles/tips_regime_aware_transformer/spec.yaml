@@ -1,0 +1,25 @@
+title: TIPS Regime-Aware Transformer Forecast
+purpose: >
+  Trained-from-scratch regime-aware transformer (method 24 of the
+  32-method plan, see
+  New-talk-/Final-implementation/01-present-considerations/24-tips-regime-aware-transformer.md)
+  — detects the current regime (momentum vs. mean-reversion, via trailing
+  lag-1 return autocorrelation) and synthesizes a regime-tuned inductive
+  prior by routing a shared transformer encoder's pooled representation
+  through one of two regime-specific linear output heads. Produces a
+  one-step point forecast conditioned on, and an auxiliary label for, the
+  detected regime.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: >
+    One-step-ahead forecast price/return, thresholded direction
+    (up/down/flat), detected regime label (momentum/mean_reversion) and
+    its underlying autocorrelation statistic, the regime mix seen during
+    training, and the fit's training-window count and final training loss.

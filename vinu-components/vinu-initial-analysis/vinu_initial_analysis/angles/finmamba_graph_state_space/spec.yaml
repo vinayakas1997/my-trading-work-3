@@ -1,0 +1,24 @@
+title: FinMamba Graph-Enhanced State-Space Model (fallback proxy)
+purpose: >
+  Stock-movement (up/down) prediction in the spirit of FinMamba (method
+  31, see New-talk-/Final-implementation/01-present-considerations/
+  31-finmamba-graph-state-space.md). The spec itself discloses no
+  parameter count and no PyPI package or repo — public availability is
+  unconfirmed — so this angle uses an honestly-labeled minimal linear
+  state-space-recursion proxy instead of hunting for a nonexistent
+  package. The spec's cross-stock graph layer is likewise structurally
+  degenerate (single-node) since compute() is called per single symbol.
+  See compute.py's module docstring.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: >
+    predicted_movement (up/down/flat) with a confidence score, plus
+    model_backend (always "fallback_proxy"), fallback_reason, and
+    graph_note explaining the single-ticker degeneration.

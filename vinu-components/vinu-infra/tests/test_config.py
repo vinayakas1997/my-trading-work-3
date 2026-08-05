@@ -1,6 +1,6 @@
 import os
 
-from vinu_lib.config import ServiceConfig, from_env
+from vinu_infra.config import ServiceConfig, from_env
 
 
 def test_service_config_defaults():

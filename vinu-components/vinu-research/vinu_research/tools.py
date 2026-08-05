@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 import pandas as pd
 
-from vinu_lib.client import ResilientClient
+from vinu_infra.client import ResilientClient
 from vinu_research.angle_context import build_angle_context
 from vinu_research.benchmark import compute_benchmark_comparison as _compute_benchmark_comparison
 from vinu_research.benchmark import compute_benchmark_returns_metrics as _compute_benchmark_returns_metrics

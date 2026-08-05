@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from vinu_lib.telemetry import LLMCallRecord, StepRecord, record_llm_call_safe, record_step_safe
+from vinu_infra.telemetry import LLMCallRecord, StepRecord, record_llm_call_safe, record_step_safe
 
 from .tools import ToolRegistry
 from .workflow import WorkflowTracker

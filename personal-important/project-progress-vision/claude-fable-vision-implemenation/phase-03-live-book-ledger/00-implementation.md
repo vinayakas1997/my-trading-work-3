@@ -19,7 +19,7 @@ Built on the same `SQLiteBackend` foundation proven in `vinu-stock-price` and `v
 
 ## Open Questions Resolved
 
-- **Storage backend:** Use `vinu_lib.sqlite.SQLiteBackend` consistent with existing patterns.
+- **Storage backend:** Use `vinu_infra.sqlite.SQLiteBackend` consistent with existing patterns.
 
 ## Files Touched
 

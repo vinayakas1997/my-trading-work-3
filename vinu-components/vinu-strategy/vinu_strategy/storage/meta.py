@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from vinu_lib.db import migrate_schema
+from vinu_infra.db import migrate_schema
 
 LOG = logging.getLogger(__name__)
 

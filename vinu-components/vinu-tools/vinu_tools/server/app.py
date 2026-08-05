@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import APIRouter
 
-from vinu_lib.server import create_app as _create_app
+from vinu_infra.server import create_app as _create_app
 from vinu_tools.server import routes_features, routes_requests
 from vinu_tools.service import FeatureService
 

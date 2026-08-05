@@ -1,4 +1,4 @@
-from vinu_lib.llm.providers import ProviderCapabilities
+from vinu_infra.llm.providers import ProviderCapabilities
 
 
 def test_empty_pricing():

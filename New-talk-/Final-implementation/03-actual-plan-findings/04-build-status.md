@@ -6,19 +6,27 @@ purpose: audit of what's actually built in vinu-components today, against 02-api
 
 # Build Status — Real Implementation vs. the Plan
 
+> **Correction** (see [implementation-status/03-vinu-stock-price.md](implementation-status/03-vinu-stock-price.md)):
+> the "live-file naming" claim under vinu-stock-price's Storage section
+> below is incomplete — daily sharding + threshold-based consolidation
+> already exists in `storage/parquet.py`/`backfill/orchestrator.py`,
+> just not visible from `storage/paths.py` alone. Left as originally
+> written below for the historical record; treat the linked file as
+> authoritative on this point.
+
 Read-only audit of `vinu-components/`, scoped to the three in-scope
 components: `vinu-news`, `vinu-stock-price`, `vinu-initial-analysis`.
 
 ## vinu-news
 
-- **API**: real FastAPI app (`vinu_lib.server.create_app`, prefix `/news/*`,
+- **API**: real FastAPI app (`vinu_infra.server.create_app`, prefix `/news/*`,
   no version prefix). Has an ad-hoc fetch/trigger split already
   (`/ingest/trigger`, `/backfill/trigger` + `/backfill/job/{job_id}`,
   `/finbert/backfill` + job polling) — but job state is an **in-memory
   dict, capped at 50, not persisted**, and response shapes are per-endpoint
   Pydantic models, not the planned 5-field envelope.
-- **Storage**: real SQLite via `vinu_lib.sqlite.SQLiteBackend`
-  (`NewsRepository`) — one of the few real `vinu_lib` reuses. DB is
+- **Storage**: real SQLite via `vinu_infra.sqlite.SQLiteBackend`
+  (`NewsRepository`) — one of the few real `vinu_infra` reuses. DB is
   `data/news.db` (8MB, live data), path defaults to `Path.cwd()` if
   `VINU_NEWS_DB_PATH` isn't set (cwd-fallback, contradicts the planned
   required-env-var rule). Filename doesn't match the planned
@@ -92,13 +100,13 @@ components: `vinu-news`, `vinu-stock-price`, `vinu-initial-analysis`.
   planned methods would be new builds; GARCH is the one reusable piece of
   logic.
 
-## vinu-lib / vinu-tools — actual reuse today
+## vinu-infra / vinu-tools — actual reuse today
 
-- `vinu_lib.server.create_app` — used by all 3 (shared FastAPI factory).
-- `vinu_lib.sqlite.SQLiteBackend` — used by news + stock-price, **not**
+- `vinu_infra.server.create_app` — used by all 3 (shared FastAPI factory).
+- `vinu_infra.sqlite.SQLiteBackend` — used by news + stock-price, **not**
   initial-analysis.
-- `vinu_lib.parquet.ParquetStore` — confirmed fully unused, repo-wide.
-- `vinu_lib.config` — confirmed fully unused; each component hand-rolls
+- `vinu_infra.parquet.ParquetStore` — confirmed fully unused, repo-wide.
+- `vinu_infra.config` — confirmed fully unused; each component hand-rolls
   its own `config.py` with its own env var names and cwd-fallback.
 - `vinu_tools.compute.risk.{covariance,volatility}` — used only by
   `shock_clustering`/`shock_personality` in initial-analysis; not used by

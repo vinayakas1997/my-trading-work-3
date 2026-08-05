@@ -66,13 +66,24 @@ class InitialAnalysisService:
         from_ts: int | None = None,
         to_ts: int | None = None,
         angle_names: list[str] | None = None,
+        run_id: str | None = None,
+        tier: str = "tier2",
     ) -> dict[str, Any]:
         """Run all (or a targeted subset of) angles for a symbol. Returns summary.
 
         `angle_names` lets Phase 7's feedback loop refresh just `shock_personality`/
         `shock_clustering` for one symbol instead of the full angle suite.
+
+        `run_id`: pre-assign the run's ID (single-angle only — see
+        AngleRunner.run's docstring). Used by the v1 API's trigger route so
+        the ID returned immediately at trigger-time is the same one that
+        ends up in storage/RunLog, not a different one generated later.
+
+        `tier`: "tier2" (scheduled, default) or "tier3" (triggered/ad-hoc).
         """
-        return self._api.compute_and_store(symbol, from_ts=from_ts, to_ts=to_ts, angle_names=angle_names)
+        return self._api.compute_and_store(
+            symbol, from_ts=from_ts, to_ts=to_ts, angle_names=angle_names, run_id=run_id, tier=tier
+        )
 
     def list_angles(self) -> list[dict[str, Any]]:
         return self._api.runner.list_angles()

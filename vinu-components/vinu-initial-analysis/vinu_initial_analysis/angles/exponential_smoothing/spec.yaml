@@ -1,0 +1,23 @@
+title: Exponential Smoothing Classical Baseline
+purpose: >
+  Double exponential smoothing (Holt's linear trend method) forecast — the
+  classical, essentially-free statistical baseline (method 28 of the
+  32-method plan, see
+  New-talk-/Final-implementation/01-present-considerations/28-exponential-smoothing.md).
+  Weights recent close-price observations more heavily than older ones via
+  an exponentially-decaying scheme, fitting a level + trend decomposition
+  (no seasonal component — daily-bar equity series have no reliable fixed
+  seasonal period) and reporting the one-step-ahead point forecast
+  alongside the fitted level/trend components.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: >
+    One-step-ahead point forecast, fitted smoothing parameters (alpha,
+    beta), and level/trend decomposition

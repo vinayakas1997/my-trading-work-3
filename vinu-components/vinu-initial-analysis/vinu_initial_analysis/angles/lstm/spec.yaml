@@ -1,0 +1,21 @@
+title: LSTM Sequential Forecast
+purpose: >
+  Trained-from-scratch single-layer LSTM (method 19 of the 32-method plan,
+  see New-talk-/Final-implementation/01-present-considerations/19-lstm.md)
+  — the classical recurrent baseline among the six trained-from-scratch
+  architectures the source survey found competitive on finance. Processes
+  a rolling close-price window step-by-step through gated memory cells,
+  fit via a handful of Adam epochs at request time, producing a one-step
+  point forecast thresholded to a direction.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: >
+    One-step-ahead forecast price/return, thresholded direction (up/down/flat),
+    and the fit's training-window count and final training loss.

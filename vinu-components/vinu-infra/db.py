@@ -1,7 +1,7 @@
 """Shared SQLite schema migration utilities.
 
 Usage:
-    from vinu_lib.db import migrate_schema
+    from vinu_infra.db import migrate_schema
 
     migrate_schema(
         conn,

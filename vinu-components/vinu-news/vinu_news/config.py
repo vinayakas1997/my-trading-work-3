@@ -8,7 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-DEFAULT_DB_PATH = Path.cwd() / "data" / "news.db"
+from vinu_infra.config import require_data_root
+
 DEFAULT_MODE = "ticker"
 DEFAULT_POLL_INTERVAL_SEC = 600
 DEFAULT_HOST = "127.0.0.1"
@@ -63,8 +64,7 @@ class VinuConfig:
 def load_config() -> VinuConfig:
     _ensure_dotenv_loaded()
     storage = os.environ.get("VINU_NEWS_STORAGE", "sqlite").lower()
-    db_path_raw = os.environ.get("VINU_NEWS_DB_PATH", "")
-    db_path = Path(db_path_raw) if db_path_raw else DEFAULT_DB_PATH
+    db_path = require_data_root("NEWS") / "vinu_news.db"
     shared_raw = os.environ.get("VINU_SHARED_WATCHLIST_PATH", "").strip()
     shared_path = Path(shared_raw) if shared_raw else None
     return VinuConfig(

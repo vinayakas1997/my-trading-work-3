@@ -23,5 +23,5 @@
 | BUG-04 | `.env` used `localhost` which doesn't resolve inside Docker containers |
 | BUG-05 | LLM generates code without imports; `exec()` needs them in namespace |
 | BUG-06 | No instrumentation existed to trace timing across pipeline |
-| BUG-07 | `debug.py` placed in nested `vinu_lib/` dir, not package root |
+| BUG-07 | `debug.py` placed in nested `vinu_infra/` dir, not package root |
 | BUG-08 | Refinement prompt includes full prev code (3,500 chars), 7x generation prompt size |

@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from vinu_lib.retry import TransientProviderError
+from vinu_infra.retry import TransientProviderError
 
 LOG = logging.getLogger(__name__)
 

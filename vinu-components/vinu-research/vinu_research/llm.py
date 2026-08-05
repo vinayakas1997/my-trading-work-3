@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from vinu_lib.debug import debug_log
-from vinu_lib.llm import AsyncLlmClient as SharedAsyncLlmClient, LlmConfig
+from vinu_infra.debug import debug_log
+from vinu_infra.llm import AsyncLlmClient as SharedAsyncLlmClient, LlmConfig
 from vinu_research.angle_context import format_angle_context_lines
 from vinu_research.config import ResearchConfig
 from vinu_research.models import BacktestResult, CriticFeedback
@@ -97,7 +97,7 @@ def _build_risk_critic_prompt(
 
 
 class LlmCache:
-    """Kept for backward compatibility with tests. New code uses vinu_lib.llm.cache.LlmCache."""
+    """Kept for backward compatibility with tests. New code uses vinu_infra.llm.cache.LlmCache."""
 
     def __init__(self, cache_path: str | Path, ttl_sec: int = 86400) -> None:
         self._path = Path(cache_path)

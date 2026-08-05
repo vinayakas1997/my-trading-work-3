@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 import httpx
 
-from vinu_lib.debug import debug_timer
+from vinu_infra.debug import debug_timer
 
 LOG = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ class ResilientClient:
     ) -> Any:
         url = f"{self._base_url}{path}"
         if not self._allow_local:
-            from vinu_lib.security.network import validate_url_target
+            from vinu_infra.security.network import validate_url_target
             if not validate_url_target(url):
                 raise ValueError(f"URL target failed SSRF security validation: {url}")
         fb = fallback if fallback is not None else self._default_fallback
@@ -153,7 +153,7 @@ class ResilientClient:
     ) -> Any:
         url = f"{self._base_url}{path}"
         if not self._allow_local:
-            from vinu_lib.security.network import validate_url_target
+            from vinu_infra.security.network import validate_url_target
             if not validate_url_target(url):
                 raise ValueError(f"URL target failed SSRF security validation: {url}")
         fb = fallback if fallback is not None else self._default_fallback

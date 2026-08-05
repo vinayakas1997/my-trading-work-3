@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from vinu_lib.rate_limit import TokenBucket
+from vinu_infra.rate_limit import TokenBucket
 from vinu_news import net
 
 LOG = logging.getLogger(__name__)

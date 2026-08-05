@@ -9,7 +9,7 @@ Automatically structured phase-by-phase tracking for implementing the merged str
 ## How to Start a Phase
 
 1. Read `plan.md` to see the full build order and `status.md` to find the next unstarted phase
-2. Create `phase-<NN>-<short-name>/` folder (e.g. `phase-01-harden-vinu-lib/`)
+2. Create `phase-<NN>-<short-name>/` folder (e.g. `phase-01-harden-vinu-infra/`)
 3. Create `00-implementation.md` — the phase overview (plan before code)
 4. Create individual files for each work unit inside the phase
 5. On completion, update `status.md` and optionally create a summary `.md` matching the session-closure pattern
@@ -23,7 +23,7 @@ agentic-implementation/
 ├── AGENTS.md                           # This workflow definition
 ├── plan.md                             # Merged build order (the overall roadmap)
 ├── status.md                           # Overall progress tracker
-├── phase-01-harden-vinu-lib/
+├── phase-01-harden-vinu-infra/
 │   ├── 00-implementation.md            # Phase overview — what, where, dependencies
 │   ├── 01-task-<short-name>.md         # Individual work unit #1
 │   ├── 02-task-<short-name>.md         # Individual work unit #2
@@ -120,7 +120,7 @@ Brief description of what capability ships when this phase is done.
 
 | File | Service | Change Type |
 |------|---------|-------------|
-| `path/to/file.py` | vinu-lib | modify |
+| `path/to/file.py` | vinu-infra | modify |
 | `path/to/new_file.py` | vinu-research | create |
 
 ## Tasks in this Phase

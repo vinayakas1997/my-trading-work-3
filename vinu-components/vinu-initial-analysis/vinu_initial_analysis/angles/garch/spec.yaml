@@ -1,0 +1,19 @@
+title: GARCH Volatility Forecast
+purpose: >
+  Standalone GARCH(1,1) conditional-variance forecast — the classical,
+  zero-footprint volatility baseline (method 26 of the 32-method plan,
+  see New-talk-/Final-implementation/01-present-considerations/26-garch.md).
+  Extracted from shock_personality, which already fits GARCH internally
+  for its own vol_persistence field (via vinu_tools.compute.risk.volatility
+  .garch_volatility) — this angle exposes the same underlying fit as its
+  own first-class result rather than duplicating the math.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: Forecasted next-period volatility plus fitted GARCH(1,1) parameters

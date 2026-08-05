@@ -1,4 +1,4 @@
-from vinu_lib.llm.cost import CostEntry, CostTracker, TokenUsage, get_global_cost_tracker
+from vinu_infra.llm.cost import CostEntry, CostTracker, TokenUsage, get_global_cost_tracker
 
 
 def test_token_usage_from_api_response_empty():

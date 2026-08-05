@@ -1,7 +1,7 @@
 """Shared FastAPI application factory.
 
 Usage:
-    from vinu_lib.server import create_app
+    from vinu_infra.server import create_app
     from my_service.server import router
 
     app = create_app("my-service", "0.1.0", "description", router)
@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRouter
 from starlette.staticfiles import StaticFiles
 
-from vinu_lib.auth import VINU_API_KEY, require_auth
+from vinu_infra.auth import VINU_API_KEY, require_auth
 
 
 def _replace_nan(obj: Any) -> Any:

@@ -72,7 +72,7 @@ instrumenting each of the 7 call sites individually.
 - `ResearchConfig.data_root` (`config.py:55`) already exists and is already the
   root for other persistent state (SQLite DBs) — `data_root / "traces"` is a
   one-line addition, not a new configuration concept.
-- `debug_timer` (imported in `loop.py` from `vinu_lib.debug`, already wrapping
+- `debug_timer` (imported in `loop.py` from `vinu_infra.debug`, already wrapping
   every generation/backtest/walk-forward/stress-test step) shows this codebase
   already has a lightweight instrumentation convention — a trace writer should
   follow that same style/import pattern rather than introducing an unrelated

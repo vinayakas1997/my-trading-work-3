@@ -1,1 +1,1 @@
-"""Tests for vinu-lib."""
+"""Tests for vinu-infra."""

@@ -14,8 +14,8 @@ Both methods build parameterized SQL with `ON CONFLICT (conflict_columns) DO UPD
 
 | File | Lines | What Changed |
 |------|-------|-------------|
-| `vinu-components/vinu-lib/sqlite.py` | 52-78 | Added `upsert()` method |
-| `vinu-components/vinu-lib/sqlite.py` | 80-99 | Added `insert_or_ignore()` method |
+| `vinu-components/vinu-infra/sqlite.py` | 52-78 | Added `upsert()` method |
+| `vinu-components/vinu-infra/sqlite.py` | 80-99 | Added `insert_or_ignore()` method |
 
 ## Verification
 

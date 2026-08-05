@@ -8,9 +8,9 @@ from pathlib import Path
 import uvicorn
 from fastapi import APIRouter
 
-from vinu_lib.server import create_app as _create_app
+from vinu_infra.server import create_app as _create_app
 from vinu_news.config import load_config
-from vinu_news.server import routes_config, routes_read
+from vinu_news.server import routes_config, routes_read, routes_v1
 from vinu_news.service import NewsService
 
 
@@ -29,12 +29,13 @@ def create_app(service: NewsService | None = None):
 
     routes_config.get_service = _get_service
     routes_read.get_service = _get_service
+    routes_v1.get_service = _get_service
 
     merged = APIRouter()
     merged.include_router(routes_read.router)
     merged.include_router(routes_config.router)
 
-    return _create_app(
+    app = _create_app(
         service_name="vinu-news",
         version="0.1.0",
         description="Financial news ingestion and query API",
@@ -44,6 +45,10 @@ def create_app(service: NewsService | None = None):
         expose_health_on_root=False,
         route_prefix="news",
     )
+    # The redesigned positional API — additive, alongside /news/* above.
+    # See routes_v1.py's module docstring for the full design.
+    app.include_router(routes_v1.router, prefix="/v1/stage1/vinu-news")
+    return app
 
 
 def main() -> None:

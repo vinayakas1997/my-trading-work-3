@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
-from vinu_lib.server import create_app as _create_app
+from vinu_infra.server import create_app as _create_app
 from vinu_simulator.service import SimulatorService
 
 

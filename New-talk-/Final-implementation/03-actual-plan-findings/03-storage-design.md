@@ -34,7 +34,7 @@ source: there's no ambiguous default left to diverge from.
   `vinu_stock_price.db`, `vinu_initial_analysis_runs.db`. Never a generic
   `meta.db`.
 - **Shared library reuse**: all components route through
-  `vinu_lib.parquet.ParquetStore` and `vinu_lib.sqlite.SQLiteBackend`
+  `vinu_infra.parquet.ParquetStore` and `vinu_infra.sqlite.SQLiteBackend`
   instead of each reimplementing its own read/write/dedup logic.
 
 ## 3. Raw data — fetch at the finest granularity, resample the rest

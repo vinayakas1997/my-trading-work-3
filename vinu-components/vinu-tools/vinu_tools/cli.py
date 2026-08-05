@@ -8,7 +8,7 @@ import logging
 import sys
 import time
 
-from vinu_lib.debug import setup_logging
+from vinu_infra.debug import setup_logging
 from vinu_tools.compute.feature_catalog import format_help, indicator_meta_to_dict, list_indicators
 from vinu_tools.config import load_config
 from vinu_tools.server.app import create_app

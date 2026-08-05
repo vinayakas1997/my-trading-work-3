@@ -8,7 +8,7 @@ Create the SQLite-backed storage layer for the unified agent-memory catalog. Thi
 
 ## Approach
 
-- Extends `vinu_lib.sqlite.SQLiteBackend` (hardened in Phase 1) — inherits upsert, thread-local connections, WAL mode, schema migrations
+- Extends `vinu_infra.sqlite.SQLiteBackend` (hardened in Phase 1) — inherits upsert, thread-local connections, WAL mode, schema migrations
 - `memory_entries` table — unified schema across all sources (research, simulator, stock-price, news, agent)
 - `memory_fts` virtual table — FTS5 with porter stemmer for full-text search
 - `sync_watermarks` table — tracks last-sync cursor per upstream source

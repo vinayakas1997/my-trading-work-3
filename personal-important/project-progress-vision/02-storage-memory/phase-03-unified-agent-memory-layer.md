@@ -39,10 +39,10 @@ makes it the *default path*.
 
 ## Where changes occur
 
-- New module, likely `vinu-lib/memory.py` or a small new package (`vinu-memory`) so it can be a
+- New module, likely `vinu-infra/memory.py` or a small new package (`vinu-memory`) so it can be a
   dependency of `vinu-agent`, `vinu-research`, and `vinu-strategy` without creating awkward
   cross-imports between sibling packages — decide the exact location at implementation time
-  based on how `vinu-lib` is currently depended on across the tree.
+  based on how `vinu-infra` is currently depended on across the tree.
 - `MemoryQuery`/`get_memory_state(symbol: str) -> MemoryState` — a read-only aggregator that
   queries each package's Phase-2-style catalog (via whatever service/HTTP surface or, if
   colocated, direct SQLite read each package already exposes) and assembles one structured

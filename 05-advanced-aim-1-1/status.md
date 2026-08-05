@@ -1,7 +1,7 @@
 ---
 name: observability-telemetry-layer-status
 status: steps-1-4-implemented
-purpose: build log for AGENTS.md's "how to proceed" steps 1-4 (shared schema, wire into vinu-lib, fix vinu-agent's LLM client, SQLite table) plus a first pass at step 5 (tool-call telemetry) — what actually landed, file:line, and what's still open. Companion to AGENTS.md (the design/why); this file is the record of what happened.
+purpose: build log for AGENTS.md's "how to proceed" steps 1-4 (shared schema, wire into vinu-infra, fix vinu-agent's LLM client, SQLite table) plus a first pass at step 5 (tool-call telemetry) — what actually landed, file:line, and what's still open. Companion to AGENTS.md (the design/why); this file is the record of what happened.
 ---
 
 # Build Log — What Actually Landed
@@ -9,7 +9,7 @@ purpose: build log for AGENTS.md's "how to proceed" steps 1-4 (shared schema, wi
 ## What was built
 
 **1. Shared schema + SQLite store** —
-[`vinu-components/vinu-lib/telemetry.py`](../vinu-components/vinu-lib/telemetry.py):
+[`vinu-components/vinu-infra/telemetry.py`](../vinu-components/vinu-infra/telemetry.py):
 `LLMCallRecord` (service, model, base_url, prompt/completion/total tokens,
 `token_count_source: "provider"|"estimated"`, `retry_count`, `latency_sec`,
 `success`, `outcome`, `error`) and `StepRecord` (service, step_name,
@@ -26,17 +26,17 @@ project. `record_llm_call_safe`/`record_step_safe` wrap writes in
 `try/except: pass`, matching this project's established pattern (e.g.
 `session/service.py`'s debrief-detector) for never letting an
 observability side-effect break the thing it's observing. 10 tests,
-[`vinu-lib/tests/test_telemetry.py`](../vinu-components/vinu-lib/tests/test_telemetry.py).
+[`vinu-infra/tests/test_telemetry.py`](../vinu-components/vinu-infra/tests/test_telemetry.py).
 
-**2. Wired into `vinu-lib`'s existing LLM clients** —
-[`vinu-lib/llm/client.py`](../vinu-components/vinu-lib/llm/client.py) and
-[`client_async.py`](../vinu-components/vinu-lib/llm/client_async.py): both
+**2. Wired into `vinu-infra`'s existing LLM clients** —
+[`vinu-infra/llm/client.py`](../vinu-components/vinu-infra/llm/client.py) and
+[`client_async.py`](../vinu-components/vinu-infra/llm/client_async.py): both
 already logged tokens/duration to `data/llm_calls.jsonl`
 (`_log_llm_call`) but never tracked retry count. Added a `total_attempts`
 counter across the existing candidate-URL × retry loop and record an
 `LLMCallRecord` on every return path (success, parse error, all-endpoints-
 failed) — additive, the existing JSONL log and `CostTracker` recording are
-untouched. Covered by the existing `vinu-lib` test suite (68 passed, no
+untouched. Covered by the existing `vinu-infra` test suite (68 passed, no
 regressions — no new client tests added since the existing suite already
 exercises every retry/failure branch this touches).
 
@@ -110,18 +110,18 @@ cover context-window resolution priority, real-usage-over-estimate, and
 telemetry actually landing in the SQLite table for both LLM calls and
 tool calls.
 
-**Verified**: `vinu-lib/tests` — 68 passed. `vinu-agent/tests` — 303
+**Verified**: `vinu-infra/tests` — 68 passed. `vinu-agent/tests` — 303
 passed (280 pre-existing + 8 loop.py + 14 llm.py + 1 from the earlier
 `04` fix pass). No regressions in either suite.
 
 ## What was deliberately not done in this pass
 
 - **`vinu-research`'s LLM call sites** (`llm.py`, `loop.py`,
-  `forecast_skill.py`) already go through `vinu-lib`'s `LlmClient`/
+  `forecast_skill.py`) already go through `vinu-infra`'s `LlmClient`/
   `AsyncLlmClient` (per the earlier codebase scan) — step 2 above already
   covers them for free. Not separately touched.
 - **`vinu-initial-analysis`/`vinu-strategy`**: the earlier scan found no
-  direct `vinu_lib.llm` usage confirmed in these two — not instrumented
+  direct `vinu_infra.llm` usage confirmed in these two — not instrumented
   this pass since it wasn't confirmed they make LLM calls directly at all;
   worth confirming before assuming a gap here.
 - **A dashboard or UI over the collected data** — out of scope per

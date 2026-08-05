@@ -1,6 +1,6 @@
 # vinu-components Pipeline — Full Inefficiency Audit & Fix Plan
 
-> **Audit scope:** `vinu-stock-price` → `vinu-news` → `vinu-tools` → `vinu-initial-analysis` → `vinu-strategy` → `vinu-simulator` → `vinu-research` + shared `vinu-lib`
+> **Audit scope:** `vinu-stock-price` → `vinu-news` → `vinu-tools` → `vinu-initial-analysis` → `vinu-strategy` → `vinu-simulator` → `vinu-research` + shared `vinu-infra`
 >
 > **Date:** 2026-07-21
 >
@@ -820,7 +820,7 @@ The dedup hash only catches **exact** duplicates (same features, symbols, interv
 | **vinu-simulator** | DA-16, DA-17, DA-18, DA-19 | — | 1 | 3 | — |
 | **vinu-research** | FP-2, FP-6, DA-8, DA-9, DA-20, DA-21, DA-22 | — | 2 | 4 | 1 |
 | **run_pipeline.py** | FP-5 | — | 1 | — | — |
-| **vinu-lib (shared)** | (none in scope) | — | — | — | — |
+| **vinu-infra (shared)** | (none in scope) | — | — | — | — |
 
 # Severity Totals
 

@@ -1,6 +1,6 @@
 # DA-22 🟡 No Retry on Transient LLM Failure (All 6 LLM Clients)
 
-**Component:** `vinu-lib`, `vinu-agent`
+**Component:** `vinu-infra`, `vinu-agent`
 **Files Changed:** `client.py`, `client_async.py`, `agent/llm.py`
 
 ## Problem
@@ -15,8 +15,8 @@ Additionally, `LlmConfig.retry_max=3` was defined in `config.py` but **never rea
 
 | # | Client | File | Type | Fix |
 |---|--------|------|------|-----|
-| 1 | `LlmClient` (sync) | `vinu-lib/llm/client.py` | `requests` | Added inner retry loop around HTTP POST. Retries on `ConnectionError`, 429, 5xx, timeout. Exponential backoff: 1s → 2s → 4s (respects `retry_max` from config). Parse errors still return `None` immediately (permanent). |
-| 2 | `AsyncLlmClient` (async) | `vinu-lib/llm/client_async.py` | `httpx` | Same retry loop, uses `await asyncio.sleep()`. Proper exception ordering: `ConnectError` → `HTTPStatusError` → `RequestError` → `HTTPError` → parse error. |
+| 1 | `LlmClient` (sync) | `vinu-infra/llm/client.py` | `requests` | Added inner retry loop around HTTP POST. Retries on `ConnectionError`, 429, 5xx, timeout. Exponential backoff: 1s → 2s → 4s (respects `retry_max` from config). Parse errors still return `None` immediately (permanent). |
+| 2 | `AsyncLlmClient` (async) | `vinu-infra/llm/client_async.py` | `httpx` | Same retry loop, uses `await asyncio.sleep()`. Proper exception ordering: `ConnectError` → `HTTPStatusError` → `RequestError` → `HTTPError` → parse error. |
 | 3 | `OpenAIChatLLM` | `vinu-agent/agent/llm.py` | `openai` SDK | Added `max_retries=3` + `timeout` to `OpenAI()` constructor. Wrapped `create()` in try/except → `RuntimeError`. |
 | 4 | `DeepSeekChatLLM` | `vinu-agent/agent/llm.py` | `openai` SDK | Inherits from `OpenAIChatLLM` — fix applied automatically. |
 | 5 | `AnthropicChatLLM` | `vinu-agent/agent/llm.py` | `anthropic` SDK | Added `max_retries=3` to `Anthropic()` constructor. Wrapped `messages.create()` in try/except → `RuntimeError`. |
@@ -24,7 +24,7 @@ Additionally, `LlmConfig.retry_max=3` was defined in `config.py` but **never rea
 
 ## Autofixed Call Sites
 
-Fixing the 2 shared clients in vinu-lib automatically fixes **10 of 15** call sites:
+Fixing the 2 shared clients in vinu-infra automatically fixes **10 of 15** call sites:
 
 - **vinu-news** (3 sites): `client.py:37` (wrapper), `analyze.py:58` (analyze_article), `service.py:85` (worker loop) — all use `LlmClient` (sync)
 - **vinu-research** (4 sites): `llm.py:163` (passthrough), `llm_generator.py:260`/`313`/`381` — all use `AsyncLlmClient` (async)
@@ -32,12 +32,12 @@ Fixing the 2 shared clients in vinu-lib automatically fixes **10 of 15** call si
 
 ## Root Cause
 
-The `LlmConfig` class in `vinu_lib/llm/config.py` has had `retry_max=3` defined since day one, but `LlmClient.chat_json()` and `AsyncLlmClient.chat_json()` never read it. The Docker hostname failover (`alternative_urls`) was the only resilience mechanism, and it only helps with loopback resolution, never with transient HTTP errors.
+The `LlmConfig` class in `vinu_infra/llm/config.py` has had `retry_max=3` defined since day one, but `LlmClient.chat_json()` and `AsyncLlmClient.chat_json()` never read it. The Docker hostname failover (`alternative_urls`) was the only resilience mechanism, and it only helps with loopback resolution, never with transient HTTP errors.
 
 ## Verification
 
 All tests pass across all affected components:
-- vinu-lib: 31 passed
+- vinu-infra: 31 passed
 - vinu-agent: 108 passed
 - vinu-news: 2 passed (test_ticker_news_provider)
 - vinu-research: 44 passed

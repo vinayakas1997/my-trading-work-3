@@ -1,4 +1,4 @@
-# Phase 01: Harden vinu-lib Primitives
+# Phase 01: Harden vinu-infra Primitives
 
 **Status:** COMPLETED
 **Started:** 2026-07-24
@@ -7,21 +7,21 @@
 
 ## What It Delivers
 
-`vinu-lib`'s `SQLiteBackend` and `ParquetStore` are hardened with the missing primitives that downstream packages need:
+`vinu-infra`'s `SQLiteBackend` and `ParquetStore` are hardened with the missing primitives that downstream packages need:
 
 - **SQLiteBackend**: upsert helpers (`upsert()` and `insert_or_ignore()`), composite-key support in schema creation, exposed `_get_conn()` for sub-store composition
 - **ParquetStore**: sharded writes (`write_shard`), shard reads (`read_shard`), consolidation (`consolidate`)
 
-These additions close the gap between what vinu-lib provides and what stock-price/news/research actually need, so downstream phases can build on a single shared foundation instead of hand-rolling duplicates.
+These additions close the gap between what vinu-infra provides and what stock-price/news/research actually need, so downstream phases can build on a single shared foundation instead of hand-rolling duplicates.
 
 ## Files Touched
 
 | File | Service | Change Type |
 |------|---------|-------------|
-| `vinu-components/vinu-lib/sqlite.py` | vinu-lib | modify |
-| `vinu-components/vinu-lib/parquet.py` | vinu-lib | modify |
-| `vinu-components/vinu-lib/tests/test_sqlite.py` | vinu-lib | modify |
-| `vinu-components/vinu-lib/tests/test_parquet.py` | vinu-lib | modify |
+| `vinu-components/vinu-infra/sqlite.py` | vinu-infra | modify |
+| `vinu-components/vinu-infra/parquet.py` | vinu-infra | modify |
+| `vinu-components/vinu-infra/tests/test_sqlite.py` | vinu-infra | modify |
+| `vinu-components/vinu-infra/tests/test_parquet.py` | vinu-infra | modify |
 
 ## Tasks in this Phase
 

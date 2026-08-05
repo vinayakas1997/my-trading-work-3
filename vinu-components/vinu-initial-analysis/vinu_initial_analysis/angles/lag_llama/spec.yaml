@@ -1,0 +1,22 @@
+title: Lag-Llama Probabilistic Time-Series Model (fallback proxy)
+purpose: >
+  Probabilistic (multi-quantile) forecast in the spirit of Lag-Llama
+  (method 16 of the 32-method plan, see
+  New-talk-/Final-implementation/01-present-considerations/16-lag-llama.md).
+  lag-llama has no PyPI package and only a manual-clone research repo —
+  this angle uses an honestly-labeled AR(5) linear-Gaussian fallback
+  proxy that still emits a genuinely probabilistic output. See
+  compute.py's module docstring.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: >
+    Point forecast plus a 5-quantile (p5/p25/p50/p75/p95) distributional
+    forecast for the next 5 periods, plus model_backend (always
+    "fallback_proxy") and fallback_reason.

@@ -11,7 +11,7 @@ execution roadmap.
 
 | # | Phase | Status | Depends on | Detail |
 |---|---|---|---|---|
-| 1 | Consolidate onto `vinu-lib`'s shared storage primitives | not started | — | [phase-01-adopt-shared-storage-library.md](phase-01-adopt-shared-storage-library.md) |
+| 1 | Consolidate onto `vinu-infra`'s shared storage primitives | not started | — | [phase-01-adopt-shared-storage-library.md](phase-01-adopt-shared-storage-library.md) |
 | 2 | Catalog + watermark pattern for research/simulator storage | not started | Phase 1 | [phase-02-research-simulator-catalog.md](phase-02-research-simulator-catalog.md) |
 | 3 | Unified agent-memory layer | not started | Phase 2 | [phase-03-unified-agent-memory-layer.md](phase-03-unified-agent-memory-layer.md) |
 | 4 | Context-efficient retrieval for agents/skills/tools | not started | Phase 3 | [phase-04-context-efficient-retrieval.md](phase-04-context-efficient-retrieval.md) |
@@ -19,7 +19,7 @@ execution roadmap.
 ## Dependency chain
 
 ```
-Phase 1 (vinu-lib becomes the real shared foundation; stock-price + news migrate)
+Phase 1 (vinu-infra becomes the real shared foundation; stock-price + news migrate)
    │
    └──▶ Phase 2 (same pattern applied to vinu-simulator / vinu-research)
             │
@@ -33,7 +33,7 @@ and news already have the right design, they just need to sit on one shared, wel
 instead of two duplicated ones. Phase 2 is what actually closes the gap identified in
 [01-vision-plan](../01-vision-plan/) (Phase 1 and Phase 3 there currently describe hand-rolled
 SQLite tables for research/simulation storage — once this folder's Phase 1 ships, those should
-be built on `vinu_lib.SQLiteBackend`/`ParquetStore` from the start rather than becoming a third
+be built on `vinu_infra.SQLiteBackend`/`ParquetStore` from the start rather than becoming a third
 independent reimplementation).
 
 Phase 3 is the first point where storage stops being purely package-local — it introduces a
@@ -55,7 +55,7 @@ kind of duplicated effort this folder exists to prevent.
 
 ## Files touched, by service
 
-- **vinu-lib** (`vinu-components/vinu-lib/`): Phase 1.
+- **vinu-infra** (`vinu-components/vinu-infra/`): Phase 1.
   - `sqlite.py` (`SQLiteBackend`), `parquet.py` (`ParquetStore`), `db.py` (migration helpers)
 - **vinu-stock-price** (`vinu-components/vinu-stock-price/`): Phase 1 (migration only, behavior
   unchanged).
@@ -63,7 +63,7 @@ kind of duplicated effort this folder exists to prevent.
 - **vinu-news** (`vinu-components/vinu-news/`): Phase 1 (migration only, behavior unchanged).
   - `vinu_news/backfill/store.py`, `vinu_news/analysis/storage/`
 - **vinu-simulator / vinu-research**: Phase 2 (new work, coordinated with `01-vision-plan`).
-- **New cross-package memory module** (likely `vinu-lib` or a new small package): Phase 3.
+- **New cross-package memory module** (likely `vinu-infra` or a new small package): Phase 3.
 - **vinu-agent** (skills, tools, agent loop context-building): Phase 4.
 
 ## Approval status

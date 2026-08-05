@@ -1,0 +1,25 @@
+title: TFT Temporal Fusion Transformer (Quantile Forecast)
+purpose: >
+  Trained-from-scratch, lightweight Temporal Fusion Transformer (method 22
+  of the 32-method plan, see
+  New-talk-/Final-implementation/01-present-considerations/22-tft.md) — a
+  gated variable-selection network weights engineered return/volatility
+  features at each time step, an LSTM encodes the sequence, self-attention
+  pools it, and three linear heads produce P10/P50/P90 next-step return
+  quantiles trained jointly via pinball loss, per the spec's "natively
+  quantile forecasts" output format. Known-future inputs and static
+  covariates from the source spec are not modeled (no such data available
+  from `bars`/`news`); see compute.py's docstring for the full note.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: >
+    P10/P50/P90 next-step return and price quantile forecasts, thresholded
+    direction from the median, the last-step variable-selection weights
+    per feature, and the fit's training-window count and final training loss.

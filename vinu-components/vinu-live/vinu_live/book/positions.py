@@ -4,7 +4,7 @@ import hashlib
 import logging
 from typing import Any
 
-from vinu_lib.sqlite import SQLiteBackend
+from vinu_infra.sqlite import SQLiteBackend
 from vinu_live.book.schema import (
     Position,
     OPEN_POSITIONS_TABLE,

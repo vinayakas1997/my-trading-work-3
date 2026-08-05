@@ -19,9 +19,7 @@ from vinu_stock.storage.paths import archive_year_path
 @pytest.fixture
 def client(tmp_path: Path) -> TestClient:
     data_root = tmp_path / "data"
-    meta_db = data_root / "meta.db"
     os.environ["VINU_STOCK_DATA_ROOT"] = str(data_root)
-    os.environ["VINU_STOCK_META_DB_PATH"] = str(meta_db)
 
     # Seed parquet with recent timestamps aligned to 5m buckets
     now = int(time.time())

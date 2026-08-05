@@ -3,7 +3,7 @@ from tempfile import TemporaryDirectory
 
 import pyarrow as pa
 
-from vinu_lib.parquet import ParquetStore
+from vinu_infra.parquet import ParquetStore
 
 
 def test_parquet_append_read():

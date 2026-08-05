@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from vinu_lib.debug import debug_log
+from vinu_infra.debug import debug_log
 from vinu_research.models import Evidence, Hypothesis, HypothesisStatus
 
 LOG = logging.getLogger(__name__)

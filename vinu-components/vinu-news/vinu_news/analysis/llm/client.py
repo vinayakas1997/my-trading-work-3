@@ -1,13 +1,13 @@
-"""OpenAI-compatible LLM HTTP client — delegates to vinu_lib.llm."""
+"""OpenAI-compatible LLM HTTP client — delegates to vinu_infra.llm."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from vinu_news.config import VinuConfig, load_config
-from vinu_lib.llm import LlmClient as SharedLlmClient, LlmConfig
+from vinu_infra.llm import LlmClient as SharedLlmClient, LlmConfig
 
-LOG = None  # unused, logging is handled by vinu_lib.llm
+LOG = None  # unused, logging is handled by vinu_infra.llm
 
 
 class LlmClientError(RuntimeError):

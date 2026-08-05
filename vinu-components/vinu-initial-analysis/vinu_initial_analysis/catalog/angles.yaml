@@ -1,8 +1,21 @@
 angles:
+- id: garch
+  title: GARCH Volatility Forecast
+  purpose: Standalone GARCH(1,1) conditional-variance forecast — the classical volatility baseline (method
+    26 of the 32-method plan). Extracted from shock_personality, which already fits GARCH internally.
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: Forecasted next-period volatility plus fitted GARCH(1,1) parameters
 - id: backtesting_44_metrics
   title: Backtesting Metrics
-  purpose: Compute 44+ portfolio metrics — Sharpe, Sortino, MaxDD, WinRate, CAGR,
-    VaR, CVaR, tail ratio
+  purpose: Compute 44+ portfolio metrics — Sharpe, Sortino, MaxDD, WinRate, CAGR, VaR, CVaR, tail ratio
   time_formats:
   - 1D
   - 1W
@@ -18,8 +31,7 @@ angles:
     description: Angle-specific results
 - id: drawdown_deep_dive
   title: Drawdown Deep-Dive
-  purpose: Drawdown detection, news attribution, max drawdown duration, recovery time
-    across multi-timeframe
+  purpose: Drawdown detection, news attribution, max drawdown duration, recovery time across multi-timeframe
   time_formats:
   - 15min
   - 1H
@@ -34,7 +46,8 @@ angles:
     description: Angle-specific results
 - id: ml_model_pipeline
   title: ML Model Pipeline
-  purpose: Train/evaluate 9 ML models, OOS IC, auto-selection, CUDA detection
+  purpose: '[DEPRECATED � superseded by the dlinear/lstm/patchtst/itransformer/tft/lpatchtst/tips_regime_aware_transformer/kronos/chronos/timesfm/...
+    family, see compute.py docstring] Train/evaluate 9 ML models, OOS IC, auto-selection, CUDA detection'
   time_formats:
   - 1D
   - 1W
@@ -49,8 +62,8 @@ angles:
     description: Angle-specific results
 - id: news_first_analysis
   title: News First Analysis
-  purpose: Categorize and quantify the news landscape — sentiment, categories, priority,
-    threads, and basic stats
+  purpose: '[DEPRECATED � superseded by vinu-news analysis/methods/, see compute.py docstring] Categorize
+    and quantify the news landscape — sentiment, categories, priority, threads, and basic stats'
   time_formats:
   - 15min
   - 1H
@@ -65,8 +78,8 @@ angles:
     description: Angle-specific results
 - id: news_price_causality
   title: News-Price Causality
-  purpose: Statistical proof of news impact on price — Granger causality, Pearson
-    correlation, lag analysis, event study
+  purpose: Statistical proof of news impact on price — Granger causality, Pearson correlation, lag analysis,
+    event study
   time_formats:
   - 15min
   - 1H
@@ -81,16 +94,14 @@ angles:
     description: Angle-specific results
 - id: pnl_attribution
   title: PnL Attribution
-  purpose: 'Realized-trade PnL statistics per symbol -- win rate, average win/loss,
-    trade count -- computed from Phase 6 (vinu-live) execution logs. Every field includes
-    sample size and confidence interval. Deviates from the standard runner-driven
-    angle pattern: its natural input is closed positions/fills, not price bars, so
-    it is push-fed via POST /pnl-attribution/{symbol}/record (Phase 7''s feedback
-    loop) rather than pulled by AngleRunner from bars/news. `compute()` still exists
-    with the standard signature so a generic `/run/{ticker}` sweep doesn''t error,
-    but it is a documented no-op there -- real population happens through the ingest
-    path (`pnl_attribution_ingest.py`), which calls `aggregate_pnl_attribution` directly
-    and writes via `AngleStorage.write()`.
+  purpose: 'Realized-trade PnL statistics per symbol -- win rate, average win/loss, trade count -- computed
+    from Phase 6 (vinu-live) execution logs. Every field includes sample size and confidence interval.
+    Deviates from the standard runner-driven angle pattern: its natural input is closed positions/fills,
+    not price bars, so it is push-fed via POST /pnl-attribution/{symbol}/record (Phase 7''s feedback loop)
+    rather than pulled by AngleRunner from bars/news. `compute()` still exists with the standard signature
+    so a generic `/run/{ticker}` sweep doesn''t error, but it is a documented no-op there -- real population
+    happens through the ingest path (`pnl_attribution_ingest.py`), which calls `aggregate_pnl_attribution`
+    directly and writes via `AngleStorage.write()`.
 
     '
   time_formats:
@@ -104,8 +115,7 @@ angles:
     description: PnL attribution results with confidence intervals
 - id: regime_analysis
   title: Regime Analysis
-  purpose: 4-regime classifier (bull/bear/high_vol/sideways), transition matrix, per-regime
-    Sharpe ratio
+  purpose: 4-regime classifier (bull/bear/high_vol/sideways), transition matrix, per-regime Sharpe ratio
   time_formats:
   - 1D
   - 1W
@@ -120,9 +130,9 @@ angles:
     description: Angle-specific results
 - id: shock_clustering
   title: Shock Clustering
-  purpose: 'Identifies which symbols tend to shock together, derived from Phase 1''s
-    dynamic covariance sampled specifically at shock dates. Reports cluster membership
-    with correlation strength and confidence intervals.
+  purpose: 'Identifies which symbols tend to shock together, derived from Phase 1''s dynamic covariance
+    sampled specifically at shock dates. Reports cluster membership with correlation strength and confidence
+    intervals.
 
     '
   time_formats:
@@ -137,9 +147,8 @@ angles:
     description: Shock cluster membership for the symbol
 - id: shock_personality
   title: Shock Personality
-  purpose: 'Post-shock behavioral characterization — gap_fill_rate, vol_persistence
-    (from Phase 1 GARCH), drift_persistence_days. Every field includes sample size
-    and confidence interval.
+  purpose: 'Post-shock behavioral characterization — gap_fill_rate, vol_persistence (from Phase 1 GARCH),
+    drift_persistence_days. Every field includes sample size and confidence interval.
 
     '
   time_formats:
@@ -154,8 +163,8 @@ angles:
     description: Shock personality results with confidence intervals
 - id: trend_lifecycle
   title: Trend Lifecycle
-  purpose: Peak/trough pattern library, KNN similarity matching, trend stage classification,
-    reversal signals with percentage exit thresholds
+  purpose: Peak/trough pattern library, KNN similarity matching, trend stage classification, reversal
+    signals with percentage exit thresholds
   time_formats:
   - 15min
   - 1H
@@ -171,9 +180,8 @@ angles:
     description: Angle-specific results
 - id: trend_session_structure
   title: Trend Session Structure
-  purpose: Session-level analysis of trend_lifecycle peaks/troughs — which trading
-    session (premarket/regular/afterhours) produces reliable tops, with per-session
-    drawdown, recovery, and match-similarity statistics
+  purpose: Session-level analysis of trend_lifecycle peaks/troughs — which trading session (premarket/regular/afterhours)
+    produces reliable tops, with per-session drawdown, recovery, and match-similarity statistics
   time_formats:
   - 15min
   - 1H
@@ -186,3 +194,512 @@ angles:
   - column: angle_data
     type: dict
     description: Angle-specific results
+- id: arima
+  title: ARIMA Classical Statistical Baseline
+  purpose: 'AutoRegressive Integrated Moving Average forecast — the classical statistical baseline (method
+    25 of the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/25-arima.md).
+    Fits an ARIMA(p, d, q) model to the close-price series with order chosen by AIC grid search, no fixed
+    lookback window, and reports the model''s standard output shape: a one-step-ahead point forecast plus
+    its 95% confidence interval.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'Fitted ARIMA order, AIC, one-step-ahead point forecast, and 95% confidence interval
+
+      '
+- id: chronos
+  title: Chronos Time-Series Foundation Model
+  purpose: 'Zero-shot probabilistic forecast from Amazon''s Chronos-T5 time-series foundation model (method
+    10 of the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/10-chronos.md).
+    General-purpose, not finance-specific — a comparison baseline against Kronos, not a first-choice
+    signal (per the spec''s own caveat that general TSFMs tend to underperform finance-specific models
+    on K-line data).
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'Quantile forecast (p10/median/p90) for the next 5 periods, plus model_backend ("pretrained"
+      via amazon/chronos-t5-tiny, or "fallback_proxy" if the real pipeline could not be loaded).
+
+      '
+- id: cross_attention_gcn_news_price_fusion
+  title: Bidirectional Cross-Attention + GCN News-Price Fusion
+  purpose: 'News+price fusion via real bidirectional cross-attention (method 29, see New-talk-/Final-implementation/01-present-considerations/
+    29-cross-attention-gcn-news-price-fusion.md). The cross-attention layer is a genuine small PyTorch
+    module; the GCN''s cross-stock layer is structurally degenerate here (single-node self-loop) since
+    compute() is called per single symbol, not jointly across tickers — see compute.py''s module docstring
+    and the gcn_note output field.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'Predicted next-period return/close from the fused price+news representation, plus model_backend
+      ("trained_in_process"), gcn_note explaining the single-ticker degeneration, and n_news_articles_used.
+
+      '
+- id: dlinear
+  title: DLinear Decomposition Linear Forecast
+  purpose: 'Trained-from-scratch DLinear model (method 18 of the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/18-dlinear.md)
+    — the simplest of six architectures the source survey found "actually win on finance". Decomposes
+    the close-price window into a moving-average trend and a seasonal residual, fits one small linear
+    layer to each on a handful of Adam epochs at request time, and sums their outputs into a one-step-ahead
+    point forecast, thresholded to a direction.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'One-step-ahead forecast price/return, thresholded direction (up/down/flat), and the
+      fit''s training-window count and final training loss.
+
+      '
+- id: exponential_smoothing
+  title: Exponential Smoothing Classical Baseline
+  purpose: 'Double exponential smoothing (Holt''s linear trend method) forecast — the classical, essentially-free
+    statistical baseline (method 28 of the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/28-exponential-smoothing.md).
+    Weights recent close-price observations more heavily than older ones via an exponentially-decaying
+    scheme, fitting a level + trend decomposition (no seasonal component — daily-bar equity series have
+    no reliable fixed seasonal period) and reporting the one-step-ahead point forecast alongside the fitted
+    level/trend components.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'One-step-ahead point forecast, fitted smoothing parameters (alpha, beta), and level/trend
+      decomposition
+
+      '
+- id: fincast_foundation_model
+  title: FinCast Financial Foundation Model (fallback proxy)
+  purpose: 'Next-K-line forecast in the spirit of FinCast (method 30, see New-talk-/Final-implementation/01-present-considerations/
+    30-fincast-foundation-model.md). The spec itself flags FinCast''s public availability as unconfirmed/borderline
+    (no PyPI package, no self-hostable checkpoint reference) — this angle uses an honestly-labeled small
+    in-process-trained PyTorch MLP proxy instead of hunting for a nonexistent package. See compute.py''s
+    module docstring.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'Predicted next-bar OHLC plus model_backend (always "fallback_proxy") and fallback_reason
+      explaining why.
+
+      '
+- id: finmamba_graph_state_space
+  title: FinMamba Graph-Enhanced State-Space Model (fallback proxy)
+  purpose: 'Stock-movement (up/down) prediction in the spirit of FinMamba (method 31, see New-talk-/Final-implementation/01-present-considerations/
+    31-finmamba-graph-state-space.md). The spec itself discloses no parameter count and no PyPI package
+    or repo — public availability is unconfirmed — so this angle uses an honestly-labeled minimal
+    linear state-space-recursion proxy instead of hunting for a nonexistent package. The spec''s cross-stock
+    graph layer is likewise structurally degenerate (single-node) since compute() is called per single
+    symbol. See compute.py''s module docstring.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'predicted_movement (up/down/flat) with a confidence score, plus model_backend (always
+      "fallback_proxy"), fallback_reason, and graph_note explaining the single-ticker degeneration.
+
+      '
+- id: itransformer
+  title: iTransformer Cross-Variate Attention Forecast
+  purpose: 'Trained-from-scratch iTransformer model (method 21 of the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/21-itransformer.md)
+    — tokenizes variates (here: this symbol''s OHLCV channels, since the per-symbol compute() interface
+    has no sibling-ticker input to exploit true cross-asset attention; see compute.py''s docstring for
+    the full deviation note) rather than time steps, so self-attention runs across variate-tokens. Fit
+    via a handful of Adam epochs at request time; reports the close-channel one-step forecast, thresholded
+    to a direction.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'One-step-ahead close-channel forecast price/return, thresholded direction (up/down/flat),
+      which OHLCV channels were used as variates, and the fit''s training-window count and final training
+      loss.
+
+      '
+- id: kalman_filters
+  title: Kalman Filter State Estimation
+  purpose: 'Classical recursive state-estimation baseline (method 27 of the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/27-kalman-filters.md).
+    Recursively estimates a hidden underlying price level and local trend from noisy close-price observations
+    via a predict-then-correct cycle (statsmodels'' local-linear-trend structural time series model —
+    a two-state Kalman filter/smoother). Reports the present/recent filtered and smoothed state plus its
+    uncertainty (state covariance) — not a forward forecast.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'Filtered and smoothed level/trend state estimates plus their standard deviations (state
+      covariance uncertainty)
+
+      '
+- id: kronos
+  title: Kronos Financial K-Line Foundation Model (fallback proxy)
+  purpose: 'Next-K-line forecast in the spirit of Kronos, the flagship open-source financial K-line foundation
+    model (method 9 of the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/09-kronos.md).
+    Kronos has no pip-installable package or loadable weights in this environment (GitHub-only, custom
+    non-packaged loader) — this angle uses an honestly-labeled small PyTorch proxy trained in-process
+    on the ticker''s own OHLC window instead of the real pretrained model. See compute.py''s module docstring
+    for the full explanation.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'Predicted next-bar OHLC plus model_backend (always "fallback_proxy" for this angle)
+      and fallback_reason explaining why.
+
+      '
+- id: lag_llama
+  title: Lag-Llama Probabilistic Time-Series Model (fallback proxy)
+  purpose: 'Probabilistic (multi-quantile) forecast in the spirit of Lag-Llama (method 16 of the 32-method
+    plan, see New-talk-/Final-implementation/01-present-considerations/16-lag-llama.md). lag-llama has
+    no PyPI package and only a manual-clone research repo — this angle uses an honestly-labeled AR(5)
+    linear-Gaussian fallback proxy that still emits a genuinely probabilistic output. See compute.py''s
+    module docstring.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'Point forecast plus a 5-quantile (p5/p25/p50/p75/p95) distributional forecast for the
+      next 5 periods, plus model_backend (always "fallback_proxy") and fallback_reason.
+
+      '
+- id: lpatchtst
+  title: LPatchTST LSTM+PatchTST Hybrid Forecast
+  purpose: 'Trained-from-scratch LPatchTST model (method 23 of the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/23-lpatchtst.md)
+    — the best-performing of the six trained-from-scratch architectures in the source survey (~54% directional
+    accuracy, Sharpe 2.31-2.32). "L" is LSTM, not "lightweight": an LSTM branch and a patch-transformer
+    branch (the same `PatchEncoderBranch` used standalone by `patchtst`) each encode the close-price lookback
+    window, their representations are concatenated, and one linear head produces the one-step point forecast.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'One-step-ahead forecast price/return, thresholded direction (up/down/flat), LSTM/patch
+      branch configuration, and the fit''s training-window count and final training loss.
+
+      '
+- id: lstm
+  title: LSTM Sequential Forecast
+  purpose: 'Trained-from-scratch single-layer LSTM (method 19 of the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/19-lstm.md)
+    — the classical recurrent baseline among the six trained-from-scratch architectures the source survey
+    found competitive on finance. Processes a rolling close-price window step-by-step through gated memory
+    cells, fit via a handful of Adam epochs at request time, producing a one-step point forecast thresholded
+    to a direction.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'One-step-ahead forecast price/return, thresholded direction (up/down/flat), and the
+      fit''s training-window count and final training loss.
+
+      '
+- id: moirai
+  title: MOIRAI Any-Variate Time-Series Foundation Model (fallback proxy)
+  purpose: 'Forecast in the spirit of Salesforce''s MOIRAI (method 13 of the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/13-moirai.md).
+    The real `uni2ts` package exists but would downgrade the shared environment''s torch build and can''t
+    exercise MOIRAI''s any-variate multi-ticker mechanism from this per-symbol interface anyway — this
+    angle uses an honestly-labeled AR(3) statistical fallback proxy. See compute.py''s module docstring.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'Point + p10/p90 forecast for the next 5 periods, plus model_backend (always "fallback_proxy"),
+      fallback_reason, and any_variate_note explaining the single-ticker degeneration.
+
+      '
+- id: moment
+  title: MOMENT Multi-Task Time-Series Foundation Model (fallback proxy)
+  purpose: 'Forecast in the spirit of MOMENT''s forecasting task (method 14 of the 32-method plan, see
+    New-talk-/Final-implementation/01-present-considerations/14-moment.md). The real `momentfm` package
+    failed to build in this Python 3.12 environment (pkgutil.ImpImporter incompatibility, confirmed via
+    an actual install attempt) — this angle uses an honestly-labeled statistical fallback proxy for
+    the forecasting task only. See compute.py''s module docstring.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'Point + p10/p90 forecast for the next 5 periods, plus model_backend (always "fallback_proxy"),
+      fallback_reason, and task_note flagging that only the forecasting task is implemented.
+
+      '
+- id: patchformer
+  title: PatchFormer Patch-Based Foundation Model (fallback proxy)
+  purpose: 'Patch-similarity forecast in the spirit of PatchFormer (method 17 of the 32-method plan, see
+    New-talk-/Final-implementation/01-present-considerations/17-patchformer.md). No PyPI package exists
+    and the spec itself couldn''t confirm the real model''s architecture — this angle uses an honestly-labeled
+    k-NN patch-similarity statistical proxy. See compute.py''s module docstring.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'Point + p10/p90 forecast for the next 5 periods derived from k-nearest-neighbor historical
+      patch similarity, plus model_backend (always "fallback_proxy") and fallback_reason.
+
+      '
+- id: patchtst
+  title: PatchTST Channel-Independent Patch Transformer
+  purpose: 'Trained-from-scratch PatchTST model (method 20 of the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/20-patchtst.md)
+    — splits the close-price lookback window into fixed-length patches, embeds each as a token, and
+    runs a small transformer encoder''s self-attention across patches (channel-independent design, a regularizer
+    per the source survey). Fit via a handful of Adam epochs at request time; produces a one-step point
+    forecast thresholded to a direction. See `lpatchtst` for the LSTM+PatchTST hybrid built on the same
+    shared patch-encoder core.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'One-step-ahead forecast price/return, thresholded direction (up/down/flat), patch configuration,
+      and the fit''s training-window count and final training loss.
+
+      '
+- id: tft
+  title: TFT Temporal Fusion Transformer (Quantile Forecast)
+  purpose: 'Trained-from-scratch, lightweight Temporal Fusion Transformer (method 22 of the 32-method
+    plan, see New-talk-/Final-implementation/01-present-considerations/22-tft.md) — a gated variable-selection
+    network weights engineered return/volatility features at each time step, an LSTM encodes the sequence,
+    self-attention pools it, and three linear heads produce P10/P50/P90 next-step return quantiles trained
+    jointly via pinball loss, per the spec''s "natively quantile forecasts" output format. Known-future
+    inputs and static covariates from the source spec are not modeled (no such data available from `bars`/`news`);
+    see compute.py''s docstring for the full note.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'P10/P50/P90 next-step return and price quantile forecasts, thresholded direction from
+      the median, the last-step variable-selection weights per feature, and the fit''s training-window
+      count and final training loss.
+
+      '
+- id: timegpt
+  title: TimeGPT (fallback proxy — paid hosted API, no key available)
+  purpose: 'Point + interval forecast in the spirit of Nixtla''s TimeGPT (method 12 of the 32-method plan,
+    see New-talk-/Final-implementation/01-present-considerations/12-timegpt.md). TimeGPT is a paid hosted
+    API with no self-hostable checkpoint, per the spec''s own text — this angle always runs an honestly-labeled
+    statistical fallback proxy (EWMA trend + residual-normal interval) instead of calling Nixtla''s paid
+    API with no key.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'Point forecast plus an 80% interval for the next 5 periods, plus model_backend (always
+      "fallback_proxy" for this angle) and fallback_reason explaining why.
+
+      '
+- id: timer_timerxl
+  title: Timer / Timer-XL Patch-Based Foundation Model (fallback proxy)
+  purpose: 'Patch-based forecast in the spirit of Timer/Timer-XL (method 15 of the 32-method plan, see
+    New-talk-/Final-implementation/01-present-considerations/15-timer-timerxl.md). Neither package name
+    exists on PyPI and the only public artifact (THUML''s research repo) isn''t pip-installable — this
+    angle uses an honestly-labeled patch-based statistical proxy. See compute.py''s module docstring.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'Point + p10/p90 forecast for the next 5 periods derived from per-patch trend extrapolation,
+      plus model_backend (always "fallback_proxy") and fallback_reason.
+
+      '
+- id: timesfm
+  title: TimesFM Time-Series Foundation Model
+  purpose: 'Zero-shot point + quantile forecast from Google''s TimesFM foundation model (method 11 of
+    the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/11-timesfm.md). General-purpose,
+    not finance-specific — a comparison baseline alongside Chronos and Kronos, not a first-choice signal.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'Point forecast plus p10/p90 quantile band for the next 5 periods, plus model_backend
+      ("pretrained" via google/timesfm-2.5-200m-pytorch, or "fallback_proxy" if the real checkpoint could
+      not be loaded).
+
+      '
+- id: tips_regime_aware_transformer
+  title: TIPS Regime-Aware Transformer Forecast
+  purpose: 'Trained-from-scratch regime-aware transformer (method 24 of the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/24-tips-regime-aware-transformer.md)
+    — detects the current regime (momentum vs. mean-reversion, via trailing lag-1 return autocorrelation)
+    and synthesizes a regime-tuned inductive prior by routing a shared transformer encoder''s pooled representation
+    through one of two regime-specific linear output heads. Produces a one-step point forecast conditioned
+    on, and an auxiliary label for, the detected regime.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'One-step-ahead forecast price/return, thresholded direction (up/down/flat), detected
+      regime label (momentum/mean_reversion) and its underlying autocorrelation statistic, the regime
+      mix seen during training, and the fit''s training-window count and final training loss.
+
+      '
+- id: peer_relative_strength
+  title: Peer Relative Strength
+  purpose: 'Measures how a symbol performs relative to its watchlist peer basket over time using rolling
+    correlation and relative (excess) returns. Stands apart from shock_clustering (which only answers
+    "which symbols shock together on shock dates") by computing peer co-movement and relative strength
+    as a continuous, windowed signal across the full requested range.
+
+    '
+  time_formats:
+  - 1D
+  inputs:
+    symbol: str
+    from_ts: int | None
+    to_ts: int | None
+    price_client: price_client | None
+  outputs:
+  - column: angle_data
+    type: dict
+    description: 'Rolling peer correlation and excess-return rows per sampled bar: date, peer_symbol,
+      correlation (63-day rolling), relative_return_20d.'

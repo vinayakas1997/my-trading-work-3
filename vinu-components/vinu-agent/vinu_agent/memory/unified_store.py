@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
-from vinu_lib.sqlite import SQLiteBackend
+from vinu_infra.sqlite import SQLiteBackend
 
 
 SCHEMA = """

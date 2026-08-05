@@ -98,7 +98,9 @@ class TestIngestClosedPositions:
 class TestRoutes:
     @pytest.fixture
     def client(self, tmp_path: Path) -> TestClient:
-        config = VinuInitialAnalysisConfig(data_root=tmp_path)
+        config = VinuInitialAnalysisConfig(
+            data_root=tmp_path, runs_db_path=tmp_path / "vinu_initial_analysis_runs.db"
+        )
         service = InitialAnalysisService(config)
         return TestClient(create_app(service))
 

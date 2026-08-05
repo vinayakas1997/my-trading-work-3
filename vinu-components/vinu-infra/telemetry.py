@@ -7,7 +7,7 @@ after the fact — nothing was actually measuring this while it ran. This
 module is the layer that would have surfaced it live instead.
 
 Usage:
-    from vinu_lib.telemetry import LLMCallRecord, record_llm_call_safe
+    from vinu_infra.telemetry import LLMCallRecord, record_llm_call_safe
 
     record_llm_call_safe(
         LLMCallRecord(
@@ -19,7 +19,7 @@ Usage:
         db_path="/data/telemetry.db",
     )
 
-Deliberately additive, not a replacement for `vinu_lib.llm.client`'s existing
+Deliberately additive, not a replacement for `vinu_infra.llm.client`'s existing
 `data/llm_calls.jsonl` append log or `CostTracker` — this is a second,
 queryable sink for the same class of event, plus a new one (`StepRecord`)
 for non-LLM pipeline steps and tool calls that nothing previously recorded
@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from vinu_lib.sqlite import SQLiteBackend
+from vinu_infra.sqlite import SQLiteBackend
 
 
 def _now_iso() -> str:
@@ -85,6 +85,20 @@ class StepRecord:
 
 
 class TelemetryStore(SQLiteBackend):
+    def close(self) -> None:
+        """Close the underlying SQLite connection and, only if this store is
+        the one currently cached for its path, evict it from the module-level
+        cache so a fresh store is created on next use — and so the db file is
+        actually released (Windows won't delete an open file, which broke
+        TemporaryDirectory cleanup in tests). A second standalone store for
+        the same path must NOT evict the cached writer: they'd collide on the
+        same cache key while belonging to different instances."""
+        key = str(Path(self._db_path).resolve())
+        with _stores_lock:
+            if _stores.get(key) is self:
+                _stores.pop(key, None)
+        super().close()
+
     SCHEMA = """
     CREATE TABLE IF NOT EXISTS llm_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -10,7 +10,7 @@ import requests
 from vinu_stock.config import VinuStockConfig, load_config
 from vinu_stock.providers.base import EarliestResult, FetchBarsResult
 from vinu_stock.providers.config.settings import REQUEST_TIMEOUT_SEC
-from vinu_lib.retry import http_get_with_retry
+from vinu_infra.retry import http_get_with_retry
 from vinu_stock.storage.models import BarRecord
 
 LOG = logging.getLogger(__name__)

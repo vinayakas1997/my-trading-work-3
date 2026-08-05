@@ -1,0 +1,24 @@
+title: PatchTST Channel-Independent Patch Transformer
+purpose: >
+  Trained-from-scratch PatchTST model (method 20 of the 32-method plan,
+  see New-talk-/Final-implementation/01-present-considerations/20-patchtst.md)
+  — splits the close-price lookback window into fixed-length patches,
+  embeds each as a token, and runs a small transformer encoder's
+  self-attention across patches (channel-independent design, a
+  regularizer per the source survey). Fit via a handful of Adam epochs at
+  request time; produces a one-step point forecast thresholded to a
+  direction. See `lpatchtst` for the LSTM+PatchTST hybrid built on the
+  same shared patch-encoder core.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: >
+    One-step-ahead forecast price/return, thresholded direction (up/down/flat),
+    patch configuration, and the fit's training-window count and final
+    training loss.

@@ -28,7 +28,7 @@
 - `tests/test_prospective_fact_check.py` (new, 6 tests) — clean plan passes, **the named JNJ-reconstruction acceptance test** (a stated $162.45 with no matching fetched data is caught as `Fail`, real value $267.16 backed by fetched data passes), warning rendering, and two tests against the real `_execute_async` control flow confirming a blocking finding skips the journal write while a clean one still calls it.
 
 **Bugs found and fixed while building Piece 2** (both are real, previously-undiscovered gaps in already-"shipped" items 2 and 3 — found because Piece 2 reused the same HTTP call pattern and it didn't work against the actual mounted routes):
-1. `ground_truth.py`'s `_fetch_open_theses` called `GET {research_url}/hypotheses` and expected a bare list back. The route is actually mounted at `/research/hypotheses` (confirmed via `vinu_lib/server.py`'s `route_prefix="research"`, matching the already-correct `query_hypotheses_tool.py`) and returns `{"count": N, "hypotheses": [...]}`. Both the URL and the response-shape assumption were wrong — the "Active Trade Theses" ground-truth block has never actually populated in a real run. Fixed both; added `tests/test_ground_truth.py` (4 tests, previously zero coverage existed for this module).
+1. `ground_truth.py`'s `_fetch_open_theses` called `GET {research_url}/hypotheses` and expected a bare list back. The route is actually mounted at `/research/hypotheses` (confirmed via `vinu_infra/server.py`'s `route_prefix="research"`, matching the already-correct `query_hypotheses_tool.py`) and returns `{"count": N, "hypotheses": [...]}`. Both the URL and the response-shape assumption were wrong — the "Active Trade Theses" ground-truth block has never actually populated in a real run. Fixed both; added `tests/test_ground_truth.py` (4 tests, previously zero coverage existed for this module).
 2. `trade_plan_tool.py`'s `_write_trade_journal_async` POSTed to `{research_url}/hypotheses` instead of `/research/hypotheses` — every trade-plan journal write has been silently 404'ing (fire-and-forget, swallowed by a bare `except`). Item 3's decision-journal write-side never actually landed a row in a real run despite passing unit tests that never exercised the real URL. Fixed; added `tests/test_trade_journal_write.py` (1 test, regression-locks the corrected URL).
 
 **Piece 4 — Freshness-warnings reader:**
@@ -41,7 +41,7 @@
 
 ## Test run
 
-`python3 -m pytest` (system interpreter — `vinu-lib` is `pip install -e`'d system-wide, not resolvable by an isolated `uv run` venv) from `vinu-agent/`: **280 passed** (was 224 before this work; +56 new tests across Pieces 1-5 and the two bug-fix regression tests, 0 regressions at any step).
+`python3 -m pytest` (system interpreter — `vinu-infra` is `pip install -e`'d system-wide, not resolvable by an isolated `uv run` venv) from `vinu-agent/`: **280 passed** (was 224 before this work; +56 new tests across Pieces 1-5 and the two bug-fix regression tests, 0 regressions at any step).
 
 **Piece 5 — Research-digest reader:**
 - `vinu_agent/audit/research_digest.py` (new) — `ResearchDigestReader`: fetches `GET /research/runs?symbol={s}&limit=1` per symbol in play, surfaces the run's `summary_text` only if its `id` hasn't already been shown for that symbol (persisted "seen" state file, same mechanic as `PositionCloseDetector`'s snapshot).

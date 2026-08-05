@@ -87,4 +87,4 @@ response") only did half of what its own name implies, plus a fail-open bug in t
   end-to-end test proving a failing first backtest stops `run()` after exactly one iteration
   without ever calling the risk critic.
 - **Suite after fix**: 126/126 vinu-simulator + 407/407 vinu-research + 112/112 vinu-agent tests
-  pass (688 total across all four touched packages including vinu-lib's unaffected 43).
+  pass (688 total across all four touched packages including vinu-infra's unaffected 43).
