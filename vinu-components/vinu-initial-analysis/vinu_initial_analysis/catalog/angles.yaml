@@ -304,51 +304,6 @@ angles:
       decomposition
 
       '
-- id: fincast_foundation_model
-  title: FinCast Financial Foundation Model (fallback proxy)
-  purpose: 'Next-K-line forecast in the spirit of FinCast (method 30, see New-talk-/Final-implementation/01-present-considerations/
-    30-fincast-foundation-model.md). The spec itself flags FinCast''s public availability as unconfirmed/borderline
-    (no PyPI package, no self-hostable checkpoint reference) — this angle uses an honestly-labeled small
-    in-process-trained PyTorch MLP proxy instead of hunting for a nonexistent package. See compute.py''s
-    module docstring.
-
-    '
-  time_formats:
-  - 1D
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: 'Predicted next-bar OHLC plus model_backend (always "fallback_proxy") and fallback_reason
-      explaining why.
-
-      '
-- id: finmamba_graph_state_space
-  title: FinMamba Graph-Enhanced State-Space Model (fallback proxy)
-  purpose: 'Stock-movement (up/down) prediction in the spirit of FinMamba (method 31, see New-talk-/Final-implementation/01-present-considerations/
-    31-finmamba-graph-state-space.md). The spec itself discloses no parameter count and no PyPI package
-    or repo — public availability is unconfirmed — so this angle uses an honestly-labeled minimal
-    linear state-space-recursion proxy instead of hunting for a nonexistent package. The spec''s cross-stock
-    graph layer is likewise structurally degenerate (single-node) since compute() is called per single
-    symbol. See compute.py''s module docstring.
-
-    '
-  time_formats:
-  - 1D
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: 'predicted_movement (up/down/flat) with a confidence score, plus model_backend (always
-      "fallback_proxy"), fallback_reason, and graph_note explaining the single-ticker degeneration.
-
-      '
 - id: itransformer
   title: iTransformer Cross-Variate Attention Forecast
   purpose: 'Trained-from-scratch iTransformer model (method 21 of the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/21-itransformer.md)
@@ -527,27 +482,6 @@ angles:
       fallback_reason, and task_note flagging that only the forecasting task is implemented.
 
       '
-- id: patchformer
-  title: PatchFormer Patch-Based Foundation Model (fallback proxy)
-  purpose: 'Patch-similarity forecast in the spirit of PatchFormer (method 17 of the 32-method plan, see
-    New-talk-/Final-implementation/01-present-considerations/17-patchformer.md). No PyPI package exists
-    and the spec itself couldn''t confirm the real model''s architecture — this angle uses an honestly-labeled
-    k-NN patch-similarity statistical proxy. See compute.py''s module docstring.
-
-    '
-  time_formats:
-  - 1D
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: 'Point + p10/p90 forecast for the next 5 periods derived from k-nearest-neighbor historical
-      patch similarity, plus model_backend (always "fallback_proxy") and fallback_reason.
-
-      '
 - id: patchtst
   title: PatchTST Channel-Independent Patch Transformer
   purpose: 'Trained-from-scratch PatchTST model (method 20 of the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/20-patchtst.md)
@@ -594,28 +528,6 @@ angles:
     description: 'P10/P50/P90 next-step return and price quantile forecasts, thresholded direction from
       the median, the last-step variable-selection weights per feature, and the fit''s training-window
       count and final training loss.
-
-      '
-- id: timegpt
-  title: TimeGPT (fallback proxy — paid hosted API, no key available)
-  purpose: 'Point + interval forecast in the spirit of Nixtla''s TimeGPT (method 12 of the 32-method plan,
-    see New-talk-/Final-implementation/01-present-considerations/12-timegpt.md). TimeGPT is a paid hosted
-    API with no self-hostable checkpoint, per the spec''s own text — this angle always runs an honestly-labeled
-    statistical fallback proxy (EWMA trend + residual-normal interval) instead of calling Nixtla''s paid
-    API with no key.
-
-    '
-  time_formats:
-  - 1D
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: 'Point forecast plus an 80% interval for the next 5 periods, plus model_backend (always
-      "fallback_proxy" for this angle) and fallback_reason explaining why.
 
       '
 - id: timer_timerxl

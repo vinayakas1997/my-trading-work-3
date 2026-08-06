@@ -187,3 +187,21 @@ pass can wire them without re-downloading:
 
 All three loaders keep `model_backend: "fallback_proxy"` with
 `fallback_reason` stating the exact blocker, so nothing is silently fake.
+
+**Removed by decision — 4 angles deleted, no weights ever available (2026-08-06):**
+
+Unlike the 3 above (real environment blockers, weights already downloaded,
+a real path forward), these 4 had no checkpoint to ever wire in — keeping
+a permanent fake proxy in the codebase is just confusing. Removed
+entirely (`compute.py` + `spec.yaml` + tests + catalog entry each):
+
+| Angle removed | Reason no weights exist |
+|---|---|
+| `timegpt` | Paid hosted API (Nixtla) — no self-hostable checkpoint at all |
+| `patchformer` | No PyPI package; spec itself couldn't confirm the real architecture |
+| `fincast_foundation_model` | No PyPI package or self-hostable checkpoint — only paper links |
+| `finmamba_graph_state_space` | No PyPI package or repo; spec discloses no param count |
+
+31 angles remain (down from 35). If a public checkpoint or package ever
+appears for one of these, it can be re-implemented then — this is a
+removal for now, not a permanent ban.

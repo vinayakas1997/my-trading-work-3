@@ -9,10 +9,14 @@ time). Now every downloadable pretrained model is fetched once into
 
 Only models that actually have downloadable weights are registered here;
 models with no public weights (TimeGPT is a paid API; PatchFormer/FinCast/
-FinMamba) are intentionally absent — the angles that reference them keep
-their honest `fallback_proxy` backend. Note: `kronos` needs its companion
-tokenizer (`kronos-tokenizer`) downloaded too, and the Kronos model code is
-vendored into the kronos angle's `_kronos_model/` package (MIT license).
+FinMamba) are intentionally absent — those had no path to real weights, so
+their `fallback_proxy` angles were removed from vinu-initial-analysis
+entirely rather than left as permanent proxies (see
+`vinu-initial-analysis/vinu_initial_analysis/angles/`, and the
+Final-implementation models-download plan for the removal rationale). Note:
+`kronos` needs its companion tokenizer (`kronos-tokenizer`) downloaded too,
+and the Kronos model code is vendored into the kronos angle's
+`_kronos_model/` package (MIT license).
 """
 
 from __future__ import annotations

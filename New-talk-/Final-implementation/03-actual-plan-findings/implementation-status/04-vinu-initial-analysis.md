@@ -279,3 +279,37 @@ zero regressions.
 - **`ml_model_pipeline`/`news_first_analysis` physical removal** — marked
   deprecated, intentionally not deleted (see Phase 4 above); a follow-up
   decision if you want them actually removed.
+
+## Post-Phase-6 decision: 4 permanent-fallback angles physically removed (2026-08-06)
+
+Of the 12 `fallback_proxy` angles from Phase 5 Section 2c, 4 had **no path
+to real weights at all** (no checkpoint exists or ever will) rather than
+being blocked by an environment/dependency conflict: `timegpt` (paid
+Nixtla API, no self-hostable checkpoint), `patchformer` (no PyPI package,
+spec couldn't confirm the real architecture), `fincast_foundation_model`
+(no package/checkpoint, only paper links), `finmamba_graph_state_space`
+(no param count disclosed, no package or repo).
+
+Decision: a permanent fake is more confusing to keep in the codebase than
+useful — unlike `moirai`/`moment`/`lag_llama` (weights already downloaded
+into `data/models/`, blocked only by dependency conflicts — a real,
+finishable follow-up), these 4 would never graduate past their proxy.
+Removed:
+- `angles/{timegpt,patchformer,fincast_foundation_model,finmamba_graph_state_space}/`
+  (each `compute.py` + `spec.yaml`) deleted entirely.
+- `tests/test_{timegpt,patchformer,fincast_foundation_model,finmamba_graph_state_space}.py`
+  deleted.
+- `catalog/angles.yaml` entries removed (angle discovery is filesystem-driven
+  off `angles/`, so no registry code needed updating) — **31 angles remain**
+  (down from 35).
+- `pyproject.toml` description string corrected to match (was already
+  stale at "25" pre-removal; now "31").
+- `vinu-infra/models.py`'s doc comment updated to reflect the angles are
+  gone, not just absent from the download registry.
+
+Net effect: the 32-method plan now has **28 implemented methods** (9
+news-only + 19 price-dependent in vinu-initial-analysis, down from 23 —
+3 classical + 7 trained-from-scratch + 9 foundation/fusion, of which 2 are
+genuinely `pretrained` and the remaining 7 stay honest `fallback_proxy`/
+`trained_in_process`) plus 3 fallback-proxy angles (`moirai`/`moment`/
+`lag_llama`) with a real, documented path to becoming pretrained later.
