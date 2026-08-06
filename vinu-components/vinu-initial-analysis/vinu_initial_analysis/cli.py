@@ -12,6 +12,7 @@ from vinu_initial_analysis.api import CorrelationAPI
 from vinu_initial_analysis.clients.news_client import NewsClient
 from vinu_initial_analysis.clients.price_client import PriceClient
 from vinu_initial_analysis.config import load_config
+from vinu_initial_analysis.quarters import last_completed_period_end
 from vinu_initial_analysis.runner import AngleRunner
 from vinu_initial_analysis.server.app import create_app
 from vinu_initial_analysis.storage.meta import RunLog
@@ -102,8 +103,31 @@ def compute_main(argv: list[str] | None = None) -> None:
                     LOG.info("  %s -> %s", datetime.fromtimestamp(from_ts), datetime.fromtimestamp(to_ts))
                     runner.run(symbol, from_ts=from_ts, to_ts=to_ts)
             else:
+                # `from_ts=to_ts=None` used to mean "no window filter" to
+                # has_existing_run(), which made it match ANY prior
+                # completed tier2 run for this symbol/angle forever — so
+                # after the first successful cycle, every later continuous
+                # cycle silently no-op'd instead of refreshing stale data
+                # (see New-talk-/Final-implementation/04-first-small-E2E-check/
+                # 03-vinu-initial-analysis.md BUGS-1/Round 2). The window end
+                # must be `now` (recomputes every single cycle, defeating the
+                # dedup cache entirely) — it must be the last completed
+                # calendar period (quarterly by default), which only changes
+                # a few times a year, so has_existing_run's exact-match dedup
+                # stays stable within a period and only triggers a real
+                # recompute when a new one closes. Same shared window for
+                # every ticker regardless of when it joined the watchlist,
+                # so cross-ticker correlation stays comparable.
+                start_ts = int(
+                    datetime.strptime(config.stage1_start_date, "%Y-%m-%d")
+                    .replace(tzinfo=timezone.utc)
+                    .timestamp()
+                )
+                period_end_ts = int(
+                    last_completed_period_end(period_months=config.tier2_period_months).timestamp()
+                )
                 LOG.info("Analyzing %s...", symbol)
-                runner.run(symbol)
+                runner.run(symbol, from_ts=start_ts, to_ts=period_end_ts)
             LOG.info("Done %s", symbol)
 
     if args.continuous:

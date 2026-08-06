@@ -49,10 +49,23 @@ redesigned here.)
 
 ## 4. `vinu-stock-price` layout (Tier 1 — raw, append-only, never pruned)
 
+**Corrected 2026-08-06** — this section previously described a
+`{ticker}/{granularity}/...` layout that was never actually implemented;
+verified against real code during the small E2E check
+(`../04-first-small-E2E-check/02-vinu-stock-price.md` BUGS-1) and against
+the component's own shipped docs (`vinu-stock-price/README.md`,
+`docs/book/part-2-storage/ch08-data-layout.md`), which all agree with the
+code, not with the old text here:
+
 ```
-{ticker}/{granularity}/archive/{year}.parquet
-{ticker}/{granularity}/live/{year}_{YYYYMMDD}.parquet   ← today's shard, pre-consolidation
+prices/1m/{SYMBOL}/live/{year}.parquet                     ← consolidated year file
+prices/1m/{SYMBOL}/live/{year}_{YYYYMMDD}.parquet           ← today's shard, pre-consolidation
 ```
+
+Granularity is hardcoded as the literal directory segment `1m` (not
+`{granularity}`) — only `1min` bars are ever written to disk; coarser
+granularities are resampled on read, not stored separately (see #3
+above).
 
 Daily shards absorb new bars cheaply (append-only, small file); a
 consolidation step periodically merges finished shards into the year

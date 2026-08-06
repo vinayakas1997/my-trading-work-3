@@ -1,5 +1,12 @@
 FROM python:3.12-slim
 
+# Slow/irregular CDN downloads (e.g. the 216MB nvidia-nccl_cu13 wheel pulled in
+# by xgboost) exceeded pip's default 15s read-timeout during the first real
+# build (observed ~117kB/s vs ~1MB/s on the host). Widen the tolerance so a
+# transient slow stream doesn't kill the whole image build.
+ENV PIP_DEFAULT_TIMEOUT=180 \
+    PIP_RETRIES=10
+
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
