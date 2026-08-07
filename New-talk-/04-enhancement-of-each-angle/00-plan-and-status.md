@@ -24,21 +24,51 @@ purpose: index and status tracker for the angle-by-angle discussion/enhancement 
   above, not this table — if an angle is ever added/removed there,
   this table needs a matching update.
 
+## Standard section template (use for every angle file)
+
+Every per-angle `.md` file should follow this same 7-section structure —
+decided while writing [01-arima.md](01-arima.md), reused as-is for
+consistency so any angle file reads the same way:
+
+1. **Status** — discussed date, status (not-discussed / decided / built),
+   reference implementation path verified, links to shared/common pieces
+   used (e.g. [common-rule-of-time-slicing-tags.md](common-rule-of-time-slicing-tags.md))
+2. **One-line definition** — plain-English, 1-2 sentences, no jargon,
+   understandable by anyone
+3. **Decided parameters** — table of every parameter/value actually
+   agreed on for this angle (thresholds, windows, methods chosen, date
+   range, data source, etc.)
+4. **Example** — one concrete example of what the output/result actually
+   looks like, end to end (raw → tagged → aggregated, if applicable)
+5. **Storage, querying, API shape** — how results get stored, how they're
+   queried, what the access pattern looks like — written so it's easy to
+   actually build from later
+6. **What we will achieve / how to use it** — the point of doing this:
+   what decisions this data should inform, why it matters
+7. **Deeper rationale** — the "show your work" section: why each
+   parameter was chosen, what alternatives were rejected and why, source/
+   references where applicable, and any open/unresolved caveats (flagged
+   honestly, not glossed over)
+
+Don't skip a section — if something genuinely isn't decided yet, write
+"not yet decided" in that section rather than omitting it, so it's obvious
+what's still open.
+
 ## Status table
 
 | # | Angle | File | Status | Notes |
 |---|-------|------|--------|-------|
-| 01 | `arima` | [01-arima.md](01-arima.md) | not-discussed | |
-| 02 | `backtesting_44_metrics` | [02-backtesting_44_metrics.md](02-backtesting_44_metrics.md) | not-discussed | |
-| 03 | `chronos` | [03-chronos.md](03-chronos.md) | not-discussed | pretrained foundation model |
-| 04 | `cross_attention_gcn_news_price_fusion` | [04-cross_attention_gcn_news_price_fusion.md](04-cross_attention_gcn_news_price_fusion.md) | not-discussed | |
-| 05 | `dlinear` | [05-dlinear.md](05-dlinear.md) | not-discussed | |
-| 06 | `drawdown_deep_dive` | [06-drawdown_deep_dive.md](06-drawdown_deep_dive.md) | not-discussed | |
-| 07 | `exponential_smoothing` | [07-exponential_smoothing.md](07-exponential_smoothing.md) | not-discussed | |
-| 08 | `garch` | [08-garch.md](08-garch.md) | not-discussed | |
-| 09 | `itransformer` | [09-itransformer.md](09-itransformer.md) | not-discussed | |
-| 10 | `kalman_filters` | [10-kalman_filters.md](10-kalman_filters.md) | not-discussed | |
-| 11 | `kronos` | [11-kronos.md](11-kronos.md) | not-discussed | pretrained foundation model |
+| 01 | `arima` | [01-arima.md](01-arima.md) | decided | design decided, not yet built; reference impl for shared time-slicing tagging, see [common-rule-of-time-slicing-tags.md](common-rule-of-time-slicing-tags.md) |
+| 02 | `backtesting_44_metrics` | [02-backtesting_44_metrics.md](02-backtesting_44_metrics.md) | decided | design decided, not yet built; real code computes 18 metrics not 44+, reuses ARIMA's shared time-slicing tagging |
+| 03 | `chronos` | [03-chronos.md](03-chronos.md) | decided | design decided, not yet built; genuinely pretrained (upgraded to chronos-t5-large, 710M params), reuses ARIMA's shared time-slicing tagging |
+| 04 | `cross_attention_gcn_news_price_fusion` | [04-cross_attention_gcn_news_price_fusion.md](04-cross_attention_gcn_news_price_fusion.md) | decided | not backtestable as-is (untrained, GCN degenerate to 1-node self-loop); real research match found (arXiv 2603.19286); training deferred to future work |
+| 05 | `dlinear` | [05-dlinear.md](05-dlinear.md) | decided | design decided, not yet built; genuinely trained-from-scratch each run, every walk-forward step's weights stored, reuses ARIMA's shared time-slicing tagging |
+| 06 | `drawdown_deep_dive` | [06-drawdown_deep_dive.md](06-drawdown_deep_dive.md) | decided | design decided, not yet built; adds missing recovery/duration/shape fields, honest news counts instead of unvalidated attribution %, reuses shared time-slicing tagging |
+| 07 | `exponential_smoothing` | [07-exponential_smoothing.md](07-exponential_smoothing.md) | decided | design decided, not yet built; Holt's linear trend method, directional-accuracy hit definition, reuses ARIMA's shared design (N=100, flexible refit cadence, tagging) |
+| 08 | `garch` | [08-garch.md](08-garch.md) | decided | design decided, not yet built; volatility forecaster (not price), evaluated via QLIKE + directional accuracy, uses vinu-tools' shared garch_volatility function |
+| 09 | `itransformer` | [09-itransformer.md](09-itransformer.md) | decided | design decided, not yet built; genuinely trained-from-scratch each run like DLinear; channel-as-token workaround (not true cross-asset attention, same multi-ticker blocker as angle 04's GCN); all 5 channel forecasts stored, weights_ref per step |
+| 10 | `kalman_filters` | [10-kalman_filters.md](10-kalman_filters.md) | decided | design decided, not yet built; not a forecaster (state estimator) — filtered_trend sign repurposed as directional signal like DLinear; smoothed state kept whole-history-only to avoid look-ahead bias |
+| 11 | `kronos` | [11-kronos.md](11-kronos.md) | decided | design decided, not yet built; genuinely pretrained (Kronos-base, 102M params), full OHLC per horizon step, directional-accuracy hit definition (no band exposed), fallback proxy out of scope |
 | 12 | `lag_llama` | [12-lag_llama.md](12-lag_llama.md) | not-discussed | fallback_proxy — real path to pretrained, see `../03-actual-plan-findings/06-models-download.md` |
 | 13 | `lpatchtst` | [13-lpatchtst.md](13-lpatchtst.md) | not-discussed | |
 | 14 | `lstm` | [14-lstm.md](14-lstm.md) | not-discussed | |
