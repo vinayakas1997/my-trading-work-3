@@ -16,13 +16,18 @@ from __future__ import annotations
 import pandas as pd
 
 from vinu_initial_analysis.angles._tagging import tag_row
-from vinu_initial_analysis.angles.dlinear.compute import _direction, _fit_and_forecast
+from vinu_initial_analysis.angles.dlinear.compute import (
+    _direction,
+    _fit_and_forecast,
+    MIN_BARS as MIN_OBSERVATIONS,
+)
 from vinu_initial_analysis.storage.weights import WeightsStore
 from vinu_tools.compute.backtest.walk_forward import StepResult, WalkForwardStep, run_walk_forward
 
-# Decided value, 04-enhancement-of-each-angle/05-dlinear.md — raised from
-# compute.py's own MIN_BARS floor of 80, same consistency move as ARIMA.
-MIN_OBSERVATIONS = 100
+# Was its own hardcoded duplicate of compute.py's MIN_BARS (both happened
+# to be 100, but nothing kept them in sync) -- now imported directly so
+# there's one real value, and VINU_DLINEAR_MIN_OBSERVATIONS (see
+# compute.py) covers both call sites automatically.
 
 
 def dlinear_step(step: WalkForwardStep) -> StepResult:

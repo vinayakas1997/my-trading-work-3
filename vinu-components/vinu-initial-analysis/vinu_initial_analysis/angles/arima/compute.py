@@ -20,6 +20,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import DEFAULT_MIN_OBSERVATIONS, get_angle_setting
+
 ANGLE_NAME = "arima"
 
 # Small, cheap grid — real ARIMA fit but bounded so this stays fast for the
@@ -33,7 +35,12 @@ _ORDER_GRID = [
     if not (p == 0 and q == 0)
 ]
 
-_MIN_OBSERVATIONS = 100  # decided value, 04-enhancement-of-each-angle/01-arima.md — raised from 30
+# decided value, 04-enhancement-of-each-angle/01-arima.md — raised from
+# 30. Overridable via VINU_ARIMA_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+# NOTE: backtest.py has its own separate MIN_OBSERVATIONS constant (not
+# imported from here) -- update both together, same env var covers both.
+_MIN_OBSERVATIONS = get_angle_setting(ANGLE_NAME, "min_observations", DEFAULT_MIN_OBSERVATIONS)
 
 
 def _fit_best_arima(close: np.ndarray):

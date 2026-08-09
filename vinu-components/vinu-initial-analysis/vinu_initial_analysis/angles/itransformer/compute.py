@@ -29,6 +29,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import DEFAULT_MIN_OBSERVATIONS, get_angle_setting
+
 ANGLE_NAME = "itransformer"
 
 CHANNELS = ["open", "high", "low", "close", "volume"]
@@ -42,7 +44,9 @@ NHEAD = 2
 NUM_LAYERS = 1
 # Decided value, 04-enhancement-of-each-angle/09-itransformer.md — raised
 # from 90, same consistency move as ARIMA/DLinear/exponential_smoothing.
-MIN_BARS = 100
+# Overridable via VINU_ITRANSFORMER_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_BARS = get_angle_setting(ANGLE_NAME, "min_observations", DEFAULT_MIN_OBSERVATIONS)
 EPOCHS = 50
 
 

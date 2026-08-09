@@ -23,6 +23,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import DEFAULT_MIN_OBSERVATIONS, get_angle_setting
+
 ANGLE_NAME = "dlinear"
 
 # A window needs at least LOOKBACK points to form one training sample plus
@@ -31,7 +33,10 @@ ANGLE_NAME = "dlinear"
 # 80 bars gives ~50 training windows at LOOKBACK=30, which is enough for
 # this small a model (well under 1k params) to fit meaningfully fast.
 LOOKBACK = 30
-MIN_BARS = 100  # decided value, 04-enhancement-of-each-angle/05-dlinear.md — raised from 80
+# decided value, 04-enhancement-of-each-angle/05-dlinear.md — raised from
+# 80. Overridable via VINU_DLINEAR_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_BARS = get_angle_setting(ANGLE_NAME, "min_observations", DEFAULT_MIN_OBSERVATIONS)
 EPOCHS = 60
 KERNEL_SIZE = 5  # odd, so 'same' padding keeps trend length == input length
 

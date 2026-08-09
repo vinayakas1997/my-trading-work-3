@@ -144,19 +144,32 @@ same-turn fix warrants. Those are tracked separately in
 them, so they stay discoverable and can be combined/prioritized in their
 own dedicated pass later rather than getting buried or fixed piecemeal.
 
-## Performance (future, not started)
+## Performance — parallel walk-forward execution
 
 ARIMA's real-data validation showed the actual bottleneck for any
 angle that fits a statistical/ML model per step isn't the shared harness
 or pandas — a single ARIMA grid-search fit is ~0.53s and that's almost
 entirely inside `statsmodels`' own compiled fitting code, not Python
-overhead. Rewriting the harness itself in Rust/Cython wouldn't move that
-number. The real lever, if this ever becomes worth doing: **parallelize
-refit steps across CPU cores** — each refit step's fit depends only on its
-own rolling window, not on any other step (only the cheap
-`.append(refit=False)` steps are sequential), so refits are embarrassingly
-parallel. Not started; noted here so it isn't lost, not to be picked up
-until it's actually decided to be worth doing.
+overhead. The real lever: **parallelize refit steps across CPU cores** —
+each refit step's fit depends only on its own rolling window (only the
+cheap `.append(refit=False)` steps are sequential), so refits are
+embarrassingly parallel. **Now built and real-data-validated** — see
+[parallel-backtest-infra.md](parallel-backtest-infra.md) for the shared
+`run_walk_forward_parallel`/`run_walk_forward_parallel_batch` harness,
+the 7-angle/10-angle/13-angle group split (which angles are safe to
+parallelize as-is), the real measured speedup (1.26-1.34x on a real
+3-symbol batch), and the fault-tolerance layer (retry, error isolation,
+disk checkpoint/resume) built on top of it. `timer_timerxl` is the one
+angle actually wired to it so far; the other 6 parallel-safe angles are
+mechanical follow-up work, not a new design question.
+
+## Adding a new angle
+
+[adding-a-new-angle.md](adding-a-new-angle.md) — the guide for adding
+angle #32 and beyond: the config/env-override pattern
+(`get_angle_setting()`), which walk-forward pattern to use, the
+real-data-validation bar every one of the 31 existing angles was held
+to, and a checklist.
 
 ## Status table
 

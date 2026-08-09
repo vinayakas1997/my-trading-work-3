@@ -22,7 +22,12 @@ import pandas as pd
 
 from vinu_initial_analysis.angles._tagging import tag_row
 from vinu_initial_analysis.angles.timer_timerxl.compute import MIN_OBSERVATIONS, _forecast
-from vinu_tools.compute.backtest.walk_forward import StepResult, WalkForwardStep, run_walk_forward
+from vinu_tools.compute.backtest.walk_forward import (
+    StepResult,
+    WalkForwardStep,
+    run_walk_forward,
+    run_walk_forward_parallel,
+)
 
 HORIZON = 5
 
@@ -75,7 +80,32 @@ def run_timer_timerxl_backtest(
     symbol: str,
     timeframe: str,
     bars: pd.DataFrame,
+    *,
+    parallel: bool = False,
+    chunk_size: int = 200,
+    n_workers: int | None = None,
 ) -> pd.DataFrame:
+    """parallel=True dispatches to run_walk_forward_parallel instead of the
+    sequential loop -- safe here specifically because this angle uses a
+    fixed `window=MIN_OBSERVATIONS` context (real pretrained inference,
+    not expanding-window retraining), so chunked execution is provably
+    row-for-row identical to the sequential path, just scheduled across a
+    process pool instead of one loop. See run_walk_forward_parallel's own
+    docstring for which angles this is/isn't valid for.
+    """
+    if parallel:
+        return run_walk_forward_parallel(
+            symbol,
+            timeframe,
+            bars,
+            timer_timerxl_step,
+            min_observations=MIN_OBSERVATIONS,
+            horizon=HORIZON,
+            window=MIN_OBSERVATIONS,
+            tag_fn=tag_row,
+            chunk_size=chunk_size,
+            n_workers=n_workers,
+        )
     return run_walk_forward(
         symbol,
         timeframe,

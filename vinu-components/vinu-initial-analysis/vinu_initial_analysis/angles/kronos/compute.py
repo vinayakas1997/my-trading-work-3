@@ -31,8 +31,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import get_angle_setting
+
 ANGLE_NAME = "kronos"
-MIN_OBSERVATIONS = 30
+# Overridable via VINU_KRONOS_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_OBSERVATIONS = get_angle_setting(ANGLE_NAME, "min_observations", 30)
 CONTEXT_WINDOW = 32
 HORIZON = 5
 FALLBACK_REASON = (

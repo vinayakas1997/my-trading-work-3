@@ -19,10 +19,13 @@ from vinu_initial_analysis.angles.backtesting_44_metrics.compute import (
     _core_metrics,
     _whole_history_metrics,
 )
+from vinu_initial_analysis.config import DEFAULT_MIN_OBSERVATIONS, get_angle_setting
 
 # Extends the project's established N=100 convention (ARIMA/DLinear) --
 # not explicitly pinned in this angle's own design doc, see 00-plan.md.
-MIN_OBSERVATIONS = 100
+# Overridable via VINU_BACKTESTING_44_METRICS_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_OBSERVATIONS = get_angle_setting("backtesting_44_metrics", "min_observations", DEFAULT_MIN_OBSERVATIONS)
 
 
 def run_core_metrics_backtest(symbol: str, timeframe: str, bars: pd.DataFrame) -> pd.DataFrame:

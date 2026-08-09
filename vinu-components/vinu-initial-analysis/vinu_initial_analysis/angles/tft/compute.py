@@ -31,6 +31,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import DEFAULT_MIN_OBSERVATIONS, get_angle_setting
+
 ANGLE_NAME = "tft"
 
 FEATURE_NAMES = ["ret_1", "ret_5", "sma_ratio_5", "sma_ratio_21", "vol_5", "high_low_range"]
@@ -42,7 +44,9 @@ QUANTILES = (0.1, 0.5, 0.9)
 LOOKBACK = 30
 # Decided value, 04-enhancement-of-each-angle/26-tft.md — raised from 90,
 # same consistency move as every other trained-from-scratch angle.
-MIN_BARS = 100
+# Overridable via VINU_TFT_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_BARS = get_angle_setting(ANGLE_NAME, "min_observations", DEFAULT_MIN_OBSERVATIONS)
 HIDDEN_SIZE = 16
 EPOCHS = 60
 

@@ -22,11 +22,15 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import DEFAULT_MIN_OBSERVATIONS, get_angle_setting
+
 ANGLE_NAME = "exponential_smoothing"
 # Decided value, 04-enhancement-of-each-angle/07-exponential_smoothing.md
 # -- raised from the code's floor of 10, same consistency move as
-# ARIMA's 30->100, DLinear's 80->100.
-MIN_OBSERVATIONS = 100
+# ARIMA's 30->100, DLinear's 80->100. Overridable via
+# VINU_EXPONENTIAL_SMOOTHING_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_OBSERVATIONS = get_angle_setting(ANGLE_NAME, "min_observations", DEFAULT_MIN_OBSERVATIONS)
 
 
 def _fit_and_forecast(close: np.ndarray):

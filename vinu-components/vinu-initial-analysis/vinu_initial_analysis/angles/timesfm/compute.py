@@ -29,17 +29,21 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import DEFAULT_MIN_OBSERVATIONS, get_angle_setting
+
 ANGLE_NAME = "timesfm"
 # Decided value, 04-enhancement-of-each-angle/28-timesfm.md — raised from
 # 30, same consistency move as every other angle (a quality floor here,
 # not an architectural requirement the way Kronos's context length is).
-MIN_OBSERVATIONS = 100
+# Overridable via VINU_TIMESFM_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_OBSERVATIONS = get_angle_setting(ANGLE_NAME, "min_observations", DEFAULT_MIN_OBSERVATIONS)
 HORIZON = 5
 # Decided value — raised from 256, matching the model's own documented
 # default operating configuration (HuggingFace card default config uses
 # max_context=1024) rather than running it at a quarter of its normal
-# context.
-MAX_CONTEXT = 1024
+# context. Overridable via VINU_TIMESFM_MAX_CONTEXT.
+MAX_CONTEXT = get_angle_setting(ANGLE_NAME, "max_context", 1024)
 CHECKPOINT = "google/timesfm-2.5-200m-pytorch"
 DECILE_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 

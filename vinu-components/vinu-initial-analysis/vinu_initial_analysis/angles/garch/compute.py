@@ -18,11 +18,15 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import DEFAULT_MIN_OBSERVATIONS, get_angle_setting
+
 ANGLE_NAME = "garch"
 # Decided value, 04-enhancement-of-each-angle/08-garch.md — raised from
 # the code's floor of 20, same consistency move as every other classical
-# angle (ARIMA/DLinear/exponential_smoothing).
-MIN_OBSERVATIONS = 100
+# angle (ARIMA/DLinear/exponential_smoothing). Overridable via
+# VINU_GARCH_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_OBSERVATIONS = get_angle_setting(ANGLE_NAME, "min_observations", DEFAULT_MIN_OBSERVATIONS)
 
 
 def _fit_and_forecast(returns: np.ndarray, time_format: str | None) -> dict[str, Any]:

@@ -1,3 +1,6 @@
+import subprocess
+import sys
+
 import numpy as np
 import pandas as pd
 
@@ -34,6 +37,24 @@ def test_min_observations_clears_the_real_patch_requirement():
     # fall through to the proxy. 100 > 96 makes that path unreachable via
     # compute()'s public API now.
     assert MIN_OBSERVATIONS > PATCH_SIZE
+
+
+def test_env_override_below_patch_size_is_rejected_at_import_time():
+    # MIN_OBSERVATIONS is now overridable via VINU_TIMER_TIMERXL_MIN_OBSERVATIONS
+    # (config.py's get_angle_setting) -- an override that reintroduces the
+    # exact bug fixed above must be rejected outright, not silently
+    # accepted. Run in a fresh subprocess since the guard runs at module
+    # import time, and this process has already imported the module once.
+    import os
+
+    env = os.environ.copy()
+    env["VINU_TIMER_TIMERXL_MIN_OBSERVATIONS"] = "50"
+    result = subprocess.run(
+        [sys.executable, "-c", "from vinu_initial_analysis.angles.timer_timerxl import compute"],
+        env=env, capture_output=True, text=True,
+    )
+    assert result.returncode != 0
+    assert "PATCH_SIZE" in result.stderr
 
 
 def test_below_floor_is_insufficient_data_not_a_silent_fallback():

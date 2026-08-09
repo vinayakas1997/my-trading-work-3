@@ -24,10 +24,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import DEFAULT_MIN_OBSERVATIONS, get_angle_setting
+
 ANGLE_NAME = "kalman_filters"
 # Decided value, 04-enhancement-of-each-angle/10-kalman_filters.md —
 # raised from 20, same consistency move as every other classical angle.
-MIN_OBSERVATIONS = 100
+# Overridable via VINU_KALMAN_FILTERS_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_OBSERVATIONS = get_angle_setting(ANGLE_NAME, "min_observations", DEFAULT_MIN_OBSERVATIONS)
 
 
 def _fit(close: np.ndarray):

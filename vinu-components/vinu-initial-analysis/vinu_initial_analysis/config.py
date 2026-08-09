@@ -27,6 +27,40 @@ def _ensure_dotenv_loaded() -> None:
 _ensure_dotenv_loaded._done = False  # type: ignore[attr-defined]
 
 
+# The standard walk-forward "how many bars before this angle can compute
+# at all" floor most angles use. NOT every angle uses this value -- a
+# handful have a real, already-decided reason to differ (chronos=512 and
+# kronos's own pretrained-context requirement, shock_personality=21 and
+# tips_regime_aware_transformer=120's own decided designs, timesfm's
+# separate MAX_CONTEXT cap). Those angles pass their own real default to
+# get_angle_setting() below rather than this one -- this constant is only
+# the fallback for angles that don't have a reason to differ, not a
+# floor forced onto every angle. See
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+# for the full pattern and when an angle should/shouldn't use it.
+DEFAULT_MIN_OBSERVATIONS = 100
+
+
+def get_angle_setting(angle_name: str, setting_name: str, default: int) -> int:
+    """Per-angle integer setting, overridable via
+    VINU_<ANGLE_NAME>_<SETTING_NAME> without touching code -- e.g.
+    VINU_LSTM_MIN_OBSERVATIONS or VINU_TIMESFM_MAX_CONTEXT. Falls back to
+    `default` (the angle's own already-decided value) when the env var is
+    unset or blank.
+
+    Called at each angle's own compute.py module-import time (these
+    thresholds are module-level constants, evaluated once, not
+    per-call) -- ensures .env is loaded even if load_config() itself was
+    never called first.
+    """
+    _ensure_dotenv_loaded()
+    env_var = f"VINU_{angle_name.upper()}_{setting_name.upper()}"
+    raw = os.getenv(env_var)
+    if raw is not None and raw.strip():
+        return int(raw)
+    return default
+
+
 @dataclass(frozen=True)
 class VinuInitialAnalysisConfig:
     data_root: Path = field(default_factory=lambda: require_data_root("INITIAL_ANALYSIS"))

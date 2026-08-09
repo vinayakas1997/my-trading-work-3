@@ -38,15 +38,28 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import get_angle_setting
+
 ANGLE_NAME = "timer_timerxl"
+PATCH_SIZE = 96
 # Decided value, 04-enhancement-of-each-angle/27-timer_timerxl.md — raised
 # from 24. Not just cross-angle consistency: below PATCH_SIZE=96, the real
 # model can never produce even one patch and silently falls through to the
 # fallback proxy every time (a real behavioral quirk, not just a floor
-# bump) -- 100 clears that real architectural requirement.
-MIN_OBSERVATIONS = 100
-PATCH_SIZE = 96
-MAX_CONTEXT = 2880
+# bump) -- 100 clears that real architectural requirement. Overridable via
+# VINU_TIMER_TIMERXL_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+# but guarded below: an override that reintroduces the PATCH_SIZE bug is
+# rejected outright rather than silently accepted.
+MIN_OBSERVATIONS = get_angle_setting(ANGLE_NAME, "min_observations", 100)
+if MIN_OBSERVATIONS < PATCH_SIZE:
+    raise ValueError(
+        f"VINU_TIMER_TIMERXL_MIN_OBSERVATIONS={MIN_OBSERVATIONS} is below "
+        f"PATCH_SIZE={PATCH_SIZE} -- the real model can never produce even "
+        "one patch below this floor and silently falls through to the "
+        "fallback proxy, the exact bug this angle's own fix corrected."
+    )
+MAX_CONTEXT = get_angle_setting(ANGLE_NAME, "max_context", 2880)
 HORIZON = 5
 FALLBACK_REASON = (
     "Timer pretrained weights unavailable at runtime (missing download or "

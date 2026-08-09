@@ -37,6 +37,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import get_angle_setting
+
 ANGLE_NAME = "tips_regime_aware_transformer"
 
 REGIME_MOMENTUM = 0
@@ -46,10 +48,12 @@ REGIME_MEAN_REVERSION = 1
 # LOOKBACK-bar transformer window per sample, plus ~20+ training samples.
 # 120 bars gives roughly (120 - LOOKBACK - REGIME_WINDOW) ~= 40 usable
 # windows -- enough margin for both the regime statistic and the model fit
-# to be meaningful rather than noise.
+# to be meaningful rather than noise. Overridable via
+# VINU_TIPS_REGIME_AWARE_TRANSFORMER_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
 LOOKBACK = 24
 REGIME_WINDOW = 20
-MIN_BARS = 120
+MIN_BARS = get_angle_setting(ANGLE_NAME, "min_observations", 120)
 D_MODEL = 16
 NHEAD = 2
 NUM_LAYERS = 1

@@ -32,14 +32,17 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import get_angle_setting
+
 ANGLE_NAME = "chronos"
 # Fixed context requirement, not a growing/adaptive floor like ARIMA's
 # N=100 -- 512 is Amazon's own stated ceiling *and* default for this model
 # family (04-enhancement-of-each-angle/03-chronos.md SS3/SS7), so this
 # angle simply requires the full 512 before evaluating rather than mixing
 # an expanding-window design onto a model that always truncates to its
-# last 512 candles anyway.
-MIN_OBSERVATIONS = 512
+# last 512 candles anyway. Overridable via VINU_CHRONOS_MIN_OBSERVATIONS
+# -- see ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_OBSERVATIONS = get_angle_setting(ANGLE_NAME, "min_observations", 512)
 PREDICTION_LENGTH = 5
 # Decided checkpoint (04-enhancement-of-each-angle/03-chronos.md SS3):
 # upgraded from the code's prior default (chronos-t5-tiny, 8M params) to

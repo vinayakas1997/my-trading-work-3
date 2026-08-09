@@ -24,12 +24,17 @@ from __future__ import annotations
 import pandas as pd
 
 from vinu_initial_analysis.angles._tagging import tag_row
-from vinu_initial_analysis.angles.arima.compute import _fit_and_forecast, _forecast_fields
+from vinu_initial_analysis.angles.arima.compute import (
+    _fit_and_forecast,
+    _forecast_fields,
+    _MIN_OBSERVATIONS as MIN_OBSERVATIONS,
+)
 from vinu_tools.compute.backtest.walk_forward import StepResult, WalkForwardStep, run_walk_forward
 
-# Decided value, 04-enhancement-of-each-angle/01-arima.md — raised from the
-# code's own floor of 30, same consistency move as DLinear's 80->100.
-MIN_OBSERVATIONS = 100
+# Was its own hardcoded duplicate of compute.py's _MIN_OBSERVATIONS (both
+# happened to be 100, but nothing kept them in sync) -- now imported
+# directly so there's one real value, and VINU_ARIMA_MIN_OBSERVATIONS
+# (see compute.py) covers both call sites automatically.
 
 # Refit cadence per timeframe. 1H/4H/1D refit every step (design doc's
 # explicit decision — few enough bars over any real window that a full

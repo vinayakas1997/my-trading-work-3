@@ -28,6 +28,7 @@ from vinu_initial_analysis.angles.patchtst._patch_transformer import (
     make_windows,
     zscore,
 )
+from vinu_initial_analysis.config import DEFAULT_MIN_OBSERVATIONS, get_angle_setting
 
 ANGLE_NAME = "patchtst"
 
@@ -44,7 +45,9 @@ NHEAD = 2
 NUM_LAYERS = 1
 # Decided value, 04-enhancement-of-each-angle/20-patchtst.md — raised
 # from 90, same consistency move as ARIMA/DLinear/lpatchtst/lstm.
-MIN_BARS = 100
+# Overridable via VINU_PATCHTST_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_BARS = get_angle_setting(ANGLE_NAME, "min_observations", DEFAULT_MIN_OBSERVATIONS)
 EPOCHS = 50
 
 

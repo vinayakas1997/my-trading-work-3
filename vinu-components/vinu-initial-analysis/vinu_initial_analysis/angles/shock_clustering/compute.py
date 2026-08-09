@@ -32,13 +32,18 @@ import numpy as np
 import pandas as pd
 
 from vinu_initial_analysis.angles._helpers import pearson_with_ci
+from vinu_initial_analysis.config import DEFAULT_MIN_OBSERVATIONS, get_angle_setting
+
+ANGLE_NAME = "shock_clustering"
 
 GAP_ROLLING_WINDOW = 21
 VOL_ROLLING_WINDOW = 21
 SHOCK_Z_THRESHOLD = 2.0
 # Real, derived floor for the rolling shock-detection windows to
-# stabilize -- per the design doc SS3.
-MIN_OBSERVATIONS = 100
+# stabilize -- per the design doc SS3. Overridable via
+# VINU_SHOCK_CLUSTERING_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_OBSERVATIONS = get_angle_setting(ANGLE_NAME, "min_observations", DEFAULT_MIN_OBSERVATIONS)
 # Below this many detected shock dates, co-shock-rate/correlation aren't
 # reported at all (status: insufficient_shock_sample) -- same "don't
 # report a rate built on almost nothing" discipline as

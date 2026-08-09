@@ -19,6 +19,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import DEFAULT_MIN_OBSERVATIONS, get_angle_setting
+
 ANGLE_NAME = "lstm"
 
 # Same rationale as dlinear/patchtst: LOOKBACK=30 with MIN_BARS=80 gives
@@ -27,8 +29,10 @@ ANGLE_NAME = "lstm"
 # noise alone.
 LOOKBACK = 30
 # Decided value, 04-enhancement-of-each-angle/14-lstm.md — raised from
-# 80, same consistency move as ARIMA/DLinear/LPatchTST.
-MIN_BARS = 100
+# 80, same consistency move as ARIMA/DLinear/LPatchTST. Overridable via
+# VINU_LSTM_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_BARS = get_angle_setting(ANGLE_NAME, "min_observations", DEFAULT_MIN_OBSERVATIONS)
 HIDDEN_SIZE = 16
 EPOCHS = 60
 

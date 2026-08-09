@@ -29,10 +29,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import DEFAULT_MIN_OBSERVATIONS, get_angle_setting
+
 ANGLE_NAME = "lag_llama"
 # Decided value, 04-enhancement-of-each-angle/12-lag_llama.md — raised
 # from 25, same consistency move as ARIMA/DLinear/lpatchtst/lstm.
-MIN_OBSERVATIONS = 100
+# Overridable via VINU_LAG_LLAMA_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_OBSERVATIONS = get_angle_setting(ANGLE_NAME, "min_observations", DEFAULT_MIN_OBSERVATIONS)
 LAG_ORDER = 5
 HORIZON = 5
 QUANTILE_LEVELS = [0.05, 0.25, 0.5, 0.75, 0.95]

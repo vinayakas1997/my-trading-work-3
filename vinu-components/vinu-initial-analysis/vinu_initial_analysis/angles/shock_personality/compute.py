@@ -34,13 +34,18 @@ from datetime import datetime, timezone
 from typing import Any
 
 from vinu_initial_analysis.angles._helpers import mean_with_ci
+from vinu_initial_analysis.config import get_angle_setting
+
+ANGLE_NAME = "shock_personality"
 
 GAP_ROLLING_WINDOW = 21
 VOL_ROLLING_WINDOW = 21
 # Real floor: the rolling windows' own requirement, not the arbitrary
 # N=100 convention -- per the design doc SS3, this angle's actual
 # gating constraint is how many shocks get detected, not raw candle count.
-MIN_OBSERVATIONS = 21
+# Overridable via VINU_SHOCK_PERSONALITY_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_OBSERVATIONS = get_angle_setting(ANGLE_NAME, "min_observations", 21)
 
 
 def _detect_gap_shocks(

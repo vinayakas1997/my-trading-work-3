@@ -17,6 +17,9 @@ from datetime import datetime, timezone
 
 from vinu_initial_analysis.angles._helpers import ann_factor
 from vinu_initial_analysis.angles.signal_contract import tag_row
+from vinu_initial_analysis.config import get_angle_setting
+
+ANGLE_NAME = "regime_analysis"
 
 VOL_WINDOW = 21
 VOL_BASELINE_WINDOW = 120
@@ -25,8 +28,13 @@ BULL_BEAR_THRESHOLD = 0.01
 HIGH_VOL_Z_THRESHOLD = 1.0
 # Real, derived floor for the corrected method (120-day trailing baseline
 # + 21-day vol window), not the arbitrary N=100 convention used for the
-# candle-count forecasters -- per the design doc SS3.
-MIN_OBSERVATIONS = VOL_BASELINE_WINDOW + VOL_WINDOW
+# candle-count forecasters -- per the design doc SS3. Overridable via
+# VINU_REGIME_ANALYSIS_MIN_OBSERVATIONS (overrides the whole derived
+# total, not VOL_BASELINE_WINDOW/VOL_WINDOW individually) -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_OBSERVATIONS = get_angle_setting(
+    ANGLE_NAME, "min_observations", VOL_BASELINE_WINDOW + VOL_WINDOW
+)
 
 
 def classify_regime(ret_20d: float, vol_z: float) -> str:

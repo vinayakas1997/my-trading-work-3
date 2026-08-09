@@ -35,10 +35,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import DEFAULT_MIN_OBSERVATIONS, get_angle_setting
+
 ANGLE_NAME = "moirai"
 # Decided value, 04-enhancement-of-each-angle/16-moirai.md — raised from
 # 20, same consistency move as every other raised-floor angle.
-MIN_OBSERVATIONS = 100
+# Overridable via VINU_MOIRAI_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_OBSERVATIONS = get_angle_setting(ANGLE_NAME, "min_observations", DEFAULT_MIN_OBSERVATIONS)
 HORIZON = 5
 AR_ORDER = 3
 FALLBACK_REASON = (

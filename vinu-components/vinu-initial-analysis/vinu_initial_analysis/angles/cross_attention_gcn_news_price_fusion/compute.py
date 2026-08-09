@@ -45,8 +45,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_initial_analysis.config import get_angle_setting
+
 ANGLE_NAME = "cross_attention_gcn_news_price_fusion"
-MIN_OBSERVATIONS = 20
+# Overridable via VINU_CROSS_ATTENTION_GCN_NEWS_PRICE_FUSION_MIN_OBSERVATIONS
+# -- see ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+MIN_OBSERVATIONS = get_angle_setting(ANGLE_NAME, "min_observations", 20)
 PRICE_WINDOW = 20  # spec: "20-trading-day historical price window"
 EMBED_DIM = 16
 VOCAB_SIZE = 256
