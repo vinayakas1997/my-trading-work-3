@@ -81,6 +81,52 @@ def test_1min_timeframe_reuses_prior_state_between_refits(monkeypatch):
     assert calls["n"] < len(df)  # confirms the cadence is actually saving real fits
 
 
+def test_parallel_output_is_row_for_row_identical_to_sequential_at_cadence_1():
+    # 1D has REFIT_CADENCE == 1 (refits every step sequentially too), so
+    # the parallel path's "every step is a fresh independent fit" behavior
+    # matches sequential exactly here -- a pure scheduling change.
+    bars = _make_bars(n=MIN_OBSERVATIONS + 20)
+    sequential = run_arima_backtest("AAPL", "1D", bars, data_root="unused")
+    parallel = run_arima_backtest(
+        "AAPL", "1D", bars, data_root="unused", parallel=True, chunk_size=5, n_workers=2,
+    )
+    pd.testing.assert_frame_equal(
+        sequential.reset_index(drop=True), parallel.reset_index(drop=True),
+    )
+
+
+def test_parallel_at_cadence_greater_than_1_runs_but_is_not_identical_to_sequential():
+    # 1min has REFIT_CADENCE > 1: sequential mode only fully refits every
+    # Nth step and cheaply extends the fit in between; the parallel path
+    # has no refit_cadence/prior_state support at all and fully refits
+    # every step -- a real, documented behavior difference, not a bug.
+    # This proves it runs successfully (no crash) and that it genuinely
+    # differs from sequential, rather than silently claiming identical
+    # output it can't actually produce for this cadence.
+    cadence = arima_backtest.REFIT_CADENCE["1min"]
+    n_steps = cadence * 2 + 3
+    bars = _make_bars(n=MIN_OBSERVATIONS + n_steps)
+    sequential = run_arima_backtest("AAPL", "1min", bars, data_root="unused")
+    parallel = run_arima_backtest(
+        "AAPL", "1min", bars, data_root="unused", parallel=True, chunk_size=5, n_workers=2,
+    )
+    assert len(sequential) == len(parallel) > 0
+    # At least one step differs (a fresh AIC-search refit vs an extended
+    # fit is not guaranteed to land on the exact same forecast/order).
+    # Only compare rows where both sides actually fit successfully.
+    ok_rows = [
+        i for i in range(len(sequential))
+        if sequential.iloc[i]["status"] == "ok" and parallel.iloc[i]["status"] == "ok"
+    ]
+    assert ok_rows
+    orders_differ_or_forecasts_differ = any(
+        sequential.iloc[i]["forecast"] != parallel.iloc[i]["forecast"]
+        or tuple(sequential.iloc[i]["order"].values()) != tuple(parallel.iloc[i]["order"].values())
+        for i in ok_rows
+    )
+    assert orders_differ_or_forecasts_differ
+
+
 def test_naive_baseline_forecast_is_always_last_close():
     bars = _make_bars(n=MIN_OBSERVATIONS + 8)
     df = run_naive_baseline("AAPL", "1D", bars)

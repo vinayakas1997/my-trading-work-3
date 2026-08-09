@@ -18,12 +18,25 @@ import pandas as pd
 
 from vinu_initial_analysis.angles._tagging import tag_row
 from vinu_initial_analysis.angles.kronos.compute import HORIZON, MIN_OBSERVATIONS, _fit_and_forecast
-from vinu_tools.compute.backtest.walk_forward import StepResult, WalkForwardStep, run_walk_forward
+from vinu_initial_analysis.config import get_angle_setting
+from vinu_tools.compute.backtest.walk_forward import (
+    StepResult,
+    WalkForwardStep,
+    run_walk_forward,
+    run_walk_forward_parallel,
+)
 
 # Per the decided design: 512 is the real Kronos predictor's hard context
 # requirement (KronosPredictor(..., max_context=512) in compute.py), not
-# a tunable floor -- same treatment as Chronos's MIN_OBSERVATIONS.
-WALK_FORWARD_MIN_OBSERVATIONS = 512
+# a tunable floor -- same treatment as Chronos's MIN_OBSERVATIONS. A real,
+# deliberately DIFFERENT value from compute.py's own MIN_OBSERVATIONS=30
+# (that one gates the fallback-proxy path, which doesn't need the real
+# model's full context) -- not a duplicate-drift bug like arima/dlinear's
+# was, so this gets its own setting name rather than reusing "min_observations"
+# (which would incorrectly conflate two genuinely different thresholds).
+# Overridable via VINU_KRONOS_WALK_FORWARD_MIN_OBSERVATIONS -- see
+# ../../../New-talk-/06-implementation-of-each-angles/adding-a-new-angle.md
+WALK_FORWARD_MIN_OBSERVATIONS = get_angle_setting("kronos", "walk_forward_min_observations", 512)
 
 
 def _direction(value: float, eps: float = 1e-4) -> str:
@@ -77,7 +90,38 @@ def run_kronos_backtest(
     symbol: str,
     timeframe: str,
     bars: pd.DataFrame,
+    *,
+    parallel: bool = False,
+    chunk_size: int = 200,
+    n_workers: int | None = None,
 ) -> pd.DataFrame:
+    """parallel=True dispatches to run_walk_forward_parallel instead of the
+    sequential loop -- safe here because this angle uses a fixed
+    window=WALK_FORWARD_MIN_OBSERVATIONS context (no per-step state to
+    carry across chunks), so chunking never changes what data any step
+    sees. **Not row-for-row identical to sequential, and this is not a
+    parallel-wiring artifact**: confirmed directly that even two
+    sequential calls in the *same* process on identical input already
+    produce different numbers (the real Kronos predictor samples
+    internally, same as Chronos, with no fixed seed set anywhere in this
+    pipeline). Unlike `timer_timerxl` (a genuinely deterministic
+    point-forecaster, where parallel output IS provably identical),
+    "safe" here means the real methodology is unchanged (same context
+    window, same real model call per step), not that the numbers will
+    match run to run -- they won't, with or without parallel=True."""
+    if parallel:
+        return run_walk_forward_parallel(
+            symbol,
+            timeframe,
+            bars,
+            kronos_step,
+            min_observations=WALK_FORWARD_MIN_OBSERVATIONS,
+            horizon=HORIZON,
+            window=WALK_FORWARD_MIN_OBSERVATIONS,
+            tag_fn=tag_row,
+            chunk_size=chunk_size,
+            n_workers=n_workers,
+        )
     return run_walk_forward(
         symbol,
         timeframe,

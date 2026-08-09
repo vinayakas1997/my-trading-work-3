@@ -70,12 +70,64 @@ not just performance:
 
 | Group | Count | Angles | Status |
 |---|---|---|---|
-| **Parallel-safe** | 7 | `arima`, `chronos`, `exponential_smoothing`, `garch`, `kalman_filters`, `kronos`, `timer_timerxl` | Already pass `window=MIN_OBSERVATIONS` (a fixed int) to `run_walk_forward` — a genuinely bounded lookback baked into the harness itself. Chunked execution is **provably** row-for-row identical to sequential; this is a pure scheduling change, not a methodology change. |
+| **Parallel-safe** | 7 | `arima`, `chronos`, `exponential_smoothing`, `garch`, `kalman_filters`, `kronos`, `timer_timerxl` | Already pass `window=MIN_OBSERVATIONS` (a fixed int) to `run_walk_forward` — a genuinely bounded lookback baked into the harness itself. Chunking is a pure scheduling change (never changes what data any step sees), but **"row-for-row identical to sequential" only actually holds for 5 of the 7** — see the correction below. |
 | **Expanding window — needs a decision first** | 10 | `dlinear`, `itransformer`, `lag_llama`, `lpatchtst`, `lstm`, `moirai`, `moment`, `patchtst`, `tft`, `timesfm`, `tips_regime_aware_transformer` | Use the harness's default `window="expanding"` — every step's `history` is the *entire* series since t=0, and each step's model trains on all of it. Chunking would silently cap that to `chunk_size + overlap`, which is a real methodology change (bounded-lookback retraining vs. ever-growing retraining), not a free speedup. Both `run_walk_forward_parallel` and `run_walk_forward_parallel_batch` raise `ValueError` if handed a non-int `window`, specifically so this group can't be silently misused. **Not touched — tabled pending an explicit decision on whether these angles should switch to a bounded window.** |
 | **N/A** | 13 | `backtesting_44_metrics`, `cross_attention_gcn_news_price_fusion`, `drawdown_deep_dive`, `ml_model_pipeline`, `news_first_analysis`, `news_price_causality`, `peer_relative_strength`, `pnl_attribution`, `regime_analysis`, `shock_clustering`, `shock_personality`, `trend_lifecycle`, `trend_session_structure` | Custom, already-vectorized aggregation over the whole dataset — no step-by-step walk-forward loop to chunk in the first place. This infra doesn't apply. |
 
 7 + 10 + 13 = 30, plus `signal_contract.py` (a shared helper module, not
 an angle) = 31.
+
+## Correction: "row-for-row identical" only holds for 5 of the 7, not all 7
+
+All 7 parallel-safe angles were wired to a real `parallel=True` flag in a
+follow-up pass. Proving each one for real (not assuming the table above
+generalized past `timer_timerxl`, the one angle it was actually measured
+against) surfaced a real, honest gap in the original claim:
+
+- **`arima`, `exponential_smoothing`, `garch`, `kalman_filters`,
+  `timer_timerxl`** (5 of 7): genuinely deterministic — classical MLE
+  fits or a deterministic point-forecast, no sampling involved. Real
+  parallel-vs-sequential runs are row-for-row identical (`arima` only at
+  `REFIT_CADENCE == 1` timeframes — see the ARIMA-specific caveat below).
+  Proven via permanent regression tests (`pd.testing.assert_frame_equal`
+  on real multi-chunk parallel output vs. sequential).
+- **`chronos`, `kronos`** (2 of 7): **not** row-for-row identical, and
+  this is *not* a parallel-wiring artifact. Both real pretrained models
+  produce a probabilistic (quantile-sampled) forecast with no fixed seed
+  set anywhere in either pipeline — confirmed directly that **two
+  sequential calls in the same process on identical input already
+  produce different numbers**, before parallel execution is even
+  involved. `timer_timerxl`'s own docstring already correctly scoped
+  itself as "a deterministic point forecaster with no native
+  uncertainty" — that property, not "fixed window" alone, is what
+  actually makes exact reproducibility possible, and it doesn't extend
+  to Chronos/Kronos's sampling-based architecture. `parallel=True` is
+  still safe to use for these two in the sense that matters (same real
+  model, same real context window per step, no data leakage or
+  methodology change) — it just was never going to produce identical
+  numbers to a sequential run, with or without chunking, and claiming
+  otherwise would have been false. Both angles' own `run_*_backtest`
+  docstrings were corrected to state this precisely instead of repeating
+  the "row-for-row identical" language that only actually applies to the
+  other 5.
+
+**ARIMA's own additional caveat**: `run_walk_forward_parallel` has no
+`refit_cadence`/`prior_state` support at all (every step runs as an
+independent fresh fit). For ARIMA's 1H/4H/1D timeframes
+(`REFIT_CADENCE == 1`, already refits every step sequentially too) this
+is still row-for-row identical. For 1min/5min/15min
+(`REFIT_CADENCE > 1`), sequential mode only fully refits every Nth step
+and cheaply extends the fit in between (`.append(refit=False)`, ~170x
+cheaper per the module docstring); parallel mode has no such path and
+fully re-runs the AIC grid search every single step — a real behavior
+change (a fresh fit isn't guaranteed to choose the same `(p,d,q)` order
+as an extended one) and, for these timeframes specifically, likely more
+total real compute than sequential, not just the same compute
+rescheduled. Proven directly: a real parallel run on synthetic 1min data
+produces the same row count as sequential but genuinely different
+forecasts/orders on at least one step. `parallel=True` is a real,
+deliberate trade for 1min/5min/15min ARIMA, not a free win the way it is
+for the other 6 angles.
 
 Also worth naming: 4 of the 7 parallel-safe angles (`arima`,
 `exponential_smoothing`, `garch`, `kalman_filters`) use `refit_cadence >
@@ -252,13 +304,33 @@ Existing `test_timer_timerxl_backtest.py`/`test_timer_timerxl.py`: 13
 tests, all still pass — the new `parallel` flag is additive, the default
 sequential path is untouched.
 
+## What's done now (update)
+
+All 7 parallel-safe angles (`arima`, `chronos`, `exponential_smoothing`,
+`garch`, `kalman_filters`, `kronos`, `timer_timerxl`) now have a real
+`parallel=True` flag on their `run_*_backtest()` entry point, same
+`chunk_size`/`n_workers` kwargs as `timer_timerxl`'s original wiring.
+`garch` needed one extra piece `timer_timerxl` didn't: its step function
+is a closure over `timeframe` (needed for volatility annualization),
+which doesn't survive being pickled to a worker process — fixed with
+`functools.partial(_garch_step, timeframe=timeframe)`, a module-level
+function with bound args, which does pickle correctly (proven via a real
+multi-chunk `ProcessPoolExecutor` run, not assumed). See the
+"row-for-row identical" correction above for what's actually provable
+per angle — it isn't uniform across all 7.
+
+Real regression tests added for the 5 genuinely-deterministic angles
+(`test_arima_backtest.py`, `test_exponential_smoothing_backtest.py`,
+`test_garch_backtest.py`, `test_kalman_filters_backtest.py` — plus a
+second ARIMA test proving the 1min cadence>1 case runs successfully but
+is *not* identical) — all pass. `chronos`/`kronos` were verified with a
+real ad-hoc script instead of a permanent test (matching `timer_timerxl`'s
+own original precedent of not baking expensive real-pretrained-model
+calls into the permanent suite) since a value-equality assertion for
+them would be asserting something false.
+
 ## What's not done yet
 
-- **The other 6 parallel-safe angles** (`arima`, `chronos`,
-  `exponential_smoothing`, `garch`, `kalman_filters`, `kronos`) aren't
-  wired to the parallel path yet — `timer_timerxl` was the one proof
-  target. Wiring the rest is mechanical (same `parallel=True` pattern),
-  not a new design question.
 - **The 10 expanding-window angles** are explicitly not addressed here —
   needs a separate decision on whether to accept a bounded-lookback
   retraining semantic for them before any parallelization work starts.

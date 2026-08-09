@@ -17,7 +17,12 @@ import pandas as pd
 
 from vinu_initial_analysis.angles._tagging import tag_row
 from vinu_initial_analysis.angles.exponential_smoothing.compute import MIN_OBSERVATIONS, _fit_and_forecast
-from vinu_tools.compute.backtest.walk_forward import StepResult, WalkForwardStep, run_walk_forward
+from vinu_tools.compute.backtest.walk_forward import (
+    StepResult,
+    WalkForwardStep,
+    run_walk_forward,
+    run_walk_forward_parallel,
+)
 
 
 def _direction(value: float, eps: float = 1e-4) -> str:
@@ -59,7 +64,30 @@ def run_es_backtest(
     symbol: str,
     timeframe: str,
     bars: pd.DataFrame,
+    *,
+    parallel: bool = False,
+    chunk_size: int = 200,
+    n_workers: int | None = None,
 ) -> pd.DataFrame:
+    """parallel=True dispatches to run_walk_forward_parallel instead of the
+    sequential loop -- safe here because this angle already refits every
+    step (refit_cadence=1, no cross-step state reuse), so the parallel
+    path's own "every step refits fresh, no prior_state" behavior is
+    identical to the sequential path, not an approximation of it. Fixed
+    window=MIN_OBSERVATIONS context, not expanding, so chunks are
+    independently computable."""
+    if parallel:
+        return run_walk_forward_parallel(
+            symbol,
+            timeframe,
+            bars,
+            es_step,
+            min_observations=MIN_OBSERVATIONS,
+            window=MIN_OBSERVATIONS,
+            tag_fn=tag_row,
+            chunk_size=chunk_size,
+            n_workers=n_workers,
+        )
     return run_walk_forward(
         symbol,
         timeframe,

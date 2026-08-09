@@ -51,6 +51,15 @@ def test_no_weights_ref_column():
     assert "weights_ref" not in df.columns
 
 
+def test_parallel_output_is_row_for_row_identical_to_sequential():
+    bars = _make_bars(n=MIN_OBSERVATIONS + 20)
+    sequential = run_es_backtest("AAPL", "1D", bars)
+    parallel = run_es_backtest("AAPL", "1D", bars, parallel=True, chunk_size=5, n_workers=2)
+    pd.testing.assert_frame_equal(
+        sequential.reset_index(drop=True), parallel.reset_index(drop=True),
+    )
+
+
 def test_direction_helper_thresholds():
     assert _direction(0.01) == "up"
     assert _direction(-0.01) == "down"

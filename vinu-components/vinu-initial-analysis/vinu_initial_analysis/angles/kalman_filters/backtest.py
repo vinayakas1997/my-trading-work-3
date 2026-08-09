@@ -23,7 +23,12 @@ from vinu_initial_analysis.angles.kalman_filters.compute import (
     _filtered_fields,
     _smoothed_fields,
 )
-from vinu_tools.compute.backtest.walk_forward import StepResult, WalkForwardStep, run_walk_forward
+from vinu_tools.compute.backtest.walk_forward import (
+    StepResult,
+    WalkForwardStep,
+    run_walk_forward,
+    run_walk_forward_parallel,
+)
 
 
 def _direction(value: float, eps: float = 1e-4) -> str:
@@ -63,7 +68,28 @@ def run_kalman_backtest(
     symbol: str,
     timeframe: str,
     bars: pd.DataFrame,
+    *,
+    parallel: bool = False,
+    chunk_size: int = 200,
+    n_workers: int | None = None,
 ) -> pd.DataFrame:
+    """parallel=True dispatches to run_walk_forward_parallel instead of the
+    sequential loop -- safe here because this angle already refits every
+    step (refit_cadence=1, no cross-step state reuse) with a fixed
+    window=MIN_OBSERVATIONS context, so chunked execution is row-for-row
+    identical to the sequential path."""
+    if parallel:
+        return run_walk_forward_parallel(
+            symbol,
+            timeframe,
+            bars,
+            kalman_step,
+            min_observations=MIN_OBSERVATIONS,
+            window=MIN_OBSERVATIONS,
+            tag_fn=tag_row,
+            chunk_size=chunk_size,
+            n_workers=n_workers,
+        )
     return run_walk_forward(
         symbol,
         timeframe,

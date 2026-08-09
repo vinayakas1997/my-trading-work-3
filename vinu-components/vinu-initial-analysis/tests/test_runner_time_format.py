@@ -64,10 +64,45 @@ def test_time_format_none_runs_every_declared_format(fake_angle):
         try:
             result = angle_runner.run("AAPL", angle_names=[fake_angle])
             assert result[fake_angle]["status"] == "completed"
-            assert result[fake_angle]["row_count"] == 2  # one row per declared format (1D + 1H)
-            # default (no time_format) writes/records under the storage default "1D"
-            back = storage.read_latest("AAPL", fake_angle, granularity="1D")
-            assert len(back) == 2
+            assert result[fake_angle]["row_count"] == 2  # one row per declared format (1D + 1H), total across both
+
+            # Each declared format is stored under its OWN real granularity,
+            # not combined together under one default "1D" bucket -- a
+            # fetch scoped to exactly one granularity must see only that
+            # one format's row, never the other format's row mixed in.
+            back_1d = storage.read_latest("AAPL", fake_angle, granularity="1D")
+            assert len(back_1d) == 1
+            assert back_1d.iloc[0]["time_format"] == "1D"
+
+            back_1h = storage.read_latest("AAPL", fake_angle, granularity="1H")
+            assert len(back_1h) == 1
+            assert back_1h.iloc[0]["time_format"] == "1H"
+
+            # RunLog got its own row per (symbol, angle, granularity), not
+            # one shared row for the whole sweep.
+            runs = run_log.get_runs(symbol="AAPL", angle_name=fake_angle)
+            assert len(runs) == 2
+            assert {r["granularity"] for r in runs} == {"1D", "1H"}
+            assert len({r["run_id"] for r in runs}) == 2  # distinct run_ids, not one reused
+        finally:
+            run_log.close()
+
+
+def test_time_format_none_second_call_only_recomputes_the_missing_timeframe(fake_angle):
+    # Real per-timeframe existing-run skip: if "1H" already has a completed
+    # run but "1D" doesn't, a second unrestricted sweep must only recompute
+    # "1D", not silently skip the whole angle (the old whole-angle-level
+    # check would have) and not needlessly recompute "1H" either.
+    with TemporaryDirectory() as tmp:
+        angle_runner, storage, run_log = _make_runner(tmp)
+        try:
+            angle_runner.run("AAPL", angle_names=[fake_angle], time_format="1H")
+            module = angle_runner._import_compute(fake_angle)
+            module.CALLS.clear()
+
+            result = angle_runner.run("AAPL", angle_names=[fake_angle])
+            assert result[fake_angle]["row_count"] == 1  # only 1D was actually (re)computed
+            assert module.CALLS == ["1D"]
         finally:
             run_log.close()
 
@@ -103,6 +138,33 @@ def test_time_format_not_declared_is_reported_as_error(fake_angle):
             # run() catches per-angle exceptions and reports them, doesn't raise
             assert result[fake_angle]["status"] == "error"
             assert "4H" in result[fake_angle]["error"]
+
+            # Previously silent: a failed angle left zero trace in RunLog.
+            # Now a real row is recorded with status='error', the real
+            # error message, and real elapsed time, scoped to the
+            # granularity that was actually requested.
+            runs = run_log.get_runs(symbol="AAPL", angle_name=fake_angle)
+            assert len(runs) == 1
+            assert runs[0]["status"] == "error"
+            assert "4H" in runs[0]["error"]
+            assert runs[0]["granularity"] == "4H"
+            assert runs[0]["duration_seconds"] is not None
+            assert runs[0]["duration_seconds"] >= 0
+            assert runs[0]["run_id"]  # a real run_id was generated even on failure
+        finally:
+            run_log.close()
+
+
+def test_successful_run_records_a_real_positive_duration(fake_angle):
+    with TemporaryDirectory() as tmp:
+        angle_runner, storage, run_log = _make_runner(tmp)
+        try:
+            angle_runner.run("AAPL", angle_names=[fake_angle], time_format="1H")
+            latest = run_log.get_latest_run("AAPL", fake_angle, granularity="1H")
+            assert latest is not None
+            assert latest["status"] == "completed"
+            assert latest["duration_seconds"] is not None
+            assert latest["duration_seconds"] >= 0
         finally:
             run_log.close()
 

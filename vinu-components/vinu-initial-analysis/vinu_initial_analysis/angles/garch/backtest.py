@@ -10,12 +10,19 @@ so none is added here.
 
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 import pandas as pd
 
 from vinu_initial_analysis.angles._tagging import tag_row
 from vinu_initial_analysis.angles.garch.compute import MIN_OBSERVATIONS, _fit_and_forecast
-from vinu_tools.compute.backtest.walk_forward import StepResult, WalkForwardStep, run_walk_forward
+from vinu_tools.compute.backtest.walk_forward import (
+    StepResult,
+    WalkForwardStep,
+    run_walk_forward,
+    run_walk_forward_parallel,
+)
 
 
 def _qlike(realized_var: float, forecast_var: float) -> float:
@@ -78,10 +85,34 @@ def run_garch_backtest(
     symbol: str,
     timeframe: str,
     bars: pd.DataFrame,
+    *,
+    parallel: bool = False,
+    chunk_size: int = 200,
+    n_workers: int | None = None,
 ) -> pd.DataFrame:
-    def step_fn(step: WalkForwardStep) -> StepResult:
-        return _garch_step(step, timeframe)
-
+    """parallel=True dispatches to run_walk_forward_parallel instead of the
+    sequential loop -- safe here because this angle already refits every
+    step (refit_cadence=1) with a fixed window=MIN_OBSERVATIONS context.
+    _garch_step needs `timeframe` (garch_volatility's annualization factor
+    depends on it), but run_walk_forward_parallel pickles step_fn by
+    reference to a worker process, so a local closure over `timeframe`
+    (fine for the sequential path below) won't survive that -- a
+    functools.partial binding it onto the module-level `_garch_step` does,
+    since partial objects pickle as (func, bound-args), not captured
+    interpreter state."""
+    step_fn = functools.partial(_garch_step, timeframe=timeframe)
+    if parallel:
+        return run_walk_forward_parallel(
+            symbol,
+            timeframe,
+            bars,
+            step_fn,
+            min_observations=MIN_OBSERVATIONS,
+            window=MIN_OBSERVATIONS,
+            tag_fn=tag_row,
+            chunk_size=chunk_size,
+            n_workers=n_workers,
+        )
     return run_walk_forward(
         symbol,
         timeframe,

@@ -29,7 +29,12 @@ from vinu_initial_analysis.angles.arima.compute import (
     _forecast_fields,
     _MIN_OBSERVATIONS as MIN_OBSERVATIONS,
 )
-from vinu_tools.compute.backtest.walk_forward import StepResult, WalkForwardStep, run_walk_forward
+from vinu_tools.compute.backtest.walk_forward import (
+    StepResult,
+    WalkForwardStep,
+    run_walk_forward,
+    run_walk_forward_parallel,
+)
 
 # Was its own hardcoded duplicate of compute.py's _MIN_OBSERVATIONS (both
 # happened to be 100, but nothing kept them in sync) -- now imported
@@ -95,8 +100,45 @@ def run_arima_backtest(
     timeframe: str,
     bars: pd.DataFrame,
     data_root: str,
+    *,
+    parallel: bool = False,
+    chunk_size: int = 200,
+    n_workers: int | None = None,
 ) -> pd.DataFrame:
+    """parallel=True dispatches to run_walk_forward_parallel instead of the
+    sequential loop. **Caveat specific to this angle**:
+    run_walk_forward_parallel does not support refit_cadence/prior_state
+    chaining at all -- every step runs as a fresh, independent fit
+    (is_refit_step=True, prior_state=None always). For 1H/4H/1D
+    (REFIT_CADENCE == 1, already refits every step sequentially too),
+    parallel output is row-for-row identical to sequential -- a pure
+    scheduling change. For 1min/5min/15min (REFIT_CADENCE > 1), this is
+    NOT row-for-row identical: sequential mode only fully refits every
+    Nth step and cheaply extends the fit in between
+    (`.append(refit=False)`, ~170x cheaper, see module docstring); parallel
+    mode fully re-runs the AIC grid search on every single step instead,
+    which is both a real behavior change (a fresh fit can choose a
+    different (p,d,q) order than an extended one) and, for these
+    timeframes specifically, likely *slower* overall despite the process
+    pool -- it does strictly more full fits than sequential does, not
+    just the same fits rescheduled. Turning parallel=True on for
+    1min/5min/15min is a real, deliberate trade (more/costlier real fits
+    per run) not a free win the way it is for the other 6 angles; safe
+    and identical only for 1H/4H/1D.
+    """
     refit_cadence = REFIT_CADENCE.get(timeframe, 1)
+    if parallel:
+        return run_walk_forward_parallel(
+            symbol,
+            timeframe,
+            bars,
+            arima_step,
+            min_observations=MIN_OBSERVATIONS,
+            window=MIN_OBSERVATIONS,
+            tag_fn=tag_row,
+            chunk_size=chunk_size,
+            n_workers=n_workers,
+        )
     return run_walk_forward(
         symbol,
         timeframe,

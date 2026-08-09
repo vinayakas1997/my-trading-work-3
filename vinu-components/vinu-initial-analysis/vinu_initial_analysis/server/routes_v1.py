@@ -19,13 +19,25 @@ Design notes specific to this component:
     not the storage default of `"1D"` regardless of what was actually
     computed. `fetch`/`fetch_by_run` already read by the requested
     granularity correctly; this closes the other half (the write side
-    silently ignoring it). Every other, unrestricted call site of
-    `AngleRunner.run()` (e.g. the tier2 scheduler, which wants every
-    declared time_format combined into one write) is unchanged — `time_format`
-    is opt-in, `None` preserves the prior default behavior exactly.
-    `AngleRunner._run_angle` also now rejects (`ValueError`) a requested
-    time_format the angle doesn't actually declare, rather than silently
-    computing something it wasn't asked to support.
+    silently ignoring it). `AngleRunner._run_angle` also now rejects
+    (`ValueError`) a requested time_format the angle doesn't actually
+    declare, rather than silently computing something it wasn't asked to
+    support.
+  - **Also fixed (was a second, related known limitation)**: every other,
+    unrestricted call site of `AngleRunner.run()` (`time_format=None` —
+    e.g. the tier2 scheduler, which wants every declared time_format
+    computed) used to combine all of them into ONE write/RunLog row under
+    the default `"1D"` granularity, mixing every timeframe's rows
+    together in one bucket regardless of what was actually computed — a
+    1H-scoped fetch would find nothing even though 1H rows genuinely
+    existed, mixed in under "1D". Each declared time_format now gets its
+    own real storage write and its own RunLog row under its own real
+    granularity, and its own distinct `run_id` (a single caller-supplied
+    `run_id` has no coherent meaning across multiple real writes, and
+    `run()` now rejects pre-assigning one without also restricting
+    `time_format`). The existing-run skip check is scoped per timeframe
+    too, so a partially-completed sweep only recomputes what's actually
+    missing.
   - `trigger` pre-assigns `run_id` and threads it through
     `AngleRunner.run(..., run_id=...)` so the ID returned immediately at
     trigger-time is the exact same one that ends up in `RunLog`/storage —

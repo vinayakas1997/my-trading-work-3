@@ -71,6 +71,15 @@ def test_smoothed_diagnostic_is_one_row_and_untagged():
     assert "smoothed_trend" in df.columns
 
 
+def test_parallel_output_is_row_for_row_identical_to_sequential():
+    bars = _make_bars(n=MIN_OBSERVATIONS + 20)
+    sequential = run_kalman_backtest("AAPL", "1D", bars)
+    parallel = run_kalman_backtest("AAPL", "1D", bars, parallel=True, chunk_size=5, n_workers=2)
+    pd.testing.assert_frame_equal(
+        sequential.reset_index(drop=True), parallel.reset_index(drop=True),
+    )
+
+
 def test_naive_baseline_is_persistence_not_flat():
     bars = _make_bars(n=MIN_OBSERVATIONS + 8)
     df = run_naive_baseline("AAPL", "1D", bars)

@@ -4,6 +4,7 @@ import importlib
 import inspect
 import logging
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -116,6 +117,13 @@ class AngleRunner:
         """
         if run_id is not None and (angle_names is None or len(angle_names) != 1):
             raise ValueError("run_id can only be pre-assigned when angle_names selects exactly one angle")
+        if run_id is not None and time_format is None:
+            # A pre-assigned run_id no longer has one coherent meaning for an
+            # unrestricted multi-format sweep -- each declared time_format
+            # now gets its own real, distinct run_id and storage write (see
+            # _run_angle), so a single caller-supplied ID would just be
+            # silently discarded rather than actually identifying anything.
+            raise ValueError("run_id can only be pre-assigned together with a single time_format")
 
         self._bar_cache.clear()
         self._news_cache.clear()
@@ -123,10 +131,17 @@ class AngleRunner:
         to_run = [a for a in self._angles if angle_names is None or a["name"] in angle_names]
 
         for angle in to_run:
+            # Generated here (not left to _run_angle) so a real run_id exists
+            # even on a failure that happens before _run_angle would have
+            # made its own -- RunLog.record_run's run_id column is NOT NULL,
+            # and a failed run needs its own real, traceable ID same as a
+            # successful one.
+            angle_run_id = run_id or uuid4().hex[:12]
+            t0 = time.perf_counter()
             try:
                 with sync_timer(f"angle.{angle['name']}"):
                     count = self._run_angle(
-                        symbol, angle, from_ts, to_ts, run_id=run_id, tier=tier, time_format=time_format
+                        symbol, angle, from_ts, to_ts, run_id=angle_run_id, tier=tier, time_format=time_format
                     )
                 results[angle["name"]] = {
                     "status": "completed",
@@ -134,6 +149,26 @@ class AngleRunner:
                 }
             except Exception as exc:
                 LOG.exception("Angle %s failed for %s", angle["name"], symbol)
+                duration = time.perf_counter() - t0
+                # Previously silent: a failed angle left zero trace in
+                # RunLog at all (record_run was only ever called from the
+                # success path inside _run_angle). Recording the failure
+                # here -- real elapsed time, real error, real granularity
+                # -- is what makes RunLog an actual "what completed, what
+                # failed, how long did it take" lookup rather than only
+                # ever showing successes.
+                self._run_log.record_run(
+                    symbol=symbol,
+                    angle_name=angle["name"],
+                    run_id=angle_run_id,
+                    analysis_from=from_ts,
+                    analysis_until=to_ts,
+                    tier=tier,
+                    status="error",
+                    error=str(exc),
+                    duration_seconds=duration,
+                    granularity=time_format or "1D",
+                )
                 results[angle["name"]] = {"status": "error", "error": str(exc)}
 
         return results
@@ -149,12 +184,14 @@ class AngleRunner:
         time_format: str | None = None,
     ) -> int:
         """Run an angle for each of its time_formats (or just `time_format`,
-        if given). Returns total row count."""
-        existing = self._run_log.has_existing_run(symbol, angle["name"], from_ts, to_ts)
-        if existing:
-            LOG.info("Skipping %s for %s — existing run found", angle["name"], symbol)
-            return 0
-
+        if given). Each time_format gets its OWN storage write and its OWN
+        RunLog row, under its own real granularity -- previously every
+        declared format got combined into one DataFrame and written/recorded
+        under a single default "1D" bucket regardless of what was actually
+        computed, so a later fetch scoped to (say) "1H" found nothing even
+        though 1H rows existed, mixed in under "1D". Returns total row count
+        across every time_format actually run (skipped/empty ones excluded).
+        """
         module = self._import_compute(angle["name"])
         if module is None:
             raise ImportError(f"Could not import compute for {angle['name']}")
@@ -170,12 +207,21 @@ class AngleRunner:
         else:
             time_formats = declared_time_formats
         needs_bars = angle["spec"].get("needs_bars", True)
-        run_id = run_id or uuid4().hex[:12]
-        all_dfs: list[pd.DataFrame] = []
-
         news = self._fetch_news(symbol, from_ts, to_ts)
 
+        total_rows = 0
         for tf in time_formats:
+            # Existing-run check is now scoped per (symbol, angle, tf) --
+            # previously this only ever checked the default "1D" granularity
+            # for the whole angle, which was correct back when everything
+            # really did land under "1D" together, but would now wrongly
+            # skip (or wrongly NOT skip) individual timeframes once each one
+            # is stored under its own real granularity.
+            if self._run_log.has_existing_run(symbol, angle["name"], from_ts, to_ts, granularity=tf, tier=tier):
+                LOG.info("Skipping %s for %s at %s — existing run found", angle["name"], symbol, tf)
+                continue
+
+            tf_t0 = time.perf_counter()
             bars = self._fetch_bars(symbol, tf, from_ts, to_ts) if needs_bars else pd.DataFrame()
             compute_kwargs: dict[str, Any] = {
                 "symbol": symbol,
@@ -196,45 +242,42 @@ class AngleRunner:
             if "time_format" in df.columns:
                 df = df.drop(columns=["time_format"])
             df["time_format"] = tf
-            all_dfs.append(df)
 
-        if not all_dfs:
-            return 0
+            # A single explicitly-requested time_format keeps the caller's
+            # exact run_id -- the v1 API's trigger/fetch_by_run contract
+            # depends on polling by that exact ID. An unrestricted
+            # multi-format sweep has no such single-ID contract to
+            # preserve, and reusing one run_id across multiple real writes
+            # here would violate RunLog's run_id UNIQUE constraint
+            # (INSERT OR REPLACE would silently erase every earlier
+            # timeframe's row) -- so each timeframe gets its own fresh,
+            # real, distinct run_id instead.
+            tf_run_id = run_id if time_format is not None else uuid4().hex[:12]
 
-        combined = pd.concat(all_dfs, ignore_index=True)
-        # When a single time_format was requested, write/record under that
-        # exact granularity so a later fetch for the same granularity can
-        # actually find it — otherwise both default to "1D" regardless of
-        # what was actually computed (the pre-existing gap routes_v1.py's
-        # module docstring already flagged). The unrestricted multi-format
-        # case keeps the prior default behavior unchanged.
-        write_kwargs: dict[str, Any] = {}
-        record_kwargs: dict[str, Any] = {}
-        if time_format is not None:
-            write_kwargs["granularity"] = time_format
-            record_kwargs["granularity"] = time_format
+            self._storage.write(
+                symbol,
+                angle["name"],
+                df,
+                analysis_from=from_ts,
+                analysis_until=to_ts,
+                run_id=tf_run_id,
+                tier=tier,
+                granularity=tf,
+            )
+            self._run_log.record_run(
+                symbol=symbol,
+                angle_name=angle["name"],
+                run_id=tf_run_id,
+                analysis_from=from_ts,
+                analysis_until=to_ts,
+                tier=tier,
+                row_count=len(df),
+                duration_seconds=time.perf_counter() - tf_t0,
+                granularity=tf,
+            )
+            total_rows += len(df)
 
-        self._storage.write(
-            symbol,
-            angle["name"],
-            combined,
-            analysis_from=from_ts,
-            analysis_until=to_ts,
-            run_id=run_id,
-            tier=tier,
-            **write_kwargs,
-        )
-        self._run_log.record_run(
-            symbol=symbol,
-            angle_name=angle["name"],
-            run_id=run_id,
-            analysis_from=from_ts,
-            analysis_until=to_ts,
-            tier=tier,
-            row_count=len(combined),
-            **record_kwargs,
-        )
-        return len(combined)
+        return total_rows
 
     def _fetch_bars(
         self,

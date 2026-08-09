@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS runs (
     error       TEXT,
     row_count   INTEGER DEFAULT 0,
     granularity TEXT NOT NULL DEFAULT '1D',
-    tier        TEXT NOT NULL DEFAULT 'tier2'
+    tier        TEXT NOT NULL DEFAULT 'tier2',
+    duration_seconds REAL
 );
 CREATE INDEX IF NOT EXISTS idx_runs_symbol ON runs(symbol);
 CREATE INDEX IF NOT EXISTS idx_runs_angle ON runs(angle_name);
@@ -55,13 +56,14 @@ class RunLog(SQLiteBackend):
         row_count: int = 0,
         granularity: str = "1D",
         tier: str = "tier2",
+        duration_seconds: float | None = None,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
         conn.execute(
             """INSERT OR REPLACE INTO runs
-               (symbol, angle_name, run_id, started_at, analysis_from, analysis_until, stored_at, status, error, row_count, granularity, tier)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (symbol, angle_name, run_id, started_at, analysis_from, analysis_until, stored_at, status, error, row_count, granularity, tier, duration_seconds)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 symbol,
                 angle_name,
@@ -75,6 +77,7 @@ class RunLog(SQLiteBackend):
                 row_count,
                 granularity,
                 tier,
+                duration_seconds,
             ),
         )
         conn.commit()

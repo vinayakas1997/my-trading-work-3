@@ -274,11 +274,30 @@ zero regressions.
   — same reasoning as vinu-stock-price's decision (see
   `03-vinu-stock-price.md`): the bespoke code already does what's needed
   correctly.
-- **Real per-angle granularity** — see Phase 6c's documented limitation
-  above; every angle still writes under the default `1D` bucket.
 - **`ml_model_pipeline`/`news_first_analysis` physical removal** — marked
   deprecated, intentionally not deleted (see Phase 4 above); a follow-up
   decision if you want them actually removed.
+
+## Update: real per-angle granularity — fixed
+
+Phase 6c's documented limitation ("every angle still writes under the
+default `1D` bucket") is now fixed for real, not just for the v1 API's
+single-`time_format` `trigger` route. `AngleRunner._run_angle` used to
+combine every declared `time_format` into one `DataFrame` and write/record
+it once under the storage default `granularity="1D"`, regardless of what
+was actually computed — an unrestricted multi-format sweep (the tier2
+scheduler's normal call shape) would silently bury 1H/4H/etc. rows inside
+the "1D" bucket, where a granularity-scoped fetch could never find them.
+Each declared `time_format` now gets its own real storage write, its own
+`RunLog` row under its own real `granularity`, and its own distinct
+`run_id` (reusing one `run_id` across multiple real writes would have
+violated `RunLog`'s `run_id UNIQUE` constraint — `INSERT OR REPLACE` would
+have silently erased every earlier timeframe's row). The existing-run
+skip check is now scoped per `(symbol, angle, granularity)` too, so a
+partially-completed sweep only recomputes what's actually missing instead
+of either skipping the whole angle or redundantly recomputing everything.
+See `vinu_initial_analysis/server/routes_v1.py`'s module docstring and
+`tests/test_runner_time_format.py` for the real proof.
 
 ## Post-Phase-6 decision: 4 permanent-fallback angles physically removed (2026-08-06)
 

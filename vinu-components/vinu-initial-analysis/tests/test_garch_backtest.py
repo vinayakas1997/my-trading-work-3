@@ -68,3 +68,17 @@ def test_no_weights_ref_and_no_naive_baseline_module():
     import pytest
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module("vinu_initial_analysis.angles.garch.naive_baseline")
+
+
+def test_parallel_output_is_row_for_row_identical_to_sequential():
+    # Real proof, not assumed: step_fn here is a functools.partial binding
+    # timeframe onto the module-level _garch_step (the sequential path's
+    # own local closure over `timeframe` would fail to pickle to a worker
+    # process) -- this test exercises the real ProcessPoolExecutor path
+    # with a small chunk_size so >1 chunk is actually created.
+    bars = _make_bars(n=MIN_OBSERVATIONS + 20)
+    sequential = run_garch_backtest("AAPL", "1D", bars)
+    parallel = run_garch_backtest("AAPL", "1D", bars, parallel=True, chunk_size=5, n_workers=2)
+    pd.testing.assert_frame_equal(
+        sequential.reset_index(drop=True), parallel.reset_index(drop=True),
+    )
