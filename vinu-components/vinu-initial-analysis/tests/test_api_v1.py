@@ -83,6 +83,50 @@ def test_fetch_granularity_isolation(client_and_service) -> None:
     assert resp.status_code == 404
 
 
+def test_factsheet_unknown_method_is_422(client: TestClient) -> None:
+    resp = client.get("/v1/stage1/vinu-initial-analysis/factsheet/AAPL/not-a-real-method")
+    assert resp.status_code == 422
+
+
+def test_factsheet_no_stored_data_is_404(client: TestClient) -> None:
+    resp = client.get("/v1/stage1/vinu-initial-analysis/factsheet/AAPL/arima")
+    assert resp.status_code == 404
+    assert resp.json()["status"] == "not_found"
+
+
+def test_factsheet_returns_the_real_generated_document(client_and_service) -> None:
+    # Same real shape test_factsheet.py's own fixtures use -- a real
+    # AngleStorage write PLUS a real RunLog row, since generate_factsheet
+    # resolves "latest" through RunLog (never the mtime fallback plain
+    # fetch() tolerates above).
+    client, service = client_and_service
+    df = pd.DataFrame([
+        {
+            "bar_ts": BASE_TS + i * 86400, "step_index": i,
+            "session": "closed", "subsession": None, "day_of_week": "monday",
+            "week_of_month": 1, "month": 7, "quarter": 3, "timeframe": "1D",
+            "status": "ok", "n_observations": 100,
+            "order": {"p": 1, "d": 1, "q": 1}, "aic": 500.0,
+            "forecast": 100.0, "confidence_interval": [95.0, 105.0],
+            "confidence_level": 0.95, "actual_price": 101.0,
+            "hit": 1, "abs_error": 1.0, "squared_error": 1.0,
+        }
+        for i in range(3)
+    ])
+    run_id = service.storage.write("AAPL", "arima", df, tier="tier2", granularity="1D")
+    service.run_log.record_run("AAPL", "arima", run_id, row_count=len(df), granularity="1D", tier="tier2")
+
+    resp = client.get("/v1/stage1/vinu-initial-analysis/factsheet/AAPL/arima")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["tier"] == "tier2"
+    assert isinstance(body["data"], str)
+    assert "hit_rate" in body["data"]
+    assert run_id in body["data"]
+    assert "not available" in body["data"]  # other 5 declared time formats have no real run
+
+
 def test_trigger_and_poll_flow(client_and_service) -> None:
     client, service = client_and_service
 

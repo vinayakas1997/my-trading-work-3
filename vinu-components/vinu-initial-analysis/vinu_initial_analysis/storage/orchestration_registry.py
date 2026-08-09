@@ -57,7 +57,9 @@ documented behavior on an empty book, not a placeholder this pass faked.
 from __future__ import annotations
 
 import functools
+import time
 from typing import Any, Callable
+from uuid import uuid4
 
 import pandas as pd
 
@@ -111,7 +113,10 @@ from vinu_initial_analysis.angles.trend_lifecycle.backtest import run_signal_out
 from vinu_initial_analysis.angles.trend_session_structure.backtest import (
     aggregate_signal_outcomes_by_session,
 )
+from vinu_initial_analysis.storage.factsheet import write_factsheet, write_summary
+from vinu_initial_analysis.storage.meta import RunLog
 from vinu_initial_analysis.storage.orchestration import AngleRunStatus, run_batch
+from vinu_initial_analysis.storage.parquet import AngleStorage
 from vinu_tools.compute.backtest.walk_forward import (
     BatchResult,
     WalkForwardJob,
@@ -384,6 +389,61 @@ def build_walk_forward_jobs(
     return jobs
 
 
+def _persist_result_and_write_factsheet(
+    storage: AngleStorage,
+    run_log: RunLog,
+    data_root: str,
+    symbol: str,
+    angle_name: str,
+    timeframe: str,
+    df: Any,
+    *,
+    tier: str = "tier2",
+) -> None:
+    """Real storage/RunLog write for one job's result, then a fresh fact
+    sheet for it -- the file being "there right after the angle runs"
+    requires this batch path to actually persist, which (unlike
+    runner.py's separate compute() path) it did not do before this: a
+    plain run_batch()/run_batch_with_parallel_harness() call only ever
+    returned DataFrames in memory. Skips anything that isn't a real,
+    non-empty result (e.g. a job whose own step_fn already reported
+    "fit_failed" as a status row is still real data and gets persisted;
+    None/empty means nothing to persist)."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return
+    run_id = uuid4().hex[:12]
+    t0 = time.perf_counter()
+    # Real analysis_from/analysis_until, derived from this run's own real
+    # bar_ts values -- not a shared config value, since different angles
+    # in the same batch can (and do -- see chronos/kronos, news_price_
+    # causality) use a different real window. AngleStorage.write()'s
+    # analysis_from/analysis_until columns existed in the schema before
+    # this but were never populated by this batch path (confirmed: always
+    # NaT in every real run so far) -- the fact sheet worked around this
+    # by deriving its "Real data covers X to Y" line straight from bar_ts
+    # each time instead, but the dedicated storage slot for it sat unused.
+    analysis_from = analysis_until = None
+    if "bar_ts" in df.columns:
+        real_ts = pd.to_numeric(df["bar_ts"], errors="coerce").dropna()
+        if not real_ts.empty:
+            analysis_from = int(real_ts.min())
+            analysis_until = int(real_ts.max())
+    storage.write(
+        symbol, angle_name, df, run_id=run_id, granularity=timeframe, tier=tier,
+        analysis_from=analysis_from, analysis_until=analysis_until,
+    )
+    run_log.record_run(
+        symbol=symbol,
+        angle_name=angle_name,
+        run_id=run_id,
+        row_count=len(df),
+        granularity=timeframe,
+        tier=tier,
+        duration_seconds=time.perf_counter() - t0,
+    )
+    write_factsheet(data_root, symbol, angle_name, run_log, storage, tier=tier)
+
+
 def run_batch_with_parallel_harness(
     tracker: AngleRunStatus,
     batch_id: str,
@@ -402,6 +462,8 @@ def run_batch_with_parallel_harness(
     articles_to_ts: int | None = None,
     price_client: Any = None,
     positions_by_symbol: dict[str, list[dict]] | None = None,
+    run_log: RunLog | None = None,
+    tier: str = "tier2",
 ) -> dict[str, Any]:
     """Same real contract as orchestration.run_batch (every job registered
     up front for full visibility, batch rows deleted only once every job
@@ -418,6 +480,16 @@ def run_batch_with_parallel_harness(
     3-symbol/1-angle batch). Splitting one shared pool across all 7
     parallel-safe angles x every symbol in one call is the same lever at
     real orchestrator scale, not per single-angle call.
+
+    `run_log`: opt-in. When given, every job that actually succeeds with a
+    real, non-empty result is written through AngleStorage/RunLog for
+    real, and a fresh fact sheet (`storage/factsheet.py`) is written to
+    `{data_root}/factsheets/{symbol}/{angle_name}.md` right after -- this
+    is what makes the file "there" once an angle has run. When omitted
+    (the default), behavior is unchanged from before: results are
+    returned in memory only, nothing is written to disk beyond what the
+    caller does itself -- every existing caller of this function keeps
+    working exactly as before.
     """
     names = angle_names if angle_names is not None else list(ANGLE_REGISTRY)
     parallel_names = [a for a in names if a in PARALLEL_SAFE_ANGLES]
@@ -459,6 +531,12 @@ def run_batch_with_parallel_harness(
                 else:
                     results[key] = batch_result.data.get(key)
                     tracker.mark_ok(batch_id, symbol, angle_name)
+                    if run_log is not None:
+                        storage = AngleStorage(data_root, run_log=run_log)
+                        _persist_result_and_write_factsheet(
+                            storage, run_log, data_root, symbol, angle_name,
+                            timeframe, results[key], tier=tier,
+                        )
 
     if sequential_names:
         seq_jobs = build_batch_jobs(
@@ -476,7 +554,19 @@ def run_batch_with_parallel_harness(
         seq_summary = run_batch(tracker, batch_id, seq_jobs, max_attempts=max_attempts)
         results.update(seq_summary["results"])
         errors.update(seq_summary["errors"])
+        if run_log is not None:
+            storage = AngleStorage(data_root, run_log=run_log)
+            for key, df in seq_summary["results"].items():
+                symbol, angle_name = key.split(":", 1)
+                _persist_result_and_write_factsheet(
+                    storage, run_log, data_root, symbol, angle_name, timeframe, df, tier=tier,
+                )
     elif tracker.is_batch_complete(batch_id):
         tracker.delete_batch(batch_id)
+
+    if run_log is not None:
+        storage = AngleStorage(data_root, run_log=run_log)
+        for symbol in symbols:
+            write_summary(data_root, symbol, run_log, storage, angle_names=names, tier=tier)
 
     return {"results": results, "errors": errors, "ok": not errors}

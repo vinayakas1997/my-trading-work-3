@@ -1,0 +1,42 @@
+# Real shared analysis window for the fact-sheet regeneration stage
+# scripts (real_all_angles_stage*.py). Read once here instead of each
+# stage script picking its own window via fetch_candles(limit=N).
+#
+# Real reason this file exists: fetch_candles(..., limit=N) returns the
+# FIRST N bars from the earliest real bar in the local archive, not the
+# most recent N (confirmed against vinu_stock/query/engine.py directly).
+# Every prior real run's date range landed in 2022 purely as a side effect
+# of that, regardless of which N was used -- not a deliberate choice. This
+# file makes the real window explicit instead.
+#
+# Local AAPL archive's real full range (confirmed): 2022-01-03 to
+# 2026-02-04, 1025 real daily bars.
+start_date=2022-01-03
+end_date=2022-10-18
+
+# news_price_causality_impact/_aggregate need real candles that overlap
+# real news coverage. The local news.db archive's real AAPL article
+# coverage (confirmed by direct query) is narrow and doesn't overlap
+# start_date/end_date above at all: 2022-12-31 to 2023-01-30, 156 real
+# articles. Without this, news_price_causality_aggregate's real per-
+# quarter bucketing (candles bucket by real quarter, articles bucket by
+# real quarter, a quarter needs BOTH non-empty to produce a row) finds
+# zero overlapping quarters and silently returns empty -- not a data-
+# sparsity problem, a real window mismatch. A small buffer is added on
+# both sides for real steps to mature.
+news_start_date=2022-11-01
+news_end_date=2023-02-15
+
+# chronos/kronos need min_observations=512 real bars before their first
+# real forecast -- the window above (~200 real trading days) doesn't
+# cover that. Their own stage script fetches a separate, wider real
+# window (same start_date, later end_date) rather than silently reusing
+# end_date above and producing zero real steps. 2024-03-26 is the real
+# date of the 560th real trading-day bar from start_date in the local
+# archive (confirmed by direct fetch_candles(limit=560) query) -- chosen
+# for the same real step count (560 bars -> 44 real forecast steps) the
+# prior real chronos/kronos run already used and proved works, not a
+# guess. A first attempt at this value (2023-04-01) was wrong -- it only
+# covers 313 real trading days, under the 512 needed, and produced zero
+# real steps (confirmed: file=NO for both angles on that attempt).
+chronos_kronos_end_date=2024-03-27

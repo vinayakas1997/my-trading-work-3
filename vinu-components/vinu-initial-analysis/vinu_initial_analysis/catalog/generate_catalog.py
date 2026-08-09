@@ -23,7 +23,7 @@ def generate_catalog(output_path: str | Path | None = None) -> str:
         spec_file = folder / "spec.yaml"
         if not spec_file.exists():
             continue
-        with open(spec_file) as f:
+        with open(spec_file, encoding="utf-8") as f:
             spec = yaml.safe_load(f) or {}
 
         entries.append({
@@ -38,7 +38,7 @@ def generate_catalog(output_path: str | Path | None = None) -> str:
     catalog = {"angles": entries}
 
     out_path = Path(output_path) if output_path else CATALOG_PATH
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         yaml.dump(catalog, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
     print(f"Wrote {len(entries)} angles to {out_path}")

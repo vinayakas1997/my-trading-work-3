@@ -8,6 +8,7 @@ from typing import Any
 from vinu_initial_analysis.api import CorrelationAPI
 from vinu_initial_analysis.config import VinuInitialAnalysisConfig, load_config
 from vinu_initial_analysis.runner import AngleRunner
+from vinu_initial_analysis.storage.meta import RunLog
 from vinu_initial_analysis.storage.parquet import AngleStorage
 
 LOG = logging.getLogger(__name__)
@@ -29,6 +30,10 @@ class InitialAnalysisService:
     @property
     def storage(self) -> AngleStorage:
         return self._api.storage
+
+    @property
+    def run_log(self) -> RunLog:
+        return self._api.run_log
 
     @property
     def config(self) -> VinuInitialAnalysisConfig:

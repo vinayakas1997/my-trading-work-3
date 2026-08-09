@@ -32,6 +32,10 @@ class CorrelationAPI:
         return self._storage
 
     @property
+    def run_log(self) -> RunLog:
+        return self._run_log
+
+    @property
     def runner(self) -> AngleRunner:
         return self._runner
 

@@ -1,0 +1,69 @@
+# backtesting_44_metrics (AAPL) -- Backtesting Metrics
+
+**backtesting_44_metrics (AAPL):** Compute 44+ portfolio metrics — Sharpe, Sortino, MaxDD, WinRate, CAGR, VaR, CVaR, tail ratio Output: Angle-specific results
+
+Condition: N=100 candles of history considered before each forecast ("100 candles" means 100 candles at that column's own resolution -- 100 one-minute candles for the `1min` column, 100 daily candles for the `1D` column, not a fixed time window applied to every column).
+
+Real data covers 2022-05-26 to 2022-10-17 (144 days), 99 real steps across 1 real time format(s).
+
+Table columns = candle/bar time resolution (declared time formats: 1min, 5min, 15min, 1H, 4H, 1D, 1W, 1M, 6M). Each cell states `n_observations`, `total_return`, `cagr`, `ann_vol`, `sharpe_ratio`, `sortino_ratio`, `max_drawdown`, `calmar_ratio`, `win_rate`, `avg_win`, `avg_loss`, `win_loss_ratio`, `profit_factor`, plus `n` (how many real steps that value is based on), or `not available` when that (session, time format) combination has no real stored run yet.
+
+All times below are UTC. Session row labels, as fixed UTC hour ranges (New York shifts with US daylight saving; London/closed do not):
+- `closed` = 00:00-07:00 UTC
+- `london` = 07:00-13:00 UTC
+- `ny_premarket` = 13:00-13:30 UTC (DST) / 13:00-14:30 UTC (non-DST)
+- `ny_regular` = 13:30-20:00 UTC (DST) / 14:30-21:00 UTC (non-DST) -- NYSE's 9:30am-4:00pm ET regular trading hours
+- `ny_afterhours` = 20:00-24:00 UTC (DST) / 21:00-24:00 UTC (non-DST)
+
+| session | 1min | 5min | 15min | 1H | 4H | 1D | 1W | 1M | 6M |
+|---|---|---|---|---|---|---|---|---|---|
+| closed | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.07554, cagr=-0.1684, ann_vol=0.3611, sharpe_ratio=-0.4669, sortino_ratio=-0.7177, max_drawdown=-0.2455, calmar_ratio=-0.6858, win_rate=0.5049, avg_win=0.01747, avg_loss=-0.01901, win_loss_ratio=0.9278, profit_factor=0.9449, n=99, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| london | not available | not available | not available | not available | not available | not available (n=0) | not available | not available | not available |
+| ny_premarket | not available | not available | not available | not available | not available | not available (n=0) | not available | not available | not available |
+| ny_regular | not available | not available | not available | not available | not available | not available (n=0) | not available | not available | not available |
+| ny_afterhours | not available | not available | not available | not available | not available | not available (n=0) | not available | not available | not available |
+
+## Breakdown by calendar tag
+
+Same fields as the session table above (`n_observations`, `total_return`, `cagr`, `ann_vol`, `sharpe_ratio`, `sortino_ratio`, `max_drawdown`, `calmar_ratio`, `win_rate`, `avg_win`, `avg_loss`, `win_loss_ratio`, `profit_factor`, plus `n`/`computed_at`/`run_id`), grouped instead by a real calendar tag every step already carries: `day_of_week` (real weekday name of the bar), `week_of_month` (1-5, which real calendar week of that month the bar falls in), `month` (real calendar month number, 1-12), `quarter` (real calendar quarter, 1-4). Unlike the session table, only real observed values become a row here -- there is no fixed universe of weeks/months/quarters to pre-list, so a value that never occurs in this run's real data is simply absent, not shown as `not available`.
+
+### day_of_week (real weekday name of the bar)
+
+| day_of_week | 1min | 5min | 15min | 1H | 4H | 1D | 1W | 1M | 6M |
+|---|---|---|---|---|---|---|---|---|---|
+| monday | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.06185, cagr=-0.1379, ann_vol=0.3615, sharpe_ratio=-0.3826, sortino_ratio=-0.5869, max_drawdown=-0.2454, calmar_ratio=-0.5575, win_rate=0.5047, avg_win=0.01762, avg_loss=-0.01884, win_loss_ratio=0.9439, profit_factor=0.9601, n=17, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| tuesday | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.08374, cagr=-0.1882, ann_vol=0.3616, sharpe_ratio=-0.5197, sortino_ratio=-0.7981, max_drawdown=-0.2459, calmar_ratio=-0.7621, win_rate=0.504, avg_win=0.01746, avg_loss=-0.01908, win_loss_ratio=0.9228, profit_factor=0.9361, n=20, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| wednesday | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.07504, cagr=-0.1673, ann_vol=0.3607, sharpe_ratio=-0.4622, sortino_ratio=-0.709, max_drawdown=-0.2448, calmar_ratio=-0.6758, win_rate=0.506, avg_win=0.01741, avg_loss=-0.01902, win_loss_ratio=0.9248, profit_factor=0.9458, n=20, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| thursday | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.07596, cagr=-0.1677, ann_vol=0.3605, sharpe_ratio=-0.4668, sortino_ratio=-0.7203, max_drawdown=-0.2453, calmar_ratio=-0.6862, win_rate=0.5052, avg_win=0.01742, avg_loss=-0.01901, win_loss_ratio=0.9257, profit_factor=0.9442, n=21, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| friday | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.07887, cagr=-0.1759, ann_vol=0.3613, sharpe_ratio=-0.4892, sortino_ratio=-0.7529, max_drawdown=-0.2459, calmar_ratio=-0.726, win_rate=0.5048, avg_win=0.01747, avg_loss=-0.01907, win_loss_ratio=0.9245, profit_factor=0.9408, n=21, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+
+### week_of_month (1-5, which real calendar week of that month the bar falls in)
+
+| week_of_month | 1min | 5min | 15min | 1H | 4H | 1D | 1W | 1M | 6M |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.06888, cagr=-0.1508, ann_vol=0.3595, sharpe_ratio=-0.4233, sortino_ratio=-0.6619, max_drawdown=-0.2417, calmar_ratio=-0.6318, win_rate=0.5057, avg_win=0.01747, avg_loss=-0.01894, win_loss_ratio=0.9305, profit_factor=0.9514, n=23, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| 2 | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.06694, cagr=-0.1466, ann_vol=0.3583, sharpe_ratio=-0.4058, sortino_ratio=-0.6309, max_drawdown=-0.2423, calmar_ratio=-0.6019, win_rate=0.502, avg_win=0.01747, avg_loss=-0.01862, win_loss_ratio=0.9484, profit_factor=0.9548, n=25, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| 3 | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.05938, cagr=-0.135, ann_vol=0.3653, sharpe_ratio=-0.367, sortino_ratio=-0.5607, max_drawdown=-0.2528, calmar_ratio=-0.5221, win_rate=0.514, avg_win=0.01756, avg_loss=-0.01937, win_loss_ratio=0.9155, profit_factor=0.9646, n=20, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| 4 | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.09513, cagr=-0.2146, ann_vol=0.3618, sharpe_ratio=-0.5964, sortino_ratio=-0.9069, max_drawdown=-0.2489, calmar_ratio=-0.8627, win_rate=0.5027, avg_win=0.01741, avg_loss=-0.01919, win_loss_ratio=0.914, profit_factor=0.9225, n=22, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| 5 | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.1044, cagr=-0.2349, ann_vol=0.3617, sharpe_ratio=-0.653, sortino_ratio=-0.9887, max_drawdown=-0.2393, calmar_ratio=-0.9878, win_rate=0.4967, avg_win=0.01746, avg_loss=-0.019, win_loss_ratio=0.9247, profit_factor=0.9117, n=9, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+
+### month (real calendar month number, 1-12)
+
+| month | 1min | 5min | 15min | 1H | 4H | 1D | 1W | 1M | 6M |
+|---|---|---|---|---|---|---|---|---|---|
+| 5 | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.1734, cagr=-0.3798, ann_vol=0.3441, sharpe_ratio=-1.105, sortino_ratio=-1.771, max_drawdown=-0.232, calmar_ratio=-1.637, win_rate=0.4867, avg_win=0.0163, avg_loss=-0.01871, win_loss_ratio=0.8713, profit_factor=0.8265, n=3, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| 6 | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.1727, cagr=-0.3787, ann_vol=0.3589, sharpe_ratio=-1.054, sortino_ratio=-1.641, max_drawdown=-0.2543, calmar_ratio=-1.489, win_rate=0.4948, avg_win=0.01689, avg_loss=-0.01979, win_loss_ratio=0.8545, profit_factor=0.8366, n=21, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| 7 | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.1023, cagr=-0.2317, ann_vol=0.3687, sharpe_ratio=-0.6304, sortino_ratio=-0.9802, max_drawdown=-0.2703, calmar_ratio=-0.8575, win_rate=0.5325, avg_win=0.01716, avg_loss=-0.02132, win_loss_ratio=0.8049, profit_factor=0.9188, n=20, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| 8 | not available | not available | not available | not available | not available | n_observations=100, total_return=0.0008218, cagr=0.007489, ann_vol=0.3656, sharpe_ratio=0.01919, sortino_ratio=0.0295, max_drawdown=-0.2652, calmar_ratio=0.01384, win_rate=0.5187, avg_win=0.01789, avg_loss=-0.01876, win_loss_ratio=0.9549, profit_factor=1.03, n=23, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| 9 | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.05565, cagr=-0.1331, ann_vol=0.3634, sharpe_ratio=-0.3671, sortino_ratio=-0.5264, max_drawdown=-0.2121, calmar_ratio=-0.6366, win_rate=0.49, avg_win=0.01792, avg_loss=-0.01784, win_loss_ratio=1.005, profit_factor=0.9659, n=21, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| 10 | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.01245, cagr=-0.02895, ann_vol=0.3421, sharpe_ratio=-0.08186, sortino_ratio=-0.1194, max_drawdown=-0.2097, calmar_ratio=-0.138, win_rate=0.4791, avg_win=0.01774, avg_loss=-0.01612, win_loss_ratio=1.102, profit_factor=1.013, n=11, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+
+### quarter (real calendar quarter, 1-4)
+
+| quarter | 1min | 5min | 15min | 1H | 4H | 1D | 1W | 1M | 6M |
+|---|---|---|---|---|---|---|---|---|---|
+| 2 | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.1728, cagr=-0.3789, ann_vol=0.3571, sharpe_ratio=-1.06, sortino_ratio=-1.657, max_drawdown=-0.2515, calmar_ratio=-1.507, win_rate=0.4937, avg_win=0.01682, avg_loss=-0.01966, win_loss_ratio=0.8566, profit_factor=0.8353, n=24, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| 3 | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.04993, cagr=-0.1134, ann_vol=0.3659, sharpe_ratio=-0.3105, sortino_ratio=-0.4684, max_drawdown=-0.2493, calmar_ratio=-0.4719, win_rate=0.5136, avg_win=0.01767, avg_loss=-0.01926, win_loss_ratio=0.9246, profit_factor=0.9742, n=64, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+| 4 | not available | not available | not available | not available | not available | n_observations=100, total_return=-0.01245, cagr=-0.02895, ann_vol=0.3421, sharpe_ratio=-0.08186, sortino_ratio=-0.1194, max_drawdown=-0.2097, calmar_ratio=-0.138, win_rate=0.4791, avg_win=0.01774, avg_loss=-0.01612, win_loss_ratio=1.102, profit_factor=1.013, n=11, computed_at=2026-08-09T13:29:48.370425+00:00, run_id=7031e7071766 | not available | not available | not available |
+
+_This exact document is also available live via `GET /v1/stage1/vinu-initial-analysis/factsheet/AAPL/backtesting_44_metrics`. For the raw underlying rows behind any cell (not just its session/time-format average), call `GET /v1/stage1/vinu-initial-analysis/fetch/AAPL/1D/{time_range}/backtesting_44_metrics/7031e7071766` (`{time_range}` filled in with whatever window you need; the run_id above pins the exact computation this table's 1D numbers came from). This document states values only -- it does not compare, rank, or advise between them._

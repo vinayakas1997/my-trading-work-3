@@ -68,6 +68,7 @@ from fastapi import APIRouter, HTTPException, Response
 
 from vinu_initial_analysis.server.routes_read import _json_safe
 from vinu_initial_analysis.service import InitialAnalysisService
+from vinu_initial_analysis.storage.factsheet import NoRunFoundError, generate_factsheet
 
 router = APIRouter(tags=["v1-stage1"])
 
@@ -194,6 +195,35 @@ def fetch_by_run(response: Response, ticker: str, granularity: str, time_range: 
         computed_at=job.get("computed_at"),
         tier="tier3",
         data=records,
+    )
+
+
+@router.get("/factsheet/{ticker}/{method}", response_model=None)
+def factsheet(response: Response, ticker: str, method: str, tier: str = "tier2") -> Envelope:
+    """The plain-text fact sheet document (`storage/factsheet.py`) for one
+    (ticker, method) pair, spanning every real time format that angle has a
+    completed run for -- not the raw stored rows `fetch` above returns, the
+    self-contained paragraph + market-session x time-format table a future
+    LLM agent can read directly, put in `data` as a string (same 5-field
+    envelope every other v1 route uses, per 02-api-design.md, rather than a
+    raw text/markdown response). No `{granularity}`/`{time-range}` segments
+    -- a fact sheet is not scoped to one granularity, it reports every
+    declared time format for the method at once."""
+    svc = get_service()
+    if method not in _known_methods(svc):
+        raise HTTPException(status_code=422, detail=f"Unknown method '{method}'")
+    ticker = ticker.upper()
+    try:
+        text = generate_factsheet(ticker, method, svc.run_log, svc.storage, tier=tier)
+    except NoRunFoundError:
+        response.status_code = 404
+        return Envelope(run_id=None, status="not_found", computed_at=None, tier=tier, data=None)
+    return Envelope(
+        run_id=None,
+        status="ok",
+        computed_at=datetime.now(timezone.utc).isoformat(),
+        tier=tier,
+        data=text,
     )
 
 
