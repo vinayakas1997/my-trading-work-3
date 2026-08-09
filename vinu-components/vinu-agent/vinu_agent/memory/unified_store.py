@@ -374,6 +374,21 @@ class UnifiedMemoryStore(SQLiteBackend):
         )
         conn.commit()
 
+    def _sync_fts_rows_many(self, entries: list[MemoryEntry]) -> None:
+        conn = self._get_conn()
+        conn.executemany(
+            "INSERT OR REPLACE INTO memory_fts(rowid, title, content, summary, symbol, memory_type) "
+            "VALUES ("
+            "  (SELECT rowid FROM memory_entries WHERE id = ?), "
+            "  ?, ?, ?, ?, ?"
+            ")",
+            [
+                (entry.id, entry.title, entry.content, entry.summary, entry.symbol, entry.memory_type)
+                for entry in entries
+            ],
+        )
+        conn.commit()
+
     def rebuild_fts(self) -> None:
         conn = self._get_conn()
         conn.executescript(
@@ -388,11 +403,27 @@ class UnifiedMemoryStore(SQLiteBackend):
     # ------------------------------------------------------------------
 
     def bulk_add(self, entries: list[MemoryEntry]) -> int:
-        count = 0
+        # Real fix: this used to call add_entry() per entry, and add_entry()
+        # itself commits twice per call (once in upsert(), once in
+        # _sync_fts_row()) -- so a "bulk" add of N entries did 2*N
+        # fsync-backed commits, one row at a time, defeating the entire
+        # point of a bulk path. Now one commit for the entries table, one
+        # commit for the FTS sync, regardless of N.
+        if not entries:
+            return 0
+        now = _now()
         for entry in entries:
-            self.add_entry(entry)
-            count += 1
-        return count
+            if not entry.id:
+                entry.id = _new_id()
+            if not entry.created_at:
+                entry.created_at = now
+            entry.updated_at = now
+
+        self.upsert_many(
+            "memory_entries", [entry.to_dict() for entry in entries], conflict_columns=["id"]
+        )
+        self._sync_fts_rows_many(entries)
+        return len(entries)
 
     def clear_and_rebuild(self, source: str | None = None) -> int:
         conn = self._get_conn()

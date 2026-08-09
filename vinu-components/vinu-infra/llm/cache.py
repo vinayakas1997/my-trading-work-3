@@ -13,10 +13,18 @@ class LlmCache:
         self._path = Path(cache_path)
         self._ttl = ttl_sec
         self._local = threading.local()
+        # Same real fix as vinu_infra.sqlite.SQLiteBackend: track every
+        # connection opened by any thread so close() can close all of them,
+        # and a generation counter so a thread whose connection was closed
+        # by another thread's close() call reopens instead of reusing (and
+        # getting sqlite3.ProgrammingError from) a stale closed connection.
+        self._all_conns: list[sqlite3.Connection] = []
+        self._all_conns_lock = threading.Lock()
+        self._generation = 0
 
     def _get_conn(self) -> sqlite3.Connection:
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
-        if conn is None:
+        if conn is None or getattr(self._local, "gen", -1) != self._generation:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(str(self._path))
             conn.execute("PRAGMA journal_mode=WAL")
@@ -28,6 +36,9 @@ class LlmCache:
                 ")"
             )
             self._local.conn = conn
+            self._local.gen = self._generation
+            with self._all_conns_lock:
+                self._all_conns.append(conn)
         return conn
 
     def get(self, cache_key: str) -> dict[str, Any] | None:
@@ -58,7 +69,12 @@ class LlmCache:
         conn.commit()
 
     def close(self) -> None:
-        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
-        if conn is not None:
-            conn.close()
-            self._local.conn = None
+        with self._all_conns_lock:
+            conns, self._all_conns = self._all_conns, []
+            self._generation += 1
+        for conn in conns:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+        self._local.conn = None

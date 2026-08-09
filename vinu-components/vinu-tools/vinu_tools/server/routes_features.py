@@ -133,7 +133,7 @@ async def get_feature_or_symbol(symbol_or_kind: str, indicators: str | None = No
             params["indicators"] = indicators
         try:
             delay = 1.0
-            last_exc: Exception | None = None
+            candles: list[Any] = []
             for attempt in range(_REATTEMPTS):
                 try:
                     async with httpx.AsyncClient() as client:
@@ -142,19 +142,38 @@ async def get_feature_or_symbol(symbol_or_kind: str, indicators: str | None = No
                     data = resp.json()
                     candles = data.get("data", [])
                     break
-                except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as e:
-                    last_exc = e
-                    if isinstance(e, httpx.HTTPStatusError) and e.response.status_code not in (429, 500, 502, 503, 504):
-                        raise
+                except httpx.HTTPStatusError as e:
+                    # Real fix: a non-retryable status (e.g. 404 for an
+                    # unknown symbol) used to be re-raised here, then caught
+                    # by the blanket `except Exception` below and reported
+                    # to the caller as a generic 502 -- losing the real
+                    # status code entirely. Preserve it instead.
+                    if e.response.status_code not in (429, 500, 502, 503, 504):
+                        raise HTTPException(
+                            status_code=e.response.status_code,
+                            detail=f"Upstream stock-api error for {symbol_or_kind}: {e}",
+                        ) from e
                     if attempt == _REATTEMPTS - 1:
                         raise
                     LOG.warning("Transient error on GET %s (attempt %s/%s): %s",
                                 url, attempt + 1, _REATTEMPTS, e)
                     await asyncio.sleep(delay)
                     delay *= _BACKOFF
-                    continue
-            if last_exc:
-                raise last_exc
+                except (httpx.TimeoutException, httpx.ConnectError) as e:
+                    if attempt == _REATTEMPTS - 1:
+                        raise
+                    LOG.warning("Transient error on GET %s (attempt %s/%s): %s",
+                                url, attempt + 1, _REATTEMPTS, e)
+                    await asyncio.sleep(delay)
+                    delay *= _BACKOFF
+            # Real fix: this used to end with `if last_exc: raise last_exc`,
+            # unconditionally re-raising the FIRST failed attempt's
+            # exception even when a later retry succeeded -- the only way
+            # to reach past the loop was via `break` (success), so a
+            # request needing even one retry had its real, successful
+            # result silently discarded and reported as a failure.
+        except HTTPException:
+            raise
         except Exception as exc:
             LOG.error("Failed to fetch features from stock-api: %s", exc)
             raise HTTPException(

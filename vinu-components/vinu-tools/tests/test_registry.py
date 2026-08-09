@@ -1,5 +1,7 @@
 """Tests for SQLite registry."""
 
+import threading
+
 from vinu_tools.storage.models import STATUS_DONE, STATUS_PENDING, STATUS_RUNNING, SubmitRequest
 from vinu_tools.storage.sqlite_backend import SqliteBackend
 
@@ -52,3 +54,38 @@ def test_claim_next_pending(backend: SqliteBackend):
 
     # second call should return None (no more pending)
     assert backend.claim_next_pending() is None
+
+
+def test_close_closes_connections_opened_by_other_threads(tmp_path):
+    backend = SqliteBackend(tmp_path / "meta.db")
+
+    other_thread_error: list[BaseException] = []
+
+    def touch_from_other_thread() -> None:
+        try:
+            backend._get_conn()
+        except BaseException as exc:  # noqa: BLE001
+            other_thread_error.append(exc)
+
+    t = threading.Thread(target=touch_from_other_thread)
+    t.start()
+    t.join()
+    assert not other_thread_error
+
+    assert len(backend._all_conns) == 2  # main-thread conn (from __init__) + the other thread's
+
+    backend.close()  # must not raise despite one connection belonging to a dead thread
+
+
+def test_get_conn_reopens_after_another_threads_close(tmp_path):
+    backend = SqliteBackend(tmp_path / "meta.db")
+    conn_before = backend._get_conn()
+
+    backend.close()
+
+    conn_after = backend._get_conn()
+    assert conn_after is not conn_before
+    # Usable again (no sqlite3.ProgrammingError from the closed original).
+    conn_after.execute("SELECT 1").fetchone()
+
+    backend.close()

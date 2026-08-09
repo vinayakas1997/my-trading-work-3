@@ -11,6 +11,7 @@ requires Authorization: Bearer <key>.
 
 from __future__ import annotations
 
+import hmac
 import os
 
 from fastapi import HTTPException, Request, status
@@ -29,7 +30,11 @@ async def require_auth(request: Request) -> None:
             headers={"WWW-Authenticate": "Bearer"},
         )
     token = auth.removeprefix("Bearer ")
-    if token != VINU_API_KEY:
+    # hmac.compare_digest, not `!=` -- a plain string comparison short-
+    # circuits on the first mismatched byte, so its response time leaks how
+    # many leading characters of a guessed token are correct (a real,
+    # well-known timing-attack class against API key checks).
+    if not hmac.compare_digest(token, VINU_API_KEY):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid API key",

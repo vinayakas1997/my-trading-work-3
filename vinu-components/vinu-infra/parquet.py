@@ -33,6 +33,18 @@ class ParquetStore:
         schema: pa.Schema | None = None,
         dedup_on: list[str] | None = None,
     ) -> None:
+        """Reads the entire existing file at `rel_path` (if any), concats
+        the new records, and rewrites the whole file -- cost is O(existing
+        file size), not O(len(records)). Fine for occasional/batch calls.
+        NOT safe to call repeatedly on the same `rel_path` at high
+        frequency (e.g. once per live-ingest tick) -- each call re-reads
+        and re-writes everything written so far, making total cost grow
+        quadratically with the number of calls. For that pattern, write
+        each batch to its own shard path instead (e.g. a timestamped
+        filename) and periodically call `consolidate()` on the shard glob
+        -- the module docstring's own example already shows this split
+        (`append()` on one coarse path vs. `read_shard()`/`consolidate()`
+        on a `live/*.parquet` glob)."""
         if not records:
             return
         table = pa.Table.from_pylist(records, schema=schema)

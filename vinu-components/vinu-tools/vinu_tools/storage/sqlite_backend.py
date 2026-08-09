@@ -50,21 +50,38 @@ CREATE INDEX IF NOT EXISTS idx_feature_requests_hash ON feature_requests(request
 
 
 class SqliteBackend:
+    """Real fix: `close()` used to close only the calling thread's own
+    connection. `worker/runner.py`'s `FeatureWorker.process_pending()`
+    dispatches concurrent jobs onto a fresh `ThreadPoolExecutor` on every
+    call, and each of those worker threads opens its own connection via
+    `_get_conn()` -- those connections were never closed by anyone, relying
+    on `__del__` at GC time instead. Same bug class, same fix, as
+    `vinu_infra.sqlite.SQLiteBackend`: track every connection opened by
+    every thread, and a generation counter so any thread whose connection
+    was closed out from under it transparently reopens on next use."""
+
     def __init__(self, db_path: Path) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
+        self._all_conns: list[sqlite3.Connection] = []
+        self._all_conns_lock = threading.Lock()
+        self._generation = 0
         self._init_connection()
 
     def _get_conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
-        if conn is None:
+        gen = getattr(self._local, "gen", -1)
+        if conn is None or gen != self._generation:
             conn = sqlite3.connect(str(self.db_path))
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
             self._migrate(conn)
             self._local.conn = conn
+            self._local.gen = self._generation
+            with self._all_conns_lock:
+                self._all_conns.append(conn)
         return conn
 
     _SCHEMA_VERSION = 1
@@ -84,9 +101,21 @@ class SqliteBackend:
         _ = self._get_conn()
 
     def close(self) -> None:
-        conn = getattr(self._local, "conn", None)
-        if conn is not None:
-            conn.close()
+        with self._all_conns_lock:
+            conns, self._all_conns = self._all_conns, []
+            self._generation += 1
+        for conn in conns:
+            # A connection opened by another (possibly now-dead) thread
+            # can't be close()'d from here -- sqlite3 raises
+            # ProgrammingError for cross-thread use, close() included.
+            # The generation bump above already makes that thread reopen
+            # transparently next use; the old connection object becomes
+            # unreachable and is closed by Python's GC finalizer instead.
+            try:
+                conn.close()
+            except sqlite3.ProgrammingError:
+                pass
+        self._local.conn = None
 
     def __enter__(self) -> SqliteBackend:
         return self

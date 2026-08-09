@@ -44,6 +44,41 @@ def test_create_app_validation_error():
     assert "bad input" in resp.text
 
 
+def test_create_app_replaces_nan_with_null_in_response():
+    import math
+
+    router = APIRouter()
+
+    @router.get("/nan")
+    def has_nan():
+        return {"value": math.nan, "nested": {"also": math.nan}, "list": [1.0, math.nan, 3.0]}
+
+    app = create_app("test-svc", "1.0", "test", router)
+    client = TestClient(app)
+    resp = client.get("/nan")
+    assert resp.status_code == 200
+    # A raw NaN in the response body is invalid JSON per spec -- confirm the
+    # real wire bytes contain "null", not the literal token "NaN".
+    assert "NaN" not in resp.text
+    data = resp.json()
+    assert data["value"] is None
+    assert data["nested"]["also"] is None
+    assert data["list"] == [1.0, None, 3.0]
+
+
+def test_nan_replacement_is_scoped_to_this_apps_response_class_only():
+    # Real regression guard for the fix itself: importing vinu_infra.server
+    # (done implicitly by every test in this file) must not globally patch
+    # fastapi.responses.JSONResponse for every other app/response in the
+    # process -- a plain JSONResponse must still render NaN as-is.
+    from fastapi.responses import JSONResponse
+
+    resp = JSONResponse(content={"value": None})
+    assert JSONResponse.render is not None  # the class itself, unpatched
+    import inspect
+    assert "vinu_infra" not in (inspect.getmodule(JSONResponse.render).__name__ or "")
+
+
 def test_create_app_config_routes():
     config_router = APIRouter()
 

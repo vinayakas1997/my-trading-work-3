@@ -17,6 +17,21 @@ _PRIVATE_NETWORKS = [
 
 
 def validate_url_target(url: str) -> bool:
+    """Rejects a URL whose hostname is *literally* localhost/private/link-
+    local -- catches the common case (a caller-supplied URL that directly
+    names an internal address).
+
+    Real, NOT-fixed-here gap: this never resolves DNS. A hostname that
+    resolves to a private/internal address (DNS rebinding -- e.g. a domain
+    an attacker controls that answers with 10.x.x.x) is not an `ipaddress`-
+    parseable literal, so it falls through the private-network check
+    entirely and this returns True. Closing that gap properly needs
+    connect-time validation (checking the socket's actual resolved address,
+    with defense against the answer changing between check and connect),
+    not a stronger string check here -- deliberately left as a known,
+    documented limitation rather than a shallow patch that would look like
+    a real fix without being one.
+    """
     try:
         parsed = urlparse(url)
         host = parsed.hostname
@@ -24,9 +39,6 @@ def validate_url_target(url: str) -> bool:
             return False
 
         if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
-            return False
-
-        if host.startswith("10.") or host.startswith("172.16.") or host.startswith("192.168."):
             return False
 
         try:

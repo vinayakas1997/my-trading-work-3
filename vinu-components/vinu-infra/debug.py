@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import logging
 import os
 import time
@@ -61,28 +62,38 @@ def debug_log(msg: str, level: int = 1) -> None:
         _DEBUG_LOGGER.debug("%s %s", prefix, msg)
 
 
-_INDENT = 0
+# A plain module-level int here (the original implementation) is a real
+# race condition: `debug_timer` wraps every HTTP request in
+# `client.py`'s `ResilientClient`, so any two concurrent requests -- two
+# threads, or two interleaved asyncio tasks on the same thread, which a
+# plain int OR threading.local both fail to distinguish -- increment/
+# decrement the SAME shared counter. Under real concurrency this doesn't
+# just garble the log's indentation cosmetically: interleaved +1/-1 pairs
+# from different requests can leave the counter permanently above 0,
+# so indentation drifts deeper forever and never recovers. ContextVar is
+# the correct primitive: each thread AND each asyncio task gets its own
+# independent value, automatically, with no explicit propagation code.
+_indent_var: contextvars.ContextVar[int] = contextvars.ContextVar("vinu_debug_indent", default=0)
 
 
 def _indent() -> str:
-    return "  " * _INDENT
+    return "  " * _indent_var.get()
 
 
 @contextmanager
 def sync_timer(label: str):
     """Synchronous context manager for timing blocks."""
-    global _INDENT
     if not _DEBUG:
         yield
         return
     t0 = time.perf_counter()
-    _INDENT += 1
+    token = _indent_var.set(_indent_var.get() + 1)
     debug_log(f"[TIMER] {label} START", level=1)
     try:
         yield
     finally:
         dt = time.perf_counter() - t0
-        _INDENT -= 1
+        _indent_var.reset(token)
         debug_log(f"[TIMER] {label} END ({dt:.2f}s)", level=1)
 
 
@@ -92,16 +103,15 @@ async def debug_timer(label: str):
 
     Nested timers are indented to create a readable call tree.
     """
-    global _INDENT
     if not _DEBUG:
         yield
         return
     t0 = time.perf_counter()
-    _INDENT += 1
+    token = _indent_var.set(_indent_var.get() + 1)
     debug_log(f"[TIMER] {label} START", level=1)
     try:
         yield
     finally:
         dt = time.perf_counter() - t0
-        _INDENT -= 1
+        _indent_var.reset(token)
         debug_log(f"[TIMER] {label} END ({dt:.2f}s)", level=1)

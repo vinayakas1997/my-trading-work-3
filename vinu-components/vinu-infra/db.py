@@ -18,6 +18,15 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+# The only real, idempotency-safe reasons a migration statement can fail on
+# a re-run -- the column/table/index already exists because a prior run
+# already applied it. Anything else (a typo'd column name, a bad table
+# name, a locked/corrupt database) is a real failure and must not be
+# silently swallowed the way a bare `except OperationalError: pass` did
+# before this -- that let PRAGMA user_version get bumped to "fully
+# migrated" even when a migration never actually ran.
+_IDEMPOTENT_ERROR_SUBSTRINGS = ("duplicate column name", "already exists")
+
 
 def migrate_schema(
     conn: sqlite3.Connection,
@@ -33,6 +42,12 @@ def migrate_schema(
         version: Target schema version after all migrations.
         migrations: List of (sql_statement, description) tuples.
         current_version: Override the detected version (used for testing).
+
+    Raises:
+        sqlite3.OperationalError: if a migration fails for a real reason
+            (not "already applied") -- version is not bumped in that case,
+            so the next call retries the same pending migrations rather
+            than the database silently claiming to be fully migrated.
     """
     if current_version is None:
         current_version = conn.execute("PRAGMA user_version").fetchone()[0]
@@ -43,8 +58,9 @@ def migrate_schema(
     for sql, desc in migrations:
         try:
             conn.execute(sql)
-        except sqlite3.OperationalError:
-            pass
+        except sqlite3.OperationalError as exc:
+            if not any(s in str(exc).lower() for s in _IDEMPOTENT_ERROR_SUBSTRINGS):
+                raise
 
     conn.execute(f"PRAGMA user_version={version}")
     conn.commit()

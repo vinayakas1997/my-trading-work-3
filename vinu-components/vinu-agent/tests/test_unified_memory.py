@@ -188,6 +188,39 @@ class TestUnifiedMemoryStore:
         assert count == 5
         assert store.count() == 5
 
+    def test_bulk_add_empty_list(self, store: UnifiedMemoryStore) -> None:
+        assert store.bulk_add([]) == 0
+        assert store.count() == 0
+
+    def test_bulk_add_stamps_ids_and_timestamps(self, store: UnifiedMemoryStore) -> None:
+        entries = [MemoryEntry(id="", source="test", title=f"No id {i}", content="x") for i in range(3)]
+        assert all(not e.id for e in entries)
+        store.bulk_add(entries)
+        assert all(e.id for e in entries)
+        assert all(e.created_at and e.updated_at for e in entries)
+        assert len({e.id for e in entries}) == 3  # every id is real and distinct
+
+    def test_bulk_add_upserts_on_conflicting_id(self, store: UnifiedMemoryStore) -> None:
+        entry = make_entry(title="Original", content="v1")
+        store.add_entry(entry)
+        entry.title = "Updated via bulk_add"
+        store.bulk_add([entry])
+        assert store.count() == 1
+        assert store.get_entry(entry.id).title == "Updated via bulk_add"
+
+    def test_bulk_add_rows_are_searchable_via_fts(self, store: UnifiedMemoryStore) -> None:
+        # Real risk area of batching the FTS sync (_sync_fts_rows_many): a
+        # real rowid-subquery-per-row INSERT via executemany must still
+        # resolve each entry's own real rowid correctly, not just the
+        # entries table's own upsert.
+        entries = [
+            make_entry(title="Zebra crossing report", content="unrelated"),
+            make_entry(title="unrelated", content="Giraffe sighting report"),
+        ]
+        store.bulk_add(entries)
+        assert any("Zebra" in r.title for r in store.search("zebra"))
+        assert any("Giraffe" in r.content for r in store.search("giraffe"))
+
     def test_clear_and_rebuild(self, store: UnifiedMemoryStore) -> None:
         store.add_entry(make_entry(source="research", title="R1", content="r1"))
         store.add_entry(make_entry(source="news", title="N1", content="n1"))

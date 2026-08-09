@@ -29,16 +29,31 @@ class SQLiteBackend:
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
+        # Every real connection opened by any thread, so close() can close
+        # all of them -- threading.local() by itself only lets close() see
+        # the calling thread's own connection, silently leaking every other
+        # thread's connection (real bug: in a real web server's thread pool,
+        # a shutdown-time close() from the main thread closed nothing real).
+        # `_generation` lets a thread whose connection was closed by another
+        # thread's close() call detect that and transparently reopen, rather
+        # than reusing (and raising sqlite3.ProgrammingError on) a stale
+        # closed connection object.
+        self._all_conns: list[sqlite3.Connection] = []
+        self._all_conns_lock = threading.Lock()
+        self._generation = 0
 
     def _get_conn(self) -> sqlite3.Connection:
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
-        if conn is None:
+        if conn is None or getattr(self._local, "gen", -1) != self._generation:
             conn = sqlite3.connect(str(self._db_path))
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=5000")
             conn.row_factory = sqlite3.Row
             self._init_schema(conn)
             self._local.conn = conn
+            self._local.gen = self._generation
+            with self._all_conns_lock:
+                self._all_conns.append(conn)
         return conn
 
     def _init_schema(self, conn: sqlite3.Connection) -> None:
@@ -92,6 +107,38 @@ class SQLiteBackend:
         conn.execute(sql, values)
         conn.commit()
 
+    def upsert_many(
+        self,
+        table: str,
+        records: list[dict[str, Any]],
+        conflict_columns: list[str],
+    ) -> None:
+        """Same real upsert as `upsert()`, but one transaction/commit for
+        the whole batch instead of one per row -- real fix for a real
+        pattern found in the codebase: a "bulk_add" caller that looped
+        calling the single-row `upsert()`, so every row triggered its own
+        fsync-backed commit (the classic SQLite anti-pattern), defeating
+        the entire point of calling it "bulk". Requires every record to
+        share the same real columns (matches every real caller's usage --
+        a homogeneous batch, not a mix of different row shapes)."""
+        if not conflict_columns:
+            raise ValueError("conflict_columns must not be empty")
+        if not records:
+            return
+        columns = list(records[0].keys())
+        placeholders = ", ".join("?" for _ in columns)
+        col_names = ", ".join(columns)
+        conflict_target = ", ".join(conflict_columns)
+        updates = ", ".join(f"{col}=excluded.{col}" for col in columns)
+        sql = (
+            f"INSERT INTO {table} ({col_names}) VALUES ({placeholders}) "
+            f"ON CONFLICT ({conflict_target}) DO UPDATE SET {updates}"
+        )
+        rows = [[record[col] for col in columns] for record in records]
+        conn = self._get_conn()
+        conn.executemany(sql, rows)
+        conn.commit()
+
     def health_info(self) -> dict[str, Any]:
         path = str(self._db_path)
         try:
@@ -104,10 +151,21 @@ class SQLiteBackend:
             return {"db_path": path, "error": str(e)}
 
     def close(self) -> None:
-        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
-        if conn is not None:
-            conn.close()
-            self._local.conn = None
+        """Closes every real connection this instance opened, across every
+        thread that opened one -- not just the calling thread's own (see
+        `_all_conns` note in __init__). Bumps `_generation` so any other
+        thread's next `_get_conn()` call detects its cached connection is
+        stale and transparently opens a fresh one, instead of reusing (and
+        getting sqlite3.ProgrammingError from) the one just closed here."""
+        with self._all_conns_lock:
+            conns, self._all_conns = self._all_conns, []
+            self._generation += 1
+        for conn in conns:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+        self._local.conn = None
 
     def __enter__(self) -> SQLiteBackend:
         return self

@@ -39,10 +39,22 @@ def _replace_nan(obj: Any) -> Any:
     return obj
 
 
-_original_render = JSONResponse.render
-def _safe_render(self, content: Any) -> bytes:
-    return _original_render(self, _replace_nan(content))
-JSONResponse.render = _safe_render
+class _NanSafeJSONResponse(JSONResponse):
+    """Same as JSONResponse, but replaces NaN with null before encoding.
+
+    Real fix, not the original approach: the original patched
+    JSONResponse.render globally at MODULE IMPORT TIME (top-level code, ran
+    the instant anything imported vinu_infra.server, even if create_app()
+    was never called) -- meaning merely importing this module anywhere in a
+    process silently mutated every JSONResponse in that entire process,
+    permanently, adding a full recursive NaN-walk to every JSON response
+    body from any other service sharing the interpreter (exactly what
+    happens when multiple packages' modules get imported into one pytest
+    process in this monorepo). A subclass set as `default_response_class`
+    on just the app create_app() builds is scoped to that app only."""
+
+    def render(self, content: Any) -> bytes:
+        return super().render(_replace_nan(content))
 
 
 def create_app(
@@ -72,6 +84,7 @@ def create_app(
         description=description,
         version=version,
         lifespan=_lifespan,
+        default_response_class=_NanSafeJSONResponse,
     )
 
     # CORS — opt-in via VINU_CORS_ORIGINS
