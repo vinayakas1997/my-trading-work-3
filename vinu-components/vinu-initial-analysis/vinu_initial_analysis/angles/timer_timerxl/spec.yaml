@@ -1,13 +1,24 @@
-title: Timer / Timer-XL Patch-Based Foundation Model (fallback proxy)
+title: Timer / Timer-XL Patch-Based Foundation Model
 purpose: >
-  Patch-based forecast in the spirit of Timer/Timer-XL (method 15 of the
-  32-method plan, see
-  New-talk-/Final-implementation/01-present-considerations/15-timer-timerxl.md).
-  Neither package name exists on PyPI and the only public artifact
-  (THUML's research repo) isn't pip-installable — this angle uses an
-  honestly-labeled patch-based statistical proxy. See compute.py's module
-  docstring.
+  Patch-based forecast using the real Timer pretrained model (method 15 of
+  the 32-method plan, see
+  New-talk-/Final-implementation/01-present-considerations/15-timer-timerxl.md)
+  — THUML's `thuml/timer-base-84m` (84M params), a decoder-only causal
+  transformer pretrained on 260B time points, patch length 96. Weights are
+  downloaded into the shared models dir (`make models`). Falls back to an
+  honestly-labeled patch-based statistical proxy (per-patch mean log-return
+  trend extrapolation) only if the weights or load are unavailable at
+  runtime. See compute.py's module docstring for the full explanation.
+  (Corrected 2026-08 — this file previously read "(fallback proxy)" and
+  claimed no installable package existed, both stale since the 2026-08-06
+  models-wiring pass; found and fixed during angle 27's implementation,
+  matching the same correction already applied to kronos's spec.yaml.)
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str
@@ -17,6 +28,8 @@ outputs:
 - column: angle_data
   type: dict
   description: >
-    Point + p10/p90 forecast for the next 5 periods derived from
-    per-patch trend extrapolation, plus model_backend (always
-    "fallback_proxy") and fallback_reason.
+    Point forecast for the next 5 periods (the real model's native output)
+    plus a post-hoc p10/p90 residual-normal band (not native model
+    uncertainty), checkpoint/patch_size/n_patches, model_backend
+    ("pretrained" in the normal case, "fallback_proxy" only if real
+    inference fails at runtime) and fallback_reason.

@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import threading
 import time
+import warnings
 from pathlib import Path
 from typing import Any
 
 import duckdb
+import pyarrow.parquet as pq
 
 from vinu_stock.query.aggregate import aggregate_bars, interval_to_seconds
 from vinu_stock.query.cache import get_cache
@@ -39,6 +41,33 @@ def _file_signature(patterns: list[str]) -> tuple:
     return tuple(sig)
 
 
+def _expand_and_validate(patterns: list[str]) -> tuple[list[str], list[str]]:
+    """Expand glob patterns to individual files and split them into
+    (readable, unreadable) by opening each file's own parquet footer.
+
+    Reading just the footer (not the row data) is cheap and is enough to
+    catch a truncated/partial-write file -- the exact failure mode found
+    twice in this project's real live-ingest data (known-issues.md #2).
+    Validating per-file, rather than handing the whole glob to a single
+    read_parquet([...]) call, is what lets one bad file get skipped
+    instead of failing every query for the whole symbol.
+    """
+    good: list[str] = []
+    bad: list[str] = []
+    for pattern in patterns:
+        try:
+            files = sorted(Path(pattern).parent.glob(Path(pattern).name))
+        except OSError:
+            continue
+        for p in files:
+            try:
+                pq.ParquetFile(p)
+                good.append(str(p))
+            except Exception:
+                bad.append(str(p))
+    return good, bad
+
+
 def _load_symbol_frame(data_root: Path, symbol: str) -> Any:
     """Return a deduped in-memory frame of the full symbol dataset (cached)."""
     sym = symbol.strip().upper()
@@ -59,25 +88,35 @@ def _load_symbol_frame(data_root: Path, symbol: str) -> Any:
             _CACHED_FRAMES[sym] = (cached[0], cached[1], now)
             return cached[1]
 
-    placeholders = ", ".join(f"'{p}'" for p in patterns)
-    conn = duckdb.connect()
-    try:
-        df = conn.execute(
-            f"""
-            SELECT symbol, provider, bar_ts, open, high, low, close, volume,
-                   COALESCE(adj_factor, 1.0) AS adj_factor
-            FROM read_parquet([{placeholders}], union_by_name=true)
-            WHERE symbol = ?
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY symbol, provider, bar_ts ORDER BY bar_ts DESC) = 1
-            """,
-            [sym],
-        ).fetchdf()
-    finally:
-        conn.close()
+    good_files, bad_files = _expand_and_validate(patterns)
+    if bad_files:
+        warnings.warn(
+            f"Skipping {len(bad_files)} unreadable parquet file(s) for {sym}: {bad_files}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
-    if df is not None and not df.empty:
-        df["bar_ts"] = df["bar_ts"].astype("int64")
-        df["adj_factor"] = df["adj_factor"].astype("float64")
+    df = None
+    if good_files:
+        placeholders = ", ".join(f"'{p}'" for p in good_files)
+        conn = duckdb.connect()
+        try:
+            df = conn.execute(
+                f"""
+                SELECT symbol, provider, bar_ts, open, high, low, close, volume,
+                       COALESCE(adj_factor, 1.0) AS adj_factor
+                FROM read_parquet([{placeholders}], union_by_name=true)
+                WHERE symbol = ?
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY symbol, provider, bar_ts ORDER BY bar_ts DESC) = 1
+                """,
+                [sym],
+            ).fetchdf()
+        finally:
+            conn.close()
+
+        if df is not None and not df.empty:
+            df["bar_ts"] = df["bar_ts"].astype("int64")
+            df["adj_factor"] = df["adj_factor"].astype("float64")
 
     with _FRAME_LOCK:
         _CACHED_FRAMES[sym] = (sig, df, now)

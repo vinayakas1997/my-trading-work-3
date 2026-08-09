@@ -3,8 +3,10 @@ purpose: Statistical proof of news impact on price — Granger causality, Pearso
   lag analysis, event study
 time_formats:
 - 1min
+- 5min
 - 15min
 - 1H
+- 4H
 - 1D
 inputs:
   symbol: str

@@ -1,9 +1,17 @@
 title: Shock Personality
 purpose: >
-  Post-shock behavioral characterization — gap_fill_rate, vol_persistence (from
-  Phase 1 GARCH), drift_persistence_days. Every field includes sample size and
-  confidence interval.
+  Post-shock behavioral characterization — gap_fill_rate, vol_persistence (real
+  GARCH, vinu_tools.compute.risk.volatility), drift_persistence_days (sign-streak)
+  and drift_mean_autocorr (mean lag-1-9 return autocorrelation, previously
+  computed and discarded, now reported), each also split by news presence
+  (has_news/nearest_news_days, previously computed and discarded, now surfaced
+  per-shock). Every field includes sample size and confidence interval.
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str

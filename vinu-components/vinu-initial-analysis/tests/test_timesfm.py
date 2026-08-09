@@ -38,8 +38,17 @@ def test_real_pretrained_checkpoint_forecasts_expected_length():
     assert row["model_backend"] in ("pretrained", "fallback_proxy")
     assert len(row["point_forecast"]) == row["forecast_horizon"] == 5
     assert all(np.isfinite(row["point_forecast"]))
-    assert all(np.isfinite(row["p10_forecast"]))
-    assert all(np.isfinite(row["p90_forecast"]))
+    deciles = row["decile_forecasts"]
+    assert set(deciles.keys()) == {f"q{d}" for d in (10, 20, 30, 40, 50, 60, 70, 80, 90)}
+    for values in deciles.values():
+        assert len(values) == 5
+        assert all(np.isfinite(values))
+    # monotonic across decile levels at each forecast step (fix_quantile_crossing=True)
+    q10 = np.array(deciles["q10"])
+    q50 = np.array(deciles["q50"])
+    q90 = np.array(deciles["q90"])
+    assert np.all(q10 <= q50 + 1e-6)
+    assert np.all(q50 <= q90 + 1e-6)
 
 
 def test_pretrained_backend_actually_loads_in_this_environment():

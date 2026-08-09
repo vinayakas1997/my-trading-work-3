@@ -8,6 +8,11 @@ purpose: >
   standard output shape: a one-step-ahead point forecast plus its 95%
   confidence interval.
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str

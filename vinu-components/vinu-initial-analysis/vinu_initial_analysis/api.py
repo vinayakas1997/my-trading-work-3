@@ -45,9 +45,16 @@ class CorrelationAPI:
         angle_names: list[str] | None = None,
         run_id: str | None = None,
         tier: str = "tier2",
+        time_format: str | None = None,
     ) -> dict[str, Any]:
         return self._runner.run(
-            symbol, from_ts=from_ts, to_ts=to_ts, angle_names=angle_names, run_id=run_id, tier=tier
+            symbol,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            angle_names=angle_names,
+            run_id=run_id,
+            tier=tier,
+            time_format=time_format,
         )
 
     # -- backward-compat single-angle query methods ------------------------

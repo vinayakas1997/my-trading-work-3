@@ -6,6 +6,11 @@ purpose: >
   General-purpose, not finance-specific — a comparison baseline alongside
   Chronos and Kronos, not a first-choice signal.
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str
@@ -15,6 +20,9 @@ outputs:
 - column: angle_data
   type: dict
   description: >
-    Point forecast plus p10/p90 quantile band for the next 5 periods, plus
-    model_backend ("pretrained" via google/timesfm-2.5-200m-pytorch, or
-    "fallback_proxy" if the real checkpoint could not be loaded).
+    Point forecast plus all 9 real decile levels (q10 through q90 — the
+    model's own trained quantile-head output, genuine model confidence,
+    not a bolted-on statistical band) for the next 5 periods, plus
+    context_length_used, model_backend ("pretrained" via
+    google/timesfm-2.5-200m-pytorch, or "fallback_proxy" if the real
+    checkpoint could not be loaded) and fallback_reason.

@@ -12,19 +12,20 @@ Design notes specific to this component:
     result came from (`tier2`/`tier3`), read straight off the RunLog row
     that `AngleStorage._resolve_latest_path()` resolved — this is the
     real thing 02-api-design.md's envelope was designed around.
-  - **Known, honestly-documented limitation**: none of the 35 angles
-    currently pass an explicit `granularity` through to `AngleStorage`
-    (see 03-storage-design.md / the Phase 3 implementation notes) — every
-    write still lands under the default `granularity="1D"` bucket
-    regardless of what `time_format` the angle actually computed at
-    internally (that's a DataFrame column, a separate concept from the
-    storage path's granularity dimension). So `fetch`/`trigger` here
-    validate and pass through `{granularity}` correctly, but a request
-    for anything other than the `1day`-equivalent bucket will find
-    nothing until angles are individually updated to write under their
-    real granularity — not a bug in this route, a scope boundary of what
-    Phase 3 covered (storage *shape*, not retrofitting every existing
-    angle's write path to use it).
+  - **Fixed (was a known limitation)**: `trigger` now threads the parsed
+    `{granularity}` through as `AngleRunner.run(..., time_format=...)`,
+    which restricts that run to computing just the one requested
+    time_format and writes/records it under that exact `granularity` —
+    not the storage default of `"1D"` regardless of what was actually
+    computed. `fetch`/`fetch_by_run` already read by the requested
+    granularity correctly; this closes the other half (the write side
+    silently ignoring it). Every other, unrestricted call site of
+    `AngleRunner.run()` (e.g. the tier2 scheduler, which wants every
+    declared time_format combined into one write) is unchanged — `time_format`
+    is opt-in, `None` preserves the prior default behavior exactly.
+    `AngleRunner._run_angle` also now rejects (`ValueError`) a requested
+    time_format the angle doesn't actually declare, rather than silently
+    computing something it wasn't asked to support.
   - `trigger` pre-assigns `run_id` and threads it through
     `AngleRunner.run(..., run_id=...)` so the ID returned immediately at
     trigger-time is the exact same one that ends up in `RunLog`/storage —
@@ -189,7 +190,7 @@ def trigger(ticker: str, granularity: str, time_range: str, method: str) -> Enve
     svc = get_service()
     if method not in _known_methods(svc):
         raise HTTPException(status_code=422, detail=f"Unknown method '{method}'")
-    _parse_granularity(granularity)  # validated but not threaded to compute() yet — see module docstring
+    internal_granularity = _parse_granularity(granularity)
     start_ts, end_ts = _parse_time_range(time_range)
 
     ticker = ticker.upper()
@@ -200,7 +201,15 @@ def trigger(ticker: str, granularity: str, time_range: str, method: str) -> Enve
 
     def _run() -> None:
         try:
-            svc.run_analysis(ticker, from_ts=start_ts, to_ts=end_ts, angle_names=[method], run_id=run_id, tier="tier3")
+            svc.run_analysis(
+                ticker,
+                from_ts=start_ts,
+                to_ts=end_ts,
+                angle_names=[method],
+                run_id=run_id,
+                tier="tier3",
+                time_format=internal_granularity,
+            )
             with _jobs_lock:
                 _jobs[run_id] = {"status": "done", "computed_at": datetime.now(timezone.utc).isoformat()}
         except Exception as exc:

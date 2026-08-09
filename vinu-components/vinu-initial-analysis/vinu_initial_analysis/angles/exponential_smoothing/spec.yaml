@@ -10,6 +10,11 @@ purpose: >
   seasonal period) and reporting the one-step-ahead point forecast
   alongside the fitted level/trend components.
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str

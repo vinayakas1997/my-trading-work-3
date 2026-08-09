@@ -31,8 +31,14 @@ certain session or day of the week."
 
 | Parameter | Decided value | Notes |
 |---|---|---|
-| Drawdown threshold | -2% | kept as-is from the real code (`drop_threshold_pct = -2.0` in `compute.py`) |
-| Timeframes | 15min, 1H, 1D | kept as-is from the real `spec.yaml` — narrower than ARIMA's 6, judged intentional for this kind of analysis |
+| Drawdown threshold | **volatility-adaptive: `k × ATR%`, not fixed** — deviates from the real code's `drop_threshold_pct = -2.0` | a fixed -2% conflates "how volatile this stock normally is" with "did something unusual happen" — see §7 for the full case; real code's constant kept as the pre-change baseline for reference, not as the final design |
+| Volatility measure | ATR (Average True Range), computed on the same timeframe being analyzed (15min/1H/1D each get their own ATR) | ATR uses intracandle high/low range, not just close-to-close — captures gap/wick volatility a rolling-stddev-of-returns measure would miss; standard choice for this exact use case (same pattern as Chandelier Exits, Keltner Channels) |
+| ATR period | 14 (Wilder's standard convention) | not arbitrary — this is the original, most widely used ATR period; no reason found to deviate from it |
+| ATR computation window | rolling, trailing-only (no lookahead) | recomputed at each point in time using only data up to that point — same no-lookahead discipline already used in `regime_features.py`'s point-in-time features elsewhere in this project; a single static ATR over the whole date range would blur different volatility regimes (e.g. 2022 vs. 2025) together |
+| k (multiplier) | starting default k=2, but **swept (1.5 / 2 / 2.5 / 3) as a robustness check**, not silently fixed at one value | k is a tunable knob, not a literature constant — matches this project's standing practice of flagging undecided constants openly rather than picking one number and hoping; see §7 |
+| Minimum threshold floor | -0.5% (never tighter than this, regardless of how small a stock's ATR gets) | prevents an extremely illiquid/flat stock's tiny ATR from turning "drawdown detection" into noise-level triggers |
+| Per-episode transparency | every stored episode carries `threshold_pct_used` and `atr_pct_at_peak` alongside its `drop_pct` | since the threshold is now time-varying and per-ticker, each episode needs to self-document what threshold actually applied when it was detected — otherwise two episodes for the same ticker at different dates aren't auditable against each other |
+| Timeframes | 1min, 5min, 15min, 1H, 4H, 1D | **updated**: widened to the standard 6, same as every other angle — supersedes the earlier narrower decision (originally kept as-is from the real `spec.yaml`: 15min/1H/1D only, judged intentional for this kind of analysis) |
 | Date range | 2022-01-01 → 2026-Q2 | same as other angles |
 | Data source | Alpaca (price), shared news pipeline (same source already feeding `news` into every angle's `compute()`) | no new news source invented |
 | Scope | **every** detected drawdown, not just the single worst one | current code only analyzes the worst drawdown per run — this angle needs the full set to build a meaningful per-time-slice profile |
@@ -59,6 +65,8 @@ status: recovered
 
 peak_ts: 2024-05-10T13:30:00Z
 peak_price: 148.50
+atr_pct_at_peak: 1.85       # ATR(14) as % of price, at the time of peak
+threshold_pct_used: -3.70   # k=2 x atr_pct_at_peak, this episode's actual trigger level
 trough_ts: 2024-05-16T13:30:00Z
 trough_price: 142.30
 drop_pct: -4.17
@@ -200,13 +208,66 @@ have small `n`. Framing outputs as probability/likelihood, always paired
 with `n`, keeps the tool honest about its own statistical confidence
 rather than presenting thin-sample results as settled fact.
 
-**What "-2%" is measured from, and how trending stocks are handled:**
-the threshold is not measured from a fixed reference point — it's
-measured from the most recent **rolling peak** (the code keeps updating
-"peak" to the newest high whenever not already in a drawdown). This means:
+**Why the fixed -2% threshold was replaced with `k × ATR%` (added
+2026-08-07, after the rest of this design was already decided):** a flat
+percentage threshold means the literal same-size move counts as "a
+drawdown" for every ticker, regardless of how volatile that ticker
+normally is. That has two real consequences: a high-volatility stock
+crosses -2% constantly as ordinary noise, drowning its own dataset in
+low-signal episodes and making its "drawdown frequency per session"
+numbers meaningless; a low-volatility stock may rarely cross -2% even on
+a genuinely bad day, under-detecting real events. Making the threshold
+proportional to each ticker's own recent volatility (ATR) fixes both at
+once — the same `k` stays constant across every instrument while the
+actual percentage threshold adapts per ticker, which is the same
+principle behind well-established volatility-based stop/signal
+techniques like Chandelier Exits and Keltner Channels.
+
+**Why ATR specifically, not rolling stddev of returns:** ATR incorporates
+each candle's full high/low range, not just its close — so it captures
+gap and wick volatility that a close-to-close stddev measure would miss
+entirely. This matters for exactly the kind of fast, sharp moves this
+angle is trying to characterize.
+
+**Why 14-period, trailing/rolling, no lookahead:** 14 is Wilder's
+original, most widely used ATR period — no reason found to deviate from
+it. Computing it as a rolling, trailing-only value (never using data past
+the point being evaluated) keeps this angle honest the same way
+`regime_features.py` already handles point-in-time features elsewhere in
+this project — a single ATR computed once over the whole 2022-2026 range
+would blur genuinely different volatility regimes together and risk
+leaking future volatility information into a threshold decided at an
+earlier point in time.
+
+**Why k is swept instead of fixed at one chosen value:** k is a tunable
+scalar, not a number derivable from literature or the data itself — any
+single choice is a judgment call. Rather than picking one value and
+presenting results as if that choice were neutral, sweeping k across a
+small reasonable range (1.5/2/2.5/3) and checking whether the resulting
+drawdown-lifecycle findings are stable across that range is the same
+robustness-check discipline this project applies to other open
+constants elsewhere (e.g. ARIMA's compute-cost caveat) — a stable finding
+across k values is trustworthy; a finding that flips depending on k
+would itself be a real, useful thing to know before drawing conclusions.
+
+**Why a minimum floor (-0.5%) in addition to the ATR scaling:** without
+a floor, an extremely illiquid or flat stock with a tiny ATR could end up
+with a threshold so small that ordinary tick-level noise starts counting
+as "drawdown episodes," defeating the purpose of the volatility
+adjustment in the first place.
+
+**What the threshold is measured from, and how trending stocks are
+handled (unchanged by the k×ATR switch — this is about the reference
+point, not the threshold size):** the threshold is not measured from a
+fixed reference point — it's measured from the most recent **rolling
+peak** (the code keeps updating "peak" to the newest high whenever not
+already in a drawdown). This logic is independent of whether the
+threshold itself is a flat -2% or a time-varying `k × ATR%` — only the
+trigger *size* changed, not what it's measured from. This means:
 - **Uptrending stocks**: handled correctly and naturally — the peak keeps
-  climbing with the trend, so every ≥2% pullback from the latest high
-  still gets detected as its own episode.
+  climbing with the trend, so every pullback past that ticker's current
+  ATR-scaled threshold from the latest high still gets detected as its
+  own episode.
 - **Persistently downtrending stocks**: the real edge case. A drawdown
   only closes once price makes a new high *above the original peak* (full
   recovery) — so a multi-year decline that never regains its old high
@@ -224,6 +285,10 @@ measured from the most recent **rolling peak** (the code keeps updating
 angle's design — the lifecycle/shape/news-window approach here is a
 custom design decided in this conversation, not sourced from a published
 method, so no citation applies the way it did for DLinear or Chronos.
+Also open: the k-sweep (1.5/2/2.5/3) hasn't actually been run yet — which
+k value(s) the lifecycle findings turn out to be stable across is a real,
+measured outcome of running the backtest, not assumed in advance; k=2 is
+only a documented starting default, not a final choice.
 
 ## FUTURE-PERSONAL-PROJECT
 

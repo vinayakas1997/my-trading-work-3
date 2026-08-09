@@ -3,12 +3,20 @@ purpose: >
   Trained-from-scratch LPatchTST model (method 23 of the 32-method plan,
   see New-talk-/Final-implementation/01-present-considerations/23-lpatchtst.md)
   — the best-performing of the six trained-from-scratch architectures in
-  the source survey (~54% directional accuracy, Sharpe 2.31-2.32). "L" is
-  LSTM, not "lightweight": an LSTM branch and a patch-transformer branch
+  the source survey (57.7% directional accuracy per arXiv:2603.01820,
+  corrected from an earlier miscited ~54% — see
+  04-enhancement-of-each-angle/13-lpatchtst.md SS1 for the correction;
+  Sharpe 2.31-2.32). "L" is LSTM, not "lightweight": an LSTM branch and a
+  patch-transformer branch
   (the same `PatchEncoderBranch` used standalone by `patchtst`) each
   encode the close-price lookback window, their representations are
   concatenated, and one linear head produces the one-step point forecast.
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str

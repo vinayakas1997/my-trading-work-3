@@ -40,28 +40,12 @@ def _rate_with_ci(values: list[float]) -> dict[str, Any]:
     }
 
 
-def aggregate_pnl_attribution(
-    symbol: str,
-    closed_positions: list[dict[str, Any]],
-) -> pd.DataFrame:
-    """Aggregate a symbol's closed positions into win-rate/avg-win/avg-loss stats.
-
-    `closed_positions` items are expected to carry at least `realized_pnl`, `avg_entry`,
-    `qty` (matching `vinu_live.book.positions.list_closed_positions`'s row shape) -- extra
-    keys are ignored, so the same dicts vinu-live's book already produces can be passed
-    through unmodified.
+def _aggregate_group(closed_positions: list[dict[str, Any]]) -> dict[str, Any]:
+    """win_rate/avg_win_pct/avg_loss_pct/n_trades/total_realized_pnl for one
+    group of closed positions -- the same block `aggregate_pnl_attribution`
+    always computed at the symbol level, extracted so the per-`artifact_id`
+    breakdown can reuse it unchanged instead of duplicating the stats logic.
     """
-    analysis_at = datetime.now(timezone.utc).isoformat()
-
-    if not closed_positions:
-        return pd.DataFrame([{
-            "symbol": symbol,
-            "analysis_at": analysis_at,
-            "angle": "pnl_attribution",
-            "status": "no_data",
-            "closed_positions_json": "[]",
-        }])
-
     pnl_pcts: list[float] = []
     realized_pnls: list[float] = []
     for p in closed_positions:
@@ -74,16 +58,57 @@ def aggregate_pnl_attribution(
     losses = [p for p in pnl_pcts if p <= 0]
     win_flags = [1.0 if p > 0 else 0.0 for p in pnl_pcts]
 
-    result = {
-        "symbol": symbol,
-        "analysis_at": analysis_at,
-        "angle": "pnl_attribution",
-        "status": "ok",
+    return {
         "n_trades": len(closed_positions),
         "total_realized_pnl": float(sum(realized_pnls)),
         "win_rate": _rate_with_ci(win_flags),
         "avg_win_pct": _rate_with_ci(wins),
         "avg_loss_pct": _rate_with_ci(losses),
+    }
+
+
+def aggregate_pnl_attribution(
+    symbol: str,
+    closed_positions: list[dict[str, Any]],
+) -> pd.DataFrame:
+    """Aggregate a symbol's closed positions into win-rate/avg-win/avg-loss stats,
+    both at the symbol level (unchanged) and broken down per `artifact_id` (new --
+    per 04-enhancement-of-each-angle/22-pnl_attribution.md SS3, the actual
+    "attribution" this angle's name promises).
+
+    `closed_positions` items are expected to carry at least `realized_pnl`, `avg_entry`,
+    `qty` (matching `vinu_live.book.positions.list_closed_positions`'s row shape) -- extra
+    keys are ignored, so the same dicts vinu-live's book already produces can be passed
+    through unmodified. `artifact_id` is read the same way -- already present on every
+    real closed `Position` (vinu-live/book/schema.py), no new data collection needed.
+    """
+    analysis_at = datetime.now(timezone.utc).isoformat()
+
+    if not closed_positions:
+        return pd.DataFrame([{
+            "symbol": symbol,
+            "analysis_at": analysis_at,
+            "angle": "pnl_attribution",
+            "status": "no_data",
+            "closed_positions_json": "[]",
+        }])
+
+    by_artifact: dict[str, dict[str, Any]] = {}
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for p in closed_positions:
+        aid = p.get("artifact_id") or ""
+        if aid:
+            groups.setdefault(aid, []).append(p)
+    for aid, positions in groups.items():
+        by_artifact[aid] = _aggregate_group(positions)
+
+    result = {
+        "symbol": symbol,
+        "analysis_at": analysis_at,
+        "angle": "pnl_attribution",
+        "status": "ok",
+        **_aggregate_group(closed_positions),
+        "by_artifact": by_artifact,
         # Full history carried forward (as a JSON string, not a raw list column -- parquet
         # round-trips list-of-dicts columns as numpy object arrays, which FastAPI's JSON
         # encoder can't serialize when this row is later returned from /angle/{name}/{ticker})

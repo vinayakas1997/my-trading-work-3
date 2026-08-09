@@ -1,10 +1,46 @@
+"""Shock Personality — post-shock behavioral profile for a single symbol.
+
+Per 04-enhancement-of-each-angle/25-shock_personality.md, three confirmed
+bugs fixed here:
+
+Bug #1 (leak, independently reimplemented duplicate of shock_clustering's
+own fixed bug, not shared code): `_detect_gap_shocks`'s `gap_mean`/
+`gap_std` were computed over the ENTIRE bars series -- a full-history
+constant. Fixed to a rolling(21) window, matching the vol-spike trigger
+right next to it (which was already correct). This matters beyond
+backtest correctness: a full-sample statistic can't be computed live --
+the rolling version is the same calculation whether run in a backtest or
+in production every day.
+
+Bug #2 (computed, then discarded): `_compute_drift_persistence` computed
+per-shock post-event return autocorrelation but only ever checked
+whether at least one value was non-NaN -- the actual numbers were thrown
+away. Now aggregated and reported as `drift_mean_autocorr`, alongside
+the existing sign-streak `drift_persistence_days`.
+
+Bug #3 (computed, then discarded): `_cross_reference_news` tagged every
+shock with `has_news`/`nearest_news_days`, but `compute()`'s output only
+ever reported an aggregate `n_shocks` count -- the per-shock news
+information never reached storage. Now surfaced via backtest.py's new
+per-shock rows, and used here to split gap_fill_rate/drift metrics by
+news presence.
+"""
+
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
-from scipy import stats as _stats
 from typing import Any
+
+from vinu_initial_analysis.angles._helpers import mean_with_ci
+
+GAP_ROLLING_WINDOW = 21
+VOL_ROLLING_WINDOW = 21
+# Real floor: the rolling windows' own requirement, not the arbitrary
+# N=100 convention -- per the design doc SS3, this angle's actual
+# gating constraint is how many shocks get detected, not raw candle count.
+MIN_OBSERVATIONS = 21
 
 
 def _detect_gap_shocks(
@@ -14,13 +50,13 @@ def _detect_gap_shocks(
     close = bars["close"].astype(float)
     open_p = bars["open"].astype(float)
     gaps = (open_p - close.shift(1)) / close.shift(1)
-    gap_mean = gaps.mean()
-    gap_std = gaps.std()
+    gap_mean = gaps.rolling(GAP_ROLLING_WINDOW).mean()
+    gap_std = gaps.rolling(GAP_ROLLING_WINDOW).std()
     shocks = []
     for i in range(len(gaps)):
-        if pd.isna(gaps.iloc[i]):
+        if pd.isna(gaps.iloc[i]) or pd.isna(gap_std.iloc[i]):
             continue
-        z = (gaps.iloc[i] - gap_mean) / max(gap_std, 1e-12)
+        z = (gaps.iloc[i] - gap_mean.iloc[i]) / max(gap_std.iloc[i], 1e-12)
         if abs(z) > gap_std_threshold:
             shocks.append({
                 "date": int(bars["bar_ts"].iloc[i]),
@@ -35,7 +71,7 @@ def _detect_gap_shocks(
 def _detect_vol_shocks(
     bars: pd.DataFrame,
     vol_z_threshold: float = 2.0,
-    window: int = 21,
+    window: int = VOL_ROLLING_WINDOW,
 ) -> list[dict[str, Any]]:
     close = bars["close"].astype(float)
     high = bars["high"].astype(float)
@@ -65,6 +101,9 @@ def _cross_reference_news(
     news_window_days: int = 2,
 ) -> list[dict[str, Any]]:
     if not news:
+        for shock in shocks:
+            shock.setdefault("has_news", False)
+            shock.setdefault("nearest_news_days", None)
         return shocks
     news_dates = set()
     for article in news:
@@ -92,6 +131,7 @@ def _cross_reference_news(
                 break
         else:
             shock["has_news"] = False
+            shock["nearest_news_days"] = None
     return shocks
 
 
@@ -122,7 +162,6 @@ def _compute_gap_fill_rate(
 ) -> dict[str, Any]:
     close = bars["close"].astype(float)
     open_p = bars["open"].astype(float)
-    gaps = (open_p - close.shift(1)) / close.shift(1)
 
     fill_ratios = []
     for shock in shocks:
@@ -143,24 +182,7 @@ def _compute_gap_fill_rate(
         fill_ratio = max(0.0, min(1.0, filled / gap_size))
         fill_ratios.append(fill_ratio)
 
-    n = len(fill_ratios)
-    if n < 2:
-        return {
-            "mean": float(np.mean(fill_ratios)) if fill_ratios else None,
-            "n_observations": n,
-            "confidence_interval": None,
-            "status": "insufficient_sample" if n < 2 else "ok",
-        }
-
-    mean = float(np.mean(fill_ratios))
-    se = float(np.std(fill_ratios, ddof=1) / np.sqrt(n))
-    ci = _stats.t.interval(0.95, df=n - 1, loc=mean, scale=se)
-    return {
-        "mean": mean,
-        "n_observations": n,
-        "confidence_interval": [float(ci[0]), float(ci[1])],
-        "status": "ok",
-    }
+    return mean_with_ci(fill_ratios)
 
 
 def _compute_vol_persistence(
@@ -185,15 +207,23 @@ def _compute_vol_persistence(
     }
 
 
-def _compute_drift_persistence(
+def _compute_drift_metrics(
     bars: pd.DataFrame,
     shocks: list[dict[str, Any]],
     max_lag: int = 20,
-) -> dict[str, Any]:
+) -> dict[str, dict[str, Any]]:
+    """Two complementary post-shock drift views: `drift_persistence_days`
+    (existing sign-streak, truncates at the first reversal) and
+    `drift_mean_autocorr` (new -- mean lag-1-through-9 return
+    autocorrelation following each shock, previously computed then
+    discarded, see module docstring Bug #2). Returns both under one call
+    so shocks only need to be walked once.
+    """
     close = bars["close"].astype(float)
     returns = close.pct_change().dropna()
 
     drift_lengths = []
+    mean_autocorrs = []
     for shock in shocks:
         idx = shock.get("idx")
         if idx is None:
@@ -205,6 +235,8 @@ def _compute_drift_persistence(
         autocorrs = [a for a in autocorrs if not pd.isna(a)]
         if not autocorrs:
             continue
+        mean_autocorrs.append(float(np.mean(autocorrs)))
+
         sign_streak = 0
         shock_sign = np.sign(shock["magnitude"])
         for r in post_shock.values:
@@ -214,24 +246,18 @@ def _compute_drift_persistence(
                 break
         drift_lengths.append(sign_streak)
 
-    n = len(drift_lengths)
-    if n < 2:
-        return {
-            "mean_days": float(np.mean(drift_lengths)) if drift_lengths else None,
-            "n_observations": n,
-            "confidence_interval": None,
-            "status": "insufficient_sample" if n < 2 else "ok",
-        }
-
-    mean = float(np.mean(drift_lengths))
-    se = float(np.std(drift_lengths, ddof=1) / np.sqrt(n))
-    ci = _stats.t.interval(0.95, df=n - 1, loc=mean, scale=se)
+    drift_persistence = mean_with_ci(drift_lengths)
+    drift_persistence = {"mean_days": drift_persistence.pop("mean"), **drift_persistence}
     return {
-        "mean_days": mean,
-        "n_observations": n,
-        "confidence_interval": [float(ci[0]), float(ci[1])],
-        "status": "ok",
+        "drift_persistence_days": drift_persistence,
+        "drift_mean_autocorr": mean_with_ci(mean_autocorrs),
     }
+
+
+def _news_split(shocks: list[dict[str, Any]]) -> tuple[list[dict], list[dict]]:
+    news_shocks = [s for s in shocks if s.get("has_news")]
+    no_news_shocks = [s for s in shocks if not s.get("has_news")]
+    return news_shocks, no_news_shocks
 
 
 def compute(
@@ -252,10 +278,21 @@ def compute(
 
     analysis_at = datetime.now(timezone.utc).isoformat()
 
+    if len(bars) < MIN_OBSERVATIONS:
+        return pd.DataFrame([{
+            "symbol": symbol,
+            "analysis_at": analysis_at,
+            "angle": "shock_personality",
+            "status": "insufficient_data",
+            "n_observations": len(bars),
+        }])
+
     shocks = _tag_shocks(bars, news)
     gap_fill = _compute_gap_fill_rate(bars, shocks)
     vol_pers = _compute_vol_persistence(symbol, bars)
-    drift = _compute_drift_persistence(bars, shocks)
+    drift = _compute_drift_metrics(bars, shocks)
+
+    news_shocks, no_news_shocks = _news_split(shocks)
 
     result = {
         "symbol": symbol,
@@ -263,9 +300,15 @@ def compute(
         "angle": "shock_personality",
         "status": "ok",
         "n_shocks": len(shocks),
+        "n_shocks_with_news": len(news_shocks),
         "gap_fill_rate": gap_fill,
+        "gap_fill_rate_news": _compute_gap_fill_rate(bars, news_shocks),
+        "gap_fill_rate_no_news": _compute_gap_fill_rate(bars, no_news_shocks),
         "vol_persistence": vol_pers,
-        "drift_persistence_days": drift,
+        "drift_persistence_days": drift["drift_persistence_days"],
+        "drift_mean_autocorr": drift["drift_mean_autocorr"],
+        "drift_persistence_days_news": _compute_drift_metrics(bars, news_shocks)["drift_persistence_days"],
+        "drift_persistence_days_no_news": _compute_drift_metrics(bars, no_news_shocks)["drift_persistence_days"],
     }
 
     return pd.DataFrame([result])

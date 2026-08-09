@@ -32,6 +32,19 @@ def test_fits_and_forecasts_positive_volatility():
     row = df.iloc[0]
     assert row["status"] == "ok"
     assert row["next_period_volatility_forecast"] > 0
+    # Loose sanity bound, not a tight one: catches the real
+    # annualization-unit bug found via the walk-forward backtest's
+    # real-data check (the forecast previously came back ~40 -- 5 orders
+    # of magnitude too large, an already-annualized value fed back into
+    # the per-period GARCH recursion without de-annualizing, now fixed).
+    # Kept loose (not e.g. < 0.1) because a *separate*, real, upstream
+    # issue in vinu_tools' _garch_ml_estimate (its omega estimate runs
+    # ~1000x too large vs the true MLE on real return-scale data,
+    # confirmed on real AAPL data too, not synthetic-only -- see
+    # 06-implementation-of-each-angles/08-garch/01-implementation.md)
+    # means next_period_volatility_forecast can still legitimately land
+    # well above a "reasonable" value until that upstream bug is fixed.
+    assert row["next_period_volatility_forecast"] < 10.0
     assert 0.0 <= row["alpha"] <= 1.0
     assert 0.0 <= row["beta"] <= 1.0
     assert row["persistence"] == row["alpha"] + row["beta"]

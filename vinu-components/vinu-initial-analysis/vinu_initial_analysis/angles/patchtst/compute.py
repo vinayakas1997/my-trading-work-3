@@ -42,7 +42,9 @@ STRIDE = 4
 D_MODEL = 16
 NHEAD = 2
 NUM_LAYERS = 1
-MIN_BARS = 90
+# Decided value, 04-enhancement-of-each-angle/20-patchtst.md — raised
+# from 90, same consistency move as ARIMA/DLinear/lpatchtst/lstm.
+MIN_BARS = 100
 EPOCHS = 50
 
 
@@ -64,6 +66,67 @@ def _build_model():
             return self.head(self.branch.encode_flat(x))
 
     return PatchTSTModel()
+
+
+def _fit_and_forecast(close: np.ndarray, seed: int = 42):
+    """Trains a fresh PatchTST (patch-encoder-only) model on `close` and
+    forecasts one step past its end. Returns (fields, model) — `fields`
+    is every result column except symbol/analysis_at/angle (callers
+    attach those), and `model` is the trained nn.Module, exposed so the
+    walk-forward backtest (backtest.py) can save its state_dict as this
+    step's weights artifact.
+
+    Raises ValueError if there aren't enough training windows.
+    """
+    import torch
+    from torch import nn
+
+    torch.manual_seed(seed)
+
+    norm, mean, std = zscore(close)
+    X, y = make_windows(norm, LOOKBACK, horizon=1)
+    if len(X) < 20:
+        raise ValueError(f"insufficient training windows: {len(X)}")
+
+    X_t = torch.from_numpy(X)
+    y_t = torch.from_numpy(y)
+
+    model = _build_model()
+    opt = torch.optim.Adam(model.parameters(), lr=0.01)
+    loss_fn = nn.MSELoss()
+
+    model.train()
+    for _ in range(EPOCHS):
+        opt.zero_grad()
+        pred = model(X_t)
+        loss = loss_fn(pred, y_t)
+        loss.backward()
+        opt.step()
+    final_train_loss = float(loss.item())
+
+    model.eval()
+    with torch.no_grad():
+        last_window = torch.from_numpy(norm[-LOOKBACK:].astype(np.float32)).unsqueeze(0)
+        forecast_norm = float(model(last_window).item())
+
+    forecast_price = forecast_norm * std + mean
+    last_close = float(close[-1])
+    forecast_return = (forecast_price - last_close) / last_close if last_close else 0.0
+
+    fields = {
+        "status": "ok",
+        "n_observations": int(len(close)),
+        "n_train_windows": int(len(X)),
+        "lookback": LOOKBACK,
+        "patch_len": PATCH_LEN,
+        "n_patches": model.branch.n_patches,
+        "last_close": last_close,
+        "forecast_price": float(forecast_price),
+        "forecast_return": float(forecast_return),
+        "direction": direction(forecast_return),
+        "train_loss": final_train_loss,
+    }
+    return fields, model
 
 
 def compute(
@@ -97,14 +160,9 @@ def compute(
             "n_observations": int(n),
         }])
 
-    import torch
-    from torch import nn
-
-    torch.manual_seed(seed)
-
-    norm, mean, std = zscore(close)
-    X, y = make_windows(norm, LOOKBACK, horizon=1)
-    if len(X) < 20:
+    try:
+        fields, _model = _fit_and_forecast(close, seed=seed)
+    except ValueError:
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": analysis_at,
@@ -113,45 +171,10 @@ def compute(
             "n_observations": int(n),
         }])
 
-    X_t = torch.from_numpy(X)
-    y_t = torch.from_numpy(y)
-
-    model = _build_model()
-    opt = torch.optim.Adam(model.parameters(), lr=0.01)
-    loss_fn = nn.MSELoss()
-
-    model.train()
-    for _ in range(EPOCHS):
-        opt.zero_grad()
-        pred = model(X_t)
-        loss = loss_fn(pred, y_t)
-        loss.backward()
-        opt.step()
-    final_train_loss = float(loss.item())
-
-    model.eval()
-    with torch.no_grad():
-        last_window = torch.from_numpy(norm[-LOOKBACK:].astype(np.float32)).unsqueeze(0)
-        forecast_norm = float(model(last_window).item())
-
-    forecast_price = forecast_norm * std + mean
-    last_close = float(close[-1])
-    forecast_return = (forecast_price - last_close) / last_close if last_close else 0.0
-
     result: dict[str, Any] = {
         "symbol": symbol,
         "analysis_at": analysis_at,
         "angle": ANGLE_NAME,
-        "status": "ok",
-        "n_observations": int(n),
-        "n_train_windows": int(len(X)),
-        "lookback": LOOKBACK,
-        "patch_len": PATCH_LEN,
-        "n_patches": model.branch.n_patches,
-        "last_close": last_close,
-        "forecast_price": float(forecast_price),
-        "forecast_return": float(forecast_return),
-        "direction": direction(forecast_return),
-        "train_loss": final_train_loss,
+        **fields,
     }
     return pd.DataFrame([result])

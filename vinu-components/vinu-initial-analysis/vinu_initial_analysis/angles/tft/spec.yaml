@@ -11,6 +11,11 @@ purpose: >
   covariates from the source spec are not modeled (no such data available
   from `bars`/`news`); see compute.py's docstring for the full note.
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str

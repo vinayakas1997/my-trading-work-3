@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-from scipy.stats import pearsonr, bootstrap
+from scipy.stats import pearsonr
+
+from vinu_initial_analysis.angles._helpers import pearson_with_ci
 
 
 def resample_news_to_hourly(articles: list[dict]) -> pd.DataFrame:
@@ -64,37 +66,23 @@ def compute_correlation(
     returns = merged["return"].values
     sentiment = merged["avg_sentiment"].values
 
-    news_return_corr, news_return_p = pearsonr(news_intensity, returns)
+    # Was a hand-rolled scipy.stats.bootstrap call passing list(zip(x, y))
+    # as one un-paired sample -- the exact same bug found and fixed in
+    # pearson_with_ci (known-issues.md Resolved #1): scipy auto-vectorized
+    # the statistic function across resamples in a way that decorrelated
+    # x from y per resample, collapsing the CI to the degenerate [-1, 1]
+    # regardless of the real correlation strength or sample size. Reusing
+    # the already-fixed, already-tested shared helper instead of
+    # re-deriving the same paired=True/vectorized=False fix here.
+    news_return = pearson_with_ci(news_intensity, returns, n_bootstrap=n_bootstrap)
     sentiment_return_corr, _ = pearsonr(sentiment, returns)
     news_volume_corr, _ = pearsonr(news_intensity, np.abs(returns))
 
-    corr_data = list(zip(news_intensity, returns))
-    def _corr_stat(data, axis=0):
-        arr = np.array(data)
-        if arr.shape[0] < 2:
-            return 0.0
-        c, _ = pearsonr(arr[:, 0], arr[:, 1])
-        return c
-
-    try:
-        boot = bootstrap(
-            (corr_data,),
-            _corr_stat,
-            n_resamples=n_bootstrap,
-            confidence_level=0.95,
-            method="percentile",
-        )
-        ci_lower = boot.confidence_interval.low
-        ci_upper = boot.confidence_interval.high
-    except Exception:
-        ci_lower = news_return_corr
-        ci_upper = news_return_corr
-
     return {
-        "news_return_corr": round(float(news_return_corr), 4),
-        "corr_p_value": round(float(news_return_p), 6),
-        "corr_ci_lower": round(float(ci_lower), 4),
-        "corr_ci_upper": round(float(ci_upper), 4),
+        "news_return_corr": round(news_return["corr"], 4),
+        "corr_p_value": round(news_return["p_value"], 6),
+        "corr_ci_lower": round(news_return["ci_lower"], 4),
+        "corr_ci_upper": round(news_return["ci_upper"], 4),
         "sentiment_return_corr": round(float(sentiment_return_corr), 4),
         "news_volume_corr": round(float(news_volume_corr), 4),
         "sample_size": len(merged),

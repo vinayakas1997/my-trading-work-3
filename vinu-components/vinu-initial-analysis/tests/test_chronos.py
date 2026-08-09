@@ -28,12 +28,14 @@ def test_insufficient_data_status():
 
 
 def test_real_pretrained_pipeline_forecasts_expected_length():
-    """Genuine integration test: loads amazon/chronos-t5-tiny via the real
+    """Genuine integration test: loads amazon/chronos-t5-large via the real
     chronos-forecasting package and checks the forecast shape/finiteness.
     Network access + first-run HF Hub download required; the pipeline is
     cached module-wide by compute()'s _PIPELINE_CACHE so a second test in
-    this file/process reuses the already-loaded model."""
-    df = compute("AAPL", bars=_make_bars(n=200))
+    this file/process reuses the already-loaded model. n=512 matches the
+    decided MIN_OBSERVATIONS (a fixed context requirement, not a floor —
+    see 04-enhancement-of-each-angle/03-chronos.md SS3)."""
+    df = compute("AAPL", bars=_make_bars(n=512))
     row = df.iloc[0]
     assert row["status"] == "ok"
     # Honest either/or: if the real package/network isn't available in some
@@ -49,9 +51,10 @@ def test_real_pretrained_pipeline_forecasts_expected_length():
 def test_pretrained_backend_actually_loads_in_this_environment():
     """This environment does have chronos-forecasting installed with network
     access verified during implementation — assert the real path is taken,
-    not silently degrading to the proxy."""
-    df = compute("MSFT", bars=_make_bars(n=200, seed=7))
+    not silently degrading to the proxy, and that the decided checkpoint
+    (chronos-t5-large, upgraded from tiny) is what actually loads."""
+    df = compute("MSFT", bars=_make_bars(n=512, seed=7))
     row = df.iloc[0]
     assert row["model_backend"] == "pretrained"
-    assert row["checkpoint"] == "amazon/chronos-t5-tiny"
+    assert row["checkpoint"] == "amazon/chronos-t5-large"
     assert row["fallback_reason"] is None

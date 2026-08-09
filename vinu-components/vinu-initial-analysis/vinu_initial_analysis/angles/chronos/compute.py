@@ -33,9 +33,19 @@ import numpy as np
 import pandas as pd
 
 ANGLE_NAME = "chronos"
-MIN_OBSERVATIONS = 30
+# Fixed context requirement, not a growing/adaptive floor like ARIMA's
+# N=100 -- 512 is Amazon's own stated ceiling *and* default for this model
+# family (04-enhancement-of-each-angle/03-chronos.md SS3/SS7), so this
+# angle simply requires the full 512 before evaluating rather than mixing
+# an expanding-window design onto a model that always truncates to its
+# last 512 candles anyway.
+MIN_OBSERVATIONS = 512
 PREDICTION_LENGTH = 5
-CHECKPOINT = "amazon/chronos-t5-tiny"
+# Decided checkpoint (04-enhancement-of-each-angle/03-chronos.md SS3):
+# upgraded from the code's prior default (chronos-t5-tiny, 8M params) to
+# chronos-t5-large (710M params) for forecast quality over speed.
+CHECKPOINT = "amazon/chronos-t5-large"
+_MODEL_REGISTRY_NAME = "chronos-t5-large"
 
 _PIPELINE_CACHE: dict[str, Any] = {}
 
@@ -44,7 +54,7 @@ def _checkpoint_path() -> str:
     """Resolve the local weights dir, auto-downloading if absent."""
     from vinu_infra.models import ensure_model
 
-    return str(ensure_model("chronos-t5-tiny", quiet=True))
+    return str(ensure_model(_MODEL_REGISTRY_NAME, quiet=True))
 
 
 def _get_pipeline():
@@ -79,6 +89,57 @@ def _fallback_forecast(closes: np.ndarray, horizon: int) -> dict[str, Any]:
     }
 
 
+def _forecast(context: np.ndarray) -> dict[str, Any]:
+    """Runs one real Chronos forecast call (or the fallback proxy if the
+    pipeline can't be loaded) on a context window and returns the fields
+    describing it. Shared by compute() and the walk-forward backtest
+    (backtest.py) so both produce the exact same forecast shape.
+
+    Real per-call cost, benchmarked directly on this CPU-only environment
+    with chronos-t5-large and a genuine 512-candle context: ~14s/call
+    (pipeline load is a separate, one-time ~7s, cached across calls via
+    _PIPELINE_CACHE). p10/median/p90 can be genuinely identical for a
+    given horizon step when the model's 64 sampled paths concentrate onto
+    one discretized value -- confirmed real and reproducible (not a code
+    bug) on both chronos-t5-tiny and chronos-t5-large given a
+    low-relative-volatility real context; more volatile contexts and
+    later horizon steps show real nonzero spread. The natural
+    `p10 <= actual <= p90` hit check handles the zero-width case
+    correctly on its own (just evaluates to a near-certain miss) -- no
+    special-casing needed.
+    """
+    model_backend = "pretrained"
+    fallback_reason = None
+    try:
+        import torch
+
+        pipeline = _get_pipeline()
+        ctx_tensor = torch.tensor(context, dtype=torch.float32)
+        samples = pipeline.predict(
+            inputs=ctx_tensor, prediction_length=PREDICTION_LENGTH, num_samples=64
+        )
+        samples_np = samples[0].numpy()  # (num_samples, prediction_length)
+        p10, median, p90 = np.quantile(samples_np, [0.1, 0.5, 0.9], axis=0)
+        forecast = {
+            "median_forecast": median.tolist(),
+            "p10_forecast": p10.tolist(),
+            "p90_forecast": p90.tolist(),
+        }
+    except Exception as exc:  # pragma: no cover - only hit if pkg/network unavailable
+        model_backend = "fallback_proxy"
+        fallback_reason = f"chronos-forecasting pipeline unavailable: {exc!r}"
+        forecast = _fallback_forecast(context, PREDICTION_LENGTH)
+
+    return {
+        "model_backend": model_backend,
+        "checkpoint": CHECKPOINT if model_backend == "pretrained" else None,
+        "fallback_reason": fallback_reason,
+        "forecast_horizon": PREDICTION_LENGTH,
+        "last_close": float(context[-1]),
+        **forecast,
+    }
+
+
 def compute(
     symbol: str,
     bars: pd.DataFrame | None = None,
@@ -108,28 +169,7 @@ def compute(
         }])
 
     context = closes[-512:]  # Chronos context cap, per model card
-    model_backend = "pretrained"
-    fallback_reason = None
-
-    try:
-        import torch
-
-        pipeline = _get_pipeline()
-        ctx_tensor = torch.tensor(context, dtype=torch.float32)
-        samples = pipeline.predict(
-            inputs=ctx_tensor, prediction_length=PREDICTION_LENGTH, num_samples=64
-        )
-        samples_np = samples[0].numpy()  # (num_samples, prediction_length)
-        p10, median, p90 = np.quantile(samples_np, [0.1, 0.5, 0.9], axis=0)
-        forecast = {
-            "median_forecast": median.tolist(),
-            "p10_forecast": p10.tolist(),
-            "p90_forecast": p90.tolist(),
-        }
-    except Exception as exc:  # pragma: no cover - only hit if pkg/network unavailable
-        model_backend = "fallback_proxy"
-        fallback_reason = f"chronos-forecasting pipeline unavailable: {exc!r}"
-        forecast = _fallback_forecast(context, PREDICTION_LENGTH)
+    forecast_fields = _forecast(context)
 
     result: dict[str, Any] = {
         "symbol": symbol,
@@ -137,11 +177,6 @@ def compute(
         "angle": ANGLE_NAME,
         "status": "ok",
         "n_observations": int(len(closes)),
-        "model_backend": model_backend,
-        "checkpoint": CHECKPOINT if model_backend == "pretrained" else None,
-        "fallback_reason": fallback_reason,
-        "forecast_horizon": PREDICTION_LENGTH,
-        "last_close": float(closes[-1]),
-        **forecast,
+        **forecast_fields,
     }
     return pd.DataFrame([result])

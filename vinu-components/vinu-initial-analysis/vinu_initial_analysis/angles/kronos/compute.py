@@ -136,47 +136,12 @@ def _fallback_forecast(ohlc_raw: np.ndarray) -> dict[str, Any]:
     }
 
 
-def compute(
-    symbol: str,
-    bars: pd.DataFrame | None = None,
-    news: list[dict] | None = None,
-    from_ts: int | None = None,
-    to_ts: int | None = None,
-    time_format: str | None = None,
-) -> pd.DataFrame:
-    analysis_at = datetime.now(timezone.utc).isoformat()
-
-    if bars is None or bars.empty:
-        return pd.DataFrame([{
-            "symbol": symbol,
-            "analysis_at": analysis_at,
-            "angle": ANGLE_NAME,
-            "status": "no_data",
-        }])
-
-    required_cols = {"open", "high", "low", "close"}
-    if not required_cols.issubset(bars.columns):
-        return pd.DataFrame([{
-            "symbol": symbol,
-            "analysis_at": analysis_at,
-            "angle": ANGLE_NAME,
-            "status": "insufficient_data",
-            "n_observations": int(len(bars)),
-        }])
-
-    ohlc_raw = bars[["open", "high", "low", "close"]].astype(float).values
-    if len(ohlc_raw) < MIN_OBSERVATIONS + CONTEXT_WINDOW:
-        return pd.DataFrame([{
-            "symbol": symbol,
-            "analysis_at": analysis_at,
-            "angle": ANGLE_NAME,
-            "status": "insufficient_data",
-            "n_observations": int(len(ohlc_raw)),
-        }])
-
-    model_backend = "pretrained"
-    fallback_reason = None
-
+def _fit_and_forecast(bars: pd.DataFrame, ohlc_raw: np.ndarray) -> dict[str, Any]:
+    """Runs one real Kronos forecast call (or the fallback MLP proxy if
+    the real predictor can't be loaded) and returns the result fields.
+    Shared by compute() and the walk-forward backtest (backtest.py) so
+    both produce the exact same forecast shape.
+    """
     try:
         import torch
 
@@ -222,25 +187,19 @@ def compute(
                 "close": [float(v) for v in pred_df["close"].tolist()],
             },
         }
-        result: dict[str, Any] = {
-            "symbol": symbol,
-            "analysis_at": analysis_at,
-            "angle": ANGLE_NAME,
+        return {
             "status": "ok",
             "n_observations": int(len(ohlc_raw)),
-            "model_backend": model_backend,
+            "model_backend": "pretrained",
             "checkpoint": "NeoQuasar/Kronos-base",
-            "fallback_reason": fallback_reason,
+            "fallback_reason": None,
             "context_window": 512,
             "last_close": float(ohlc_raw[-1, 3]),
             **forecast,
         }
     except Exception as exc:  # pragma: no cover - only hit if pkg/network unavailable
         fallback = _fallback_forecast(ohlc_raw)
-        result = {
-            "symbol": symbol,
-            "analysis_at": analysis_at,
-            "angle": ANGLE_NAME,
+        return {
             "status": "ok",
             "n_observations": int(len(ohlc_raw)),
             "model_backend": "fallback_proxy",
@@ -249,4 +208,51 @@ def compute(
             "last_close": float(ohlc_raw[-1, 3]),
             **fallback,
         }
+
+
+def compute(
+    symbol: str,
+    bars: pd.DataFrame | None = None,
+    news: list[dict] | None = None,
+    from_ts: int | None = None,
+    to_ts: int | None = None,
+    time_format: str | None = None,
+) -> pd.DataFrame:
+    analysis_at = datetime.now(timezone.utc).isoformat()
+
+    if bars is None or bars.empty:
+        return pd.DataFrame([{
+            "symbol": symbol,
+            "analysis_at": analysis_at,
+            "angle": ANGLE_NAME,
+            "status": "no_data",
+        }])
+
+    required_cols = {"open", "high", "low", "close"}
+    if not required_cols.issubset(bars.columns):
+        return pd.DataFrame([{
+            "symbol": symbol,
+            "analysis_at": analysis_at,
+            "angle": ANGLE_NAME,
+            "status": "insufficient_data",
+            "n_observations": int(len(bars)),
+        }])
+
+    ohlc_raw = bars[["open", "high", "low", "close"]].astype(float).values
+    if len(ohlc_raw) < MIN_OBSERVATIONS + CONTEXT_WINDOW:
+        return pd.DataFrame([{
+            "symbol": symbol,
+            "analysis_at": analysis_at,
+            "angle": ANGLE_NAME,
+            "status": "insufficient_data",
+            "n_observations": int(len(ohlc_raw)),
+        }])
+
+    fields = _fit_and_forecast(bars, ohlc_raw)
+    result: dict[str, Any] = {
+        "symbol": symbol,
+        "analysis_at": analysis_at,
+        "angle": ANGLE_NAME,
+        **fields,
+    }
     return pd.DataFrame([result])

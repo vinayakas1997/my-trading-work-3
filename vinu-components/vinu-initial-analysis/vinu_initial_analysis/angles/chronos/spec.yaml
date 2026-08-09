@@ -8,6 +8,11 @@ purpose: >
   general TSFMs tend to underperform finance-specific models on K-line
   data).
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str
@@ -18,5 +23,5 @@ outputs:
   type: dict
   description: >
     Quantile forecast (p10/median/p90) for the next 5 periods, plus
-    model_backend ("pretrained" via amazon/chronos-t5-tiny, or
+    model_backend ("pretrained" via amazon/chronos-t5-large, or
     "fallback_proxy" if the real pipeline could not be loaded).

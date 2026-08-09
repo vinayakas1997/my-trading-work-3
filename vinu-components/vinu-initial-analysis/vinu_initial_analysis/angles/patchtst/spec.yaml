@@ -10,6 +10,11 @@ purpose: >
   direction. See `lpatchtst` for the LSTM+PatchTST hybrid built on the
   same shared patch-encoder core.
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str

@@ -27,8 +27,11 @@ def test_tag_row_matches_registry_contents():
 
 
 def test_regime_analysis_output_carries_usage_tags():
+    # >= MIN_OBSERVATIONS (141: 120-day trailing vol baseline + 21-day vol
+    # window) -- below this, compute() correctly returns insufficient_data,
+    # not regime_stats rows.
     bars = pd.DataFrame({
-        "close": [100 + (i % 5) * 0.3 - (i % 7) * 0.2 for i in range(40)],
+        "close": [100 + (i % 5) * 0.3 - (i % 7) * 0.2 for i in range(160)],
     })
     df = compute_regime("AAPL", bars=bars)
     stats_rows = df[df.get("metric") == "regime_stats"] if not df.empty else df

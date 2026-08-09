@@ -6,6 +6,11 @@ purpose: >
   shock dates") by computing peer co-movement and relative strength as a
   continuous, windowed signal across the full requested range.
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str

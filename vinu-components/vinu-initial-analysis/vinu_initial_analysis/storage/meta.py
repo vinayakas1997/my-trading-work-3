@@ -165,3 +165,16 @@ class RunLog(SQLiteBackend):
         conn = self._get_conn()
         cursor = conn.execute(query, params)
         return cursor.fetchone() is not None
+
+    def delete_by_angle(self, angle_name: str) -> int:
+        """Deletes every run row for this angle. Returns the number deleted.
+
+        Used by `storage/admin.py`'s `delete_angle()` to keep this table in
+        sync when an angle's files are removed from disk — without this,
+        `get_latest_run()` would keep resolving to a run_id whose parquet
+        file no longer exists.
+        """
+        conn = self._get_conn()
+        cursor = conn.execute("DELETE FROM runs WHERE angle_name = ?", (angle_name,))
+        conn.commit()
+        return cursor.rowcount

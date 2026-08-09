@@ -73,6 +73,19 @@ def test_garch_volatility_fixed_params():
     assert not np.all(np.isnan(cond_vol))
 
 
+def test_garch_volatility_omega_matches_variance_targeting_identity():
+    # Regression test for a fixed bug: the old hand-rolled gradient-ascent
+    # optimizer used an unscaled, incomplete gradient and produced omega
+    # values ~1000x too large. The true MLE omega must roughly satisfy the
+    # unconditional-variance identity: omega / (1 - alpha - beta) == sample_var.
+    np.random.seed(7)
+    returns = np.random.randn(300) * 0.015
+    _, alpha, beta, omega = garch_volatility(returns, fit=True)
+    sample_var = np.var(returns, ddof=1)
+    implied_var = omega / (1 - alpha - beta)
+    assert 0.2 * sample_var < implied_var < 5 * sample_var
+
+
 def test_garch_volatility_short_input():
     returns = np.array([0.01, 0.02])
     cond_vol, _, _, _ = garch_volatility(returns)

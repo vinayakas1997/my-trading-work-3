@@ -2,8 +2,11 @@ title: Drawdown Deep-Dive
 purpose: Drawdown detection, news attribution, max drawdown duration, recovery time
   across multi-timeframe
 time_formats:
+- 1min
+- 5min
 - 15min
 - 1H
+- 4H
 - 1D
 inputs:
   symbol: str

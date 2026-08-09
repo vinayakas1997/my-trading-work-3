@@ -9,8 +9,20 @@ from scipy import stats
 
 
 PERIODS_PER_YEAR: dict[str, int] = {
+    # 15min/1H assume a 6.5-hour regular trading day x 252 trading days/year
+    # (390min/15=26/day, 390min/60=6.5/day) -- 1min/5min/4H extend the same
+    # convention (390/1=390, 390/5=78, 6.5/4=1.625 bars/day respectively);
+    # added for 02-backtesting_44_metrics's decided 9-timeframe widening
+    # (04-enhancement-of-each-angle/02-backtesting_44_metrics.md SS3) --
+    # previously missing here, which would have silently fallen back to
+    # 252 (the 1D value) via periods_per_year()'s .get(..., 252) default,
+    # badly miscalculating ann_vol/cagr/sharpe/sortino/calmar for these
+    # three timeframes.
+    "1min": 98280,
+    "5min": 19656,
     "15min": 6552,
     "1H": 1638,
+    "4H": 410,
     "1D": 252,
     "1W": 52,
     "1M": 12,
@@ -186,6 +198,128 @@ def _try_market_model(
     abnormal_returns = [event_stock[t] - exp_r for t, exp_r in zip(event_aligned_ts, expected_returns)]
     car = float(sum(abnormal_returns))
     return abnormal_returns, car, estimation_std, df, float(np.mean(expected_returns))
+
+
+def mean_with_ci(values: list[float], thin_floor: int = 10) -> dict[str, Any]:
+    """Mean + sample size + 95% t-distribution CI -- the same shape
+    pnl_attribution's own `_rate_with_ci` already used, generalized here
+    since shock_personality needs the identical pattern for several
+    different metrics (gap fill rate, drift persistence, mean
+    autocorrelation, each also split by news presence -- 8+ call sites in
+    one angle). `n < 2` -> `insufficient_sample` (can't fit a t-interval
+    at all); `2 <= n < thin_floor` is still computed, not blocked, but
+    gets a `note` flagging it as thin -- shock_personality's own decided
+    "thin-sample caution below the hard floor" rule
+    (04-enhancement-of-each-angle/25-shock_personality.md SS3).
+    """
+    n = len(values)
+    if n < 2:
+        return {
+            "mean": float(np.mean(values)) if values else None,
+            "n_observations": n,
+            "confidence_interval": None,
+            "status": "insufficient_sample",
+        }
+    mean = float(np.mean(values))
+    se = float(np.std(values, ddof=1) / np.sqrt(n))
+    ci = stats.t.interval(0.95, df=n - 1, loc=mean, scale=se)
+    result: dict[str, Any] = {
+        "mean": mean,
+        "n_observations": n,
+        "confidence_interval": [float(ci[0]), float(ci[1])],
+        "status": "ok",
+    }
+    if n < thin_floor:
+        result["note"] = f"thin sample, n<{thin_floor}"
+    return result
+
+
+def calendar_quarter_key(ts: int) -> str:
+    """"YYYY-QN" real calendar quarter for a UTC unix timestamp -- coarser
+    than `_tagging.tag_row`'s bare 1-4 `quarter` field (which has no
+    year), needed wherever rows get grouped/sliced by real calendar
+    quarter across multiple years. First needed by news_price_causality's
+    aggregate-test slicing (04-enhancement-of-each-angle/19-news_price_causality.md
+    SS3 — "per calendar quarter only"), reused by peer_relative_strength's
+    forward-return validation slicing.
+    """
+    from datetime import datetime, timezone
+
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    q = (dt.month - 1) // 3 + 1
+    return f"{dt.year}-Q{q}"
+
+
+def pearson_with_ci(x: np.ndarray, y: np.ndarray, n_bootstrap: int = 500) -> dict[str, float]:
+    """Pearson correlation + bootstrapped 95% CI -- the same technique
+    news_price_causality/correlation.py's `compute_correlation` uses,
+    generalized here (that function is coupled to its own hourly-resample
+    column names) so other angles can reuse the identical method rather
+    than reinventing it. First reused by peer_relative_strength's
+    forward-return validation (04-enhancement-of-each-angle/21-peer_relative_strength.md
+    SS3: "same method already used in news_price_causality's correlation
+    module").
+
+    Uses `scipy.stats.bootstrap`'s `paired=True` mode to resample (x, y)
+    pairs together, not `x`/`y` independently -- found and fixed during
+    shock_clustering's (angle 24) real-data validation: passing
+    `list(zip(x, y))` as a single un-paired sample (the original,
+    correlation.py-inherited approach) lets scipy auto-vectorize the
+    statistic function across bootstrap resamples in a way that silently
+    decorrelates x from y per resample, collapsing the CI to the
+    degenerate [-1, 1] on every real input tried, regardless of sample
+    size or actual correlation strength -- confirmed via a direct A/B
+    comparison against `paired=True` on the same synthetic data.
+    """
+    from scipy.stats import bootstrap, pearsonr
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    n = len(x)
+    if n < 5:
+        return {"corr": 0.0, "p_value": 1.0, "ci_lower": 0.0, "ci_upper": 0.0, "sample_size": n}
+
+    corr, p_value = pearsonr(x, y)
+
+    def _stat(x_sample, y_sample):
+        c, _ = pearsonr(x_sample, y_sample)
+        return c
+
+    try:
+        boot = bootstrap(
+            (x, y), _stat, n_resamples=n_bootstrap, confidence_level=0.95,
+            method="percentile", paired=True, vectorized=False,
+        )
+        ci_lower, ci_upper = float(boot.confidence_interval.low), float(boot.confidence_interval.high)
+        if not (np.isfinite(ci_lower) and np.isfinite(ci_upper)):
+            # A small sample can draw a degenerate (constant) bootstrap
+            # resample often enough that pearsonr returns NaN for some
+            # resamples, poisoning the percentile CI -- falls back to a
+            # zero-width CI at the real (non-bootstrapped) correlation
+            # rather than surfacing NaN, same fallback as the except path.
+            raise ValueError("degenerate bootstrap CI")
+    except Exception:
+        ci_lower = ci_upper = float(corr)
+
+    return {
+        "corr": round(float(corr), 4),
+        "p_value": round(float(p_value), 6),
+        "ci_lower": round(ci_lower, 4),
+        "ci_upper": round(ci_upper, 4),
+        "sample_size": n,
+    }
+
+
+def pinball_loss(q: float, forecast: float, actual: float) -> float:
+    """Quantile (pinball) loss for one quantile level `q` — the standard
+    proper scoring rule for a quantile forecast, penalizing under- and
+    over-shoot asymmetrically per the target quantile. First needed by
+    lag_llama (04-enhancement-of-each-angle/12-lag_llama.md SS3/SS7 — "no
+    other angle's real code output is a full multi-level quantile
+    forecast"), reused by moirai's narrower 2-level (p10/p90) band.
+    """
+    diff = actual - forecast
+    return float(q * diff if diff >= 0 else (q - 1) * diff)
 
 
 def classify_significance(ar_p_value: float) -> str:

@@ -62,42 +62,70 @@ def ewma_volatility(
     return result
 
 
+def _garch_neg_log_likelihood(
+    params: np.ndarray, squared: np.ndarray, sigma2_init: float
+) -> float:
+    # omega is optimized in log-space (see _garch_ml_estimate) -- exp it
+    # back out here so the recursion itself stays in real units.
+    log_omega, alpha, beta = params
+    omega = np.exp(log_omega)
+    n = len(squared)
+    sigma2 = np.empty(n)
+    sigma2[0] = sigma2_init
+    for t in range(1, n):
+        sigma2[t] = omega + alpha * squared[t - 1] + beta * sigma2[t - 1]
+    sigma2 = np.maximum(sigma2, 1e-12)
+    return 0.5 * np.sum(np.log(sigma2) + squared / sigma2)
+
+
 def _garch_ml_estimate(
     returns: np.ndarray,
-    omega: float = 1e-6,
-    alpha: float = 0.1,
-    beta: float = 0.85,
+    omega: float | None = None,
+    alpha: float = 0.05,
+    beta: float = 0.90,
     max_iter: int = 500,
-    tol: float = 1e-6,
+    tol: float = 1e-10,
 ) -> tuple[float, float, float]:
+    from scipy.optimize import minimize
+
     n = len(returns)
     squared = returns ** 2
+    sample_var = float(np.var(returns, ddof=1)) if n > 1 else 1e-6
+    sample_var = max(sample_var, 1e-12)
 
-    for _ in range(max_iter):
-        sigma2 = np.full(n, np.var(returns, ddof=1))
-        for t in range(1, n):
-            sigma2[t] = omega + alpha * squared[t - 1] + beta * sigma2[t - 1]
-        sigma2 = np.maximum(sigma2, 1e-12)
-        ll = -0.5 * np.sum(np.log(sigma2) + squared / sigma2)
+    if omega is None:
+        # variance-targeting starting point: unconditional variance
+        # omega / (1 - alpha - beta) == sample_var
+        omega = max(sample_var * (1.0 - alpha - beta), 1e-10)
 
-        grad_omega = np.sum(1.0 / sigma2)
-        grad_alpha = np.sum(squared[:-1] / sigma2[1:])
-        grad_beta = np.sum(sigma2[:-1] / sigma2[1:])
+    # omega (~1e-5 for real return series) and alpha/beta (~0.05-0.9) sit
+    # 4-5 orders of magnitude apart. Optimizing raw omega alongside them
+    # breaks SLSQP's internal step-size/convergence logic -- it reports
+    # "success" after a handful of evaluations while sitting exactly at
+    # the starting guess with a large unexploited gradient (confirmed by
+    # comparing NLL before/after adding this log-reparametrization: the
+    # log-space version finds a real, better optimum every time). Optimizing
+    # log(omega) instead puts all three parameters on a comparable scale.
+    x0 = np.array([np.log(omega), alpha, beta])
+    bounds = [
+        (np.log(1e-12), np.log(sample_var * 10.0)),
+        (1e-6, 0.999),
+        (1e-6, 0.999),
+    ]
+    constraints = [{"type": "ineq", "fun": lambda x: 0.999 - x[1] - x[2]}]
 
-        omega_new = max(omega + 1e-8 * grad_omega, 1e-8)
-        alpha_new = max(min(alpha + 1e-8 * grad_alpha, 0.999 - beta), 1e-8)
-        beta_new = max(min(beta + 1e-8 * grad_beta, 0.999 - alpha_new), 1e-8)
+    result = minimize(
+        _garch_neg_log_likelihood,
+        x0,
+        args=(squared, sample_var),
+        method="SLSQP",
+        bounds=bounds,
+        constraints=constraints,
+        options={"maxiter": max_iter, "ftol": tol},
+    )
 
-        if (
-            abs(omega_new - omega) < tol
-            and abs(alpha_new - alpha) < tol
-            and abs(beta_new - beta) < tol
-        ):
-            break
-
-        omega, alpha, beta = omega_new, alpha_new, beta_new
-
-    return omega, alpha, beta
+    log_omega, alpha, beta = result.x
+    return float(np.exp(log_omega)), float(alpha), float(beta)
 
 
 def garch_volatility(

@@ -22,7 +22,7 @@ def test_insufficient_data_status():
 
 
 def test_fallback_proxy_reason_cites_build_failure():
-    df = compute("AAPL", bars=_make_bars(n=60))
+    df = compute("AAPL", bars=_make_bars(n=100))
     row = df.iloc[0]
     assert row["status"] == "ok"
     assert row["model_backend"] == "fallback_proxy"

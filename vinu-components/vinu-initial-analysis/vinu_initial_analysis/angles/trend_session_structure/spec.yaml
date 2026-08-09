@@ -3,6 +3,8 @@ purpose: Session-level analysis of trend_lifecycle peaks/troughs — which tradi
   session (premarket/regular/afterhours) produces reliable tops, with per-session
   drawdown, recovery, and match-similarity statistics
 time_formats:
+- 1min
+- 5min
 - 15min
 - 1H
 - 4H

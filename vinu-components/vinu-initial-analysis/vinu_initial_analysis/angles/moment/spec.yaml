@@ -9,6 +9,11 @@ purpose: >
   statistical fallback proxy for the forecasting task only. See
   compute.py's module docstring.
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str

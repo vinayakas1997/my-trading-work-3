@@ -2,6 +2,11 @@ title: Regime Analysis
 purpose: 4-regime classifier (bull/bear/high_vol/sideways), transition matrix, per-regime
   Sharpe ratio
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 - 1W
 - 1M

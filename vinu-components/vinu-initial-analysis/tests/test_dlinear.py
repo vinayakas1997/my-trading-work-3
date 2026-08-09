@@ -27,7 +27,7 @@ def test_no_data_returns_status_no_data():
 
 
 def test_insufficient_data_status():
-    # Below MIN_BARS=80 — not enough history to build meaningful sliding
+    # Below MIN_BARS=100 — not enough history to build meaningful sliding
     # training windows for even this tiny linear model.
     df = compute("AAPL", bars=_make_bars(n=30))
     assert df.iloc[0]["status"] == "insufficient_data"

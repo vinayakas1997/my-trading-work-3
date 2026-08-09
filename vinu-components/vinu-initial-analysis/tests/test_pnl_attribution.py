@@ -14,7 +14,9 @@ from vinu_initial_analysis.service import InitialAnalysisService
 from vinu_initial_analysis.storage.parquet import AngleStorage
 
 
-def _closed_position(pid: str, realized_pnl: float, avg_entry: float = 100.0, qty: float = 10.0) -> dict:
+def _closed_position(
+    pid: str, realized_pnl: float, avg_entry: float = 100.0, qty: float = 10.0, artifact_id: str = "art_1",
+) -> dict:
     return {
         "position_id": pid,
         "symbol": "AAPL",
@@ -23,7 +25,7 @@ def _closed_position(pid: str, realized_pnl: float, avg_entry: float = 100.0, qt
         "avg_entry": avg_entry,
         "realized_pnl": realized_pnl,
         "closed_at": "2026-07-27T00:00:00Z",
-        "artifact_id": "art_1",
+        "artifact_id": artifact_id,
     }
 
 
@@ -60,6 +62,35 @@ class TestAggregatePnlAttribution:
     def test_generic_compute_is_a_documented_no_op(self) -> None:
         df = compute("AAPL")
         assert df.iloc[0]["status"] == "push_fed_not_runner_driven"
+
+    def test_by_artifact_breakdown_groups_correctly(self) -> None:
+        positions = [
+            _closed_position("p1", 50.0, artifact_id="art_a"),   # win
+            _closed_position("p2", -20.0, artifact_id="art_a"),  # loss
+            _closed_position("p3", 30.0, artifact_id="art_b"),   # win
+        ]
+        df = aggregate_pnl_attribution("AAPL", positions)
+        row = df.iloc[0]
+        by_artifact = row["by_artifact"]
+        assert set(by_artifact.keys()) == {"art_a", "art_b"}
+        assert by_artifact["art_a"]["n_trades"] == 2
+        assert by_artifact["art_a"]["total_realized_pnl"] == pytest.approx(30.0)
+        assert by_artifact["art_b"]["n_trades"] == 1
+        assert by_artifact["art_b"]["win_rate"]["status"] == "insufficient_sample"
+
+    def test_by_artifact_matches_symbol_level_when_single_artifact(self) -> None:
+        positions = [_closed_position("p1", 50.0), _closed_position("p2", -20.0)]
+        df = aggregate_pnl_attribution("AAPL", positions)
+        row = df.iloc[0]
+        assert row["by_artifact"]["art_1"]["n_trades"] == row["n_trades"]
+        assert row["by_artifact"]["art_1"]["total_realized_pnl"] == row["total_realized_pnl"]
+
+    def test_positions_without_artifact_id_excluded_from_breakdown(self) -> None:
+        positions = [_closed_position("p1", 50.0, artifact_id="")]
+        df = aggregate_pnl_attribution("AAPL", positions)
+        row = df.iloc[0]
+        assert row["by_artifact"] == {}
+        assert row["n_trades"] == 1  # still counted at the symbol level
 
 
 class TestIngestClosedPositions:

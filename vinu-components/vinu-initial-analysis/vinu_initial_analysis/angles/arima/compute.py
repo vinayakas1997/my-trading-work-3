@@ -33,7 +33,7 @@ _ORDER_GRID = [
     if not (p == 0 and q == 0)
 ]
 
-_MIN_OBSERVATIONS = 30
+_MIN_OBSERVATIONS = 100  # decided value, 04-enhancement-of-each-angle/01-arima.md — raised from 30
 
 
 def _fit_best_arima(close: np.ndarray):
@@ -56,6 +56,48 @@ def _fit_best_arima(close: np.ndarray):
         except Exception:
             continue
     return best_res, best_order
+
+
+def _forecast_fields(res, order: tuple[int, int, int], n_observations: int) -> dict[str, Any]:
+    """Extracts the standard result fields from a fitted ARIMA results object.
+
+    Shared by compute() and the walk-forward backtest (angles/arima/backtest.py)
+    so both a fresh fit and a state.append(refit=False)-extended fit produce
+    the exact same output shape.
+    """
+    forecast_result = res.get_forecast(steps=1)
+    point_forecast = float(forecast_result.predicted_mean[0])
+    ci = forecast_result.conf_int(alpha=0.05)
+    ci_arr = np.asarray(ci).reshape(-1)
+    lower, upper = float(ci_arr[0]), float(ci_arr[1])
+    return {
+        "status": "ok",
+        "n_observations": int(n_observations),
+        "order": {"p": order[0], "d": order[1], "q": order[2]},
+        "aic": float(res.aic),
+        "forecast": point_forecast,
+        "confidence_interval": [lower, upper],
+        "confidence_level": 0.95,
+    }
+
+
+def _fit_and_forecast(close: np.ndarray):
+    """Fits a fresh ARIMA model (AIC grid search) and forecasts one step
+    past the end of `close`. Returns (fields, res): `fields` is every
+    result column except symbol/analysis_at/angle (callers attach those),
+    and `res` is the fitted statsmodels results object itself — exposed so
+    walk-forward backtest callers (angles/arima/backtest.py) can carry it
+    forward as `state` and extend it with `.append(refit=False)` on
+    non-refit steps instead of re-running the grid search every time.
+
+    Raises ValueError if no order in the grid produced a finite-AIC fit;
+    callers decide how to report that.
+    """
+    best_res, best_order = _fit_best_arima(close)
+    if best_res is None:
+        raise ValueError("no ARIMA order in the grid produced a valid fit")
+    fields = _forecast_fields(best_res, best_order, len(close))
+    return fields, best_res
 
 
 def compute(
@@ -86,9 +128,9 @@ def compute(
             "n_observations": int(len(close)),
         }])
 
-    best_res, best_order = _fit_best_arima(close)
-
-    if best_res is None:
+    try:
+        fields, _res = _fit_and_forecast(close)
+    except ValueError:
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": analysis_at,
@@ -97,23 +139,10 @@ def compute(
             "n_observations": int(len(close)),
         }])
 
-    forecast_result = best_res.get_forecast(steps=1)
-    point_forecast = float(forecast_result.predicted_mean[0])
-    ci = forecast_result.conf_int(alpha=0.05)
-    ci_arr = np.asarray(ci).reshape(-1)
-    lower, upper = float(ci_arr[0]), float(ci_arr[1])
-
     result: dict[str, Any] = {
         "symbol": symbol,
         "analysis_at": analysis_at,
         "angle": ANGLE_NAME,
-        "status": "ok",
-        "n_observations": int(len(close)),
-        "order": {"p": best_order[0], "d": best_order[1], "q": best_order[2]},
-        "aic": float(best_res.aic),
-        "forecast": point_forecast,
-        "confidence_interval": [lower, upper],
-        "confidence_level": 0.95,
+        **fields,
     }
-
     return pd.DataFrame([result])

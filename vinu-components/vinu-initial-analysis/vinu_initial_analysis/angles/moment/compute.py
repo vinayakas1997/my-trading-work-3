@@ -35,7 +35,9 @@ import numpy as np
 import pandas as pd
 
 ANGLE_NAME = "moment"
-MIN_OBSERVATIONS = 20
+# Decided value, 04-enhancement-of-each-angle/17-moment.md — raised from
+# 20, same consistency move as every other raised-floor angle.
+MIN_OBSERVATIONS = 100
 HORIZON = 5
 FALLBACK_REASON = (
     "momentfm (real MOMENT package) failed to build in this environment: "
@@ -46,6 +48,38 @@ FALLBACK_REASON = (
     "embeddings/anomaly-detection/imputation tasks are not implemented."
 )
 TASK_NOTE = "forecasting task only — embeddings/anomaly_detection/imputation not implemented"
+
+
+def _fit_and_forecast(closes: np.ndarray) -> dict[str, Any]:
+    """Projects `closes` forward `HORIZON` steps via a geometric random
+    walk with drift (drift = mean of the last 20 returns) and an 80% band
+    (p10/p90) from the residual std. Returns every result field except
+    symbol/analysis_at/angle (callers attach those). No fitted-coefficient
+    model object — even simpler than moirai's AR(3), just a closed-form
+    drift/std computation — so, same as moirai/lag_llama, there's no
+    weights artifact for the walk-forward backtest to store.
+    """
+    returns = np.diff(closes) / closes[:-1]
+    drift = float(np.mean(returns[-20:])) if len(returns) >= 20 else float(np.mean(returns))
+    resid_std = float(np.std(returns, ddof=1)) if len(returns) > 1 else 0.0
+    last = float(closes[-1])
+    steps = np.arange(1, HORIZON + 1)
+    point = last * (1 + drift) ** steps
+    spread = resid_std * np.sqrt(steps) * last
+
+    return {
+        "status": "ok",
+        "n_observations": int(len(closes)),
+        "model_backend": "fallback_proxy",
+        "fallback_reason": FALLBACK_REASON,
+        "task": "forecasting",
+        "task_note": TASK_NOTE,
+        "forecast_horizon": HORIZON,
+        "last_close": last,
+        "point_forecast": point.tolist(),
+        "p10_forecast": (point - 1.2816 * spread).tolist(),
+        "p90_forecast": (point + 1.2816 * spread).tolist(),
+    }
 
 
 def compute(
@@ -76,28 +110,12 @@ def compute(
             "n_observations": int(len(closes)),
         }])
 
-    returns = np.diff(closes) / closes[:-1]
-    drift = float(np.mean(returns[-20:])) if len(returns) >= 20 else float(np.mean(returns))
-    resid_std = float(np.std(returns, ddof=1)) if len(returns) > 1 else 0.0
-    last = float(closes[-1])
-    steps = np.arange(1, HORIZON + 1)
-    point = last * (1 + drift) ** steps
-    spread = resid_std * np.sqrt(steps) * last
+    fields = _fit_and_forecast(closes)
 
     result: dict[str, Any] = {
         "symbol": symbol,
         "analysis_at": analysis_at,
         "angle": ANGLE_NAME,
-        "status": "ok",
-        "n_observations": int(len(closes)),
-        "model_backend": "fallback_proxy",
-        "fallback_reason": FALLBACK_REASON,
-        "task": "forecasting",
-        "task_note": TASK_NOTE,
-        "forecast_horizon": HORIZON,
-        "last_close": last,
-        "point_forecast": point.tolist(),
-        "p10_forecast": (point - 1.2816 * spread).tolist(),
-        "p90_forecast": (point + 1.2816 * spread).tolist(),
+        **fields,
     }
     return pd.DataFrame([result])

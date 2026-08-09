@@ -1,9 +1,19 @@
 title: Shock Clustering
 purpose: >
-  Identifies which symbols tend to shock together, derived from Phase 1's
-  dynamic covariance sampled specifically at shock dates. Reports cluster
-  membership with correlation strength and confidence intervals.
+  Identifies which watchlist peers tend to shock together with this
+  symbol: co-shock rate (did the peer also register its own shock within
+  +/-1 trading day) plus shock-day Pearson correlation with a bootstrapped
+  95% CI, computed only on the anchor's own shock-date subset -- not a
+  generic, unconditional correlation (that redundant, less rigorous
+  version was dropped; see compute.py's module docstring for the
+  corrected-bug history). peer_relative_strength (angle 21) already
+  covers general rolling correlation between watchlist peers.
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str

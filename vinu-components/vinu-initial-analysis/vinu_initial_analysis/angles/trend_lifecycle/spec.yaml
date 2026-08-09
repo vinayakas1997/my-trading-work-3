@@ -1,10 +1,13 @@
 title: Trend Lifecycle
 purpose: Peak/trough pattern library, KNN similarity matching, trend stage classification, reversal signals with percentage exit thresholds
 time_formats:
+- 1min
+- 5min
 - 15min
 - 1H
 - 4H
 - 1D
+- 1W
 needs_bars: true
 inputs:
   symbol: str

@@ -29,6 +29,12 @@ from pathlib import Path
 MODELS: dict[str, str] = {
     "finbert": "ProsusAI/finbert",
     "chronos-t5-tiny": "amazon/chronos-t5-tiny",
+    # 710M params, decided checkpoint for the chronos angle's real backtest
+    # (04-enhancement-of-each-angle/03-chronos.md SS3 -- upgraded from tiny
+    # for forecast quality over speed; tiny stays registered too since
+    # compute.py's own CHECKPOINT constant, not this registry, decides
+    # which one actually loads at runtime).
+    "chronos-t5-large": "amazon/chronos-t5-large",
     "timesfm-2.5-200m-pytorch": "google/timesfm-2.5-200m-pytorch",
     "timer-timerxl": "thuml/timer-base-84m",
     "kronos": "NeoQuasar/Kronos-base",

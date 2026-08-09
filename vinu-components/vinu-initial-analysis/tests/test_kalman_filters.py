@@ -69,7 +69,7 @@ def test_filtered_level_tracks_a_flat_series_closely():
     # A near-constant series: the filtered level should converge close to
     # the constant value with low uncertainty.
     np.random.seed(0)
-    n = 80
+    n = 100  # matches the decided MIN_OBSERVATIONS floor
     dates = pd.date_range("2024-01-01", periods=n, freq="D")
     close = 50 + np.random.randn(n) * 0.05
     bars = pd.DataFrame({

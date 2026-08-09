@@ -63,7 +63,7 @@ def test_forecast_close_to_recent_level_on_flat_series():
     # A near-constant series: the one-step forecast should land close to
     # the constant level, not diverge wildly.
     np.random.seed(1)
-    n = 60
+    n = 100  # matches the decided _MIN_OBSERVATIONS floor
     dates = pd.date_range("2024-01-01", periods=n, freq="D")
     close = 200 + np.random.randn(n) * 0.05
     bars = pd.DataFrame({

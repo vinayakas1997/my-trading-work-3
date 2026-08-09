@@ -31,7 +31,7 @@ ANGLE_NAME = "dlinear"
 # 80 bars gives ~50 training windows at LOOKBACK=30, which is enough for
 # this small a model (well under 1k params) to fit meaningfully fast.
 LOOKBACK = 30
-MIN_BARS = 80
+MIN_BARS = 100  # decided value, 04-enhancement-of-each-angle/05-dlinear.md — raised from 80
 EPOCHS = 60
 KERNEL_SIZE = 5  # odd, so 'same' padding keeps trend length == input length
 
@@ -75,6 +75,73 @@ def _build_model(lookback: int, kernel_size: int):
     return DLinear()
 
 
+def _fit_and_forecast(close: np.ndarray, seed: int = 42) -> tuple[dict[str, Any], Any]:
+    """Trains a fresh DLinear model on `close` and forecasts one step past
+    its end. Returns (fields, model): `fields` is every result column
+    except symbol/analysis_at/angle (callers attach those), and `model` is
+    the trained nn.Module itself — exposed so walk-forward backtest callers
+    (see angles/dlinear/backtest.py) can save its state_dict as this step's
+    weights artifact, which `compute()` below has no need for.
+
+    Raises ValueError if there aren't enough training windows; callers
+    decide how to report that (this function doesn't know the caller's
+    n_observations context).
+    """
+    import torch
+    from torch import nn
+
+    torch.manual_seed(seed)
+
+    n = len(close)
+    mean = float(close.mean())
+    std = float(close.std())
+    if std < 1e-8:
+        std = 1.0
+    norm = (close - mean) / std
+
+    X, y = _make_windows(norm, LOOKBACK)
+    if len(X) < 20:
+        raise ValueError(f"insufficient training windows: {len(X)}")
+
+    X_t = torch.from_numpy(X)
+    y_t = torch.from_numpy(y).unsqueeze(-1)
+
+    model = _build_model(LOOKBACK, KERNEL_SIZE)
+    opt = torch.optim.Adam(model.parameters(), lr=0.01)
+    loss_fn = nn.MSELoss()
+
+    model.train()
+    for _ in range(EPOCHS):
+        opt.zero_grad()
+        pred = model(X_t)
+        loss = loss_fn(pred, y_t)
+        loss.backward()
+        opt.step()
+    final_train_loss = float(loss.item())
+
+    model.eval()
+    with torch.no_grad():
+        last_window = torch.from_numpy(norm[-LOOKBACK:].astype(np.float32)).unsqueeze(0)
+        forecast_norm = float(model(last_window).item())
+
+    forecast_price = forecast_norm * std + mean
+    last_close = float(close[-1])
+    forecast_return = (forecast_price - last_close) / last_close if last_close else 0.0
+
+    fields = {
+        "status": "ok",
+        "n_observations": int(n),
+        "n_train_windows": int(len(X)),
+        "lookback": LOOKBACK,
+        "last_close": last_close,
+        "forecast_price": float(forecast_price),
+        "forecast_return": float(forecast_return),
+        "direction": _direction(forecast_return),
+        "train_loss": final_train_loss,
+    }
+    return fields, model
+
+
 def compute(
     symbol: str,
     bars: pd.DataFrame | None = None,
@@ -106,19 +173,9 @@ def compute(
             "n_observations": int(n),
         }])
 
-    import torch
-    from torch import nn
-
-    torch.manual_seed(seed)
-
-    mean = float(close.mean())
-    std = float(close.std())
-    if std < 1e-8:
-        std = 1.0
-    norm = (close - mean) / std
-
-    X, y = _make_windows(norm, LOOKBACK)
-    if len(X) < 20:
+    try:
+        fields, _model = _fit_and_forecast(close, seed=seed)
+    except ValueError:
         return pd.DataFrame([{
             "symbol": symbol,
             "analysis_at": analysis_at,
@@ -127,43 +184,10 @@ def compute(
             "n_observations": int(n),
         }])
 
-    X_t = torch.from_numpy(X)
-    y_t = torch.from_numpy(y).unsqueeze(-1)
-
-    model = _build_model(LOOKBACK, KERNEL_SIZE)
-    opt = torch.optim.Adam(model.parameters(), lr=0.01)
-    loss_fn = nn.MSELoss()
-
-    model.train()
-    for _ in range(EPOCHS):
-        opt.zero_grad()
-        pred = model(X_t)
-        loss = loss_fn(pred, y_t)
-        loss.backward()
-        opt.step()
-    final_train_loss = float(loss.item())
-
-    model.eval()
-    with torch.no_grad():
-        last_window = torch.from_numpy(norm[-LOOKBACK:].astype(np.float32)).unsqueeze(0)
-        forecast_norm = float(model(last_window).item())
-
-    forecast_price = forecast_norm * std + mean
-    last_close = float(close[-1])
-    forecast_return = (forecast_price - last_close) / last_close if last_close else 0.0
-
     result: dict[str, Any] = {
         "symbol": symbol,
         "analysis_at": analysis_at,
         "angle": ANGLE_NAME,
-        "status": "ok",
-        "n_observations": int(n),
-        "n_train_windows": int(len(X)),
-        "lookback": LOOKBACK,
-        "last_close": last_close,
-        "forecast_price": float(forecast_price),
-        "forecast_return": float(forecast_return),
-        "direction": _direction(forecast_return),
-        "train_loss": final_train_loss,
+        **fields,
     }
     return pd.DataFrame([result])

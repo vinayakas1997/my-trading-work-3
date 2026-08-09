@@ -11,6 +11,11 @@ purpose: >
   in-process-trained MLP proxy only if the weights or load are unavailable
   at runtime. See compute.py's module docstring for the full explanation.
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str

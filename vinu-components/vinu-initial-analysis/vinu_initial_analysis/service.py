@@ -68,6 +68,7 @@ class InitialAnalysisService:
         angle_names: list[str] | None = None,
         run_id: str | None = None,
         tier: str = "tier2",
+        time_format: str | None = None,
     ) -> dict[str, Any]:
         """Run all (or a targeted subset of) angles for a symbol. Returns summary.
 
@@ -80,9 +81,18 @@ class InitialAnalysisService:
         ends up in storage/RunLog, not a different one generated later.
 
         `tier`: "tier2" (scheduled, default) or "tier3" (triggered/ad-hoc).
+
+        `time_format`: restrict to one declared time_format instead of
+        every one the angle declares — see AngleRunner.run's docstring.
         """
         return self._api.compute_and_store(
-            symbol, from_ts=from_ts, to_ts=to_ts, angle_names=angle_names, run_id=run_id, tier=tier
+            symbol,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            angle_names=angle_names,
+            run_id=run_id,
+            tier=tier,
+            time_format=time_format,
         )
 
     def list_angles(self) -> list[dict[str, Any]]:

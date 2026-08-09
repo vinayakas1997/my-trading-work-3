@@ -41,6 +41,7 @@ piece and the training step are both missing.
 | Grounded in real research? | Yes | closest match: *"Generalized Stock Price Prediction for Multiple Stocks Combined with News Fusion"* (arXiv 2603.19286, Liao/Lee/Cheng/Chen/Lee/Wang, March 2026) — uses the same bidirectional cross-attention + 2-layer GCN combination, reports 7.11% MAE reduction vs. baseline |
 | Is the paper's model available to download? | No | no GitHub repo or pretrained checkpoint found for this paper — unlike Chronos/Kronos, there is nothing to just plug in; a real version would have to be built and trained from scratch, using the paper as an architectural reference |
 | What's missing vs. the paper | (1) multi-ticker input so the GCN has real cross-stock structure to learn from, (2) an actual training loop with labeled outcomes | both are future build work, not decided/scoped here |
+| Timeframes | 1min, 5min, 15min, 1H, 4H, 1D — **decided as the target set for whenever this angle is actually built**, same as every other angle | not meaningful today: with an untrained/random model there is nothing real to backtest at any timeframe (see row above), so this is a forward-looking decision to apply once real multi-ticker training exists, not something being validated now |
 
 ## 4) Example — what today's output actually looks like
 

@@ -9,6 +9,11 @@ purpose: >
   variate-tokens. Fit via a handful of Adam epochs at request time;
   reports the close-channel one-step forecast, thresholded to a direction.
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str
@@ -18,6 +23,7 @@ outputs:
 - column: angle_data
   type: dict
   description: >
-    One-step-ahead close-channel forecast price/return, thresholded
-    direction (up/down/flat), which OHLCV channels were used as variates,
+    One-step-ahead forecast for every OHLCV channel used as a variate
+    (forecast_open/high/low/close/volume), close-channel return
+    thresholded to a direction (up/down/flat), which channels were used,
     and the fit's training-window count and final training loss.

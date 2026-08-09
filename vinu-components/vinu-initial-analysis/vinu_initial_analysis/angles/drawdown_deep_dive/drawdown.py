@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pandas as pd
+
 
 _SENTIMENT_WEIGHTS: dict[str, float] = {
     "BULLISH": 1.0,
@@ -159,3 +161,192 @@ def attribute_drawdown(
             "contributing_events": sorted(contributing, key=lambda x: x["attribution_pct"], reverse=True),
         },
     }
+
+
+def atr_pct_series(bars: pd.DataFrame, period: int = 14) -> list[float | None]:
+    """Rolling, trailing-only ATR(period) as a percentage of close price.
+
+    Reuses the real vinu_tools ATR indicator (plain SMA of true range, not
+    Wilder's exact recursive smoothing formula -- the decided design's
+    emphasis was on the period (14, "Wilder's standard convention") and the
+    rolling/no-lookahead property, both satisfied here; see
+    06-implementation-of-each-angles/06-drawdown_deep_dive/00-plan.md).
+    """
+    from vinu_tools.compute.indicators.atr.atr import compute as atr_compute
+
+    rows = bars[["high", "low", "close"]].astype(float).to_dict("records")
+    col_name = f"atr_{period}"
+    result = atr_compute(rows, name=col_name)
+    atr_values = result[col_name]
+    close = bars["close"].astype(float).tolist()
+    return [
+        (a / c * 100) if a is not None and c else None
+        for a, c in zip(atr_values, close)
+    ]
+
+
+def _shape_checkpoints(sub_bars: pd.DataFrame, start_price: float, end_price: float) -> dict[str, Any]:
+    """First candle (0-based within sub_bars) whose close crosses 25/50/75%
+    cumulative progress from start_price to end_price. Works for both a
+    falling formation phase (end < start) and a rising recovery phase
+    (end > start) since the sign of `total` handles direction.
+    """
+    total = end_price - start_price
+    checkpoints: dict[str, Any] = {}
+    for pct, label in ((0.25, "25%"), (0.5, "50%"), (0.75, "75%")):
+        found = None
+        if total != 0:
+            for idx, close in enumerate(sub_bars["close"].astype(float).tolist()):
+                progress = (close - start_price) / total
+                if progress >= pct:
+                    found = {"candle": idx, "price": close}
+                    break
+        checkpoints[label] = found
+    return checkpoints
+
+
+def detect_drawdown_episodes(
+    symbol: str,
+    bars: pd.DataFrame,
+    k: float,
+    news: list[dict] | None = None,
+    min_threshold_pct: float = -0.5,
+    atr_period: int = 14,
+) -> list[dict[str, Any]]:
+    """State-machine scan for every drawdown episode (peak -> trough ->
+    recovery), with an ATR-adaptive threshold, shape checkpoints, and a
+    formation/recovery news split -- per
+    04-enhancement-of-each-angle/06-drawdown_deep_dive.md.
+
+    Not a walk-forward loop: this returns a variable number of episode
+    rows (data-dependent), not one row per candle, so it isn't run
+    through run_walk_forward -- see 06-implementation-of-each-angles/
+    06-drawdown_deep_dive/00-plan.md.
+
+    Rolling-peak and recovery-trigger logic (a later candle's high
+    exceeding the *original* peak's high) is the same mechanism
+    `get_drawdowns` already used -- extended here with the ATR-adaptive
+    threshold and full lifecycle tracking `get_drawdowns` never had.
+    """
+    bars = bars.reset_index(drop=True)
+    n = len(bars)
+    if n < 2:
+        return []
+
+    bar_ts = bars["bar_ts"].astype(int).tolist()
+    high = bars["high"].astype(float).tolist()
+    close = bars["close"].astype(float).tolist()
+    atr_pct = atr_pct_series(bars, period=atr_period)
+    news = news or []
+
+    def threshold_for(idx: int) -> float | None:
+        a = atr_pct[idx]
+        if a is None:
+            return None
+        return -max(k * a, abs(min_threshold_pct))
+
+    def news_in_range(start_ts: int, end_ts: int) -> list[dict]:
+        return [
+            e for e in news
+            if str(e.get("symbol", "")).upper() == symbol.upper()
+            and start_ts <= e.get("ts", e.get("published_at", 0)) <= end_ts
+        ]
+
+    def finalize(p_idx: int, t_idx: int, r_idx: int | None) -> dict[str, Any]:
+        peak_price = high[p_idx]
+        trough_price = close[t_idx]
+        drop_pct = round((trough_price - peak_price) / peak_price * 100, 4)
+        duration_to_trough = t_idx - p_idx
+        trough_speed = round(drop_pct / duration_to_trough, 4) if duration_to_trough else None
+        atr_at_peak = atr_pct[p_idx]
+        threshold_used = threshold_for(p_idx)
+
+        formation_sub = bars.iloc[p_idx : t_idx + 1]
+        row: dict[str, Any] = {
+            "symbol": symbol,
+            "status": "recovered" if r_idx is not None else "open",
+            "peak_ts": bar_ts[p_idx],
+            "peak_price": peak_price,
+            "atr_pct_at_peak": round(atr_at_peak, 4) if atr_at_peak is not None else None,
+            "threshold_pct_used": round(threshold_used, 4) if threshold_used is not None else None,
+            "trough_ts": bar_ts[t_idx],
+            "trough_price": trough_price,
+            "drop_pct": drop_pct,
+            "duration_to_trough": duration_to_trough,
+            "trough_speed": trough_speed,
+            "formation_checkpoints": _shape_checkpoints(formation_sub, peak_price, trough_price),
+            "formation_news": news_in_range(bar_ts[p_idx], bar_ts[t_idx]),
+        }
+
+        if r_idx is not None:
+            recovery_price = close[r_idx]
+            recovery_gain_pct = round((recovery_price - trough_price) / trough_price * 100, 4)
+            duration_to_recovery = r_idx - t_idx
+            recovery_speed = round(recovery_gain_pct / duration_to_recovery, 4) if duration_to_recovery else None
+            recovery_sub = bars.iloc[t_idx : r_idx + 1]
+            row.update({
+                "recovery_ts": bar_ts[r_idx],
+                "recovery_price": recovery_price,
+                "recovery_gain_pct": recovery_gain_pct,
+                "duration_to_recovery": duration_to_recovery,
+                "recovery_speed": recovery_speed,
+                "recovery_checkpoints": _shape_checkpoints(recovery_sub, trough_price, recovery_price),
+                "recovery_news": news_in_range(bar_ts[t_idx], bar_ts[r_idx]),
+            })
+        else:
+            row.update({
+                "recovery_ts": None,
+                "recovery_price": None,
+                "recovery_gain_pct": None,
+                "duration_to_recovery": None,
+                "recovery_speed": None,
+                "recovery_checkpoints": None,
+                "recovery_news": [],
+            })
+        return row
+
+    # Peak tracking must start once ATR has real values, not at index 0 --
+    # a peak candle that predates ATR's own 14-period warmup would have
+    # threshold_for(peak_idx) stuck at None forever (ATR is looked up AT
+    # THE PEAK, per the decided atr_pct_at_peak semantics, not at the
+    # evaluation candle), permanently blocking detection from that peak
+    # onward. Same min_observations-style discipline used everywhere else
+    # in this project (ARIMA/DLinear/Chronos all require real data before
+    # evaluation begins) -- found via a real synthetic-data test, not
+    # theoretical.
+    first_valid = next((idx for idx, a in enumerate(atr_pct) if a is not None), None)
+    if first_valid is None:
+        return []
+
+    episodes: list[dict[str, Any]] = []
+    peak_idx = first_valid
+    in_drawdown = False
+    trough_idx: int | None = None
+    trough_price: float | None = None
+
+    for i in range(first_valid + 1, n):
+        if not in_drawdown:
+            for j in range(peak_idx, i + 1):
+                if high[j] >= high[peak_idx]:
+                    peak_idx = j
+            threshold = threshold_for(peak_idx)
+            if threshold is not None:
+                peak_price = high[peak_idx]
+                drop = (close[i] - peak_price) / peak_price * 100
+                if drop <= threshold:
+                    in_drawdown = True
+                    trough_idx = i
+                    trough_price = close[i]
+        else:
+            if close[i] < trough_price:  # type: ignore[operator]
+                trough_price = close[i]
+                trough_idx = i
+            if high[i] > high[peak_idx]:
+                episodes.append(finalize(peak_idx, trough_idx, i))  # type: ignore[arg-type]
+                in_drawdown = False
+                peak_idx = i
+
+    if in_drawdown:
+        episodes.append(finalize(peak_idx, trough_idx, None))  # type: ignore[arg-type]
+
+    return episodes

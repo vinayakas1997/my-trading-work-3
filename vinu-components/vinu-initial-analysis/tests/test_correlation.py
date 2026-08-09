@@ -50,6 +50,32 @@ def test_compute_correlation():
     assert "sample_size" in result
 
 
+def test_compute_correlation_ci_is_not_degenerate_full_range():
+    # Regression test for a fixed bug: compute_correlation's bootstrap CI
+    # was always the degenerate [-1, 1] regardless of real correlation
+    # strength, due to an un-paired resample (scipy.stats.bootstrap
+    # decorrelated x from y per resample). Same root cause and fix as
+    # _helpers.pearson_with_ci (known-issues.md Resolved #1/#5).
+    rng = np.random.default_rng(3)
+    n = 120
+    article_count = rng.integers(0, 5, n)
+    returns = 0.6 * article_count + rng.normal(0, 1, n)  # real, strong correlation
+    news = pd.DataFrame({
+        "hour_ts": [3600 * i for i in range(n)],
+        "article_count": article_count,
+        "avg_sentiment": rng.uniform(-5, 5, n),
+        "avg_impact": rng.uniform(0, 2, n),
+    })
+    returns_df = pd.DataFrame({"hour_ts": [3600 * i for i in range(n)], "return": returns})
+
+    result = compute_correlation(news, returns_df)
+    assert result["news_return_corr"] > 0.3
+    # a real, informative band -- not the old degenerate full-range bug
+    assert result["corr_ci_lower"] > -1.0
+    assert result["corr_ci_upper"] < 1.0
+    assert result["corr_ci_upper"] - result["corr_ci_lower"] < 1.5
+
+
 def test_compute_correlation_insufficient_data():
     news = pd.DataFrame({"hour_ts": [3600], "article_count": [1],
                           "avg_sentiment": [0], "avg_impact": [0]})

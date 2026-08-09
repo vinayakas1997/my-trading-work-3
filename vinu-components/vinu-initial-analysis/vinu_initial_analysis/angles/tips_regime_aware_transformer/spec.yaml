@@ -10,6 +10,11 @@ purpose: >
   one-step point forecast conditioned on, and an auxiliary label for, the
   detected regime.
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str

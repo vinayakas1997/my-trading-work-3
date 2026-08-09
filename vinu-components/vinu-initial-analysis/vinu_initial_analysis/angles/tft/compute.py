@@ -40,7 +40,9 @@ QUANTILES = (0.1, 0.5, 0.9)
 # before features are valid, plus ~20+ training windows -> MIN_BARS=90
 # leaves a comfortable margin (~35 usable windows).
 LOOKBACK = 30
-MIN_BARS = 90
+# Decided value, 04-enhancement-of-each-angle/26-tft.md — raised from 90,
+# same consistency move as every other trained-from-scratch angle.
+MIN_BARS = 100
 HIDDEN_SIZE = 16
 EPOCHS = 60
 
@@ -125,48 +127,24 @@ def _pinball_loss(preds, target):
     return torch.cat(losses, dim=1).mean()
 
 
-def compute(
-    symbol: str,
-    bars: pd.DataFrame | None = None,
-    news: list[dict] | None = None,
-    from_ts: int | None = None,
-    to_ts: int | None = None,
-    time_format: str | None = None,
-    seed: int = 42,
-) -> pd.DataFrame:
-    analysis_at = datetime.now(timezone.utc).isoformat()
+def _fit_and_forecast(bars: pd.DataFrame, seed: int = 42):
+    """Trains a fresh TFT-lite model on `bars` and forecasts one step
+    past its end. Returns (fields, model) — `fields` is every result
+    column except symbol/analysis_at/angle (callers attach those), and
+    `model` is the trained nn.Module, exposed so the walk-forward
+    backtest (backtest.py) can save its state_dict as this step's
+    weights artifact.
 
-    if bars is None or bars.empty or "close" not in bars.columns:
-        return pd.DataFrame([{
-            "symbol": symbol,
-            "analysis_at": analysis_at,
-            "angle": ANGLE_NAME,
-            "status": "no_data",
-        }])
-
+    Raises ValueError if there isn't enough usable feature/window data.
+    """
     n = len(bars)
-    if n < MIN_BARS:
-        return pd.DataFrame([{
-            "symbol": symbol,
-            "analysis_at": analysis_at,
-            "angle": ANGLE_NAME,
-            "status": "insufficient_data",
-            "n_observations": int(n),
-        }])
-
     feats_df = _build_features(bars).reset_index(drop=True)
     close = bars["close"].astype(float).reset_index(drop=True)
     ret_next = close.pct_change().shift(-1)  # target: next-step return
 
     combined = pd.concat([feats_df, ret_next.rename("target")], axis=1).dropna()
     if len(combined) < LOOKBACK + 20:
-        return pd.DataFrame([{
-            "symbol": symbol,
-            "analysis_at": analysis_at,
-            "angle": ANGLE_NAME,
-            "status": "insufficient_data",
-            "n_observations": int(n),
-        }])
+        raise ValueError(f"insufficient feature rows: {len(combined)}")
 
     feat_vals = combined[FEATURE_NAMES].values.astype(np.float32)
     f_mean = feat_vals.mean(axis=0, keepdims=True)
@@ -177,13 +155,7 @@ def compute(
 
     X, y = _make_windows(feat_norm, target_vals, LOOKBACK)
     if len(X) < 15:
-        return pd.DataFrame([{
-            "symbol": symbol,
-            "analysis_at": analysis_at,
-            "angle": ANGLE_NAME,
-            "status": "insufficient_data",
-            "n_observations": int(n),
-        }])
+        raise ValueError(f"insufficient training windows: {len(X)}")
 
     import torch
 
@@ -214,10 +186,7 @@ def compute(
     last_close = float(close.iloc[-1])
     q10, q50, q90 = (float(q) for q in forecast_q)
 
-    result: dict[str, Any] = {
-        "symbol": symbol,
-        "analysis_at": analysis_at,
-        "angle": ANGLE_NAME,
+    fields = {
         "status": "ok",
         "n_observations": int(n),
         "n_train_windows": int(len(X)),
@@ -232,5 +201,54 @@ def compute(
         "direction": "up" if q50 > 0 else ("down" if q50 < 0 else "flat"),
         "variable_selection_weights": {name: float(w) for name, w in zip(FEATURE_NAMES, last_weights)},
         "train_loss": final_train_loss,
+    }
+    return fields, model
+
+
+def compute(
+    symbol: str,
+    bars: pd.DataFrame | None = None,
+    news: list[dict] | None = None,
+    from_ts: int | None = None,
+    to_ts: int | None = None,
+    time_format: str | None = None,
+    seed: int = 42,
+) -> pd.DataFrame:
+    analysis_at = datetime.now(timezone.utc).isoformat()
+
+    if bars is None or bars.empty or "close" not in bars.columns:
+        return pd.DataFrame([{
+            "symbol": symbol,
+            "analysis_at": analysis_at,
+            "angle": ANGLE_NAME,
+            "status": "no_data",
+        }])
+
+    n = len(bars)
+    if n < MIN_BARS:
+        return pd.DataFrame([{
+            "symbol": symbol,
+            "analysis_at": analysis_at,
+            "angle": ANGLE_NAME,
+            "status": "insufficient_data",
+            "n_observations": int(n),
+        }])
+
+    try:
+        fields, _model = _fit_and_forecast(bars, seed=seed)
+    except ValueError:
+        return pd.DataFrame([{
+            "symbol": symbol,
+            "analysis_at": analysis_at,
+            "angle": ANGLE_NAME,
+            "status": "insufficient_data",
+            "n_observations": int(n),
+        }])
+
+    result: dict[str, Any] = {
+        "symbol": symbol,
+        "analysis_at": analysis_at,
+        "angle": ANGLE_NAME,
+        **fields,
     }
     return pd.DataFrame([result])

@@ -1,0 +1,62 @@
+"""PatchTST's own walk-forward backtest glue code.
+
+Group A, structurally like DLinear/lpatchtst: a fresh model (the patch
+encoder alone, no LSTM branch) trained from scratch at every step, every
+step's weights saved. Direction-match hit, plus close_sq_error/
+close_abs_error fields on the angle's own step — same convention as
+lpatchtst, since this angle's whole purpose is a same-data, same-recipe
+ablation comparison against lpatchtst (does the LSTM branch help).
+"""
+
+from __future__ import annotations
+
+import pandas as pd
+
+from vinu_initial_analysis.angles._tagging import tag_row
+from vinu_initial_analysis.angles.patchtst.compute import MIN_BARS, _fit_and_forecast, direction
+from vinu_initial_analysis.storage.weights import WeightsStore
+from vinu_tools.compute.backtest.walk_forward import StepResult, WalkForwardStep, run_walk_forward
+
+
+def patchtst_step(step: WalkForwardStep) -> StepResult:
+    close = step.history["close"].astype(float).values
+    try:
+        fields, model = _fit_and_forecast(close, seed=42)
+    except ValueError:
+        return StepResult(row={"status": "insufficient_data", "n_observations": int(len(close))})
+
+    actual_price = float(step.future.iloc[0]["close"])
+    last_close = fields["last_close"]
+    actual_return = (actual_price - last_close) / last_close if last_close else 0.0
+
+    row = {
+        **fields,
+        "actual_price": actual_price,
+        "actual_return": actual_return,
+        "hit": int(fields["direction"] == direction(actual_return)),
+        "close_sq_error": (actual_price - fields["forecast_price"]) ** 2,
+        "close_abs_error": abs(actual_price - fields["forecast_price"]),
+    }
+    return StepResult(row=row, weights=model.state_dict())
+
+
+def run_patchtst_backtest(
+    symbol: str,
+    timeframe: str,
+    bars: pd.DataFrame,
+    data_root: str,
+) -> pd.DataFrame:
+    weights_store = WeightsStore(data_root)
+
+    def _save_weights(symbol: str, timeframe: str, bar_ts: int, weights) -> str:
+        return weights_store.save(symbol, "patchtst", timeframe, bar_ts, weights)
+
+    return run_walk_forward(
+        symbol,
+        timeframe,
+        bars,
+        patchtst_step,
+        min_observations=MIN_BARS,
+        tag_fn=tag_row,
+        weights_sink=_save_weights,
+    )

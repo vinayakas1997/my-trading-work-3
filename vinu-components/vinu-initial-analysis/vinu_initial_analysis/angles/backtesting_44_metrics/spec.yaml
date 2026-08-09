@@ -2,6 +2,11 @@ title: Backtesting Metrics
 purpose: Compute 44+ portfolio metrics — Sharpe, Sortino, MaxDD, WinRate, CAGR, VaR,
   CVaR, tail ratio
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 - 1W
 - 1M

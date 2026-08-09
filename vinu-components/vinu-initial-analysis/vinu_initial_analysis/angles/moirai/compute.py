@@ -36,7 +36,9 @@ import numpy as np
 import pandas as pd
 
 ANGLE_NAME = "moirai"
-MIN_OBSERVATIONS = 20
+# Decided value, 04-enhancement-of-each-angle/16-moirai.md — raised from
+# 20, same consistency move as every other raised-floor angle.
+MIN_OBSERVATIONS = 100
 HORIZON = 5
 AR_ORDER = 3
 FALLBACK_REASON = (
@@ -90,6 +92,28 @@ def _forecast_ar(closes: np.ndarray, coeffs: np.ndarray, horizon: int) -> dict[s
     }
 
 
+def _fit_and_forecast(closes: np.ndarray) -> dict[str, Any]:
+    """Fits a fresh AR(3) OLS model on `closes` and forecasts `HORIZON`
+    steps ahead with an 80% band (p10/p90). Returns every result field
+    except symbol/analysis_at/angle (callers attach those). Pure
+    closed-form solve, no trained-model object to save — same reasoning
+    as lag_llama's own `_fit_and_forecast`, no weights artifact for the
+    walk-forward backtest to store.
+    """
+    coeffs = _fit_ar(closes, AR_ORDER)
+    forecast = _forecast_ar(closes, coeffs, HORIZON)
+    return {
+        "status": "ok",
+        "n_observations": int(len(closes)),
+        "model_backend": "fallback_proxy",
+        "fallback_reason": FALLBACK_REASON,
+        "any_variate_note": ANY_VARIATE_NOTE,
+        "forecast_horizon": HORIZON,
+        "last_close": float(closes[-1]),
+        **forecast,
+    }
+
+
 def compute(
     symbol: str,
     bars: pd.DataFrame | None = None,
@@ -118,20 +142,12 @@ def compute(
             "n_observations": int(len(closes)),
         }])
 
-    coeffs = _fit_ar(closes, AR_ORDER)
-    forecast = _forecast_ar(closes, coeffs, HORIZON)
+    fields = _fit_and_forecast(closes)
 
     result: dict[str, Any] = {
         "symbol": symbol,
         "analysis_at": analysis_at,
         "angle": ANGLE_NAME,
-        "status": "ok",
-        "n_observations": int(len(closes)),
-        "model_backend": "fallback_proxy",
-        "fallback_reason": FALLBACK_REASON,
-        "any_variate_note": ANY_VARIATE_NOTE,
-        "forecast_horizon": HORIZON,
-        "last_close": float(closes[-1]),
-        **forecast,
+        **fields,
     }
     return pd.DataFrame([result])

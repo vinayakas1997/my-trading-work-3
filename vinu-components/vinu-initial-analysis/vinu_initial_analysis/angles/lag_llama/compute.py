@@ -30,7 +30,9 @@ import numpy as np
 import pandas as pd
 
 ANGLE_NAME = "lag_llama"
-MIN_OBSERVATIONS = 25
+# Decided value, 04-enhancement-of-each-angle/12-lag_llama.md — raised
+# from 25, same consistency move as ARIMA/DLinear/lpatchtst/lstm.
+MIN_OBSERVATIONS = 100
 LAG_ORDER = 5
 HORIZON = 5
 QUANTILE_LEVELS = [0.05, 0.25, 0.5, 0.75, 0.95]
@@ -43,6 +45,54 @@ FALLBACK_REASON = (
     "probabilistic (multi-quantile) forecast, matching the spec's "
     "differentiator, in place of the real LLaMA-architecture model."
 )
+
+
+def _fit_and_forecast(closes: np.ndarray) -> dict[str, Any]:
+    """Fits a fresh AR(5) OLS model on `closes` and forecasts `HORIZON`
+    steps ahead with a 5-quantile Gaussian band. Returns every result
+    field except symbol/analysis_at/angle (callers attach those). Pure
+    closed-form solve, no trained-model object to save — unlike the
+    from-scratch neural angles (DLinear/lpatchtst/lstm), there is no
+    weights artifact for this angle's walk-forward backtest to store.
+    """
+    returns = np.diff(closes) / closes[:-1]
+    n = len(returns)
+    order = LAG_ORDER
+    X = np.column_stack([returns[i:n - order + i] for i in range(order)])
+    y = returns[order:]
+    coeffs, *_ = np.linalg.lstsq(X, y, rcond=None)
+    fitted = X @ coeffs
+    resid = y - fitted
+    resid_std = float(np.std(resid, ddof=1)) if len(resid) > 1 else 0.0
+
+    from scipy import stats
+
+    history = list(returns[-order:])
+    price = float(closes[-1])
+    quantile_paths: dict[float, list[float]] = {q: [] for q in QUANTILE_LEVELS}
+    point = []
+    for step in range(1, HORIZON + 1):
+        next_ret = float(np.dot(coeffs, history[-order:]))
+        price = price * (1 + next_ret)
+        point.append(price)
+        history.append(next_ret)
+        spread = resid_std * np.sqrt(step) * float(closes[-1])
+        for q in QUANTILE_LEVELS:
+            z = float(stats.norm.ppf(q))
+            quantile_paths[q].append(price + z * spread)
+
+    return {
+        "status": "ok",
+        "n_observations": int(len(closes)),
+        "model_backend": "fallback_proxy",
+        "fallback_reason": FALLBACK_REASON,
+        "lag_order": LAG_ORDER,
+        "forecast_horizon": HORIZON,
+        "last_close": float(closes[-1]),
+        "point_forecast": point,
+        "quantile_levels": QUANTILE_LEVELS,
+        "quantile_forecasts": {str(q): quantile_paths[q] for q in QUANTILE_LEVELS},
+    }
 
 
 def compute(
@@ -73,45 +123,12 @@ def compute(
             "n_observations": int(len(closes)),
         }])
 
-    returns = np.diff(closes) / closes[:-1]
-    n = len(returns)
-    order = LAG_ORDER
-    X = np.column_stack([returns[i:n - order + i] for i in range(order)])
-    y = returns[order:]
-    coeffs, *_ = np.linalg.lstsq(X, y, rcond=None)
-    fitted = X @ coeffs
-    resid = y - fitted
-    resid_std = float(np.std(resid, ddof=1)) if len(resid) > 1 else 0.0
-
-    from scipy import stats
-
-    history = list(returns[-order:])
-    price = float(closes[-1])
-    quantile_paths: dict[float, list[float]] = {q: [] for q in QUANTILE_LEVELS}
-    point = []
-    for step in range(1, HORIZON + 1):
-        next_ret = float(np.dot(coeffs, history[-order:]))
-        price = price * (1 + next_ret)
-        point.append(price)
-        history.append(next_ret)
-        spread = resid_std * np.sqrt(step) * float(closes[-1])
-        for q in QUANTILE_LEVELS:
-            z = float(stats.norm.ppf(q))
-            quantile_paths[q].append(price + z * spread)
+    fields = _fit_and_forecast(closes)
 
     result: dict[str, Any] = {
         "symbol": symbol,
         "analysis_at": analysis_at,
         "angle": ANGLE_NAME,
-        "status": "ok",
-        "n_observations": int(len(closes)),
-        "model_backend": "fallback_proxy",
-        "fallback_reason": FALLBACK_REASON,
-        "lag_order": LAG_ORDER,
-        "forecast_horizon": HORIZON,
-        "last_close": float(closes[-1]),
-        "point_forecast": point,
-        "quantile_levels": QUANTILE_LEVELS,
-        "quantile_forecasts": {str(q): quantile_paths[q] for q in QUANTILE_LEVELS},
+        **fields,
     }
     return pd.DataFrame([result])

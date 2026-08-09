@@ -30,10 +30,18 @@ import numpy as np
 import pandas as pd
 
 ANGLE_NAME = "timesfm"
-MIN_OBSERVATIONS = 30
+# Decided value, 04-enhancement-of-each-angle/28-timesfm.md — raised from
+# 30, same consistency move as every other angle (a quality floor here,
+# not an architectural requirement the way Kronos's context length is).
+MIN_OBSERVATIONS = 100
 HORIZON = 5
-MAX_CONTEXT = 256
+# Decided value — raised from 256, matching the model's own documented
+# default operating configuration (HuggingFace card default config uses
+# max_context=1024) rather than running it at a quarter of its normal
+# context.
+MAX_CONTEXT = 1024
 CHECKPOINT = "google/timesfm-2.5-200m-pytorch"
+DECILE_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
 _MODEL_CACHE: dict[str, Any] = {}
 
@@ -69,7 +77,14 @@ def _get_model():
 
 def _fallback_forecast(closes: np.ndarray, horizon: int) -> dict[str, Any]:
     """Linear-trend extrapolation + residual-normal quantiles — used only
-    if the real TimesFM checkpoint can't be loaded (see module docstring)."""
+    if the real TimesFM checkpoint can't be loaded (see module docstring).
+    Emits all 9 decile levels (from the same Gaussian spread) so the
+    fallback path's output shape matches the real model's, even though
+    the real model's deciles are genuine trained output and these are a
+    statistical construction.
+    """
+    from scipy import stats
+
     x = np.arange(len(closes))
     slope, intercept = np.polyfit(x, closes, 1)
     resid = closes - (slope * x + intercept)
@@ -77,10 +92,56 @@ def _fallback_forecast(closes: np.ndarray, horizon: int) -> dict[str, Any]:
     future_x = np.arange(len(closes), len(closes) + horizon)
     point = slope * future_x + intercept
     spread = resid_std * np.sqrt(np.arange(1, horizon + 1))
+    deciles = {}
+    for q in DECILE_LEVELS:
+        z = float(stats.norm.ppf(q))
+        deciles[f"q{int(q * 100)}"] = (point + z * spread).tolist()
     return {
         "point_forecast": point.tolist(),
-        "p10_forecast": (point - 1.2816 * spread).tolist(),
-        "p90_forecast": (point + 1.2816 * spread).tolist(),
+        "decile_forecasts": deciles,
+    }
+
+
+def _forecast(context: np.ndarray) -> dict[str, Any]:
+    """Runs one real TimesFM forecast call (or the fallback proxy if the
+    checkpoint can't be loaded) and returns the fields describing it.
+    Shared by compute() and the walk-forward backtest (backtest.py) so
+    both produce the exact same forecast shape.
+    """
+    model_backend = "pretrained"
+    fallback_reason = None
+
+    try:
+        model = _get_model()
+        point_fc, quantile_fc = model.forecast(horizon=HORIZON, inputs=[context])
+        point = np.asarray(point_fc[0])
+        # quantile_fc returns [mean, q10, q20, ..., q90] per step (index 0
+        # is the mean, indices 1-9 are the 9 real decile levels) -- all 9
+        # kept, not just q10/q90 (previously discarded, see module
+        # docstring: "7 of the 10 real quantile levels... thrown away").
+        deciles = {
+            f"q{int(q * 100)}": np.asarray(quantile_fc[0, :, i + 1]).tolist()
+            for i, q in enumerate(DECILE_LEVELS)
+        }
+        forecast = {
+            "point_forecast": point.tolist(),
+            "decile_forecasts": deciles,
+        }
+    except Exception as exc:  # pragma: no cover - only hit if pkg/network unavailable
+        model_backend = "fallback_proxy"
+        fallback_reason = f"timesfm pretrained checkpoint unavailable: {exc!r}"
+        forecast = _fallback_forecast(context, HORIZON)
+
+    return {
+        "status": "ok",
+        "n_observations": int(len(context)),
+        "model_backend": model_backend,
+        "checkpoint": CHECKPOINT if model_backend == "pretrained" else None,
+        "fallback_reason": fallback_reason,
+        "context_length_used": int(len(context)),
+        "forecast_horizon": HORIZON,
+        "last_close": float(context[-1]),
+        **forecast,
     }
 
 
@@ -113,36 +174,12 @@ def compute(
         }])
 
     context = closes[-MAX_CONTEXT:]
-    model_backend = "pretrained"
-    fallback_reason = None
-
-    try:
-        model = _get_model()
-        point_fc, quantile_fc = model.forecast(horizon=HORIZON, inputs=[context])
-        point = point_fc[0]
-        p10 = quantile_fc[0, :, 1]  # quantile head returns [mean, q10..q90] deciles
-        p90 = quantile_fc[0, :, 9]
-        forecast = {
-            "point_forecast": np.asarray(point).tolist(),
-            "p10_forecast": np.asarray(p10).tolist(),
-            "p90_forecast": np.asarray(p90).tolist(),
-        }
-    except Exception as exc:  # pragma: no cover - only hit if pkg/network unavailable
-        model_backend = "fallback_proxy"
-        fallback_reason = f"timesfm pretrained checkpoint unavailable: {exc!r}"
-        forecast = _fallback_forecast(context, HORIZON)
+    fields = _forecast(context)
 
     result: dict[str, Any] = {
         "symbol": symbol,
         "analysis_at": analysis_at,
         "angle": ANGLE_NAME,
-        "status": "ok",
-        "n_observations": int(len(closes)),
-        "model_backend": model_backend,
-        "checkpoint": CHECKPOINT if model_backend == "pretrained" else None,
-        "fallback_reason": fallback_reason,
-        "forecast_horizon": HORIZON,
-        "last_close": float(closes[-1]),
-        **forecast,
+        **fields,
     }
     return pd.DataFrame([result])

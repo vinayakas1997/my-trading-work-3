@@ -86,6 +86,7 @@ class AngleRunner:
         angle_names: list[str] | None = None,
         run_id: str | None = None,
         tier: str = "tier2",
+        time_format: str | None = None,
     ) -> dict[str, Any]:
         """Run all (or selected) angles for a symbol.
 
@@ -101,6 +102,16 @@ class AngleRunner:
         call site's behavior unchanged) or "tier3" (triggered/ad-hoc,
         prunable). The v1 API's trigger route passes "tier3" explicitly.
 
+        `time_format`: restrict this run to a single declared time_format
+        instead of computing every one the angle declares. When given, the
+        result is written under that exact `granularity` (not the storage
+        default of "1D") — this is what the v1 API's `trigger` route needs
+        so a request for one specific granularity doesn't silently compute
+        every timeframe the angle happens to declare. `None` (the default)
+        preserves every existing call site's behavior unchanged: every
+        declared time_format computed and combined into one write under
+        the default granularity.
+
         Returns a summary dict keyed by angle_name.
         """
         if run_id is not None and (angle_names is None or len(angle_names) != 1):
@@ -114,7 +125,9 @@ class AngleRunner:
         for angle in to_run:
             try:
                 with sync_timer(f"angle.{angle['name']}"):
-                    count = self._run_angle(symbol, angle, from_ts, to_ts, run_id=run_id, tier=tier)
+                    count = self._run_angle(
+                        symbol, angle, from_ts, to_ts, run_id=run_id, tier=tier, time_format=time_format
+                    )
                 results[angle["name"]] = {
                     "status": "completed",
                     "row_count": count,
@@ -133,8 +146,10 @@ class AngleRunner:
         to_ts: int | None,
         run_id: str | None = None,
         tier: str = "tier2",
+        time_format: str | None = None,
     ) -> int:
-        """Run an angle for each of its time_formats. Returns total row count."""
+        """Run an angle for each of its time_formats (or just `time_format`,
+        if given). Returns total row count."""
         existing = self._run_log.has_existing_run(symbol, angle["name"], from_ts, to_ts)
         if existing:
             LOG.info("Skipping %s for %s — existing run found", angle["name"], symbol)
@@ -144,7 +159,16 @@ class AngleRunner:
         if module is None:
             raise ImportError(f"Could not import compute for {angle['name']}")
 
-        time_formats = angle["spec"].get("time_formats", DEFAULT_TIME_FORMATS)
+        declared_time_formats = angle["spec"].get("time_formats", DEFAULT_TIME_FORMATS)
+        if time_format is not None:
+            if time_format not in declared_time_formats:
+                raise ValueError(
+                    f"{angle['name']} does not declare time_format '{time_format}' "
+                    f"(declared: {declared_time_formats})"
+                )
+            time_formats = [time_format]
+        else:
+            time_formats = declared_time_formats
         needs_bars = angle["spec"].get("needs_bars", True)
         run_id = run_id or uuid4().hex[:12]
         all_dfs: list[pd.DataFrame] = []
@@ -178,6 +202,18 @@ class AngleRunner:
             return 0
 
         combined = pd.concat(all_dfs, ignore_index=True)
+        # When a single time_format was requested, write/record under that
+        # exact granularity so a later fetch for the same granularity can
+        # actually find it — otherwise both default to "1D" regardless of
+        # what was actually computed (the pre-existing gap routes_v1.py's
+        # module docstring already flagged). The unrestricted multi-format
+        # case keeps the prior default behavior unchanged.
+        write_kwargs: dict[str, Any] = {}
+        record_kwargs: dict[str, Any] = {}
+        if time_format is not None:
+            write_kwargs["granularity"] = time_format
+            record_kwargs["granularity"] = time_format
+
         self._storage.write(
             symbol,
             angle["name"],
@@ -186,6 +222,7 @@ class AngleRunner:
             analysis_until=to_ts,
             run_id=run_id,
             tier=tier,
+            **write_kwargs,
         )
         self._run_log.record_run(
             symbol=symbol,
@@ -195,6 +232,7 @@ class AngleRunner:
             analysis_until=to_ts,
             tier=tier,
             row_count=len(combined),
+            **record_kwargs,
         )
         return len(combined)
 

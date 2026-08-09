@@ -8,6 +8,11 @@ purpose: >
   .garch_volatility) — this angle exposes the same underlying fit as its
   own first-class result rather than duplicating the math.
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str

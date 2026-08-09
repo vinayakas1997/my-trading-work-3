@@ -10,6 +10,11 @@ purpose: >
   and smoothed state plus its uncertainty (state covariance) — not a
   forward forecast.
 time_formats:
+- 1min
+- 5min
+- 15min
+- 1H
+- 4H
 - 1D
 inputs:
   symbol: str

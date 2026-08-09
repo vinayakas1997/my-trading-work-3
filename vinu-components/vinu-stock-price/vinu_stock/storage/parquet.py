@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,13 +63,37 @@ def _read_existing(path: Path) -> pa.Table:
     return pq.read_table(path)
 
 
+def _atomic_write_table(path: Path, table: pa.Table, *, compression: str = "zstd") -> None:
+    """Write a parquet file without ever leaving a truncated file at `path`.
+
+    A crash or kill mid-write during a plain pq.write_table(table, path)
+    leaves a partial file at the real path -- the next reader sees it and
+    fails the whole symbol's query (this is what corrupted the two live
+    shard files found during the angle-implementation pass, see
+    known-issues.md #2). Writing to a temp file in the same directory
+    then os.replace()-ing over the target is atomic on both POSIX and
+    NTFS: a reader either sees the old complete file or the new complete
+    file, never a partial one.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        pq.write_table(table, tmp_path, compression=compression)
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
 def write_bars(path: Path, table: pa.Table, *, merge: bool = True) -> int:
     """Write bars to parquet; merge+dedupe with existing file if merge=True."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if merge and path.is_file():
         existing = _read_existing(path)
         table = _dedupe_table(pa.concat_tables([existing, table]))
-    pq.write_table(table, path, compression="zstd")
+    _atomic_write_table(path, table)
     return table.num_rows
 
 
@@ -89,7 +115,7 @@ def append_bars(path: Path, bars: list[BarRecord]) -> int:
     total = 0
     for day_key, day_bars in by_day.items():
         day_path = path.parent / f"{path.stem}_{day_key}.parquet"
-        pq.write_table(bars_to_table(day_bars), day_path, compression="zstd")
+        _atomic_write_table(day_path, bars_to_table(day_bars))
         total += len(day_bars)
 
     return total
@@ -131,7 +157,7 @@ def consolidate_live_shards(live_path: Path) -> int:
     if table.num_rows == 0:
         return 0
 
-    pq.write_table(table, live_path, compression="zstd")
+    _atomic_write_table(live_path, table)
 
     for shard in shards:
         try:

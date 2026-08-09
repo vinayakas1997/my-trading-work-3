@@ -39,7 +39,12 @@ import numpy as np
 import pandas as pd
 
 ANGLE_NAME = "timer_timerxl"
-MIN_OBSERVATIONS = 24
+# Decided value, 04-enhancement-of-each-angle/27-timer_timerxl.md — raised
+# from 24. Not just cross-angle consistency: below PATCH_SIZE=96, the real
+# model can never produce even one patch and silently falls through to the
+# fallback proxy every time (a real behavioral quirk, not just a floor
+# bump) -- 100 clears that real architectural requirement.
+MIN_OBSERVATIONS = 100
 PATCH_SIZE = 96
 MAX_CONTEXT = 2880
 HORIZON = 5
@@ -118,6 +123,66 @@ def _quantile_bands(
     return (point - 1.2816 * spread).tolist(), (point + 1.2816 * spread).tolist()
 
 
+def _forecast(closes: np.ndarray) -> dict[str, Any]:
+    """Runs one real Timer forecast call (or the fallback proxy if the
+    pipeline can't be loaded) and returns the fields describing it.
+    Shared by compute() and the walk-forward backtest (backtest.py) so
+    both produce the exact same forecast shape.
+    """
+    model_backend = "pretrained"
+    fallback_reason = None
+    n_patches = 0
+
+    try:
+        import torch
+
+        model = _get_model()
+        context = closes[-MAX_CONTEXT:]
+        usable = (len(context) // PATCH_SIZE) * PATCH_SIZE
+        context = context[-usable:]
+        n_patches = len(context) // PATCH_SIZE
+        if n_patches < 1:
+            raise ValueError(
+                f"need >= {PATCH_SIZE} points for one Timer patch; got {len(context)}"
+            )
+
+        seq = torch.tensor(
+            np.log(np.clip(context, 1e-8, None)), dtype=torch.float32
+        ).unsqueeze(0)
+        with torch.no_grad():
+            out = model(input_ids=seq, max_output_length=HORIZON, revin=True, use_cache=False)
+        point = np.exp(out.logits[0].numpy())  # (HORIZON,)
+        last = float(closes[-1])
+        p10, p90 = _quantile_bands(point, closes, last)
+        return {
+            "status": "ok",
+            "n_observations": int(len(closes)),
+            "model_backend": model_backend,
+            "checkpoint": "thuml/timer-base-84m",
+            "fallback_reason": fallback_reason,
+            "patch_size": PATCH_SIZE,
+            "n_patches": int(n_patches),
+            "forecast_horizon": HORIZON,
+            "last_close": last,
+            "point_forecast": point.tolist(),
+            "p10_forecast": p10,
+            "p90_forecast": p90,
+        }
+    except Exception as exc:  # pragma: no cover - only hit if pkg/network unavailable
+        forecast = _fallback_forecast(closes)
+        return {
+            "status": "ok",
+            "n_observations": int(len(closes)),
+            "model_backend": "fallback_proxy",
+            "fallback_reason": f"{FALLBACK_REASON} Detail: {exc!r}",
+            "patch_size": PATCH_SIZE,
+            "n_patches": int(len(closes) // PATCH_SIZE),
+            "forecast_horizon": HORIZON,
+            "last_close": float(closes[-1]),
+            **forecast,
+        }
+
+
 def compute(
     symbol: str,
     bars: pd.DataFrame | None = None,
@@ -146,62 +211,12 @@ def compute(
             "n_observations": int(len(closes)),
         }])
 
-    model_backend = "pretrained"
-    fallback_reason = None
-    n_patches = 0
+    fields = _forecast(closes)
 
-    try:
-        import torch
-
-        model = _get_model()
-        context = closes[-MAX_CONTEXT:]
-        usable = (len(context) // PATCH_SIZE) * PATCH_SIZE
-        context = context[-usable:]
-        n_patches = len(context) // PATCH_SIZE
-        if n_patches < 1:
-            raise ValueError(
-                f"need >= {PATCH_SIZE} points for one Timer patch; got {len(context)}"
-            )
-
-        seq = torch.tensor(
-            np.log(np.clip(context, 1e-8, None)), dtype=torch.float32
-        ).unsqueeze(0)
-        with torch.no_grad():
-            out = model(input_ids=seq, max_output_length=HORIZON, revin=True, use_cache=False)
-        point = np.exp(out.logits[0].numpy())  # (HORIZON,)
-        last = float(closes[-1])
-        p10, p90 = _quantile_bands(point, closes, last)
-        result: dict[str, Any] = {
-            "symbol": symbol,
-            "analysis_at": analysis_at,
-            "angle": ANGLE_NAME,
-            "status": "ok",
-            "n_observations": int(len(closes)),
-            "model_backend": model_backend,
-            "checkpoint": "thuml/timer-base-84m",
-            "fallback_reason": fallback_reason,
-            "patch_size": PATCH_SIZE,
-            "n_patches": int(n_patches),
-            "forecast_horizon": HORIZON,
-            "last_close": last,
-            "point_forecast": point.tolist(),
-            "p10_forecast": p10,
-            "p90_forecast": p90,
-        }
-    except Exception as exc:  # pragma: no cover - only hit if pkg/network unavailable
-        forecast = _fallback_forecast(closes)
-        result = {
-            "symbol": symbol,
-            "analysis_at": analysis_at,
-            "angle": ANGLE_NAME,
-            "status": "ok",
-            "n_observations": int(len(closes)),
-            "model_backend": "fallback_proxy",
-            "fallback_reason": f"{FALLBACK_REASON} Detail: {exc!r}",
-            "patch_size": PATCH_SIZE,
-            "n_patches": int(len(closes) // PATCH_SIZE),
-            "forecast_horizon": HORIZON,
-            "last_close": float(closes[-1]),
-            **forecast,
-        }
+    result: dict[str, Any] = {
+        "symbol": symbol,
+        "analysis_at": analysis_at,
+        "angle": ANGLE_NAME,
+        **fields,
+    }
     return pd.DataFrame([result])

@@ -136,36 +136,20 @@ def _build_model():
     return TIPSCore()
 
 
-def compute(
-    symbol: str,
-    bars: pd.DataFrame | None = None,
-    news: list[dict] | None = None,
-    from_ts: int | None = None,
-    to_ts: int | None = None,
-    time_format: str | None = None,
-    seed: int = 42,
-) -> pd.DataFrame:
-    analysis_at = datetime.now(timezone.utc).isoformat()
+def _fit_and_forecast(close: np.ndarray, seed: int = 42):
+    """Trains a fresh regime-gated TIPS-inspired model on `close` and
+    forecasts one step past its end. Returns (fields, model) — `fields`
+    is every result column except symbol/analysis_at/angle (callers
+    attach those), and `model` is the trained nn.Module, exposed so the
+    walk-forward backtest (backtest.py) can save its state_dict as this
+    step's weights artifact.
 
-    if bars is None or bars.empty or "close" not in bars.columns:
-        return pd.DataFrame([{
-            "symbol": symbol,
-            "analysis_at": analysis_at,
-            "angle": ANGLE_NAME,
-            "status": "no_data",
-        }])
+    Raises ValueError if there aren't enough training windows.
+    """
+    import torch
+    from torch import nn
 
-    close = bars["close"].astype(float).values
-    n = len(close)
-
-    if n < MIN_BARS:
-        return pd.DataFrame([{
-            "symbol": symbol,
-            "analysis_at": analysis_at,
-            "angle": ANGLE_NAME,
-            "status": "insufficient_data",
-            "n_observations": int(n),
-        }])
+    torch.manual_seed(seed)
 
     returns = np.diff(close) / close[:-1]
     autocorr = _rolling_autocorr_lag1(returns, REGIME_WINDOW)  # aligned to returns (len n-1)
@@ -187,18 +171,7 @@ def compute(
 
     X, y, regimes = _make_windows(norm, regime_labels_by_close_idx, LOOKBACK)
     if len(X) < 20:
-        return pd.DataFrame([{
-            "symbol": symbol,
-            "analysis_at": analysis_at,
-            "angle": ANGLE_NAME,
-            "status": "insufficient_data",
-            "n_observations": int(n),
-        }])
-
-    import torch
-    from torch import nn
-
-    torch.manual_seed(seed)
+        raise ValueError(f"insufficient training windows: {len(X)}")
 
     X_t = torch.from_numpy(X)
     y_t = torch.from_numpy(y).unsqueeze(-1)
@@ -233,12 +206,9 @@ def compute(
     last_close = float(close[-1])
     forecast_return = (forecast_price - last_close) / last_close if last_close else 0.0
 
-    result: dict[str, Any] = {
-        "symbol": symbol,
-        "analysis_at": analysis_at,
-        "angle": ANGLE_NAME,
+    fields = {
         "status": "ok",
-        "n_observations": int(n),
+        "n_observations": int(len(close)),
         "n_train_windows": int(len(X)),
         "lookback": LOOKBACK,
         "regime_window": REGIME_WINDOW,
@@ -251,5 +221,56 @@ def compute(
         "n_momentum_windows": int((regimes == REGIME_MOMENTUM).sum()),
         "n_mean_reversion_windows": int((regimes == REGIME_MEAN_REVERSION).sum()),
         "train_loss": final_train_loss,
+    }
+    return fields, model
+
+
+def compute(
+    symbol: str,
+    bars: pd.DataFrame | None = None,
+    news: list[dict] | None = None,
+    from_ts: int | None = None,
+    to_ts: int | None = None,
+    time_format: str | None = None,
+    seed: int = 42,
+) -> pd.DataFrame:
+    analysis_at = datetime.now(timezone.utc).isoformat()
+
+    if bars is None or bars.empty or "close" not in bars.columns:
+        return pd.DataFrame([{
+            "symbol": symbol,
+            "analysis_at": analysis_at,
+            "angle": ANGLE_NAME,
+            "status": "no_data",
+        }])
+
+    close = bars["close"].astype(float).values
+    n = len(close)
+
+    if n < MIN_BARS:
+        return pd.DataFrame([{
+            "symbol": symbol,
+            "analysis_at": analysis_at,
+            "angle": ANGLE_NAME,
+            "status": "insufficient_data",
+            "n_observations": int(n),
+        }])
+
+    try:
+        fields, _model = _fit_and_forecast(close, seed=seed)
+    except ValueError:
+        return pd.DataFrame([{
+            "symbol": symbol,
+            "analysis_at": analysis_at,
+            "angle": ANGLE_NAME,
+            "status": "insufficient_data",
+            "n_observations": int(n),
+        }])
+
+    result: dict[str, Any] = {
+        "symbol": symbol,
+        "analysis_at": analysis_at,
+        "angle": ANGLE_NAME,
+        **fields,
     }
     return pd.DataFrame([result])
