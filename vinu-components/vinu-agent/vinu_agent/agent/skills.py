@@ -63,6 +63,10 @@ class SkillsLoader:
             )
             self._skills[skill.name] = skill
 
+    @property
+    def skill_count(self) -> int:
+        return len(self._skills)
+
     def get_descriptions(self) -> str:
         by_category: Dict[str, List[str]] = {}
         for skill in self._skills.values():

@@ -53,6 +53,7 @@ class ContextBuilder:
         facts_registry: Any = None,
         freshness_checker: Any = None,
         research_digest_reader: Any = None,
+        orchestrator_prompt: str = "",
     ) -> None:
         self.registry = registry
         self.memory = memory
@@ -61,6 +62,7 @@ class ContextBuilder:
         self.unified_memory = unified_memory
         self.max_memory_tokens = max_memory_tokens
         self.as_of = as_of
+        self.orchestrator_prompt = orchestrator_prompt
         self._ground_truth_injector = ground_truth_injector
         self._held_symbols = held_symbols or []
         self._last_ground_truth_msg: dict | None = None
@@ -73,11 +75,7 @@ class ContextBuilder:
 
     def build_system_prompt(self) -> str:
         tool_count = len(self.registry.tool_names)
-        skill_count = (
-            len(self.skills_loader.get_descriptions())
-            if self.skills_loader
-            else 0
-        )
+        skill_count = self.skills_loader.skill_count if self.skills_loader else 0
         tool_descriptions = self._format_tool_descriptions()
         skill_descriptions = (
             self.skills_loader.get_descriptions()
@@ -93,7 +91,7 @@ class ContextBuilder:
             else ""
         )
 
-        return _SYSTEM_PROMPT.format(
+        prompt = _SYSTEM_PROMPT.format(
             tool_count=tool_count,
             skill_count=skill_count,
             tool_descriptions=tool_descriptions,
@@ -101,6 +99,9 @@ class ContextBuilder:
             memory_section=memory_summary,
             current_datetime=current_datetime + replay_marker,
         )
+        if self.orchestrator_prompt:
+            prompt = f"{prompt}\n\n{self.orchestrator_prompt}"
+        return prompt
 
     def _extract_symbols(self, text: str) -> list[str]:
         import re

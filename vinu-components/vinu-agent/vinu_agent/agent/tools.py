@@ -1,5 +1,8 @@
+import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
+
+LOG = logging.getLogger(__name__)
 
 
 class BaseTool(ABC):
@@ -53,3 +56,21 @@ class ToolRegistry:
     @property
     def tool_names(self) -> List[str]:
         return list(self._tools.keys())
+
+    def all_tools(self) -> List[BaseTool]:
+        return list(self._tools.values())
+
+    def subset(self, names: List[str]) -> "ToolRegistry":
+        """A new registry containing only the named tools -- used to scope
+        a team manager or specialist to just the tools its AGENT.md/TEAM.md
+        declares, instead of the full shared tool pool. Unknown names are
+        logged and skipped rather than raising, since a typo in a markdown
+        config file shouldn't crash the whole team."""
+        out = ToolRegistry()
+        for name in names:
+            tool = self._tools.get(name)
+            if tool is None:
+                LOG.warning("subset(): unknown tool %r requested, skipping", name)
+                continue
+            out.register(tool)
+        return out

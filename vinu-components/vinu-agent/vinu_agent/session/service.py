@@ -17,22 +17,46 @@ class SessionService:
         store: SessionStore,
         event_bus: EventBus,
         llm: Any = None,
+        orchestrator_llm: Any = None,
         skills_loader: Any = None,
         persistent_memory: Any = None,
         unified_memory: Any = None,
         facts_registry: Any = None,
         services_config: Optional[dict] = None,
+        teams_dir: str = "",
+        orchestrator_dir: str = "",
+        run_store: Any = None,
+        llm_call_store: Any = None,
     ) -> None:
         self.store = store
         self.event_bus = event_bus
         self._llm = llm
+        # None means "share `llm` with teams/specialists" -- see
+        # config.py::_load_orchestrator_llm_config and
+        # New-talk-agents/implementation/00-status.md.
+        self._orchestrator_llm = orchestrator_llm if orchestrator_llm is not None else llm
         self._skills_loader = skills_loader
         self._persistent_memory = persistent_memory
         self._unified_memory = unified_memory
         self._facts_registry = facts_registry
         self._services_config = services_config or {}
+        self._teams_dir = teams_dir
+        self._run_store = run_store
+        self._llm_call_store = llm_call_store
+        self._orchestrator_prompt = self._load_orchestrator_prompt(orchestrator_dir)
         self._active_loops: Dict[str, Any] = {}
         self._context_builder: Optional[ContextBuilder] = None
+
+    @staticmethod
+    def _load_orchestrator_prompt(orchestrator_dir: str) -> str:
+        if not orchestrator_dir:
+            return ""
+        path = Path(orchestrator_dir) / "ORCHESTRATOR.md"
+        if not path.exists():
+            return ""
+        from ..agent.frontmatter import parse_frontmatter
+        _meta, body = parse_frontmatter(path.read_text(encoding="utf-8"))
+        return body
 
     async def create_session(self, title: str = "", config: Optional[dict] = None) -> Session:
         session = Session(title=title, config=config or {})
@@ -140,6 +164,7 @@ class SessionService:
     def _run_with_agent(self, session_id: str, attempt: Attempt) -> Dict:
         import os
 
+        from ..agent.llm import wrap_with_logging
         from ..agent.loop import AgentLoop
         from ..agent.workflow import WorkflowTracker
         from ..audit.freshness import FreshnessChecker
@@ -153,6 +178,13 @@ class SessionService:
 
         workflow_tracker = WorkflowTracker()
 
+        def event_callback(event_type: str, data: dict):
+            self.event_bus.publish(SSEEvent(
+                event_type=event_type,
+                data=data,
+                session_id=session_id,
+            ))
+
         registry = build_registry(
             session_id=session_id,
             services_config=self._services_config,
@@ -162,6 +194,11 @@ class SessionService:
             session_service=self,
             workflow_tracker=workflow_tracker,
             as_of=as_of,
+            llm=self._llm,
+            teams_dir=self._teams_dir,
+            run_store=self._run_store,
+            llm_call_store=self._llm_call_store,
+            event_callback=event_callback,
         )
 
         held_symbols = _get_held_symbols(as_of, session_id)
@@ -206,19 +243,17 @@ class SessionService:
             facts_registry=self._facts_registry,
             freshness_checker=freshness_checker,
             research_digest_reader=research_digest_reader,
+            orchestrator_prompt=self._orchestrator_prompt,
         )
         self._context_builder = context_builder
 
-        def event_callback(event_type: str, data: dict):
-            self.event_bus.publish(SSEEvent(
-                event_type=event_type,
-                data=data,
-                session_id=session_id,
-            ))
-
+        orchestrator_llm = wrap_with_logging(
+            self._orchestrator_llm, self._llm_call_store,
+            service="vinu-agent", tier="orchestrator", session_id=session_id,
+        )
         agent_loop = AgentLoop(
             registry=registry,
-            llm=self._llm,
+            llm=orchestrator_llm,
             event_callback=event_callback,
             max_iterations=50,
             persistent_memory=self._persistent_memory,

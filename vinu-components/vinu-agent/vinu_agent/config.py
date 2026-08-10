@@ -31,10 +31,17 @@ class SwarmConfig:
 @dataclass
 class AgentConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
+    #: Independent LLM config for the orchestrator's own top-level loop --
+    #: None means "share vinu_agent.llm" (today's behavior, unchanged).
+    #: Teams/specialists always use `llm` above, not this one -- see
+    #: New-talk-agents/01-orchestrator-and-teams-architecture.md.
+    orchestrator_llm: Optional[LLMConfig] = None
     swarm: SwarmConfig = field(default_factory=SwarmConfig)
     max_iterations: int = 50
     skills_dir: str = ""
     user_skills_dir: str = ""
+    teams_dir: str = ""
+    orchestrator_dir: str = ""
     sessions_dir: str = ""
     memory_dir: str = ""
     services: dict = field(default_factory=lambda: {
@@ -50,6 +57,33 @@ class AgentConfig:
     })
 
 
+def _load_orchestrator_llm_config() -> Optional[LLMConfig]:
+    """Only builds a distinct orchestrator LLMConfig if at least one
+    VINU_ORCHESTRATOR_LLM_* var is actually set -- otherwise returns None
+    so the orchestrator transparently shares the same LLM as teams/
+    specialists (today's behavior, unchanged for anyone who hasn't opted
+    in). Fields left unset fall back to LLMConfig's own plain defaults,
+    not the shared VINU_LLM_* values -- mixing a shared local model's
+    name with a different provider (e.g. VINU_LLM_MODEL="qwen36-35B" under
+    provider="openai") would silently be nonsense."""
+    keys = (
+        "VINU_ORCHESTRATOR_LLM_PROVIDER",
+        "VINU_ORCHESTRATOR_LLM_MODEL",
+        "VINU_ORCHESTRATOR_LLM_BASE_URL",
+        "VINU_ORCHESTRATOR_LLM_API_KEY",
+    )
+    if not any(os.environ.get(k) for k in keys):
+        return None
+    return LLMConfig(
+        provider=os.environ.get("VINU_ORCHESTRATOR_LLM_PROVIDER", "openai"),
+        model_name=os.environ.get("VINU_ORCHESTRATOR_LLM_MODEL", "gpt-4o-mini"),
+        api_key=os.environ.get("VINU_ORCHESTRATOR_LLM_API_KEY", ""),
+        base_url=os.environ.get("VINU_ORCHESTRATOR_LLM_BASE_URL", ""),
+        timeout=int(os.environ.get("VINU_ORCHESTRATOR_LLM_TIMEOUT", "120")),
+        context_window=int(os.environ.get("VINU_ORCHESTRATOR_LLM_CONTEXT_WINDOW", "0")),
+    )
+
+
 def load_config() -> AgentConfig:
     load_dotenv()
     data_root = Path(os.environ.get("VINU_AGENT_DATA_ROOT", Path.home() / ".vinu"))
@@ -62,6 +96,7 @@ def load_config() -> AgentConfig:
             timeout=int(os.environ.get("VINU_LLM_TIMEOUT", "120")),
             context_window=int(os.environ.get("VINU_LLM_CONTEXT_WINDOW", "0")),
         ),
+        orchestrator_llm=_load_orchestrator_llm_config(),
         swarm=SwarmConfig(
             max_workers=int(os.environ.get("VINU_SWARM_MAX_WORKERS", "4")),
             default_timeout=int(os.environ.get("VINU_SWARM_TIMEOUT", "300")),
@@ -70,6 +105,8 @@ def load_config() -> AgentConfig:
         max_iterations=int(os.environ.get("VINU_AGENT_MAX_ITERATIONS", "50")),
         skills_dir=os.environ.get("VINU_AGENT_SKILLS_DIR", os.environ.get("VINU_AGENT_SKILLS_PATH", str(Path(__file__).parent.parent / "skills"))),
         user_skills_dir=os.environ.get("VINU_AGENT_USER_SKILLS_DIR", ""),
+        teams_dir=os.environ.get("VINU_AGENT_TEAMS_DIR", str(Path(__file__).parent.parent / "teams")),
+        orchestrator_dir=os.environ.get("VINU_AGENT_ORCHESTRATOR_DIR", str(Path(__file__).parent.parent / "orchestrator")),
         sessions_dir=os.environ.get("VINU_AGENT_SESSIONS_DIR", str(data_root / "sessions")),
         memory_dir=os.environ.get("VINU_AGENT_MEMORY_DIR", str(data_root / "memory")),
     )

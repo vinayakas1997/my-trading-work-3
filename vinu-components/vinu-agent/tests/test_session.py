@@ -208,3 +208,20 @@ class TestSessionService:
         )
         loop.close()
         assert "attempt_id" not in result
+
+    def test_init_sets_active_loops_and_context_builder(self, service) -> None:
+        """Regression test: a botched edit once left `self._active_loops =
+        {}` / `self._context_builder = None` as dead code stranded after a
+        `return` inside a different (static) method, so __init__ silently
+        never set them at all -- any real user message would have crashed
+        with AttributeError the first time `_run_with_agent` touched
+        `self._active_loops[session_id] = ...`. No existing test actually
+        drives a real user message through `_run_with_agent` (both other
+        tests in this class either hit a nonexistent session or use
+        role="assistant", which returns before ever reaching it), so this
+        checks the attributes directly instead."""
+        assert service._active_loops == {}
+        assert service._context_builder is None
+
+    def test_cancel_current_on_fresh_service_is_false_not_a_crash(self, service) -> None:
+        assert service.cancel_current("some-session-id") is False

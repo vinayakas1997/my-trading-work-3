@@ -94,3 +94,37 @@ class TestToolRegistry:
         r.register(SayHelloTool())
         r.register(FailingTool())
         assert sorted(r.tool_names) == ["fail", "say_hello"]
+
+    def test_all_tools(self) -> None:
+        r = ToolRegistry()
+        hello = SayHelloTool()
+        fail = FailingTool()
+        r.register(hello)
+        r.register(fail)
+        assert set(r.all_tools()) == {hello, fail}
+
+    def test_subset_includes_only_named_tools(self) -> None:
+        r = ToolRegistry()
+        r.register(SayHelloTool())
+        r.register(FailingTool())
+        sub = r.subset(["say_hello"])
+        assert sub.tool_names == ["say_hello"]
+
+    def test_subset_empty_names_is_empty_registry(self) -> None:
+        r = ToolRegistry()
+        r.register(SayHelloTool())
+        sub = r.subset([])
+        assert sub.tool_names == []
+
+    def test_subset_skips_unknown_names_without_raising(self) -> None:
+        r = ToolRegistry()
+        r.register(SayHelloTool())
+        sub = r.subset(["say_hello", "does_not_exist"])
+        assert sub.tool_names == ["say_hello"]
+
+    def test_subset_returns_independent_registry(self) -> None:
+        r = ToolRegistry()
+        r.register(SayHelloTool())
+        sub = r.subset(["say_hello"])
+        sub.register(FailingTool())
+        assert "fail" not in r.tool_names

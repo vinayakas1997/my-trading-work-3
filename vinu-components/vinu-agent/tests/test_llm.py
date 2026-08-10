@@ -4,11 +4,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vinu_agent.agent.llm import (
+    LoggingChatLLM,
     OllamaChatLLM,
     OpenAIChatLLM,
     _DEFAULT_CONTEXT_WINDOW,
     create_llm,
+    create_llm_from_config,
     resolve_context_window,
+    wrap_with_logging,
 )
 from vinu_agent.config import AgentConfig, LLMConfig
 
@@ -163,3 +166,159 @@ class TestCreateLlmContextWindow:
             llm = create_llm(config)
         mock_resolve.assert_called_once_with("http://fake", "m")
         assert llm.context_window == 32000
+
+
+class TestCreateLlmFromConfig:
+    """create_llm_from_config() builds an LLM from a standalone LLMConfig
+    -- not tied to a whole AgentConfig -- so different tiers (orchestrator
+    vs. teams/specialists) can each be independently configured."""
+
+    def test_builds_from_standalone_llm_config(self) -> None:
+        llm_config = LLMConfig(
+            provider="openai", model_name="gpt-4o", api_key="sk-test",
+            base_url="https://api.openai.com/v1", context_window=128000,
+        )
+        llm = create_llm_from_config(llm_config)
+        assert isinstance(llm, OpenAIChatLLM)
+        assert llm.model == "gpt-4o"
+        assert llm.context_window == 128000
+
+    def test_create_llm_delegates_to_create_llm_from_config(self) -> None:
+        config = AgentConfig(llm=LLMConfig(
+            provider="openai", model_name="m", base_url="http://fake", context_window=32000,
+        ))
+        assert create_llm(config).context_window == create_llm_from_config(config.llm).context_window
+
+    def test_unknown_provider_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown LLM provider"):
+            create_llm_from_config(LLMConfig(provider="not-a-real-provider"))
+
+
+class FakeInnerLLM:
+    """Minimal duck-typed ChatLLM -- LoggingChatLLM only relies on
+    getattr(), so this doesn't need to subclass the real ABC."""
+
+    def __init__(self, response=None, error: Exception | None = None):
+        self.model = "fake-model"
+        self.base_url = "http://fake"
+        self.context_window = 32000
+        self._response = response or {"content": "hello"}
+        self._error = error
+        self.last_messages = None
+        self.last_tools = None
+
+    def chat(self, messages, tools=None, **kwargs):
+        self.last_messages = messages
+        self.last_tools = tools
+        if self._error:
+            raise self._error
+        return self._response
+
+
+class FakeCallStore:
+    def __init__(self):
+        self.records = []
+
+    def record(self, record):
+        self.records.append(record)
+
+
+class TestWrapWithLogging:
+    def test_returns_unwrapped_when_store_is_none(self) -> None:
+        inner = FakeInnerLLM()
+        assert wrap_with_logging(inner, None) is inner
+
+    def test_returns_logging_chat_llm_when_store_given(self) -> None:
+        wrapped = wrap_with_logging(FakeInnerLLM(), FakeCallStore())
+        assert isinstance(wrapped, LoggingChatLLM)
+
+
+class TestLoggingChatLLM:
+    def test_forwards_response_unchanged(self) -> None:
+        inner = FakeInnerLLM(response={"content": "the answer", "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}})
+        store = FakeCallStore()
+        wrapped = LoggingChatLLM(inner, store, tier="specialist")
+
+        messages = [{"role": "user", "content": "hi"}]
+        result = wrapped.chat(messages)
+
+        assert result == inner._response
+        assert inner.last_messages == messages
+
+    def test_logs_prompt_response_tokens_and_latency_from_provider_usage(self) -> None:
+        inner = FakeInnerLLM(response={
+            "content": "the answer",
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        })
+        store = FakeCallStore()
+        wrapped = LoggingChatLLM(
+            inner, store, service="vinu-agent", tier="specialist",
+            team="research", agent="idea_generator", role="idea-generator",
+            session_id="sess-1",
+        )
+        messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
+        tools = [{"type": "function", "function": {"name": "echo"}}]
+
+        wrapped.chat(messages, tools=tools)
+
+        assert len(store.records) == 1
+        rec = store.records[0]
+        assert rec.tier == "specialist"
+        assert rec.team == "research"
+        assert rec.agent == "idea_generator"
+        assert rec.role == "idea-generator"
+        assert rec.session_id == "sess-1"
+        assert rec.model == "fake-model"
+        assert rec.base_url == "http://fake"
+        assert rec.provider == "FakeInnerLLM"
+        assert rec.prompt == messages
+        assert rec.tools == tools
+        assert rec.response_content == "the answer"
+        assert rec.prompt_tokens == 10
+        assert rec.completion_tokens == 5
+        assert rec.total_tokens == 15
+        assert rec.token_count_source == "provider"
+        assert rec.success is True
+        assert rec.latency_sec >= 0
+
+    def test_estimates_tokens_when_provider_reports_no_usage(self) -> None:
+        inner = FakeInnerLLM(response={"content": "short answer"})
+        store = FakeCallStore()
+        wrapped = LoggingChatLLM(inner, store)
+
+        wrapped.chat([{"role": "user", "content": "hi"}])
+
+        rec = store.records[0]
+        assert rec.token_count_source == "estimated"
+        assert rec.total_tokens == rec.prompt_tokens + rec.completion_tokens
+        assert rec.total_tokens > 0
+
+    def test_records_failure_and_still_reraises(self) -> None:
+        inner = FakeInnerLLM(error=RuntimeError("connection refused"))
+        store = FakeCallStore()
+        wrapped = LoggingChatLLM(inner, store, tier="orchestrator")
+
+        with pytest.raises(RuntimeError, match="connection refused"):
+            wrapped.chat([{"role": "user", "content": "hi"}])
+
+        assert len(store.records) == 1
+        assert store.records[0].success is False
+        assert store.records[0].error == "connection refused"
+
+    def test_logging_failure_does_not_break_the_real_call(self) -> None:
+        class BrokenStore:
+            def record(self, record):
+                raise RuntimeError("db is down")
+
+        inner = FakeInnerLLM(response={"content": "still works"})
+        wrapped = LoggingChatLLM(inner, BrokenStore())
+
+        result = wrapped.chat([{"role": "user", "content": "hi"}])
+        assert result == {"content": "still works"}
+
+    def test_model_base_url_context_window_proxy_to_inner(self) -> None:
+        inner = FakeInnerLLM()
+        wrapped = LoggingChatLLM(inner, FakeCallStore())
+        assert wrapped.model == "fake-model"
+        assert wrapped.base_url == "http://fake"
+        assert wrapped.context_window == 32000

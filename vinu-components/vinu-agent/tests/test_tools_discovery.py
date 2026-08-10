@@ -62,3 +62,55 @@ class TestToolDiscovery:
             tool = registry.get(tool_name)
             assert tool is not None
             assert tool._workflow_tracker is fake_workflow_tracker
+
+    def test_build_registry_injects_llm(self) -> None:
+        fake_llm = object()
+        registry = build_registry(llm=fake_llm)
+        tool = registry.get("delegate_to_team")
+        assert tool is not None
+        assert tool._llm is fake_llm
+
+    def test_build_registry_injects_teams_dir(self) -> None:
+        registry = build_registry(teams_dir="/some/teams/dir")
+        tool = registry.get("delegate_to_team")
+        assert tool is not None
+        assert tool._teams_dir == "/some/teams/dir"
+
+    def test_build_registry_injects_run_store(self) -> None:
+        fake_run_store = object()
+        registry = build_registry(run_store=fake_run_store)
+        tool = registry.get("delegate_to_team")
+        assert tool is not None
+        assert tool._run_store is fake_run_store
+
+    def test_build_registry_injects_llm_call_store(self) -> None:
+        fake_llm_call_store = object()
+        registry = build_registry(llm_call_store=fake_llm_call_store)
+        tool = registry.get("delegate_to_team")
+        assert tool is not None
+        assert tool._llm_call_store is fake_llm_call_store
+
+    def test_build_registry_gives_delegate_to_team_a_self_reference(self) -> None:
+        registry = build_registry()
+        tool = registry.get("delegate_to_team")
+        assert tool is not None
+        assert tool._full_registry is registry
+
+    def test_discovery_is_scoped_to_the_tools_package_not_process_global(self) -> None:
+        """Regression test: BaseTool.__subclasses__() is process-global, not
+        scoped to this package. agent/team.py's DelegateToAgentTool is a
+        BaseTool subclass that requires constructor args and is built
+        per-team on purpose -- it must never show up in auto-discovery,
+        or build_registry() crashes trying to zero-arg-construct it (this
+        actually happened once: see New-talk-agents/implementation/00-status.md)."""
+        from vinu_agent.agent.team import DelegateToAgentTool
+
+        classes = _discover_subclasses()
+        assert DelegateToAgentTool not in classes
+        # Importing it (as this test just did) must not make it discoverable.
+        registry = build_registry()
+        assert registry.get("delegate_to_agent") is None
+
+    def test_build_registry_includes_delegate_to_team(self) -> None:
+        registry = build_registry()
+        assert "delegate_to_team" in registry.tool_names

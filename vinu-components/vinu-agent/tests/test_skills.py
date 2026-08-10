@@ -42,6 +42,14 @@ Skill body here"""
         meta, body = parse_frontmatter(text)
         assert meta["tags"] == ["a", "b", "c"]
 
+    def test_empty_list_value(self) -> None:
+        """Regression test: "[]".split(",") is [""], not [] -- an empty
+        list field used to parse to a one-item list holding an empty
+        string instead of a real empty list."""
+        text = "---\ntags: []\n---\nbody"
+        meta, body = parse_frontmatter(text)
+        assert meta["tags"] == []
+
     def test_quoted_string(self) -> None:
         text = """---
 name: "my skill"
@@ -78,6 +86,27 @@ class TestSkillsLoader:
             (Path(tmp) / "notadir").write_text("file")
             loader = SkillsLoader(skills_dir=Path(tmp))
             assert len(loader._skills) == 0
+
+    def test_skill_count_is_number_of_skills_not_char_count(self) -> None:
+        """Regression test: build_system_prompt() used to compute skill_count
+        as len(get_descriptions()) -- the CHARACTER length of the joined
+        description text, not the number of skills. Caught by an actual
+        real-LLM test run reporting "4099 specialized knowledge domains"
+        in a real system prompt sent to a real model (the true count was
+        a few dozen)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("skill-a", "skill-b", "skill-c"):
+                d = Path(tmp) / name
+                d.mkdir()
+                (d / "SKILL.md").write_text(f"---\ndescription: {name} desc\n---\nbody")
+            loader = SkillsLoader(skills_dir=Path(tmp))
+            assert loader.skill_count == 3
+            assert loader.skill_count != len(loader.get_descriptions())
+
+    def test_skill_count_zero_when_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            loader = SkillsLoader(skills_dir=Path(tmp))
+            assert loader.skill_count == 0
 
     def test_descriptions_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -127,3 +156,23 @@ class TestSkillsLoader:
 
     def test_category_order(self) -> None:
         assert SkillsLoader.CATEGORY_ORDER[:3] == ["data-source", "strategy", "analysis"]
+
+
+class TestBuildSystemPromptSkillCount:
+    def test_reports_real_skill_count_not_description_char_length(self) -> None:
+        from vinu_agent.agent.context import ContextBuilder
+        from vinu_agent.agent.tools import ToolRegistry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("skill-a", "skill-b"):
+                d = Path(tmp) / name
+                d.mkdir()
+                (d / "SKILL.md").write_text(f"---\ndescription: {name} description text\n---\nbody")
+            loader = SkillsLoader(skills_dir=Path(tmp))
+            builder = ContextBuilder(registry=ToolRegistry(), skills_loader=loader)
+
+            prompt = builder.build_system_prompt()
+
+            assert "2 specialized knowledge domains" in prompt
+            char_count = len(loader.get_descriptions())
+            assert f"{char_count} specialized knowledge domains" not in prompt

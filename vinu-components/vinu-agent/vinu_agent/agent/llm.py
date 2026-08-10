@@ -4,7 +4,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Generator, Optional
 
-from ..config import AgentConfig
+from ..config import AgentConfig, LLMConfig
 
 LOG = logging.getLogger(__name__)
 
@@ -368,40 +368,183 @@ class OllamaChatLLM(ChatLLM):
         raise RuntimeError(f"Ollama LLM call failed after {self._retry_max} attempts: {last_error}")
 
 
-def create_llm(config: AgentConfig) -> ChatLLM:
-    provider = config.llm.provider.lower()
+def _estimate_tokens_for_logging(text: str) -> int:
+    #: Same char/4 heuristic agent/loop.py::_estimate_tokens uses, kept as
+    #: a small local copy rather than importing from loop.py (llm.py has
+    #: no other reason to depend on loop.py, and this is two lines) -- so
+    #: numbers logged here are directly comparable to what the loop itself
+    #: estimates when a provider doesn't report real usage.
+    return int(len(text) / 4.0) + 1
+
+
+class LoggingChatLLM(ChatLLM):
+    """Transparent wrapper around any real ChatLLM: logs the full prompt,
+    response, token usage, and latency for every single .chat() call to a
+    LlmCallLogStore, then forwards to the wrapped client unchanged.
+    Applied once per call site (orchestrator loop, a team manager's loop,
+    each specialist's loop) with that site's own tags, so every row in the
+    log says exactly which tier/team/agent made it -- not just aggregate
+    counts. See New-talk-agents/implementation/00-status.md.
+
+    Logging failures are swallowed (never break the real LLM call) --
+    matches vinu_infra.telemetry's record_*_safe() discipline.
+    """
+
+    def __init__(
+        self,
+        inner: ChatLLM,
+        store: Any,
+        *,
+        service: str = "vinu-agent",
+        tier: str = "",
+        team: str = "",
+        agent: str = "",
+        role: str = "",
+        session_id: str = "",
+    ) -> None:
+        self._inner = inner
+        self._store = store
+        self._service = service
+        self._tier = tier
+        self._team = team
+        self._agent = agent
+        self._role = role
+        self._session_id = session_id
+        self.context_window = getattr(inner, "context_window", _DEFAULT_CONTEXT_WINDOW)
+
+    @property
+    def model(self) -> str:
+        return getattr(self._inner, "model", "")
+
+    @property
+    def base_url(self) -> str:
+        return getattr(self._inner, "base_url", "")
+
+    def chat(self, messages: list, tools: Optional[list] = None, **kwargs) -> dict:
+        t0 = time.perf_counter()
+        response: dict = {}
+        success = True
+        error = ""
+        try:
+            response = self._inner.chat(messages, tools=tools, **kwargs)
+            return response
+        except Exception as exc:
+            success = False
+            error = str(exc)
+            raise
+        finally:
+            self._log(messages, tools, response, time.perf_counter() - t0, success, error)
+
+    def _log(
+        self, messages: list, tools: Optional[list], response: dict,
+        elapsed: float, success: bool, error: str,
+    ) -> None:
+        try:
+            usage = response.get("usage") if isinstance(response, dict) else None
+            content = response.get("content", "") if isinstance(response, dict) else ""
+            if usage:
+                prompt_tokens = usage.get("prompt_tokens", 0)
+                completion_tokens = usage.get("completion_tokens", 0)
+                total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens)
+                token_count_source = "provider"
+            else:
+                prompt_tokens = _estimate_tokens_for_logging(str([m.get("content", "") for m in messages]))
+                completion_tokens = _estimate_tokens_for_logging(content)
+                total_tokens = prompt_tokens + completion_tokens
+                token_count_source = "estimated"
+
+            from ..storage.llm_calls import LlmCallRecord
+
+            self._store.record(LlmCallRecord(
+                service=self._service,
+                tier=self._tier,
+                team=self._team,
+                agent=self._agent,
+                role=self._role,
+                session_id=self._session_id,
+                provider=type(self._inner).__name__,
+                model=getattr(self._inner, "model", ""),
+                base_url=getattr(self._inner, "base_url", ""),
+                prompt=list(messages),
+                tools=list(tools) if tools else [],
+                response_content=content,
+                response_tool_calls=response.get("tool_calls", []) if isinstance(response, dict) else [],
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                token_count_source=token_count_source,
+                retry_count=response.get("retry_count", 0) if isinstance(response, dict) else 0,
+                latency_sec=elapsed,
+                success=success,
+                error=error,
+            ))
+        except Exception:
+            LOG.exception("Failed to record LLM call log (call itself unaffected)")
+
+
+def wrap_with_logging(
+    llm: ChatLLM,
+    store: Any,
+    *,
+    service: str = "vinu-agent",
+    tier: str = "",
+    team: str = "",
+    agent: str = "",
+    role: str = "",
+    session_id: str = "",
+) -> ChatLLM:
+    """No-op (returns llm unchanged) when store is None, so every call site
+    can pass it through unconditionally without an `if store:` guard."""
+    if store is None:
+        return llm
+    return LoggingChatLLM(
+        llm, store, service=service, tier=tier, team=team, agent=agent, role=role, session_id=session_id,
+    )
+
+
+def create_llm_from_config(llm_config: LLMConfig) -> ChatLLM:
+    """Builds a ChatLLM from a standalone LLMConfig -- not tied to
+    AgentConfig.llm specifically, so different tiers (orchestrator vs.
+    teams/specialists) can each have their own independently-configured
+    provider/model/base_url. create_llm() below is just this applied to
+    the process's default config.llm, kept for existing call sites."""
+    provider = llm_config.provider.lower()
     if provider == "openai":
         llm: ChatLLM = OpenAIChatLLM(
-            model=config.llm.model_name,
-            api_key=config.llm.api_key,
-            base_url=config.llm.base_url,
-            timeout=config.llm.timeout,
+            model=llm_config.model_name,
+            api_key=llm_config.api_key,
+            base_url=llm_config.base_url,
+            timeout=llm_config.timeout,
         )
     elif provider == "deepseek":
         llm = DeepSeekChatLLM(
-            model=config.llm.model_name,
-            api_key=config.llm.api_key,
-            base_url=config.llm.base_url,
-            timeout=config.llm.timeout,
+            model=llm_config.model_name,
+            api_key=llm_config.api_key,
+            base_url=llm_config.base_url,
+            timeout=llm_config.timeout,
         )
     elif provider == "anthropic":
         llm = AnthropicChatLLM(
-            model=config.llm.model_name,
-            api_key=config.llm.api_key,
-            timeout=config.llm.timeout,
+            model=llm_config.model_name,
+            api_key=llm_config.api_key,
+            timeout=llm_config.timeout,
         )
     elif provider == "ollama":
         llm = OllamaChatLLM(
-            model=config.llm.model_name,
-            base_url=config.llm.base_url,
-            timeout=config.llm.timeout,
+            model=llm_config.model_name,
+            base_url=llm_config.base_url,
+            timeout=llm_config.timeout,
         )
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")
 
     llm.context_window = (
-        config.llm.context_window
-        if config.llm.context_window > 0
+        llm_config.context_window
+        if llm_config.context_window > 0
         else resolve_context_window(llm.base_url, llm.model)
     )
     return llm
+
+
+def create_llm(config: AgentConfig) -> ChatLLM:
+    return create_llm_from_config(config.llm)

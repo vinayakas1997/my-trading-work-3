@@ -19,7 +19,17 @@ def _discover_subclasses() -> list:
             continue
         importlib.import_module(f".{module_name}", package=__package__)
 
-    _SUBCLASSES_CACHE = list(BaseTool.__subclasses__())
+    # Real fix: BaseTool.__subclasses__() is process-global, not scoped to
+    # this package -- any BaseTool subclass defined anywhere in the
+    # codebase becomes "discoverable" here the instant its module is
+    # imported by anything, even transitively (e.g. agent/team.py's
+    # DelegateToAgentTool, which requires constructor args and is built
+    # per-team on purpose, not meant to be auto-registered). Only count
+    # subclasses actually defined inside this tools/ package.
+    _SUBCLASSES_CACHE = [
+        cls for cls in BaseTool.__subclasses__()
+        if cls.__module__.startswith(f"{__package__}.")
+    ]
     return _SUBCLASSES_CACHE
 
 
@@ -34,6 +44,10 @@ def build_registry(
     session_service: Any = None,
     workflow_tracker: Any = None,
     as_of: Optional[str] = None,
+    llm: Any = None,
+    teams_dir: str = "",
+    run_store: Any = None,
+    llm_call_store: Any = None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
     subclasses = _discover_subclasses()
@@ -60,6 +74,22 @@ def build_registry(
             tool._workflow_tracker = workflow_tracker
         if as_of is not None and hasattr(tool, "_as_of"):
             tool._as_of = as_of
+        if llm is not None and hasattr(tool, "_llm"):
+            tool._llm = llm
+        if teams_dir and hasattr(tool, "_teams_dir"):
+            tool._teams_dir = teams_dir
+        if run_store is not None and hasattr(tool, "_run_store"):
+            tool._run_store = run_store
+        if llm_call_store is not None and hasattr(tool, "_llm_call_store"):
+            tool._llm_call_store = llm_call_store
+        # Tools that need to reach the full tool pool (e.g. delegate_to_team,
+        # which builds a scoped sub-registry for each team) get a
+        # self-reference to the registry being built here, once construction
+        # finishes -- see the loop below.
         registry.register(tool)
+
+    for tool in registry.all_tools():
+        if hasattr(tool, "_full_registry"):
+            tool._full_registry = registry
 
     return registry

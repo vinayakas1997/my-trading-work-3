@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .agent.context import ContextBuilder
-from .agent.llm import create_llm
+from .agent.llm import create_llm, create_llm_from_config
 from .agent.skills import SkillsLoader
 from .config import AgentConfig, load_config
 from .facts import FactsRegistry, seed_if_empty
@@ -12,6 +12,8 @@ from .session.events import EventBus
 from .session.models import Session
 from .session.service import SessionService
 from .session.store import SessionStore
+from .storage.llm_calls import LlmCallLogStore
+from .storage.team_runs import TeamRunStore
 from .swarm.models import SwarmRun
 from .swarm.runtime import SwarmRuntime
 from .swarm.store import SwarmStore
@@ -22,6 +24,15 @@ class AgentService:
     def __init__(self, config: Optional[AgentConfig] = None) -> None:
         self._config = config or load_config()
         self._llm = create_llm(self._config)
+        # Independent LLM client for the orchestrator's own top-level loop
+        # -- only built if configured (VINU_ORCHESTRATOR_LLM_*), otherwise
+        # the orchestrator transparently shares `self._llm` with teams/
+        # specialists, exactly as before this existed.
+        self._orchestrator_llm = (
+            create_llm_from_config(self._config.orchestrator_llm)
+            if self._config.orchestrator_llm is not None
+            else self._llm
+        )
         self._event_bus = EventBus()
         self._store = SessionStore(
             Path(self._config.sessions_dir)
@@ -39,15 +50,22 @@ class AgentService:
             skills_dir=Path(self._config.skills_dir) if self._config.skills_dir else None,
             user_skills_dir=Path(self._config.user_skills_dir) if self._config.user_skills_dir else None,
         )
+        self._team_run_store = TeamRunStore(data_root / "team_runs.db")
+        self._llm_call_store = LlmCallLogStore(data_root / "llm_calls.db")
         self._session_service = SessionService(
             store=self._store,
             event_bus=self._event_bus,
             llm=self._llm,
+            orchestrator_llm=self._orchestrator_llm,
             skills_loader=self._skills_loader,
             persistent_memory=self._memory,
             unified_memory=self._unified_memory,
             facts_registry=self._facts_registry,
             services_config=self._config.services,
+            teams_dir=self._config.teams_dir,
+            orchestrator_dir=self._config.orchestrator_dir,
+            run_store=self._team_run_store,
+            llm_call_store=self._llm_call_store,
         )
         self._swarm_store = SwarmStore(
             Path(self._config.sessions_dir) / ".." / "swarm"
@@ -101,6 +119,10 @@ class AgentService:
             self._unified_memory.close()
         if hasattr(self, "_facts_registry"):
             self._facts_registry.close()
+        if hasattr(self, "_team_run_store"):
+            self._team_run_store.close()
+        if hasattr(self, "_llm_call_store"):
+            self._llm_call_store.close()
 
     def __enter__(self):
         return self
