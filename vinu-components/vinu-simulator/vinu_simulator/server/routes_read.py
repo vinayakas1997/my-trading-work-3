@@ -77,6 +77,16 @@ async def simulate_custom(req: CustomSimulateRequest) -> CustomSimulateResponse:
         trade_count=len(result.trades),
         equity_points=len(result.portfolio_values),
         validation=result.validation,
+        # fillna(0.0): the first row of a pct_change-derived return series is
+        # always NaN, and float('nan') round-trips badly through strict JSON
+        # (json.loads on the receiving end can choke depending on parser).
+        # 0.0 for "no prior period to compare against" is the same
+        # convention PBO's own caller (vinu-research's sweep-grid) already
+        # needs anyway -- a first-period return of exactly 0 does not
+        # meaningfully distort a multi-hundred-period Sharpe/PBO calculation.
+        daily_returns=(
+            result.daily_returns.fillna(0.0).tolist() if not result.daily_returns.empty else []
+        ),
     )
 
 

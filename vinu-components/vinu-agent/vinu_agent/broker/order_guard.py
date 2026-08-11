@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
-from typing import Any
 
 import requests
 
-from .alpaca import AlpacaBroker
+from .base import Broker
+from .daily_limits import DEFAULT_DAILY_LIMIT_DB_PATH, DailyLimitStore
+from .factory import get_live_broker
 from .kill_switch import is_trading_halted
 from .mandate import TradingMandate
 
@@ -30,37 +30,30 @@ class OrderGuard:
     def __init__(
         self,
         mandate: TradingMandate | None = None,
-        broker: AlpacaBroker | None = None,
-        research_api_url: str | None = None,
+        broker: Broker | None = None,
         portfolio_api_url: str | None = None,
+        daily_limit_store: DailyLimitStore | None = None,
     ) -> None:
         self._mandate = mandate or TradingMandate.load()
-        self._broker = broker or AlpacaBroker()
-        self._research_api_url = research_api_url or os.environ.get(
-            "VINU_RESEARCH_API_URL", "http://localhost:8087"
-        )
+        self._broker = broker or get_live_broker()
+        # No research_api_url anymore -- the active-artifact check reads
+        # vinu-research's strategy_store.db directly, in-process (see
+        # _check_active_artifact / .research_link).
         self._portfolio_api_url = portfolio_api_url or os.environ.get(
             "VINU_PORTFOLIO_API_URL", "http://localhost:8090"
         )
-        self._daily_order_count: dict[str, int] = {}
-        self._daily_volume: dict[str, float] = {}
-        self._last_reset_date: date = date.today()
-
-    def _reset_daily_if_needed(self) -> None:
-        today = date.today()
-        if today != self._last_reset_date:
-            self._daily_order_count.clear()
-            self._daily_volume.clear()
-            self._last_reset_date = today
+        # Persistent, shared, SQLite-backed -- NOT a plain in-process dict.
+        # OrderGuard is constructed fresh on every trade_tool.py execute()
+        # call; a dict here would silently reset to empty every time,
+        # which is exactly the bug this store closes (see
+        # daily_limits.py's module docstring).
+        self._daily_limit_store = daily_limit_store or DailyLimitStore(DEFAULT_DAILY_LIMIT_DB_PATH)
 
     def _count_daily_orders(self, symbol: str) -> int:
-        self._reset_daily_if_needed()
-        return self._daily_order_count.get(symbol, 0)
+        return self._daily_limit_store.count_today(symbol)
 
     def _increment_daily_count(self, symbol: str, value: float = 0.0) -> None:
-        self._reset_daily_if_needed()
-        self._daily_order_count[symbol] = self._daily_order_count.get(symbol, 0) + 1
-        self._daily_volume[symbol] = self._daily_volume.get(symbol, 0.0) + value
+        self._daily_limit_store.record_order(symbol, value)
 
     def check(
         self,
@@ -70,7 +63,18 @@ class OrderGuard:
         price: float | None = None,
         estimated_value: float | None = None,
     ) -> GuardResult:
-        if is_trading_halted():
+        # Phase 3 (New-talk-agents/new-thinking/new-restructure/phases/
+        # phase-3-kill-switch/): scope convention is the ticker symbol --
+        # matches what's available on both sides (a halt issuer scopes to
+        # a symbol; this check has `symbol` right here). Before this,
+        # is_trading_halted() was called with no scope at all, so a
+        # symbol-scoped halt (as opposed to a global one) never actually
+        # blocked anything at the real order-execution boundary -- this is
+        # that boundary, shared by both the LLM's submit_order tool and
+        # vinu-live's order placement (both route through /broker/order).
+        # is_trading_halted(scope=...) already checks the global halt
+        # first internally, so this one call covers both.
+        if is_trading_halted(scope=symbol):
             return GuardResult(False, "Trading is halted by kill switch")
 
         mandate = self._mandate
@@ -146,8 +150,7 @@ class OrderGuard:
                 return concentration_result
 
         if mandate.max_daily_trade_volume > 0:
-            self._reset_daily_if_needed()
-            daily_total = self._daily_volume.get(symbol, 0.0)
+            daily_total = self._daily_limit_store.volume_today(symbol)
             if daily_total + value > mandate.max_daily_trade_volume:
                 return GuardResult(
                     False,
@@ -161,26 +164,26 @@ class OrderGuard:
         """Reject orders for symbols with no strategy artifact that cleared the
         promotion gate (deflated Sharpe + holdout + stress test, see vinu-research).
 
-        Fails open (allows the order, logs a warning) if the research-api is
-        unreachable — consistent with how every other broker-dependent check in
-        this class handles a downstream outage, so one unavailable service can't
-        silently block all trading.
+        Reads vinu-research's real strategy_store.db directly, in-process
+        (see .research_link) -- no network call, since vinu-research is no
+        longer assumed to be running as a separate service. Still fails
+        open (allows the order, logs a warning) on any exception: a
+        missing/corrupt local DB shouldn't silently block all trading any
+        more than a downstream outage used to.
         """
         try:
-            resp = requests.get(
-                f"{self._research_api_url}/research/artifacts",
-                params={"status": "ACTIVE"},
-                timeout=10.0,
-            )
-            resp.raise_for_status()
-            artifacts = resp.json()
+            from vinu_research.models import ArtifactStatus
+
+            from .research_link import get_strategy_store
+
+            store = get_strategy_store()
+            artifacts = store.list_artifacts_for_symbol(symbol, statuses=[ArtifactStatus.ACTIVE])
         except Exception as e:
             logger.warning("Could not check active-artifact status for %s: %s", symbol, e)
             return GuardResult(True)
 
-        for artifact in artifacts:
-            if symbol in (artifact.get("universe") or []):
-                return GuardResult(True)
+        if artifacts:
+            return GuardResult(True)
 
         return GuardResult(
             False,

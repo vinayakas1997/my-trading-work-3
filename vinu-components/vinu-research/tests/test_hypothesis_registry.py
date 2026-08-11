@@ -29,6 +29,32 @@ class TestHypothesisModel:
         h = Hypothesis.create("Test", "Thesis", universe=["AAPL", "MSFT"])
         assert h.universe == ["AAPL", "MSFT"]
 
+    def test_create_defaults_source_to_system(self):
+        h = Hypothesis.create("Test", "Thesis")
+        assert h.source == "system"
+
+    def test_create_from_human_always_tags_source_human(self):
+        h = Hypothesis.create_from_human("Human Theory", "AAPL is due for a bounce", universe=["AAPL"])
+        assert h.source == "human"
+        assert h.title == "Human Theory"
+        assert h.thesis == "AAPL is due for a bounce"
+
+    def test_create_from_human_has_no_source_parameter_to_override(self):
+        """Structural enforcement, not a convention: create_from_human's
+        signature has no `source` parameter at all -- there is nothing a
+        careless call site could pass to silently produce a
+        non-"human"-tagged hypothesis through this path."""
+        import inspect
+        sig = inspect.signature(Hypothesis.create_from_human)
+        assert "source" not in sig.parameters
+
+    def test_source_persists_through_registry_round_trip(self):
+        reg, _ = _make_registry()
+        h = Hypothesis.create_from_human("Human Theory", "thesis text")
+        reg.create(h)
+        fetched = reg.get(h.hypothesis_id)
+        assert fetched.source == "human"
+
 
 class TestHypothesisRegistryCRUD:
     def test_create_and_get(self):

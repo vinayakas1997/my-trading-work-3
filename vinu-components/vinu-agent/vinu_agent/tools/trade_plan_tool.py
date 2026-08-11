@@ -429,6 +429,24 @@ class TradePlanTool(BaseTool):
         base_url: str,
         symbol: str,
     ) -> list[dict]:
+        """In-process first (reads vinu-research's real local strategy_store
+        directly), HTTP fallback only if that raises -- see
+        vinu_agent/broker/research_link.py."""
+        try:
+            from ..broker.research_link import get_strategy_store, serialize_artifact_summary
+            from vinu_research.models import ArtifactStatus
+
+            store = get_strategy_store()
+            artifacts = await asyncio.to_thread(
+                store.list_artifacts_by_statuses,
+                [ArtifactStatus.ACTIVE, ArtifactStatus.MONITORING],
+            )
+            return [
+                serialize_artifact_summary(a) for a in artifacts if symbol in (a.universe or [])
+            ]
+        except Exception as e:
+            logger.debug("Failed in-process active-strategy read for %s, falling back to HTTP: %s", symbol, e)
+
         try:
             resp = await client.get(
                 f"{base_url}/research/artifacts",
@@ -450,12 +468,20 @@ class TradePlanTool(BaseTool):
         symbol: str,
         timeframe: str,
     ) -> dict:
-        """Fetch the Phase 4 frozen TradePlan (forecast + risk bands + contingency rules).
-
-        This is the only place TradePlanTool talks to the LLM-backed authoring step in
-        vinu-research -- it never calls an LLM itself, it only reads the artifact
-        vinu-research already froze via POST /research/trade-plan/{symbol}.
+        """Author + freeze the Phase 4 TradePlan (forecast + risk bands +
+        contingency rules). In-process first -- runs vinu-research's real
+        author_trade_plan()/freeze_trade_plan() directly (still the only
+        place TradePlanTool triggers the LLM-backed authoring step, just
+        without the network hop); HTTP fallback (POST
+        /research/trade-plan/{symbol}) only if that raises. See
+        vinu_agent/broker/research_link.py.
         """
+        try:
+            data = await self._author_and_freeze_trade_plan_in_process(symbol, timeframe)
+            return {"status": "available", "artifact": data}
+        except Exception as e:
+            logger.debug("Failed in-process trade-plan authoring for %s, falling back to HTTP: %s", symbol, e)
+
         try:
             resp = await client.post(
                 f"{base_url}/research/trade-plan/{symbol}",
@@ -469,6 +495,23 @@ class TradePlanTool(BaseTool):
         except Exception as e:
             logger.warning("Failed to fetch frozen trade plan for %s: %s", symbol, e)
             return {"status": "error", "error": str(e)}
+
+    async def _author_and_freeze_trade_plan_in_process(self, symbol: str, timeframe: str) -> dict:
+        from vinu_research.trade_plan_authoring import author_trade_plan, freeze_trade_plan
+
+        from ..broker.research_link import (
+            get_research_config, get_research_tools, get_strategy_store, serialize_trade_plan_artifact,
+        )
+
+        config = get_research_config()
+        tools = get_research_tools(config)
+        try:
+            plan = await author_trade_plan(symbol, timeframe, config, tools)
+        finally:
+            await tools.close()
+
+        artifact = await asyncio.to_thread(freeze_trade_plan, get_strategy_store(), plan)
+        return serialize_trade_plan_artifact(artifact)
 
     def _render_frozen_plan_block(self, frozen_plan: dict) -> str:
         artifact = frozen_plan.get("artifact", {})
@@ -1071,9 +1114,7 @@ class TradePlanTool(BaseTool):
             pass
 
     async def _write_trade_journal_async(self, research_url: str, plan_data: dict) -> None:
-        import json as _json
         try:
-            import httpx as _httpx
             from datetime import timezone as _tz, datetime as _dt
 
             symbol = plan_data.get("symbol", "")
@@ -1099,27 +1140,54 @@ class TradePlanTool(BaseTool):
 
             title = f"{symbol} {timeframe.title()} TradePlan {_dt.now(_tz.utc).strftime('%Y-%m-%d')}"
 
+            hypothesis_id = await self._write_trade_journal_hypothesis(
+                research_url, title=title, thesis=thesis, symbol=symbol, timeframe=timeframe,
+            )
+            if hypothesis_id is not None:
+                try:
+                    from ..broker.kill_switch import AuditLogger
+                    AuditLogger.log(
+                        AuditLogger.JOURNAL_ENTRY_CREATED,
+                        details={"hypothesis_id": hypothesis_id, "symbol": symbol, "direction": direction},
+                        symbol=symbol,
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    async def _write_trade_journal_hypothesis(
+        self, research_url: str, *, title: str, thesis: str, symbol: str, timeframe: str,
+    ) -> str | None:
+        """In-process first (writes to vinu-research's real local
+        HypothesisRegistry directly), HTTP fallback only if that raises --
+        see vinu_agent/broker/research_link.py. Returns None (not raised)
+        on total failure -- the caller's own best-effort posture."""
+        try:
+            from vinu_research.models import Hypothesis
+
+            from ..broker.research_link import get_hypothesis_registry
+
+            h = Hypothesis.create(title=title, thesis=thesis, universe=[symbol])
+            h.strategy_type = f"trade_plan_{timeframe}"
+            await asyncio.to_thread(get_hypothesis_registry().create, h)
+            return h.hypothesis_id
+        except Exception:
+            logger.debug("Failed in-process trade-journal write for %s, falling back to HTTP", symbol, exc_info=True)
+
+        try:
+            import httpx as _httpx
+
             async with _httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(
                     f"{research_url}/research/hypotheses",
                     json={
-                        "title": title,
-                        "thesis": thesis,
-                        "universe": [symbol],
+                        "title": title, "thesis": thesis, "universe": [symbol],
                         "strategy_type": f"trade_plan_{timeframe}",
                     },
                 )
                 if resp.status_code == 200:
-                    result = resp.json()
-                    hypothesis_id = result.get("hypothesis_id", "")
-                    try:
-                        from ..broker.kill_switch import AuditLogger
-                        AuditLogger.log(
-                            AuditLogger.JOURNAL_ENTRY_CREATED,
-                            details={"hypothesis_id": hypothesis_id, "symbol": symbol, "direction": direction},
-                            symbol=symbol,
-                        )
-                    except Exception:
-                        pass
+                    return resp.json().get("hypothesis_id", "")
         except Exception:
             pass
+        return None

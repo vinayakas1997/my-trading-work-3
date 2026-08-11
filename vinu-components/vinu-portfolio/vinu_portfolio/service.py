@@ -98,12 +98,22 @@ class PortfolioService:
         ]
 
     async def _list_llm_strategies(self) -> list[dict[str, Any]]:
-        resp = await self._http.get(
-            f"{self._config.research_api_url}/research/artifacts",
-            params={"status": "ACTIVE"},
-        )
-        resp.raise_for_status()
-        data: list[dict[str, Any]] = resp.json()
+        """In-process first (reads vinu-research's real local strategy_store
+        directly), HTTP fallback only if that raises -- see
+        vinu_portfolio/research_link.py. Found while migrating: this
+        codebase has its own independent HTTP dependency on vinu-research,
+        separate from vinu-agent's -- not covered by the original
+        vinu-research-in-process migration doc at all."""
+        try:
+            data = await self._list_llm_strategies_in_process()
+        except Exception as e:
+            LOG.debug("Failed in-process ACTIVE-artifact read, falling back to HTTP: %s", e)
+            resp = await self._http.get(
+                f"{self._config.research_api_url}/research/artifacts",
+                params={"status": "ACTIVE"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
         return [
             {
                 "name": a.get("name", "unknown"),
@@ -113,6 +123,17 @@ class PortfolioService:
                 "weights_source": f"artifact:{a.get('artifact_id', '')}",
             }
             for a in data
+        ]
+
+    async def _list_llm_strategies_in_process(self) -> list[dict[str, Any]]:
+        from vinu_portfolio.research_link import get_strategy_store
+        from vinu_research.models import ArtifactStatus
+
+        store = get_strategy_store()
+        artifacts = await asyncio.to_thread(store.list_artifacts_by_statuses, [ArtifactStatus.ACTIVE])
+        return [
+            {"name": a.name, "artifact_id": a.artifact_id, "universe": a.universe}
+            for a in artifacts
         ]
 
     # ------------------------------------------------------------------
@@ -228,6 +249,13 @@ class PortfolioService:
                 "kind": s["kind"],
                 "symbol": s.get("symbol", ""),
                 "target_weight": round(weights.get(s["name"], 0.0), 4),
+                # artifact_id/is_candidate: carried through (not computed
+                # here) so a caller evaluating a mixed batch -- the real
+                # ACTIVE book plus vinu-agent's Phase 2 PEND candidates --
+                # can map a weight back to the specific candidate it funds,
+                # not just match by name string.
+                "artifact_id": s.get("artifact_id", ""),
+                "is_candidate": bool(s.get("is_candidate", False)),
             })
         return result
 
@@ -235,7 +263,9 @@ class PortfolioService:
     # Full portfolio construction pipeline
     # ------------------------------------------------------------------
 
-    async def build_portfolio(self) -> dict[str, Any]:
+    async def build_portfolio(
+        self, extra_candidates: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
         """Run the full portfolio construction pipeline.
 
         1. List active strategies (YAML + LLM)
@@ -244,8 +274,24 @@ class PortfolioService:
         4. Apply constraints
 
         Returns the portfolio weights and metadata.
+
+        `extra_candidates` (vinu-agent Phase 2 -- capital_allocator's PEND
+        batch, see New-talk-agents/new-thinking/new-restructure/phases/
+        phase-2-funding-mechanics/): additional strategy dicts, same shape
+        as list_active_strategies()'s own output plus `is_candidate=True`,
+        evaluated ALONGSIDE the real active book in the same correlation/
+        risk-parity pass. This is how a PEND artifact's would-be weight and
+        its correlation with the existing book (and with other PEND
+        candidates in the same batch) get computed WITHOUT it needing to
+        already be ACTIVE -- list_active_strategies() only ever returns
+        ACTIVE artifacts (confirmed: _list_llm_strategies() filters
+        `status=ACTIVE` server-side), so a PEND candidate is otherwise
+        invisible to this pipeline entirely. Every existing no-arg caller
+        (build_portfolio() with nothing passed) is unaffected.
         """
         strategies = await self.list_active_strategies()
+        if extra_candidates:
+            strategies = strategies + extra_candidates
         if not strategies:
             return {"status": "empty", "strategies": [], "weights": [], "matrix": None}
 
@@ -321,20 +367,37 @@ class PortfolioService:
         artifact_id = strategy.get("artifact_id", "")
         if not artifact_id:
             return {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+
+        n_entries: int
+        accuracy: float | None
         try:
-            resp = await self._http.get(
-                f"{self._config.research_api_url}/research/trade-plan/{artifact_id}/calibration"
-            )
-            if resp.status_code != 200:
-                return {"source": "unavailable", "accuracy": None, "n_entries": 0}
-            data = resp.json()
-            n_entries = data.get("n_entries", 0)
-            if n_entries < self._config.min_calibration_entries_for_tilt:
-                return {"source": "insufficient_data", "accuracy": None, "n_entries": n_entries}
-            return {"source": "calibration", "accuracy": data.get("accuracy"), "n_entries": n_entries}
+            n_entries, accuracy = await self._fetch_calibration_in_process(artifact_id)
         except Exception as e:
-            LOG.warning("Failed to fetch outcome confidence for %s: %s", artifact_id, e)
-            return {"source": "unavailable", "accuracy": None, "n_entries": 0}
+            LOG.debug("Failed in-process calibration read for %s, falling back to HTTP: %s", artifact_id, e)
+            try:
+                resp = await self._http.get(
+                    f"{self._config.research_api_url}/research/trade-plan/{artifact_id}/calibration"
+                )
+                if resp.status_code != 200:
+                    return {"source": "unavailable", "accuracy": None, "n_entries": 0}
+                data = resp.json()
+                n_entries, accuracy = data.get("n_entries", 0), data.get("accuracy")
+            except Exception as e2:
+                LOG.warning("Failed to fetch outcome confidence for %s: %s", artifact_id, e2)
+                return {"source": "unavailable", "accuracy": None, "n_entries": 0}
+
+        if n_entries < self._config.min_calibration_entries_for_tilt:
+            return {"source": "insufficient_data", "accuracy": None, "n_entries": n_entries}
+        return {"source": "calibration", "accuracy": accuracy, "n_entries": n_entries}
+
+    async def _fetch_calibration_in_process(self, artifact_id: str) -> tuple[int, float]:
+        from vinu_portfolio.research_link import get_strategy_store
+        from vinu_research.forecast_skill import compute_calibration
+
+        store = get_strategy_store()
+        entries = await asyncio.to_thread(store.get_calibration_entries, artifact_id)
+        result = compute_calibration(entries)
+        return result.n_entries, result.accuracy
 
     def _load_tags(self) -> dict[str, Any]:
         """Load strategy-tags/tags.yaml once and cache it on the instance.
@@ -377,7 +440,9 @@ class PortfolioService:
         bound = self._config.outcome_tilt_bound
         return 1.0 + bound * (2.0 * accuracy - 1.0)
 
-    async def compute_daily_allocation(self) -> dict[str, Any]:
+    async def compute_daily_allocation(
+        self, extra_candidates: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
         """Regime-aware, outcome-confidence-weighted allocation on top of
         the base risk-parity weights from build_portfolio().
 
@@ -388,8 +453,10 @@ class PortfolioService:
         and known limitations (regime-vocabulary mapping, YAML-strategy
         outcome blind spot, the still-open ShadowEvaluator gap this only
         partially compensates for).
+
+        `extra_candidates`: same PEND-batch pass-through as build_portfolio().
         """
-        base = await self.build_portfolio()
+        base = await self.build_portfolio(extra_candidates=extra_candidates)
         if base["status"] != "ok":
             return base
 
@@ -515,6 +582,15 @@ class PortfolioService:
         artifact_id = strategy.get("artifact_id", "")
         if not artifact_id:
             return None, False
+
+        try:
+            data = await self._fetch_trade_plan_in_process(artifact_id)
+            if data is None:
+                return None, False
+            return data, True
+        except Exception as e:
+            LOG.debug("Failed in-process trade-plan read for %s, falling back to HTTP: %s", artifact_id, e)
+
         try:
             resp = await self._http.get(
                 f"{self._config.research_api_url}/research/trade-plan/{artifact_id}"
@@ -526,6 +602,24 @@ class PortfolioService:
         except Exception as e:
             LOG.warning("Failed to fetch trade plan for %s: %s", artifact_id, e)
             return None, False
+
+    async def _fetch_trade_plan_in_process(self, artifact_id: str) -> dict[str, Any] | None:
+        from vinu_portfolio.research_link import get_strategy_store
+
+        store = get_strategy_store()
+        artifact = await asyncio.to_thread(store.get_artifact, artifact_id)
+        if artifact is None or artifact.type != "trade_plan":
+            return None
+        return {
+            "artifact_id": artifact.artifact_id,
+            "type": artifact.type,
+            "name": artifact.name,
+            "universe": artifact.universe,
+            "status": artifact.status.value,
+            "created_at": artifact.created_at,
+            "updated_at": artifact.updated_at,
+            "trade_plan_data": artifact.trade_plan_data,
+        }
 
     async def _fetch_account_equity(self) -> float | None:
         """Live equity, reused from the same source drawdown_scheduler.py already polls."""

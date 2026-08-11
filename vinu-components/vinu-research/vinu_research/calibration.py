@@ -2,17 +2,32 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vinu_research.forecast_skill import (
     ForecastSkillConfig,
+    compute_angle_calibration,
     compute_brier_score,
     compute_calibration,
     compute_directional_error,
 )
-from vinu_research.models import CalibrationEntry, CalibrationResult, Forecast
+from vinu_research.models import AngleCalibrationResult, CalibrationEntry, CalibrationResult, Forecast
+
+if TYPE_CHECKING:
+    from vinu_research.storage.strategy_store import SqliteStrategyStore
 
 logger = logging.getLogger(__name__)
+
+
+def get_angle_calibration(store: "SqliteStrategyStore", angle_name: str) -> AngleCalibrationResult:
+    """Read-only aggregate for one angle across every artifact it has ever
+    been attributed to (Artifact.origin_angles) -- the real per-angle
+    trust signal the Summary Agent needs (previously nonexistent, see
+    trade_plan_authoring.py's record_realized_outcome, the one write
+    path). An angle with zero entries (never attributed to any closed
+    position yet) returns n_entries=0, not an error."""
+    entries = store.get_angle_calibration_entries(angle_name)
+    return compute_angle_calibration(angle_name, entries)
 
 
 class CalibrationTracker:

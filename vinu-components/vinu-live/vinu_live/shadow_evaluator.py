@@ -54,7 +54,15 @@ class ShadowEvaluator:
                 params={"status": "BENCHING"},
             )
             if resp.status_code == 200:
-                return await resp.json()
+                # httpx.Response.json() is synchronous, not a coroutine --
+                # `await resp.json()` here raised TypeError against a real
+                # httpx.AsyncClient (always silently caught below,
+                # returning []), confirmed via a real (non-mocked) ASGI
+                # call in test_shadow_evaluator_real_endpoint.py. The
+                # existing mocked tests never caught this because their
+                # MockResponse.json() was itself declared async, matching
+                # the bug instead of the real interface.
+                return resp.json()
         except Exception as e:
             LOG.warning("Failed to list benching artifacts: %s", e)
         return []
@@ -100,15 +108,11 @@ class ShadowEvaluator:
         """Fetch paper-trading P&L for an artifact and compute Sharpe."""
         try:
             resp = await self._http.get(
-                # NOTE: /agent/broker/performance/{artifact_id} does not exist yet in
-                # vinu_agent/server/routes_broker.py — this call will 404 regardless
-                # of prefix until that endpoint is actually built. Not fixed here;
-                # see live-safety/SKILL.md.
                 f"{self._agent_api}/agent/broker/performance/{artifact_id}",
             )
             if resp.status_code != 200:
                 return None
-            data = await resp.json()
+            data = resp.json()  # synchronous on a real httpx.Response -- see _list_benching_artifacts
             returns = data.get("daily_returns", [])
             if len(returns) < self._min_paper_days:
                 return None

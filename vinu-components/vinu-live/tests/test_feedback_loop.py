@@ -25,6 +25,12 @@ def _make_worker(book, **config_overrides) -> FeedbackLoopWorker:
     config = LiveConfig(**config_overrides)
     worker = FeedbackLoopWorker(config, book=book)
     worker._http = MagicMock()
+    # Default: no active hypotheses for any symbol -- keeps existing
+    # tests' POST call-count assertions stable (Phase 5 adds a GET lookup
+    # before any evidence POST, and only POSTs evidence when the lookup
+    # actually returns an active hypothesis). Tests that specifically
+    # exercise the hypothesis-evidence write override this.
+    worker._http.get = AsyncMock(return_value=_resp(200, {"hypotheses": []}))
     return worker
 
 
@@ -82,8 +88,12 @@ class TestCycle:
         assert outcome["calibration_recorded"] is True
         assert outcome["pnl_attribution_recorded"] is True
         assert outcome["personality_stats_refreshed"] is True
-        # Three write-back calls: calibration, pnl_attribution, personality refresh.
-        assert worker._http.post.call_count == 3
+        assert outcome["hypothesis_evidence_recorded"] is False  # no active hypotheses (default mock)
+        assert outcome["ticker_ledger_recorded"] is True
+        # Four POST write-back calls: calibration, pnl_attribution,
+        # personality refresh, ticker-ledger close-out (no hypothesis
+        # evidence POST since the lookup found nothing active).
+        assert worker._http.post.call_count == 4
 
     def test_marks_position_processed_so_it_is_not_resent(self, book) -> None:
         pos = open_position(book, "AAPL", "buy", 10.0, 150.0, artifact_id="art_1")
@@ -121,12 +131,15 @@ class TestCycle:
 
         worker = _make_worker(book)
         worker._http.post = AsyncMock(side_effect=ConnectionError("down"))
+        worker._http.get = AsyncMock(side_effect=ConnectionError("down"))
 
         result = asyncio.run(worker.cycle())
         outcome = result["processed"][0]
         assert outcome["calibration_recorded"] is False
         assert outcome["pnl_attribution_recorded"] is False
         assert outcome["personality_stats_refreshed"] is False
+        assert outcome["hypothesis_evidence_recorded"] is False
+        assert outcome["ticker_ledger_recorded"] is False
         assert list_closed_positions(book, unprocessed_only=True) == []
 
     def test_personality_refresh_uses_targeted_angle_names_and_fresh_to_ts(self, book) -> None:
@@ -151,3 +164,111 @@ class TestCycle:
         import vinu_live.feedback_loop as fl
         assert "orchestrator" not in fl.__dict__
         assert "TradePlanOrchestrator" not in dir(fl)
+
+
+class TestHypothesisRegistryAndTickerLedgerWrites:
+    """Phase 5 (New-talk-agents/new-thinking/new-restructure/phases/
+    phase-5-monitor-extend/): the two writes feedback_loop.py's close-out
+    path never made before this phase."""
+
+    def test_closeout_writes_hypothesis_registry_evidence(self, book) -> None:
+        pos = open_position(book, "AAPL", "buy", 10.0, 150.0, artifact_id="art_1")
+        close_position(book, pos.position_id, 165.0)
+
+        worker = _make_worker(book)
+        worker._http.get = AsyncMock(return_value=_resp(200, {
+            "hypotheses": [{"hypothesis_id": "hyp_1", "status": "testing"}],
+        }))
+        worker._http.post = AsyncMock(return_value=_resp(200, {"status": "ok"}))
+
+        result = asyncio.run(worker.cycle())
+
+        outcome = result["processed"][0]
+        assert outcome["hypothesis_evidence_recorded"] is True
+
+        evidence_calls = [
+            c for c in worker._http.post.call_args_list
+            if "/hyp_1/evidence" in c.args[0]
+        ]
+        assert len(evidence_calls) == 1
+        payload = evidence_calls[0].kwargs["json"]
+        assert payload["metric"] == "realized_return_pct"
+        assert payload["conclusion"] == "supports"  # 10% gain
+        assert payload["value"] == pytest.approx(0.10)
+
+    def test_closeout_only_writes_evidence_for_active_status_hypotheses(self, book) -> None:
+        pos = open_position(book, "AAPL", "buy", 10.0, 150.0, artifact_id="art_1")
+        close_position(book, pos.position_id, 165.0)
+
+        worker = _make_worker(book)
+        worker._http.get = AsyncMock(return_value=_resp(200, {
+            "hypotheses": [
+                {"hypothesis_id": "hyp_active", "status": "testing"},
+                {"hypothesis_id": "hyp_rejected", "status": "rejected"},
+                {"hypothesis_id": "hyp_validated", "status": "validated"},
+            ],
+        }))
+        worker._http.post = AsyncMock(return_value=_resp(200, {"status": "ok"}))
+
+        asyncio.run(worker.cycle())
+
+        evidence_ids = {
+            c.args[0].split("/hypotheses/")[1].split("/evidence")[0]
+            for c in worker._http.post.call_args_list
+            if "/hypotheses/" in c.args[0] and c.args[0].endswith("/evidence")
+        }
+        assert evidence_ids == {"hyp_active"}
+
+    def test_closeout_writes_ticker_ledger_row(self, book) -> None:
+        pos = open_position(book, "AAPL", "buy", 10.0, 150.0, artifact_id="art_1")
+        close_position(book, pos.position_id, 165.0)
+
+        worker = _make_worker(book)
+        worker._http.post = AsyncMock(return_value=_resp(200, {"status": "ok"}))
+
+        result = asyncio.run(worker.cycle())
+
+        outcome = result["processed"][0]
+        assert outcome["ticker_ledger_recorded"] is True
+
+        ledger_calls = [
+            c for c in worker._http.post.call_args_list
+            if "/ticker-ledger/event" in c.args[0]
+        ]
+        assert len(ledger_calls) == 1
+        payload = ledger_calls[0].kwargs["json"]
+        assert payload["ticker"] == "AAPL"
+        assert payload["stage"] == "monitor"
+        assert payload["event_type"] == "position_closed"
+        assert payload["ref_id"] == "art_1"
+
+    def test_audit_write_failure_does_not_block_or_reverse_the_close(self, book) -> None:
+        """The real close (and the fact it's marked processed, never to be
+        resent) must already be true BEFORE the new audit writes are even
+        attempted -- proven here by making both new writes fail and
+        confirming the position is still gone from the unprocessed list."""
+        pos = open_position(book, "AAPL", "buy", 10.0, 150.0, artifact_id="art_1")
+        close_position(book, pos.position_id, 165.0)
+
+        worker = _make_worker(book)
+        worker._http.get = AsyncMock(return_value=_resp(200, {
+            "hypotheses": [{"hypothesis_id": "hyp_1", "status": "testing"}],
+        }))
+
+        async def failing_post(url, **kwargs):
+            if "/evidence" in url or "/ticker-ledger/" in url:
+                raise ConnectionError("audit write down")
+            return _resp(200, {"status": "ok"})
+
+        worker._http.post = AsyncMock(side_effect=failing_post)
+
+        result = asyncio.run(worker.cycle())
+
+        outcome = result["processed"][0]
+        assert outcome["hypothesis_evidence_recorded"] is False
+        assert outcome["ticker_ledger_recorded"] is False
+        # The close itself already happened (mark_feedback_processed runs
+        # BEFORE these two writes are even attempted) -- not reversed by
+        # either audit write failing.
+        assert list_closed_positions(book, unprocessed_only=True) == []
+        assert result["status"] == "ok"

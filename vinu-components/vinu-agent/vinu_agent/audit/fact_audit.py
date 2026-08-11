@@ -58,6 +58,24 @@ def _parse_price(raw: str) -> float:
     return float(raw.replace(",", ""))
 
 
+def _numbers_in_text(text: str) -> list[float]:
+    """Same three claim-shapes _extract_claims looks for in a final answer,
+    applied to a tool result's own text -- needed because a manager's only
+    "tool result" for a delegated task is delegate_to_agent's JSON, whose
+    real numbers live inside the specialist's prose `content` string, not
+    as JSON numeric literals. Without this, every number a specialist
+    correctly computed and reported reads as ungrounded once the manager
+    repeats it, a false Fail rather than a real hallucination."""
+    values: list[float] = []
+    for m in _PRICE_RE.finditer(text):
+        values.append(_parse_price(m.group(1)))
+    for m in _PCT_RE.finditer(text):
+        values.append(float(m.group(1)))
+    for m in _SHARES_RE.finditer(text):
+        values.append(float(m.group(1).replace(",", "")))
+    return values
+
+
 def _values_near(target: float, candidates: list[float]) -> bool:
     for c in candidates:
         if abs(c - target) <= max(abs(target * _PRICE_TOLERANCE), 0.50):
@@ -218,8 +236,12 @@ class FactAuditor:
     @staticmethod
     def _collect_numerics(obj) -> list[float]:
         results: list[float] = []
-        if isinstance(obj, (int, float)):
+        if isinstance(obj, bool):
+            pass
+        elif isinstance(obj, (int, float)):
             results.append(float(obj))
+        elif isinstance(obj, str):
+            results.extend(_numbers_in_text(obj))
         elif isinstance(obj, dict):
             for v in obj.values():
                 results.extend(FactAuditor._collect_numerics(v))

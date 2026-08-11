@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -307,6 +310,39 @@ class TestEnhancedExitChecklist:
         assert "MONITOR" in output
 
 
+def _force_active_strategies_in_process_unavailable():
+    return patch(
+        "vinu_agent.broker.research_link.get_strategy_store",
+        side_effect=RuntimeError("not available"),
+    )
+
+
+class TestFetchActiveStrategiesInProcess:
+    def test_returns_real_matching_strategy(self) -> None:
+        from vinu_research.models import Artifact, ArtifactStatus
+        from vinu_research.storage.strategy_store import SqliteStrategyStore
+
+        store = SqliteStrategyStore(Path(tempfile.mktemp(suffix=".db")))
+        active = Artifact.create("strategy", "s1", universe=["AAPL"])
+        active.status = ArtifactStatus.ACTIVE
+        store.upsert_artifact(active)
+        other = Artifact.create("strategy", "s2", universe=["TSLA"])
+        other.status = ArtifactStatus.MONITORING
+        store.upsert_artifact(other)
+
+        tool = TradePlanTool()
+        with patch("vinu_agent.broker.research_link.get_strategy_store", return_value=store):
+            result = asyncio.run(self._run_fetch_strategies(tool, httpx.AsyncClient()))
+
+        assert len(result) == 1
+        assert result[0]["artifact_id"] == active.artifact_id
+
+    @staticmethod
+    async def _run_fetch_strategies(tool: TradePlanTool, client: httpx.AsyncClient) -> list:
+        async with client:
+            return await tool._fetch_active_strategies(client, "http://research.test", "AAPL")
+
+
 class TestFetchActiveStrategies:
     def test_returns_matching_strategies(self) -> None:
         tool = TradePlanTool()
@@ -319,7 +355,8 @@ class TestFetchActiveStrategies:
 
         transport = httpx.MockTransport(handler)
         client = httpx.AsyncClient(transport=transport, base_url="http://research.test")
-        result = asyncio.run(self._run_fetch_strategies(tool, client))
+        with _force_active_strategies_in_process_unavailable():
+            result = asyncio.run(self._run_fetch_strategies(tool, client))
         assert len(result) == 1
         assert result[0]["artifact_id"] == "art-1"
 
@@ -331,7 +368,8 @@ class TestFetchActiveStrategies:
 
         transport = httpx.MockTransport(handler)
         client = httpx.AsyncClient(transport=transport, base_url="http://research.test")
-        result = asyncio.run(self._run_fetch_strategies(tool, client))
+        with _force_active_strategies_in_process_unavailable():
+            result = asyncio.run(self._run_fetch_strategies(tool, client))
         assert result == []
 
     @staticmethod

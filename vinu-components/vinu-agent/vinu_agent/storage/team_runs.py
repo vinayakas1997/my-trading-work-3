@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS team_runs (
     error_message             TEXT NOT NULL DEFAULT '',
     created_at                TEXT NOT NULL,
     updated_at                TEXT NOT NULL,
-    completed_at              TEXT NOT NULL DEFAULT ''
+    completed_at              TEXT NOT NULL DEFAULT '',
+    related_artifact_id       TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_team_runs_status ON team_runs(status);
 CREATE INDEX IF NOT EXISTS idx_team_runs_session ON team_runs(triggered_by_session_id);
@@ -50,8 +51,26 @@ CREATE INDEX IF NOT EXISTS idx_team_tasks_run ON team_tasks(run_id);
 CREATE INDEX IF NOT EXISTS idx_team_tasks_status ON team_tasks(status);
 """
 
-SCHEMA_VERSION = 1
-MIGRATIONS: list[tuple[str, str]] = []
+SCHEMA_VERSION = 2
+MIGRATIONS: list[tuple[str, str]] = [
+    # ADD COLUMN is a no-op (idempotent "duplicate column name" error, caught
+    # by vinu_infra.db.migrate_schema) on a fresh DB, where CREATE TABLE
+    # above already included the column -- real work only happens on a
+    # pre-existing team_runs.db from before this column existed. The index
+    # runs from MIGRATIONS, not the CREATE TABLE block above, specifically
+    # so it always runs *after* the ALTER TABLE, never before it on a
+    # legacy DB (SCHEMA executescript runs before MIGRATIONS on every
+    # connection -- putting the index there would fail referencing a
+    # column that doesn't exist yet on an old database).
+    (
+        "ALTER TABLE team_runs ADD COLUMN related_artifact_id TEXT NOT NULL DEFAULT ''",
+        "1.1.0 -- traceability link to the vinu-research Artifact a run produced, see New-talk-agents/implementation/14-*.md",
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_team_runs_artifact ON team_runs(related_artifact_id)",
+        "1.1.0",
+    ),
+]
 
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
@@ -87,6 +106,7 @@ class TeamRun:
     created_at: str = ""
     updated_at: str = ""
     completed_at: str = ""
+    related_artifact_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -114,6 +134,7 @@ class TeamRun:
             created_at=row.get("created_at", ""),
             updated_at=row.get("updated_at", ""),
             completed_at=row.get("completed_at", ""),
+            related_artifact_id=row.get("related_artifact_id", ""),
         )
 
 
@@ -162,17 +183,42 @@ class TeamRunStore(SQLiteBackend):
     SCHEMA_VERSION = SCHEMA_VERSION
     MIGRATIONS = MIGRATIONS
 
-    def create_run(self, team_name: str, *, triggered_by_session_id: str = "") -> TeamRun:
+    def create_run(
+        self, team_name: str, *, triggered_by_session_id: str = "", related_artifact_id: str = "",
+    ) -> TeamRun:
         now = _now()
         run = TeamRun(
             run_id=_new_id(),
             team_name=team_name,
             triggered_by_session_id=triggered_by_session_id,
+            related_artifact_id=related_artifact_id,
             created_at=now,
             updated_at=now,
         )
         self.upsert("team_runs", run.to_dict(), conflict_columns=["run_id"])
         return run
+
+    def set_related_artifact_id(self, run_id: str, artifact_id: str) -> None:
+        """For the common case where the artifact doesn't exist yet when
+        the run starts (e.g. research's own run creates the artifact only
+        once its manager reaches PASS) -- set it after the fact rather
+        than only at create_run time."""
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE team_runs SET related_artifact_id = ?, updated_at = ? WHERE run_id = ?",
+            (artifact_id, _now(), run_id),
+        )
+        conn.commit()
+
+    def list_by_artifact_id(self, artifact_id: str) -> list[TeamRun]:
+        """Pillar 7's traceability query, made real: every run that ever
+        touched a given vinu-research Artifact, in one query."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM team_runs WHERE related_artifact_id = ? ORDER BY created_at ASC",
+            (artifact_id,),
+        ).fetchall()
+        return [TeamRun.from_row(dict(r)) for r in rows]
 
     def get_run(self, run_id: str) -> Optional[TeamRun]:
         conn = self._get_conn()

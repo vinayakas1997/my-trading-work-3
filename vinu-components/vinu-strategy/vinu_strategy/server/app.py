@@ -13,8 +13,10 @@ from vinu_strategy.server.routes_read import router as read_router
 
 @asynccontextmanager
 async def lifespan(app):
+    from vinu_strategy.server.routes_config import set_service
     from vinu_strategy.server.routes_read import _get_api
-    await asyncio.to_thread(_get_api)
+    api = await asyncio.to_thread(_get_api)
+    set_service(api._service)
     yield
 
 

@@ -9,6 +9,7 @@ description = "Autonomous ReAct agent for the vinu-components ecosystem"
 requires-python = ">=3.10, <3.14"
 dependencies = [
     "vinu-infra",
+    "vinu-research",
     "fastapi>=0.100",
     "uvicorn[standard]",
     "httpx>=0.25",

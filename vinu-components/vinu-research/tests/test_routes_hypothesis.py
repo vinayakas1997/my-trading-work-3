@@ -41,6 +41,33 @@ class TestCreateHypothesis:
         assert resp.status_code == 422
 
 
+class TestCreateHumanHypothesis:
+    """Phase 6 (New-talk-agents/new-thinking/new-restructure/phases/
+    phase-6-thesis-intake/): POST /hypotheses/human is Thesis Intake's
+    only write path -- always source="human"."""
+
+    def test_creates_hypothesis_tagged_source_human(self, client) -> None:
+        resp = client.post("/research/hypotheses/human", json={
+            "title": "AAPL earnings drift",
+            "thesis": "AAPL tends to keep drifting in the direction of its earnings surprise for a week after",
+            "universe": ["AAPL"],
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["source"] == "human"
+        assert data["hypothesis_id"].startswith("hyp_")
+
+    def test_system_route_never_produces_human_source(self, client) -> None:
+        resp = client.post("/research/hypotheses", json={
+            "title": "t", "thesis": "th", "universe": ["AAPL"],
+        })
+        assert resp.json()["source"] == "system"
+
+    def test_requires_title_and_thesis(self, client) -> None:
+        resp = client.post("/research/hypotheses/human", json={"title": "", "thesis": "x"})
+        assert resp.status_code == 422
+
+
 class TestAddEvidence:
     def test_adds_evidence_to_existing_hypothesis(self, client) -> None:
         create_resp = client.post("/research/hypotheses", json={

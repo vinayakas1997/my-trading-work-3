@@ -96,6 +96,40 @@ def run_shadow_evaluate_main(args: argparse.Namespace) -> None:
     asyncio.run(_run())
 
 
+def shadow_worker_main(args: argparse.Namespace | None = None) -> None:
+    """Continuous shadow-evaluation worker -- the scheduled caller
+    Phase 4/5's own implementation records flagged as missing
+    ("ShadowEvaluator still has no scheduled caller"). Same
+    `while True: cycle(); sleep()` shape as trade-plan-worker/
+    feedback-worker; `evaluate_all()` was already correct and tested,
+    just never invoked on a cadence."""
+    config = load_config()
+    interval = (
+        args.interval_sec if args and getattr(args, "interval_sec", None)
+        else config.shadow_worker_interval_sec
+    )
+    print(f"[shadow-worker] Starting (interval={interval}s)")
+    print(f"[shadow-worker] Press Ctrl+C to stop.\n")
+
+    async def _worker_loop() -> None:
+        evaluator = ShadowEvaluator(
+            research_api_url=config.research_api_url,
+            agent_api_url=config.agent_api_url,
+        )
+        try:
+            while True:
+                results = await evaluator.evaluate_all()
+                promoted = sum(1 for r in results if r.get("promoted"))
+                print(f"[shadow-worker] Cycle: {len(results)} checked, {promoted} promoted")
+                time.sleep(interval)
+        except KeyboardInterrupt:
+            print("\n[shadow-worker] Stopped by user.")
+        finally:
+            await evaluator.close()
+
+    asyncio.run(_worker_loop())
+
+
 def run_feedback_cycle_main(args: argparse.Namespace) -> None:
     async def _run() -> None:
         config = load_config()
@@ -204,6 +238,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     se_p = sub.add_parser("shadow-evaluate", help="Run a single shadow-evaluation cycle (BENCHING artifacts)")
     se_p.set_defaults(func=run_shadow_evaluate_main)
+
+    sw_p = sub.add_parser("shadow-worker", help="Run continuous shadow-evaluation worker loop")
+    sw_p.add_argument("--interval", type=int, dest="interval_sec", default=None)
+    sw_p.set_defaults(func=shadow_worker_main)
 
     fb_worker_p = sub.add_parser("feedback-worker", help="Run continuous feedback-loop worker")
     fb_worker_p.add_argument("--interval", type=int, dest="interval_sec", default=None)

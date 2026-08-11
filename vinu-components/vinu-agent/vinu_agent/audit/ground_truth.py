@@ -15,14 +15,14 @@ _GROUND_TRUTH_SENTINEL = "<ground-truth"
 
 
 def _build_broker(as_of: str | None, session_id: str) -> Any:
-    from ..broker.alpaca import AlpacaBroker
+    from ..broker.factory import get_live_broker
     from ..broker.historical_broker import HistoricalFillBroker
 
     if as_of:
         root = os.environ.get("VINU_AGENT_DATA_ROOT", "/data")
         state_path = os.path.join(root, "replay_state", f"{session_id}.json")
         return HistoricalFillBroker(as_of=as_of, state_path=state_path)
-    return AlpacaBroker()
+    return get_live_broker()
 
 
 def _get_held_symbols(as_of: str | None, session_id: str) -> list[str]:
@@ -156,35 +156,17 @@ class GroundTruthInjector:
     def _fetch_open_theses(self, symbols: list[str]) -> dict[str, list[dict]]:
         """Query vinu-research's hypothesis registry for open (testing/exploring/
         monitoring) theses matching *symbols*. Returns {symbol: [thesis_dict, ...]}.
-        Best-effort — API failure returns empty dict."""
-        research_url = self._services_config.get("vinu_research")
-        if not research_url:
-            return {}
+        Best-effort — any failure returns empty dict.
 
-        import httpx
-
-        result: dict[str, list[dict]] = {}
-        try:
-            resp = httpx.get(
-                f"{research_url}/research/hypotheses",
-                params={},
-                timeout=5.0,
-            )
-            if resp.status_code != 200:
-                return {}
-            payload = resp.json()
-        except Exception:
-            return {}
-
-        # GET /hypotheses returns {"count": N, "hypotheses": [...]}, not a
-        # bare list (routes_introspect.py:list_hypotheses) — this previously
-        # always fell through to {} below, silently disabling the "Active
-        # Trade Theses" block.
-        all_hypotheses = payload.get("hypotheses") if isinstance(payload, dict) else payload
+        In-process first (reads HypothesisRegistry's real local store
+        directly), HTTP fallback only if that raises -- see
+        vinu_agent/broker/research_link.py."""
+        all_hypotheses = self._fetch_all_hypotheses()
         if not isinstance(all_hypotheses, list):
             return {}
 
         active_statuses = {"testing", "exploring", "monitoring"}
+        result: dict[str, list[dict]] = {}
 
         for h in all_hypotheses:
             if not isinstance(h, dict):
@@ -198,3 +180,34 @@ class GroundTruthInjector:
                     break
 
         return result
+
+    def _fetch_all_hypotheses(self) -> list[dict] | None:
+        try:
+            from ..broker.research_link import get_hypothesis_registry, serialize_hypothesis
+
+            registry = get_hypothesis_registry()
+            hypotheses = registry.list_all()
+            return [serialize_hypothesis(h) for h in hypotheses]
+        except Exception:
+            logger.debug("GroundTruthInjector: in-process hypothesis read failed, falling back to HTTP", exc_info=True)
+
+        research_url = self._services_config.get("vinu_research")
+        if not research_url:
+            return None
+
+        import httpx
+
+        try:
+            resp = httpx.get(f"{research_url}/research/hypotheses", params={}, timeout=5.0)
+            if resp.status_code != 200:
+                return None
+            payload = resp.json()
+        except Exception:
+            return None
+
+        # GET /hypotheses returns {"count": N, "hypotheses": [...]}, not a
+        # bare list (routes_introspect.py:list_hypotheses) — this previously
+        # always fell through to None below, silently disabling the "Active
+        # Trade Theses" block.
+        hypotheses = payload.get("hypotheses") if isinstance(payload, dict) else payload
+        return hypotheses if isinstance(hypotheses, list) else None

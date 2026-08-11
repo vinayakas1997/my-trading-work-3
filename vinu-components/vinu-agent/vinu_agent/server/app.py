@@ -46,16 +46,19 @@ def create_app(service: Any = None) -> FastAPI:
     import vinu_agent.server.routes_sessions as rs
     import vinu_agent.server.routes_swarm as rw
     import vinu_agent.server.routes_system as rsys
+    import vinu_agent.server.routes_ticker_ledger as rtl
 
     rs._get_service = lambda: app_service
     rw._get_service = lambda: app_service
     rsys._get_service = lambda: app_service
+    rtl._get_service = lambda: app_service
 
     merged = APIRouter()
     merged.include_router(rs.router, tags=["sessions"])
     merged.include_router(rw.router, tags=["swarm"])
     merged.include_router(rsys.router, tags=["system"])
     merged.include_router(rb.router, tags=["broker"])
+    merged.include_router(rtl.router, tags=["ticker-ledger"])
 
     _channels: list[Any] = []
 

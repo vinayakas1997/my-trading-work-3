@@ -158,18 +158,24 @@ services:
         condition: service_healthy
 
   # =========================================================================
-  # vinu-strategy (Port: 8084)
+  # vinu-quant-core (Port: 8084) — merged vinu-strategy + vinu-simulator
+  # (Group 1 fold, component-consolidation-plan.md). Both confirmed
+  # genuinely stateless -- no background worker, pure request/response
+  # APIs -- the lowest-risk fold in that plan. Real paths unchanged
+  # (/strategy/*, /simulator/*); only the host:port both now share
+  # changed, from two ports to one -- see vinu_strategy/server/merged_app.py
+  # and .env/.env-example's VINU_STRATEGY_API_URL/VINU_SIMULATOR_API_URL.
   # =========================================================================
-  strategy-api:
+  quant-core-api:
     build:
       context: .
-      dockerfile: vinu-strategy/Dockerfile
-    command: ["vinu-strategy", "serve", "--host", "0.0.0.0", "--port", "8084"]
+      dockerfile: vinu-quant-core/Dockerfile
     env_file: .env
     ports:
       - "127.0.0.1:8084:8084"
     volumes:
-      - ./data/strategy:/data
+      - ./data/strategy:/data/strategy
+      - ./data/simulator:/data/simulator
     cap_drop:
       - ALL
     cap_add:
@@ -187,7 +193,7 @@ services:
     pids_limit: 256
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8084/strategy/health', timeout=3)"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8084/strategy/health', timeout=3); urllib.request.urlopen('http://localhost:8084/simulator/health', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -196,45 +202,6 @@ services:
       features-api:
         condition: service_healthy
       initial-analysis-api:
-        condition: service_healthy
-
-  # =========================================================================
-  # vinu-simulator (Port: 8085)
-  # =========================================================================
-  simulator-api:
-    build:
-      context: .
-      dockerfile: vinu-simulator/Dockerfile
-    command: ["vinu-simulator", "serve", "--host", "0.0.0.0", "--port", "8085"]
-    env_file: .env
-    ports:
-      - "127.0.0.1:8085:8085"
-    volumes:
-      - ./data/simulator:/data
-    cap_drop:
-      - ALL
-    cap_add:
-      - SETUID
-      - SETGID
-      - SYS_PTRACE
-    security_opt:
-      - "no-new-privileges:true"
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /home/app/.cache
-    mem_limit: 1g
-    cpus: 1
-    pids_limit: 256
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8085/simulator/health', timeout=3)"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    depends_on:
-      strategy-api:
         condition: service_healthy
       stock-api:
         condition: service_healthy
@@ -274,11 +241,9 @@ services:
       retries: 5
       start_period: 15s
     depends_on:
-      strategy-api:
+      quant-core-api:
         condition: service_healthy
       research-api:
-        condition: service_healthy
-      simulator-api:
         condition: service_healthy
 
   # =========================================================================
@@ -320,7 +285,7 @@ services:
     depends_on:
       features-api:
         condition: service_healthy
-      simulator-api:
+      quant-core-api:
         condition: service_healthy
       initial-analysis-api:
         condition: service_healthy
@@ -376,7 +341,10 @@ services:
     build:
       context: .
       dockerfile: vinu-agent/Dockerfile
-    command: ["vinu-agent", "serve", "--host", "0.0.0.0", "--port", "8086"]
+    # No `command:` override -- Dockerfile now uses ENTRYPOINT (entrypoint.sh,
+    # Phase 9 scheduler-wiring) to also start the skill-audit-worker
+    # background loop, same pattern as live-api below. A `command:` here
+    # would just be appended as unused args after the entrypoint script.
     env_file: .env
     ports:
       - "127.0.0.1:8086:8086"
@@ -416,9 +384,7 @@ services:
         condition: service_healthy
       initial-analysis-api:
         condition: service_healthy
-      strategy-api:
-        condition: service_healthy
-      simulator-api:
+      quant-core-api:
         condition: service_healthy
       research-api:
         condition: service_healthy

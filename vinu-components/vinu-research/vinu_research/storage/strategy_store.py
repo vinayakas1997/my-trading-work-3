@@ -6,7 +6,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from vinu_research.models import Artifact, ArtifactStatus, BenchEntry, CalibrationEntry, DecaySnapshot
+from vinu_research.models import (
+    AngleCalibrationEntry,
+    Artifact,
+    ArtifactStatus,
+    BenchEntry,
+    CalibrationEntry,
+    DecaySnapshot,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -31,7 +38,9 @@ CREATE TABLE IF NOT EXISTS artifacts (
     last_validated_ts TEXT NOT NULL DEFAULT '',
     revalidation_count INTEGER NOT NULL DEFAULT 0,
     last_revalidation_verdict INTEGER,
-    trade_plan_data TEXT NOT NULL DEFAULT ''
+    trade_plan_data TEXT NOT NULL DEFAULT '',
+    approved_size REAL NOT NULL DEFAULT 0.0,
+    origin_angles TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS bench_history (
@@ -71,11 +80,57 @@ CREATE TABLE IF NOT EXISTS calibration_entries (
     FOREIGN KEY (artifact_id) REFERENCES artifacts(artifact_id)
 );
 
+CREATE TABLE IF NOT EXISTS angle_calibration_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    angle_name TEXT NOT NULL,
+    artifact_id TEXT NOT NULL,
+    forecast_direction TEXT NOT NULL,
+    actual_return_pct REAL NOT NULL,
+    forecast_magnitude_pct REAL NOT NULL DEFAULT 0.0,
+    brier_score REAL NOT NULL DEFAULT 0.0,
+    directional_correct INTEGER NOT NULL DEFAULT 0,
+    magnitude_error REAL NOT NULL DEFAULT 0.0,
+    timestamp TEXT NOT NULL,
+    FOREIGN KEY (artifact_id) REFERENCES artifacts(artifact_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_bench_artifact ON bench_history(artifact_id);
 CREATE INDEX IF NOT EXISTS idx_snapshots_artifact ON decay_snapshots(artifact_id);
 CREATE INDEX IF NOT EXISTS idx_calibration_artifact ON calibration_entries(artifact_id);
+CREATE INDEX IF NOT EXISTS idx_angle_calibration_angle ON angle_calibration_entries(angle_name);
+CREATE INDEX IF NOT EXISTS idx_angle_calibration_artifact ON angle_calibration_entries(artifact_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_status ON artifacts(status);
 """
+
+
+class InvalidStatusTransition(ValueError):
+    """Raised by the narrow `mark_*` transition methods when the artifact's
+    current status doesn't allow the requested move. `upsert_artifact` itself
+    still allows any status to be written directly -- these methods exist so
+    callers who want the real lifecycle enforced have a way to get it."""
+
+
+_ALLOWED_TRANSITIONS: dict[ArtifactStatus, set[ArtifactStatus]] = {
+    ArtifactStatus.CREATED: {ArtifactStatus.BENCHING, ArtifactStatus.DISABLED},
+    # ACTIVE kept alongside PEND here deliberately -- vinu-live's
+    # ShadowEvaluator promotes BENCHING->ACTIVE directly via its own HTTP
+    # call (a different, independent gate from risk_gatekeeper), and that
+    # path is not touched by Phase 2. risk_gatekeeper_hook.py itself now
+    # only ever requests PEND, never ACTIVE, directly -- see
+    # apply_risk_gatekeeper_verdict().
+    ArtifactStatus.BENCHING: {ArtifactStatus.PEND, ArtifactStatus.ACTIVE, ArtifactStatus.DISABLED},
+    # PENDBLOCK <-> PEND both ways: a PEND candidate blocked by the Kill
+    # Switch goes to PENDBLOCK; a PENDBLOCK candidate re-attempted next
+    # cadence goes back through the same funding check (mark_active if
+    # clear, back to PENDBLOCK if still halted -- transitioning to one's
+    # own current status is already a no-op per transition_status).
+    ArtifactStatus.PEND: {ArtifactStatus.ACTIVE, ArtifactStatus.PENDBLOCK, ArtifactStatus.DISABLED},
+    ArtifactStatus.PENDBLOCK: {ArtifactStatus.ACTIVE, ArtifactStatus.PEND, ArtifactStatus.DISABLED},
+    ArtifactStatus.ACTIVE: {ArtifactStatus.MONITORING, ArtifactStatus.DISABLED},
+    ArtifactStatus.MONITORING: {ArtifactStatus.PEND, ArtifactStatus.ACTIVE, ArtifactStatus.DECAYED, ArtifactStatus.DISABLED},
+    ArtifactStatus.DECAYED: {ArtifactStatus.DISABLED},
+    ArtifactStatus.DISABLED: set(),
+}
 
 
 class SqliteStrategyStore:
@@ -113,6 +168,8 @@ class SqliteStrategyStore:
             ("revalidation_count", "INTEGER NOT NULL DEFAULT 0"),
             ("last_revalidation_verdict", "INTEGER"),
             ("trade_plan_data", "TEXT NOT NULL DEFAULT ''"),
+            ("approved_size", "REAL NOT NULL DEFAULT 0.0"),
+            ("origin_angles", "TEXT NOT NULL DEFAULT '[]'"),
         ]
         for name, typedef in migrations:
             if name not in cols:
@@ -145,8 +202,8 @@ class SqliteStrategyStore:
                 strategy_code, source_run_id, initial_sharpe, initial_max_dd, deflated_sharpe,
                 holdout_passed, stress_test_passed,
                 last_validated_ts, revalidation_count, last_revalidation_verdict,
-                trade_plan_data)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                trade_plan_data, approved_size, origin_angles)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 artifact.artifact_id,
                 artifact.type,
@@ -170,6 +227,8 @@ class SqliteStrategyStore:
                 artifact.revalidation_count,
                 None if artifact.last_revalidation_verdict is None else int(artifact.last_revalidation_verdict),
                 artifact.trade_plan_data,
+                artifact.approved_size,
+                json.dumps(artifact.origin_angles),
             ),
         )
         conn.commit()
@@ -273,11 +332,76 @@ class SqliteStrategyStore:
         ).fetchall()
         return [self._row_to_artifact(r) for r in rows]
 
+    def transition_status(self, artifact_id: str, to_status: ArtifactStatus) -> Artifact:
+        """Move an artifact to `to_status`, enforcing the real lifecycle
+        (see `_ALLOWED_TRANSITIONS`) instead of letting status be set to
+        anything from anywhere the way `upsert_artifact` does. Idempotent:
+        transitioning to the artifact's current status is a no-op.
+        """
+        artifact = self.get_artifact(artifact_id)
+        if artifact is None:
+            raise InvalidStatusTransition(f"no such artifact: {artifact_id}")
+        if artifact.status == to_status:
+            return artifact
+        allowed = _ALLOWED_TRANSITIONS.get(artifact.status, set())
+        if to_status not in allowed:
+            allowed_names = sorted(s.value for s in allowed) or ["none"]
+            raise InvalidStatusTransition(
+                f"{artifact_id}: cannot go {artifact.status.value} -> {to_status.value} "
+                f"(allowed from {artifact.status.value}: {allowed_names})"
+            )
+        artifact.status = to_status
+        return self.upsert_artifact(artifact)
+
+    def mark_benching(self, artifact_id: str) -> Artifact:
+        return self.transition_status(artifact_id, ArtifactStatus.BENCHING)
+
+    def mark_pend(self, artifact_id: str, *, approved_size: float = 0.0) -> Artifact:
+        """Phase 2: risk_gatekeeper's real exit -- APPROVED artifacts land
+        here, not directly in ACTIVE. `approved_size` is the specific
+        dollar cap risk_gatekeeper's exposure_reviewer computed; recorded
+        so capital_allocator can later cap funding at
+        min(approved_size, vinu-portfolio's computed size) and never fund
+        more than what was actually approved for this candidate."""
+        artifact = self.get_artifact(artifact_id)
+        if artifact is None:
+            raise InvalidStatusTransition(f"no such artifact: {artifact_id}")
+        if artifact.status != ArtifactStatus.PEND:
+            allowed = _ALLOWED_TRANSITIONS.get(artifact.status, set())
+            if ArtifactStatus.PEND not in allowed:
+                allowed_names = sorted(s.value for s in allowed) or ["none"]
+                raise InvalidStatusTransition(
+                    f"{artifact_id}: cannot go {artifact.status.value} -> PEND "
+                    f"(allowed from {artifact.status.value}: {allowed_names})"
+                )
+            artifact.status = ArtifactStatus.PEND
+        artifact.approved_size = approved_size
+        return self.upsert_artifact(artifact)
+
+    def mark_pendblock(self, artifact_id: str) -> Artifact:
+        """Phase 3: funding was decided but the Kill Switch is engaged for
+        this artifact's scope -- approved_size is left untouched (the
+        approval itself didn't change, only execution is held)."""
+        return self.transition_status(artifact_id, ArtifactStatus.PENDBLOCK)
+
+    def mark_active(self, artifact_id: str) -> Artifact:
+        return self.transition_status(artifact_id, ArtifactStatus.ACTIVE)
+
+    def mark_monitoring(self, artifact_id: str) -> Artifact:
+        return self.transition_status(artifact_id, ArtifactStatus.MONITORING)
+
+    def mark_decayed(self, artifact_id: str) -> Artifact:
+        return self.transition_status(artifact_id, ArtifactStatus.DECAYED)
+
+    def mark_disabled(self, artifact_id: str) -> Artifact:
+        return self.transition_status(artifact_id, ArtifactStatus.DISABLED)
+
     def delete_artifact(self, artifact_id: str) -> bool:
         conn = self._get_conn()
         conn.execute("DELETE FROM decay_snapshots WHERE artifact_id = ?", (artifact_id,))
         conn.execute("DELETE FROM bench_history WHERE artifact_id = ?", (artifact_id,))
         conn.execute("DELETE FROM calibration_entries WHERE artifact_id = ?", (artifact_id,))
+        conn.execute("DELETE FROM angle_calibration_entries WHERE artifact_id = ?", (artifact_id,))
         cur = conn.execute("DELETE FROM artifacts WHERE artifact_id = ?", (artifact_id,))
         conn.commit()
         return cur.rowcount > 0
@@ -330,6 +454,36 @@ class SqliteStrategyStore:
             (artifact_id,),
         ).fetchall()
         return [self._row_to_calibration_entry(r) for r in rows]
+
+    def append_angle_calibration_entry(self, entry: AngleCalibrationEntry) -> AngleCalibrationEntry:
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO angle_calibration_entries
+               (angle_name, artifact_id, forecast_direction, actual_return_pct,
+                forecast_magnitude_pct, brier_score, directional_correct, magnitude_error, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                entry.angle_name,
+                entry.artifact_id,
+                entry.forecast_direction,
+                entry.actual_return_pct,
+                entry.forecast_magnitude_pct,
+                entry.brier_score,
+                int(entry.directional_correct),
+                entry.magnitude_error,
+                entry.timestamp,
+            ),
+        )
+        conn.commit()
+        return entry
+
+    def get_angle_calibration_entries(self, angle_name: str) -> list[AngleCalibrationEntry]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM angle_calibration_entries WHERE angle_name = ? ORDER BY id ASC",
+            (angle_name,),
+        ).fetchall()
+        return [self._row_to_angle_calibration_entry(r) for r in rows]
 
     def save_snapshot(self, snapshot: DecaySnapshot) -> DecaySnapshot:
         conn = self._get_conn()
@@ -403,6 +557,12 @@ class SqliteStrategyStore:
                 else bool(row["last_revalidation_verdict"])
             ),
             trade_plan_data=row["trade_plan_data"] if "trade_plan_data" in row.keys() else "",
+            approved_size=row["approved_size"] if "approved_size" in row.keys() else 0.0,
+            origin_angles=(
+                json.loads(row["origin_angles"])
+                if "origin_angles" in row.keys() and row["origin_angles"]
+                else []
+            ),
         )
 
     @staticmethod
@@ -419,6 +579,20 @@ class SqliteStrategyStore:
     @staticmethod
     def _row_to_calibration_entry(row: sqlite3.Row) -> CalibrationEntry:
         return CalibrationEntry(
+            artifact_id=row["artifact_id"],
+            forecast_direction=row["forecast_direction"],
+            actual_return_pct=row["actual_return_pct"],
+            forecast_magnitude_pct=row["forecast_magnitude_pct"],
+            brier_score=row["brier_score"],
+            directional_correct=bool(row["directional_correct"]),
+            magnitude_error=row["magnitude_error"],
+            timestamp=row["timestamp"],
+        )
+
+    @staticmethod
+    def _row_to_angle_calibration_entry(row: sqlite3.Row) -> AngleCalibrationEntry:
+        return AngleCalibrationEntry(
+            angle_name=row["angle_name"],
             artifact_id=row["artifact_id"],
             forecast_direction=row["forecast_direction"],
             actual_return_pct=row["actual_return_pct"],

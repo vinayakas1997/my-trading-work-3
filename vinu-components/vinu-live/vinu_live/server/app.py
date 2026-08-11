@@ -3,12 +3,18 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, FastAPI
+from pydantic import BaseModel
 
 from vinu_live.config import load_config
 from vinu_live.feedback_loop import FeedbackLoopWorker
 from vinu_live.scheduler import LiveScheduler
 from vinu_live.shadow_evaluator import ShadowEvaluator
 from vinu_live.trade_plan.orchestrator import TradePlanOrchestrator
+
+
+class RebalanceRequestBody(BaseModel):
+    symbol: str
+    reason: str
 
 
 def create_app() -> FastAPI:
@@ -59,6 +65,30 @@ def create_app() -> FastAPI:
             return {"status": "ok", "n_artifacts": len(results), "results": results}
         finally:
             await evaluator.close()
+
+    @router.post("/trade-plan/rebalance-request")
+    async def submit_rebalance_request(body: RebalanceRequestBody) -> dict[str, Any]:
+        """Phase 5's intake point (trade_plan/rebalance_intake.py), now
+        HTTP-reachable -- the missing caller Phase 2's capital_allocator
+        rebalancer (vinu-agent, a separate container) needed. Accepting a
+        request here only means the symbol's own real next cycle will
+        CONSIDER it as one more advisory input alongside its actual
+        invalidation/contingency rules -- see
+        TradePlanOrchestrator._evaluate_rebalance_request -- never that it
+        will be honored. Constructing a fresh TradePlanOrchestrator per
+        request (same as every other route here) is safe specifically
+        because RebalanceRequestQueue is SQLite-backed at a shared,
+        on-disk path under config.data_root -- the actual trade-plan-
+        worker background process (same container, same volume, see
+        entrypoint.sh) picks this request up on its own next cycle, not
+        this throwaway instance."""
+        config = load_config()
+        orchestrator = TradePlanOrchestrator(config)
+        try:
+            orchestrator.submit_rebalance_request(body.symbol, body.reason)
+            return {"status": "ok", "symbol": body.symbol.upper()}
+        finally:
+            await orchestrator.close()
 
     @router.get("/status")
     async def status() -> dict[str, str]:

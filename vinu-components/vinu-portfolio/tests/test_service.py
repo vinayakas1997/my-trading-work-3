@@ -23,6 +23,17 @@ def _resp(status_code=200, json_body=None):
     return resp
 
 
+def _force_research_link_unavailable():
+    """vinu-research is now consulted in-process first (research_link.py) --
+    forces the HTTP fallback path these existing tests exercise, same
+    convention vinu-agent's test suite already uses for its own
+    research_link.py-backed call sites."""
+    return patch(
+        "vinu_portfolio.research_link.get_strategy_store",
+        side_effect=RuntimeError("not available"),
+    )
+
+
 class TestAllocateRiskParity:
     def test_empty_strategies_returns_empty(self) -> None:
         svc = _service()
@@ -127,6 +138,74 @@ class TestBuildPortfolio:
         assert weights["a"] == pytest.approx(0.5)
         assert weights["b"] == pytest.approx(0.5)
 
+    def test_extra_candidates_evaluated_alongside_active_book(self) -> None:
+        """Phase 2: a PEND candidate (not ACTIVE, so list_active_strategies()
+        would never surface it on its own) must still get a real weight
+        when passed via extra_candidates."""
+        svc = _service()
+        active = [{"name": "active_a", "kind": "yaml", "symbol": "AAPL"}]
+        svc.list_active_strategies = AsyncMock(return_value=active)
+        svc._build_returns_df = AsyncMock(return_value=None)  # equal-weight path, simplest to assert
+
+        candidate = {
+            "name": "pend_b", "kind": "llm_python", "symbol": "MSFT",
+            "artifact_id": "art_pend_1", "weights_source": "artifact:art_pend_1",
+            "is_candidate": True,
+        }
+        result = asyncio.run(svc.build_portfolio(extra_candidates=[candidate]))
+
+        assert result["status"] == "ok"
+        assert result["n_strategies"] == 2
+        names = {w["name"] for w in result["weights"]}
+        assert names == {"active_a", "pend_b"}
+        pend_weight = next(w for w in result["weights"] if w["name"] == "pend_b")
+        assert pend_weight["artifact_id"] == "art_pend_1"
+        assert pend_weight["is_candidate"] is True
+        active_weight = next(w for w in result["weights"] if w["name"] == "active_a")
+        assert active_weight["is_candidate"] is False
+
+    def test_no_extra_candidates_behaves_exactly_as_before(self) -> None:
+        """Existing no-arg callers (the pre-Phase-2 /portfolio/state,
+        /portfolio/weights routes) must see identical behavior -- extra_
+        candidates is purely additive."""
+        svc = _service()
+        active = [{"name": "a", "kind": "yaml"}, {"name": "b", "kind": "yaml"}]
+        svc.list_active_strategies = AsyncMock(return_value=active)
+        svc._build_returns_df = AsyncMock(return_value=None)
+
+        with_none = asyncio.run(svc.build_portfolio(extra_candidates=None))
+        with_empty = asyncio.run(svc.build_portfolio(extra_candidates=[]))
+        no_arg = asyncio.run(svc.build_portfolio())
+
+        assert with_none["weights"] == with_empty["weights"] == no_arg["weights"]
+
+    def test_pend_vs_pend_correlation_reflected_in_matrix(self) -> None:
+        """Two PEND candidates in the same batch, highly correlated with
+        each other -- the correlation matrix must show it (this is what
+        Phase 2's 'NEW-vs-NEW correlation' guard rail relies on: routing
+        the batch through vinu-portfolio's own correlation matrix rather
+        than needing a separate check)."""
+        svc = _service()
+        svc.list_active_strategies = AsyncMock(return_value=[])
+        dates = pd.date_range("2024-01-01", periods=15)
+        returns_df = pd.DataFrame(
+            {"pend_x": np.linspace(-0.01, 0.01, 15), "pend_y": np.linspace(-0.01, 0.01, 15)},
+            index=dates,
+        )
+        svc._build_returns_df = AsyncMock(return_value=returns_df)
+
+        candidates = [
+            {"name": "pend_x", "kind": "llm_python", "artifact_id": "x", "is_candidate": True},
+            {"name": "pend_y", "kind": "llm_python", "artifact_id": "y", "is_candidate": True},
+        ]
+        result = asyncio.run(svc.build_portfolio(extra_candidates=candidates))
+
+        matrix = result["correlation_matrix"]
+        assert matrix is not None
+        idx_x = matrix["strategies"].index("pend_x")
+        idx_y = matrix["strategies"].index("pend_y")
+        assert matrix["values"][idx_x][idx_y] == pytest.approx(1.0, abs=1e-6)
+
 
 class TestListActiveStrategies:
     def test_merges_yaml_and_llm_strategies(self) -> None:
@@ -137,7 +216,8 @@ class TestListActiveStrategies:
                 _resp(200, [{"name": "llm_strat", "artifact_id": "art_1", "universe": ["MSFT"]}]),
             ]
         )
-        result = asyncio.run(svc.list_active_strategies())
+        with _force_research_link_unavailable():
+            result = asyncio.run(svc.list_active_strategies())
         names = {s["name"] for s in result}
         assert names == {"yaml_strat", "llm_strat"}
 
@@ -150,8 +230,30 @@ class TestListActiveStrategies:
             return _resp(200, [{"name": "llm_strat", "artifact_id": "art_1"}])
 
         svc._http.get = fake_get
-        result = asyncio.run(svc.list_active_strategies())
+        with _force_research_link_unavailable():
+            result = asyncio.run(svc.list_active_strategies())
         assert [s["name"] for s in result] == ["llm_strat"]
+
+    def test_lists_real_active_llm_strategies_in_process(self) -> None:
+        from vinu_research.models import Artifact, ArtifactStatus
+        from vinu_research.storage.strategy_store import SqliteStrategyStore
+        import tempfile
+        from pathlib import Path
+
+        store = SqliteStrategyStore(Path(tempfile.mktemp(suffix=".db")))
+        active = Artifact.create("strategy", "llm_strat", universe=["MSFT"])
+        active.status = ArtifactStatus.ACTIVE
+        store.upsert_artifact(active)
+
+        svc = _service()
+        svc._http.get = AsyncMock(return_value=_resp(200, [{"name": "yaml_strat", "symbol": "AAPL"}]))
+        with patch("vinu_portfolio.research_link.get_strategy_store", return_value=store):
+            result = asyncio.run(svc.list_active_strategies())
+
+        llm_entries = [s for s in result if s["kind"] == "llm_python"]
+        assert len(llm_entries) == 1
+        assert llm_entries[0]["artifact_id"] == active.artifact_id
+        assert llm_entries[0]["symbol"] == "MSFT"
 
 
 class TestFetchBenchmarkRegime:
@@ -204,9 +306,10 @@ class TestFetchOutcomeConfidence:
         svc._http.get = AsyncMock(
             return_value=_resp(200, {"n_entries": 8, "accuracy": 0.75})
         )
-        result = asyncio.run(
-            svc._fetch_outcome_confidence({"kind": "llm_python", "artifact_id": "art_1"})
-        )
+        with _force_research_link_unavailable():
+            result = asyncio.run(
+                svc._fetch_outcome_confidence({"kind": "llm_python", "artifact_id": "art_1"})
+            )
         assert result == {"source": "calibration", "accuracy": 0.75, "n_entries": 8}
 
     def test_llm_strategy_with_insufficient_entries(self) -> None:
@@ -214,19 +317,46 @@ class TestFetchOutcomeConfidence:
         svc._http.get = AsyncMock(
             return_value=_resp(200, {"n_entries": 2, "accuracy": 1.0})
         )
-        result = asyncio.run(
-            svc._fetch_outcome_confidence({"kind": "llm_python", "artifact_id": "art_1"})
-        )
+        with _force_research_link_unavailable():
+            result = asyncio.run(
+                svc._fetch_outcome_confidence({"kind": "llm_python", "artifact_id": "art_1"})
+            )
         assert result["source"] == "insufficient_data"
         assert result["accuracy"] is None
 
     def test_fails_open_on_http_error(self) -> None:
         svc = _service()
         svc._http.get = AsyncMock(side_effect=ConnectionError("research-api down"))
-        result = asyncio.run(
-            svc._fetch_outcome_confidence({"kind": "llm_python", "artifact_id": "art_1"})
-        )
+        with _force_research_link_unavailable():
+            result = asyncio.run(
+                svc._fetch_outcome_confidence({"kind": "llm_python", "artifact_id": "art_1"})
+            )
         assert result["source"] == "unavailable"
+
+    def test_reads_real_calibration_entries_in_process(self) -> None:
+        from vinu_research.models import Artifact, CalibrationEntry
+        from vinu_research.storage.strategy_store import SqliteStrategyStore
+        import tempfile
+        from pathlib import Path
+
+        store = SqliteStrategyStore(Path(tempfile.mktemp(suffix=".db")))
+        artifact = Artifact.create("trade_plan", "plan-aapl", universe=["AAPL"])
+        store.upsert_artifact(artifact)
+        for _ in range(6):
+            store.append_calibration_entry(CalibrationEntry(
+                artifact_id=artifact.artifact_id, forecast_direction="up", actual_return_pct=0.02,
+                forecast_magnitude_pct=0.02, brier_score=0.1, directional_correct=True,
+                magnitude_error=0.01, timestamp="2026-01-01T00:00:00Z",
+            ))
+
+        svc = _service(min_calibration_entries_for_tilt=5)
+        with patch("vinu_portfolio.research_link.get_strategy_store", return_value=store):
+            result = asyncio.run(
+                svc._fetch_outcome_confidence({"kind": "llm_python", "artifact_id": artifact.artifact_id})
+            )
+        assert result["source"] == "calibration"
+        assert result["n_entries"] == 6
+        assert result["accuracy"] == 1.0
 
 
 class TestRegimeAlignmentMultiplier:

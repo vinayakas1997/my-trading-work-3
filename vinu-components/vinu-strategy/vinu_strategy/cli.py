@@ -30,6 +30,20 @@ def serve_main(args: argparse.Namespace) -> None:
     uvicorn.run(create_app(), host=host, port=port)
 
 
+def serve_merged_main(args: argparse.Namespace) -> None:
+    """Group 1 fold (component-consolidation-plan.md): serves
+    vinu-strategy AND vinu-simulator from one process -- see
+    vinu_strategy/server/merged_app.py."""
+    import uvicorn
+
+    from vinu_strategy.server.merged_app import create_merged_app
+
+    config = load_config()
+    host = args.host or config.host
+    port = args.port or config.port
+    uvicorn.run(create_merged_app(), host=host, port=port)
+
+
 def list_main(args: argparse.Namespace) -> None:
     api = StrategyAPI()
     strategies = api.list_strategies()
@@ -131,6 +145,14 @@ def main(argv: list[str] | None = None) -> None:
     serve_p.add_argument("--host", default=None)
     serve_p.add_argument("--port", type=int, default=None)
     serve_p.set_defaults(func=serve_main)
+
+    serve_merged_p = sub.add_parser(
+        "serve-merged",
+        help="Start the merged vinu-strategy + vinu-simulator HTTP API server (Group 1 fold)",
+    )
+    serve_merged_p.add_argument("--host", default=None)
+    serve_merged_p.add_argument("--port", type=int, default=None)
+    serve_merged_p.set_defaults(func=serve_merged_main)
 
     list_p = sub.add_parser("list", help="List registered strategies")
     list_p.set_defaults(func=list_main)

@@ -115,6 +115,34 @@ class TestRecordOutcome:
         assert data["directional_correct"] is True
 
 
+class TestGetAngleCalibration:
+    def test_no_entries_yet(self, client) -> None:
+        resp = client.get("/research/angle-calibration/patchtst")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["angle_name"] == "patchtst"
+        assert data["n_entries"] == 0
+
+    def test_reflects_recorded_entries(self, service, client, monkeypatch) -> None:
+        from vinu_research.models import AngleCalibrationEntry
+
+        monkeypatch.setattr(routes_trade_plan, "author_trade_plan", _fake_author_trade_plan)
+        created = client.post("/research/trade-plan/AAPL", json={"timeframe": "daily"}).json()
+
+        service.strategy_store.append_angle_calibration_entry(AngleCalibrationEntry(
+            angle_name="patchtst", artifact_id=created["artifact_id"], forecast_direction="long",
+            actual_return_pct=0.03, directional_correct=True, brier_score=0.01,
+        ))
+        resp = client.get("/research/angle-calibration/patchtst")
+        data = resp.json()
+        assert data["n_entries"] == 1
+        assert data["accuracy"] == 1.0
+
+    def test_no_pass_fail_field_in_response(self, client) -> None:
+        resp = client.get("/research/angle-calibration/patchtst")
+        assert "passed" not in resp.json()
+
+
 class TestGetCalibration:
     def test_no_entries_yet(self, client, monkeypatch) -> None:
         monkeypatch.setattr(routes_trade_plan, "author_trade_plan", _fake_author_trade_plan)

@@ -8,7 +8,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from vinu_research.config import ResearchConfig
-from vinu_research.models import CalibrationEntry, CalibrationResult, Forecast
+from vinu_research.models import (
+    AngleCalibrationEntry,
+    AngleCalibrationResult,
+    CalibrationEntry,
+    CalibrationResult,
+    Forecast,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +129,32 @@ def compute_calibration(
         magnitude_mape=magnitude_mape,
         passed=passed,
         reasons=reasons,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def compute_angle_calibration(
+    angle_name: str, entries: list[AngleCalibrationEntry],
+) -> AngleCalibrationResult:
+    """Same accuracy/brier/magnitude-MAPE aggregation as compute_calibration,
+    over one angle's entries across every artifact it has ever been
+    attributed to. No pass/fail gate -- see AngleCalibrationResult's own
+    docstring for why."""
+    n = len(entries)
+    if n == 0:
+        return AngleCalibrationResult(angle_name=angle_name, n_entries=0, timestamp=datetime.now(timezone.utc).isoformat())
+
+    accuracy = sum(1 for e in entries if e.directional_correct) / n
+    brier_mean = statistics.mean(e.brier_score for e in entries)
+    magnitude_errors = [e.magnitude_error for e in entries if e.forecast_magnitude_pct > 0]
+    magnitude_mape = statistics.mean(magnitude_errors) if magnitude_errors else 1.0
+
+    return AngleCalibrationResult(
+        angle_name=angle_name,
+        n_entries=n,
+        accuracy=accuracy,
+        brier_mean=brier_mean,
+        magnitude_mape=magnitude_mape,
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
 

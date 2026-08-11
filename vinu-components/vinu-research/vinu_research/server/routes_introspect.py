@@ -51,11 +51,14 @@ def _serialize_hypothesis(h: Hypothesis) -> dict[str, Any]:
                 "conclusion": e.conclusion,
                 "reasoning": e.reasoning,
                 "timestamp": e.timestamp,
+                "source": e.source,
+                "ref_id": e.ref_id,
             }
             for e in h.evidence
         ],
         "created_at": h.created_at,
         "updated_at": h.updated_at,
+        "source": h.source,
     }
 
 

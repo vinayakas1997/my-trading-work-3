@@ -83,6 +83,38 @@ def test_fetch_granularity_isolation(client_and_service) -> None:
     assert resp.status_code == 404
 
 
+def test_latest_run_no_runs_is_404(client: TestClient) -> None:
+    resp = client.get("/v1/stage1/vinu-initial-analysis/latest-run/AAPL")
+    assert resp.status_code == 404
+    assert resp.json()["status"] == "not_found"
+
+
+def test_latest_run_returns_most_recent_across_any_angle(client_and_service) -> None:
+    """Confirms vinu-agent's Phase 0 RunLog trigger query: the single
+    most recent run_id for a ticker, regardless of which angle produced
+    it -- not scoped to one method the way fetch()/factsheet() are."""
+    client, service = client_and_service
+    service.run_log.record_run("AAPL", "garch", "run-older")
+    time.sleep(0.01)
+    service.run_log.record_run("AAPL", "arima", "run-newest")
+    service.run_log.record_run("MSFT", "garch", "run-other-ticker")
+
+    resp = client.get("/v1/stage1/vinu-initial-analysis/latest-run/AAPL")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["run_id"] == "run-newest"
+    assert body["data"]["angle_name"] == "arima"
+
+
+def test_latest_run_ticker_case_insensitive(client_and_service) -> None:
+    client, service = client_and_service
+    service.run_log.record_run("AAPL", "garch", "run-1")
+
+    resp = client.get("/v1/stage1/vinu-initial-analysis/latest-run/aapl")
+    assert resp.status_code == 200
+    assert resp.json()["run_id"] == "run-1"
+
+
 def test_factsheet_unknown_method_is_422(client: TestClient) -> None:
     resp = client.get("/v1/stage1/vinu-initial-analysis/factsheet/AAPL/not-a-real-method")
     assert resp.status_code == 422

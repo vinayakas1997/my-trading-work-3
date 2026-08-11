@@ -1,4 +1,10 @@
+import asyncio
+import json
+import logging
+
 from ..agent.tools import BaseTool
+
+LOG = logging.getLogger(__name__)
 
 
 class ResearchTool(BaseTool):
@@ -41,6 +47,26 @@ class ResearchTool(BaseTool):
         self._services_config = {}
 
     def execute(self, **kwargs) -> str:
+        indicators = (
+            [k.strip().lower() for k in kwargs["indicators"].split(",") if k.strip()]
+            if kwargs.get("indicators") else None
+        )
+        universe = (
+            [t.strip().upper() for t in kwargs["universe"].split(",") if t.strip()]
+            if kwargs.get("universe") else None
+        )
+
+        try:
+            result = asyncio.run(self._run_in_process(
+                user_idea=kwargs["idea"], symbol=kwargs["symbol"],
+                from_date=kwargs["from_date"], to_date=kwargs["to_date"],
+                indicators=indicators, initial_capital=kwargs.get("initial_capital"),
+                universe=universe, dry_run=bool(kwargs.get("dry_run")),
+            ))
+            return json.dumps(result, default=str)
+        except Exception as exc:
+            LOG.debug("run_research: in-process run failed, falling back to HTTP: %s", exc)
+
         import httpx
 
         url = self._services_config.get("vinu_research", "http://localhost:8087")
@@ -50,19 +76,24 @@ class ResearchTool(BaseTool):
             "from_date": kwargs["from_date"],
             "to_date": kwargs["to_date"],
         }
-        if kwargs.get("indicators"):
-            payload["indicators"] = [
-                k.strip().lower() for k in kwargs["indicators"].split(",") if k.strip()
-            ]
+        if indicators:
+            payload["indicators"] = indicators
         if kwargs.get("initial_capital") is not None:
             payload["initial_capital"] = kwargs["initial_capital"]
-        if kwargs.get("universe"):
-            payload["universe"] = [
-                t.strip().upper() for t in kwargs["universe"].split(",") if t.strip()
-            ]
+        if universe:
+            payload["universe"] = universe
         if kwargs.get("dry_run"):
             payload["dry_run"] = True
 
         resp = httpx.post(f"{url}/research/run", json=payload, timeout=600)
         resp.raise_for_status()
         return resp.text
+
+    async def _run_in_process(self, **kwargs) -> dict:
+        from ..broker.research_link import get_research_service
+
+        service = get_research_service()
+        try:
+            return await service.run_research(**kwargs)
+        finally:
+            await service.close()

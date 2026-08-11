@@ -27,6 +27,9 @@ class SessionService:
         orchestrator_dir: str = "",
         run_store: Any = None,
         llm_call_store: Any = None,
+        strategy_store: Any = None,
+        ticker_summary_store: Any = None,
+        ticker_ledger_store: Any = None,
     ) -> None:
         self.store = store
         self.event_bus = event_bus
@@ -43,6 +46,9 @@ class SessionService:
         self._teams_dir = teams_dir
         self._run_store = run_store
         self._llm_call_store = llm_call_store
+        self._strategy_store = strategy_store
+        self._ticker_summary_store = ticker_summary_store
+        self._ticker_ledger_store = ticker_ledger_store
         self._orchestrator_prompt = self._load_orchestrator_prompt(orchestrator_dir)
         self._active_loops: Dict[str, Any] = {}
         self._context_builder: Optional[ContextBuilder] = None
@@ -198,6 +204,9 @@ class SessionService:
             teams_dir=self._teams_dir,
             run_store=self._run_store,
             llm_call_store=self._llm_call_store,
+            strategy_store=self._strategy_store,
+            ticker_summary_store=self._ticker_summary_store,
+            ticker_ledger_store=self._ticker_ledger_store,
             event_callback=event_callback,
         )
 
@@ -226,6 +235,7 @@ class SessionService:
                 debrief_detector = PositionCloseDetector(
                     registry=registry, state_path=state_path,
                     services_config=self._services_config,
+                    ticker_ledger_store=self._ticker_ledger_store,
                 )
                 debrief_detector.check_and_debrief(broker, session_id=session_id)
         except Exception:

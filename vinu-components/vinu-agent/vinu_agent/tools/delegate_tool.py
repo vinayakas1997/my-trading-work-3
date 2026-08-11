@@ -43,6 +43,10 @@ class DelegateToTeamTool(BaseTool):
         self._run_store: Any = None
         self._llm_call_store: Any = None
         self._session_id: str = ""
+        self._strategy_store: Any = None
+        self._ticker_summary_store: Any = None
+        self._ticker_ledger_store: Any = None
+        self._services_config: dict = {}
 
     def execute(self, **kwargs: Any) -> str:
         team_name = kwargs.get("team_name", "")
@@ -74,6 +78,10 @@ class DelegateToTeamTool(BaseTool):
                 run_store=self._run_store,
                 llm_call_store=self._llm_call_store,
                 triggered_by_session_id=self._session_id,
+                strategy_store=self._strategy_store,
+                ticker_summary_store=self._ticker_summary_store,
+                ticker_ledger_store=self._ticker_ledger_store,
+                services_config=self._services_config,
             )
             result = manager.run(task)
         except Exception as exc:

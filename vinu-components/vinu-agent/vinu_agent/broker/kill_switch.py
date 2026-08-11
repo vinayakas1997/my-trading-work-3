@@ -3,43 +3,98 @@
 Global halt: /tmp/vinu-trading-halt
 Per-strategy: /tmp/vinu-trading-halt-{strategy_name}
 Per-symbol: /tmp/vinu-trading-halt-{symbol}
+
+Check-then-act race, closed: `halt_trading()`/`resume_trading()` and every
+real check-then-act critical section that gates money-moving/status-
+changing code on a halt check (`capital_allocator_hook.py`'s check-then-
+mark_active, `trade_tool.py`'s pre_approve-then-submit_order) now share
+one real OS-level lock (`kill_switch_lock()` below) -- previously this was
+"accepted, not closed" (two independent operations, no shared lock; see
+`New-talk-agents/new-thinking/new-restructure/phases/
+phase-3-kill-switch/04-implement-test.md`). A halt can no longer complete
+while either critical section is mid-flight, and vice versa -- genuinely
+mutually exclusive, not just a narrowed window.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
+import sys
 from pathlib import Path
+from typing import Iterator
 
 logger = logging.getLogger(__name__)
 
 KILL_SWITCH_PATH = Path("/tmp/vinu-trading-halt")
 KILL_SWITCH_DIR = Path("/tmp/vinu-trading-halt.d")
+KILL_SWITCH_LOCK_PATH = Path("/tmp/vinu-trading-halt.lock")
+
+
+@contextlib.contextmanager
+def kill_switch_lock() -> Iterator[None]:
+    """Real mutual exclusion, not an in-process-only threading lock --
+    `halt_trading()` can be called from a completely different process
+    (e.g. vinu-portfolio's drawdown monitor, via /broker/halt) than the
+    one holding this lock mid check-then-act, so this has to be an actual
+    OS-level file lock, not `threading.Lock()`. `fcntl.flock` on POSIX
+    (every real deployment -- python:3.12-slim containers); `msvcrt.locking`
+    as the Windows dev-environment fallback. Blocks until acquired --
+    every real critical section this guards is already a handful of
+    in-memory/local-disk operations, never network I/O, so the wait is
+    bounded and short by construction."""
+    KILL_SWITCH_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if not KILL_SWITCH_LOCK_PATH.exists():
+        KILL_SWITCH_LOCK_PATH.write_bytes(b"\0")
+    f = open(KILL_SWITCH_LOCK_PATH, "r+b")
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if sys.platform == "win32":
+                import msvcrt
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    finally:
+        f.close()
 
 
 def halt_trading(scope: str | None = None) -> None:
     """Halt trading globally or for a specific scope (strategy name or symbol)."""
-    if scope is None:
-        KILL_SWITCH_PATH.touch(exist_ok=True)
-        logger.warning("TRADING HALTED globally via %s", KILL_SWITCH_PATH)
-    else:
-        KILL_SWITCH_DIR.mkdir(parents=True, exist_ok=True)
-        (KILL_SWITCH_DIR / f"{scope}.halt").touch(exist_ok=True)
-        logger.warning("TRADING HALTED for %s via %s/%s.halt", scope, KILL_SWITCH_DIR, scope)
+    with kill_switch_lock():
+        if scope is None:
+            KILL_SWITCH_PATH.touch(exist_ok=True)
+            logger.warning("TRADING HALTED globally via %s", KILL_SWITCH_PATH)
+        else:
+            KILL_SWITCH_DIR.mkdir(parents=True, exist_ok=True)
+            (KILL_SWITCH_DIR / f"{scope}.halt").touch(exist_ok=True)
+            logger.warning("TRADING HALTED for %s via %s/%s.halt", scope, KILL_SWITCH_DIR, scope)
 
 
 def resume_trading(scope: str | None = None) -> None:
     """Resume trading globally or for a specific scope."""
-    if scope is None:
-        if KILL_SWITCH_PATH.exists():
-            KILL_SWITCH_PATH.unlink()
-            logger.info("Trading resumed globally — %s removed", KILL_SWITCH_PATH)
-    else:
-        path = KILL_SWITCH_DIR / f"{scope}.halt"
-        if path.exists():
-            path.unlink()
-            logger.info("Trading resumed for %s — %s removed", scope, path)
+    with kill_switch_lock():
+        if scope is None:
+            if KILL_SWITCH_PATH.exists():
+                KILL_SWITCH_PATH.unlink()
+                logger.info("Trading resumed globally — %s removed", KILL_SWITCH_PATH)
+        else:
+            path = KILL_SWITCH_DIR / f"{scope}.halt"
+            if path.exists():
+                path.unlink()
+                logger.info("Trading resumed for %s — %s removed", scope, path)
 
 
 def is_trading_halted(scope: str | None = None) -> bool:

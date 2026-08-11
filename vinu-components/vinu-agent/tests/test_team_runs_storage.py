@@ -91,6 +91,75 @@ class TestTeamRuns:
         assert [r.run_id for r in pending] == [r1.run_id]
 
 
+class TestRelatedArtifactId:
+    """Pillar 7's traceability link, made real -- see
+    New-talk-agents/implementation/14-research-team-artifact-writing.md."""
+
+    def test_defaults_to_empty_string(self, store: TeamRunStore) -> None:
+        run = store.create_run("research")
+        assert run.related_artifact_id == ""
+        assert store.get_run(run.run_id).related_artifact_id == ""
+
+    def test_create_run_accepts_it_directly(self, store: TeamRunStore) -> None:
+        run = store.create_run("risk_gatekeeper", related_artifact_id="art_abc123")
+        assert store.get_run(run.run_id).related_artifact_id == "art_abc123"
+
+    def test_set_related_artifact_id_after_creation(self, store: TeamRunStore) -> None:
+        run = store.create_run("research")
+        store.set_related_artifact_id(run.run_id, "art_xyz789")
+        assert store.get_run(run.run_id).related_artifact_id == "art_xyz789"
+
+    def test_list_by_artifact_id_finds_every_run_that_touched_it(self, store: TeamRunStore) -> None:
+        r1 = store.create_run("research")
+        store.set_related_artifact_id(r1.run_id, "art_shared")
+        r2 = store.create_run("risk_gatekeeper", related_artifact_id="art_shared")
+        store.create_run("research")  # unrelated, different artifact
+
+        found = store.list_by_artifact_id("art_shared")
+        assert {r.run_id for r in found} == {r1.run_id, r2.run_id}
+
+    def test_list_by_artifact_id_empty_when_none_match(self, store: TeamRunStore) -> None:
+        store.create_run("research")
+        assert store.list_by_artifact_id("art_nonexistent") == []
+
+    def test_migrates_a_pre_existing_database_without_the_column(self) -> None:
+        """Simulates a real team_runs.db from before this column existed --
+        the ALTER TABLE migration must actually run on connect, not just
+        work by accident on a fresh database where CREATE TABLE already
+        includes the column."""
+        import sqlite3
+
+        tmp = tempfile.mktemp(suffix=".db")
+        legacy_conn = sqlite3.connect(tmp)
+        legacy_conn.executescript("""
+            CREATE TABLE team_runs (
+                run_id TEXT PRIMARY KEY, team_name TEXT NOT NULL,
+                triggered_by_session_id TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending', verdict TEXT NOT NULL DEFAULT '',
+                result_json TEXT NOT NULL DEFAULT '{}', llm_calls_used INTEGER NOT NULL DEFAULT 0,
+                time_used_seconds REAL NOT NULL DEFAULT 0.0, error_message TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT NOT NULL DEFAULT ''
+            );
+        """)
+        legacy_conn.execute(
+            "INSERT INTO team_runs (run_id, team_name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            ("pre-existing-run", "research", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+        )
+        legacy_conn.commit()
+        legacy_conn.close()
+
+        store = TeamRunStore(tmp)
+        try:
+            fetched = store.get_run("pre-existing-run")
+            assert fetched is not None
+            assert fetched.related_artifact_id == ""
+            store.set_related_artifact_id("pre-existing-run", "art_after_migration")
+            assert store.get_run("pre-existing-run").related_artifact_id == "art_after_migration"
+        finally:
+            store.close()
+            Path(tmp).unlink(missing_ok=True)
+
+
 class TestTeamTasks:
     def test_add_task_starts_pending(self, store: TeamRunStore) -> None:
         run = store.create_run("research")

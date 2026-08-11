@@ -90,6 +90,20 @@ class TestToolDiscovery:
         assert tool is not None
         assert tool._llm_call_store is fake_llm_call_store
 
+    def test_build_registry_injects_strategy_store(self) -> None:
+        fake_strategy_store = object()
+        registry = build_registry(strategy_store=fake_strategy_store)
+        tool = registry.get("delegate_to_team")
+        assert tool is not None
+        assert tool._strategy_store is fake_strategy_store
+
+    def test_build_registry_injects_ticker_summary_store(self) -> None:
+        fake_store = object()
+        registry = build_registry(ticker_summary_store=fake_store)
+        tool = registry.get("delegate_to_team")
+        assert tool is not None
+        assert tool._ticker_summary_store is fake_store
+
     def test_build_registry_gives_delegate_to_team_a_self_reference(self) -> None:
         registry = build_registry()
         tool = registry.get("delegate_to_team")

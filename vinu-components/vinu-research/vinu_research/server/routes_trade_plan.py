@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from vinu_research.calibration import get_angle_calibration
 from vinu_research.forecast_skill import compute_calibration
 from vinu_research.service import ResearchService
 from vinu_research.tools import ResearchTools
@@ -140,4 +141,29 @@ async def get_trade_plan_calibration(artifact_id: str) -> dict[str, Any]:
         "magnitude_mape": result.magnitude_mape,
         "passed": result.passed,
         "reasons": result.reasons,
+    }
+
+
+@router.get("/angle-calibration/{angle_name}")
+async def get_angle_calibration_route(angle_name: str) -> dict[str, Any]:
+    """Read-only aggregate for one angle's real forecast accuracy across
+    every artifact it has ever been attributed to (Artifact.origin_angles,
+    populated only from the research team's own final-answer JSON -- see
+    trade_plan_authoring.py's record_realized_outcome). No pass/fail gate
+    -- see AngleCalibrationResult's own docstring for why. An angle with
+    no entries yet (never attributed, or attributed but nothing has
+    closed) returns n_entries=0, not a 404 -- there is no meaningful
+    distinction here between "unknown angle name" and "no data yet," and
+    treating the former as an error would require a canonical angle-name
+    registry that doesn't exist anywhere in this project.
+    """
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    result = get_angle_calibration(_service.strategy_store, angle_name)
+    return {
+        "angle_name": angle_name,
+        "n_entries": result.n_entries,
+        "accuracy": result.accuracy,
+        "brier_mean": result.brier_mean,
+        "magnitude_mape": result.magnitude_mape,
     }

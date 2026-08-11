@@ -13,7 +13,11 @@ Requires the relevant docker-compose services to already be running:
 
     docker compose up -d news-ingest news-api stock-ingest stock-api \\
         features-worker features-api initial-analysis-compute initial-analysis-api \\
-        strategy-api simulator-api research-api
+        quant-core-api research-api
+
+(quant-core-api is the merged vinu-strategy + vinu-simulator container --
+Group 1 fold, component-consolidation-plan.md -- one container now serves
+both the "strategy" and "simulator" pipeline steps below.)
 
 Usage:
     python run_pipeline.py --ticker AAPL --from-date 2024-01-01 --to-date 2024-06-01
@@ -45,8 +49,11 @@ SERVICES: dict[str, dict[str, Any]] = {
     "news": {"base_url": "http://127.0.0.1:8080/news", "compose_service": "news-api", "data_subdir": "news"},
     "features": {"base_url": "http://127.0.0.1:8082/features", "compose_service": "features-api", "data_subdir": None},
     "initial_analysis": {"base_url": "http://127.0.0.1:8083/analysis", "compose_service": "initial-analysis-api", "data_subdir": None},
-    "strategy": {"base_url": "http://127.0.0.1:8084/strategy", "compose_service": "strategy-api", "data_subdir": None},
-    "simulator": {"base_url": "http://127.0.0.1:8085/simulator", "compose_service": "simulator-api", "data_subdir": None},
+    # "strategy" and "simulator" now share one container (quant-core-api,
+    # Group 1 fold) -- same base host:port, distinct path prefixes, same
+    # as every other step here.
+    "strategy": {"base_url": "http://127.0.0.1:8084/strategy", "compose_service": "quant-core-api", "data_subdir": None},
+    "simulator": {"base_url": "http://127.0.0.1:8084/simulator", "compose_service": "quant-core-api", "data_subdir": None},
     "research": {"base_url": "http://127.0.0.1:8087/research", "compose_service": "research-api", "data_subdir": "research"},
 }
 

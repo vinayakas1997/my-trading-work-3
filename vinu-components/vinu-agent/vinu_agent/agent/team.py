@@ -45,6 +45,38 @@ def _extract_verdict(content: str) -> str:
     return match.group(1).upper() if match else ""
 
 
+def _apply_team_result_hook(
+    team_name: str, content: str, *, strategy_store: Any, run_id: str,
+    ticker_ledger_store: Any = None, services_config: Any = None,
+) -> Optional[str]:
+    """Team-specific hooks that turn a manager's completed final answer into
+    a durable write elsewhere in the system (never an agent-callable tool --
+    pillar 8). Each hook is best-effort/swallow-and-log internally (see
+    broker/debrief.py's contract). Returns an artifact_id for traceability
+    (team_runs.related_artifact_id) when the hook actually wrote something,
+    else None. Was a single `if self.spec.name == "research"` special case;
+    generalized once risk_gatekeeper needed the same shape."""
+    if strategy_store is None:
+        return None
+    if team_name == "research":
+        from .research_artifact_writer import write_artifact_from_research_pass
+        return write_artifact_from_research_pass(
+            content, strategy_store=strategy_store, source_run_id=run_id,
+        )
+    if team_name == "risk_gatekeeper":
+        from .risk_gatekeeper_hook import apply_risk_gatekeeper_verdict
+        return apply_risk_gatekeeper_verdict(
+            content, strategy_store=strategy_store, ticker_ledger_store=ticker_ledger_store,
+        )
+    if team_name == "capital_allocator":
+        from .capital_allocator_hook import apply_capital_allocator_decision
+        return apply_capital_allocator_decision(
+            content, strategy_store=strategy_store, ticker_ledger_store=ticker_ledger_store,
+            services_config=services_config,
+        )
+    return None
+
+
 def _tag_event_callback(callback: Optional[Callable], **tags: Any) -> Optional[Callable]:
     """Wraps a session's event_callback so every event a nested AgentLoop
     emits (manager or specialist) carries which team/agent/role it came
@@ -278,6 +310,10 @@ class TeamManager:
         run_store: Any = None,
         triggered_by_session_id: str = "",
         llm_call_store: Any = None,
+        strategy_store: Any = None,
+        ticker_summary_store: Any = None,
+        ticker_ledger_store: Any = None,
+        services_config: Any = None,
     ) -> None:
         self.spec = load_team_spec(team_dir)
         self._full_registry = full_registry
@@ -288,6 +324,21 @@ class TeamManager:
         self._run_store = run_store
         self._triggered_by_session_id = triggered_by_session_id
         self._llm_call_store = llm_call_store
+        # Only ever read by the team-specific hooks in run() below -- None
+        # is fine for every team that doesn't need it.
+        self._strategy_store = strategy_store
+        # Only read by the "screener" hook below -- writes durable
+        # per-ticker summaries, a different shape than the artifact_id
+        # hooks above (no single artifact_id, no team_runs traceability
+        # link -- see storage/ticker_summaries.py).
+        self._ticker_summary_store = ticker_summary_store
+        # Only read by the "risk_gatekeeper" hook below -- best-effort
+        # audit row for the PEND transition, see risk_gatekeeper_hook.py.
+        self._ticker_ledger_store = ticker_ledger_store
+        # Only read by the "capital_allocator" hook -- the rebalancer's
+        # unwind requests need vinu-live's base URL to POST to, see
+        # capital_allocator_hook.py.
+        self._services_config = services_config
 
     def run(self, task: str, *, context: Optional[str] = None) -> dict:
         db_run = None
@@ -343,10 +394,31 @@ class TeamManager:
         if db_run is not None:
             content = result.get("content", "")
             if result.get("status") == "completed":
+                result_json: dict[str, Any] = {"content": content, "status": result.get("status")}
+                artifact_id = _apply_team_result_hook(
+                    self.spec.name, content,
+                    strategy_store=self._strategy_store, run_id=db_run.run_id,
+                    ticker_ledger_store=self._ticker_ledger_store,
+                    services_config=self._services_config,
+                )
+                if artifact_id:
+                    result_json["artifact_id"] = artifact_id
+                    # Pillar 7's traceability link, made real: this run
+                    # touched this artifact -- findable later via
+                    # run_store.list_by_artifact_id(artifact_id).
+                    self._run_store.set_related_artifact_id(db_run.run_id, artifact_id)
+                if self.spec.name == "screener" and self._ticker_summary_store is not None:
+                    from .screener_summary_writer import write_ticker_summaries
+                    tickers_written = write_ticker_summaries(
+                        content, ticker_summary_store=self._ticker_summary_store,
+                        source_run_id=db_run.run_id,
+                    )
+                    if tickers_written:
+                        result_json["tickers_written"] = tickers_written
                 self._run_store.mark_done(
                     db_run.run_id,
                     verdict=_extract_verdict(content),
-                    result_json={"content": content, "status": result.get("status")},
+                    result_json=result_json,
                     llm_calls_used=result.get("iterations", 0),
                     time_used_seconds=elapsed,
                 )

@@ -1,4 +1,9 @@
+import json
+import logging
+
 from ..agent.tools import BaseTool
+
+LOG = logging.getLogger(__name__)
 
 
 class QueryHypothesesTool(BaseTool):
@@ -31,14 +36,34 @@ class QueryHypothesesTool(BaseTool):
         self._services_config = {}
 
     def execute(self, **kwargs) -> str:
+        symbol = kwargs.get("symbol")
+        status = kwargs.get("status")
+        try:
+            from vinu_research.models import HypothesisStatus
+
+            from ..broker.research_link import get_hypothesis_registry, serialize_hypothesis
+
+            status_enum = HypothesisStatus(status) if status else None
+            registry = get_hypothesis_registry()
+            hypotheses = (
+                registry.query_by_symbol(symbol, status=status_enum) if symbol
+                else registry.list_all(status=status_enum)
+            )
+            return json.dumps({
+                "count": len(hypotheses),
+                "hypotheses": [serialize_hypothesis(h) for h in hypotheses],
+            })
+        except Exception as exc:
+            LOG.debug("query_hypotheses: in-process read failed, falling back to HTTP: %s", exc)
+
         import httpx
 
         url = self._services_config.get("vinu_research", "http://localhost:8087")
         params = {}
-        if kwargs.get("symbol"):
-            params["symbol"] = kwargs["symbol"]
-        if kwargs.get("status"):
-            params["status"] = kwargs["status"]
+        if symbol:
+            params["symbol"] = symbol
+        if status:
+            params["status"] = status
 
         resp = httpx.get(f"{url}/research/hypotheses", params=params, timeout=30)
         resp.raise_for_status()

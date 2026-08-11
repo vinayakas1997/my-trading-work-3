@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -43,10 +44,25 @@ class SyncService:
         self._config = services_config or {}
 
     # ------------------------------------------------------------------
-    # Research runs
+    # vinu-research in-process link, HTTP fallback (component-consolidation-
+    # plan.md's vinu-research migration) -- both /runs and /artifacts read
+    # the same local SQLite vinu-research's own server process would have
+    # served over HTTP, so the in-process path is not a second source of
+    # truth, just the network hop removed.
     # ------------------------------------------------------------------
 
-    async def sync_research(self, symbol: str | None = None) -> int:
+    async def _fetch_research_runs(self, symbol: str | None) -> list[dict[str, Any]] | None:
+        """Returns None on total failure (both paths failed) so callers can
+        keep their existing "0 synced" short-circuit unchanged."""
+        try:
+            from ..broker.research_link import get_research_storage
+
+            storage = get_research_storage()
+            records = await asyncio.to_thread(storage.list_runs, symbol, None, 100)
+            return [r.to_dict() for r in records]
+        except Exception as e:
+            LOG.debug("sync_research: in-process read failed, falling back to HTTP: %s", e)
+
         url = self._config.get("vinu_research", "http://localhost:8087")
         params: dict[str, Any] = {"limit": 100}
         if symbol:
@@ -56,10 +72,48 @@ class SyncService:
                 resp = await client.get(f"{url}/runs", params=params)
                 if resp.status_code != 200:
                     LOG.warning("sync_research: %s returned %d", url, resp.status_code)
-                    return 0
-                runs = resp.json()
+                    return None
+                return resp.json()
         except Exception as e:
             LOG.warning("sync_research: failed to fetch from %s: %s", url, e)
+            return None
+
+    async def _fetch_research_artifacts(self) -> list[dict[str, Any]] | None:
+        try:
+            from ..broker.research_link import get_strategy_store, serialize_artifact_summary
+            from vinu_research.models import ArtifactStatus
+
+            store = get_strategy_store()
+            artifacts = await asyncio.to_thread(
+                store.list_artifacts_by_statuses,
+                [ArtifactStatus.ACTIVE, ArtifactStatus.MONITORING],
+            )
+            return [serialize_artifact_summary(a) for a in artifacts]
+        except Exception as e:
+            LOG.debug("sync_artifacts: in-process read failed, falling back to HTTP: %s", e)
+
+        url = self._config.get("vinu_research", "http://localhost:8087")
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{url}/artifacts",
+                    params={"status": "ACTIVE,MONITORING"},
+                )
+                if resp.status_code != 200:
+                    LOG.warning("sync_artifacts: %s returned %d", url, resp.status_code)
+                    return None
+                return resp.json()
+        except Exception as e:
+            LOG.warning("sync_artifacts: failed to fetch from %s: %s", url, e)
+            return None
+
+    # ------------------------------------------------------------------
+    # Research runs
+    # ------------------------------------------------------------------
+
+    async def sync_research(self, symbol: str | None = None) -> int:
+        runs = await self._fetch_research_runs(symbol)
+        if runs is None:
             return 0
 
         entries: list[MemoryEntry] = []
@@ -114,19 +168,8 @@ class SyncService:
     # ------------------------------------------------------------------
 
     async def sync_artifacts(self) -> int:
-        url = self._config.get("vinu_research", "http://localhost:8087")
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(
-                    f"{url}/artifacts",
-                    params={"status": "ACTIVE,MONITORING"},
-                )
-                if resp.status_code != 200:
-                    LOG.warning("sync_artifacts: %s returned %d", url, resp.status_code)
-                    return 0
-                artifacts = resp.json()
-        except Exception as e:
-            LOG.warning("sync_artifacts: failed to fetch from %s: %s", url, e)
+        artifacts = await self._fetch_research_artifacts()
+        if artifacts is None:
             return 0
 
         entries: list[MemoryEntry] = []

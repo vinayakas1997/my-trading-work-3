@@ -47,6 +47,12 @@ class LiveConfig:
     fallback_portfolio_value: float = 1_000_000.0
     trade_plan_worker_interval_sec: int = 300
     feedback_worker_interval_sec: int = 300
+    # Shadow evaluation (BENCHING -> ACTIVE promotion) doesn't need to run
+    # as often as the trade-plan/feedback loops -- paper-trading Sharpe
+    # only moves meaningfully over days, not minutes. 3600s matches the
+    # original (pre-Phase-5) worker_interval_sec default rather than
+    # inventing a new number; not independently tuned.
+    shadow_worker_interval_sec: int = 3600
 
     @classmethod
     def from_env(cls) -> LiveConfig:
@@ -70,6 +76,9 @@ class LiveConfig:
             ),
             feedback_worker_interval_sec=int(
                 os.getenv("VINU_LIVE_FEEDBACK_INTERVAL", "300"),
+            ),
+            shadow_worker_interval_sec=int(
+                os.getenv("VINU_LIVE_SHADOW_INTERVAL", "3600"),
             ),
         )
 

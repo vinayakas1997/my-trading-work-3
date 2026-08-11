@@ -22,7 +22,7 @@ protection exists (or doesn't) that hasn't been verified.
    BENCHING -> eligible?            paper P&L vs.                live equity drawdown          every order, always
    statistical gate                 backtest expectation          -> kill switch                routed through the
                                      -> auto-promote                                              same guard
-   [REAL, ENFORCED]                 [BUILT, NEVER RUNS]          [REAL, RUNNING]               [REAL, ENFORCED]
+   [REAL, ENFORCED]                 [WORKS, NOT SCHEDULED]       [REAL, RUNNING]               [REAL, ENFORCED]
 ```
 
 ### Stage 1 — Research promotion bar (enforced)
@@ -59,34 +59,42 @@ auto-promotes BENCHING → ACTIVE when paper performance holds up
 paper data). This is exactly the "does it hold up outside of research
 before going live" check a shadow/paper-trading phase is supposed to be.
 
-**Confirmed dormant, three ways now:**
+**Update (Phase 4, New-talk-agents/new-thinking/new-restructure/phases/
+phase-4-live-shadow-fix/, built 2026-08-11): the endpoint claim below was
+wrong by the time it mattered.** `GET /agent/broker/performance/
+{artifact_id}` (and its `POST` counterpart) are real, implemented, and
+tested (`vinu_agent/server/routes_broker.py`, `tests/test_routes_broker.py`
+-- `TestBrokerOrderRoute::test_record_then_get_performance` et al.),
+confirmed by reading the file directly, not by re-trusting this note. The
+stale "does not exist yet" comment that used to sit in
+`shadow_evaluator.py::_fetch_paper_sharpe` (matching the now-corrected
+claim below) has been removed. `_fetch_paper_sharpe` now genuinely
+succeeds against the real endpoint -- proven by
+`test_shadow_fetch_reaches_the_real_endpoint_not_mocked` in
+`vinu-live/tests/test_shadow_evaluator.py`, which runs the two services'
+real code against each other (a real FastAPI TestClient standing in for
+`agent-api`) rather than mocking `evaluator._http.get`.
+
+**What's still true, confirmed dormant one way now (not three):**
 - Grepped `ShadowEvaluator`/`shadow_evaluator` across every `vinu-*`
   service — referenced only inside its own file, plus one comment in
   `vinu_live/feedback_loop.py`. Nothing calls `evaluate_all()`: not
   `LiveScheduler.cycle()`, not `cli.py`, not any route in
-  `vinu_live/server/app.py`.
-- No test file exists for it either (`vinu-live/tests/` has no
-  `test_shadow_evaluator.py` equivalent) — unlike every other mechanism
-- **`_fetch_paper_sharpe`'s target endpoint doesn't exist.** It calls
-  `GET /agent/broker/performance/{artifact_id}` — grepped
-  `vinu_agent/server/routes_broker.py` for "performance": zero matches.
-  Even if something started calling `evaluate_all()` on a schedule today,
-  this specific call would still 404 — the gap here is larger than
-  "unwired," it's "the endpoint it needs was never built." (A missing-
-  route-prefix sweep across the whole codebase, done alongside this
-  finding, fixed the URL *shape* of this call — `/broker/performance/...`
-  → `/agent/broker/performance/...` — but that doesn't change that the
-  route itself is absent.)
-  in this chain, it has never been exercised at all, not even in a test.
+  `vinu_live/server/app.py`. This part of the original finding still
+  holds -- Phase 4 did not add a scheduler for this (out of Phase 4's own
+  scope; see `01-plan.md`), it only fixed and tested the previously-wrong
+  "endpoint doesn't exist" claim and closed the missing-test gap.
 
-**This is a wiring gap, not a design gap.** The actionable next step (out
-of scope for this doc to decide) is: something needs to call
-`ShadowEvaluator.evaluate_all()` on a schedule — most naturally alongside
-`vinu-portfolio`'s own scheduled pattern (see Stage 3 below, which solved
-exactly this kind of gap once already) — and it needs test coverage
-before being trusted. Until that happens, **an artifact promoted to
+**This is a wiring gap, not a design gap, not a missing-endpoint gap
+anymore.** The actionable next step (still out of scope for this doc, and
+for Phase 4, to decide) is: something needs to call `ShadowEvaluator.
+evaluate_all()` on a schedule — most naturally alongside `vinu-portfolio`'s
+own scheduled pattern (see Stage 3 below, which solved exactly this kind
+of gap once already). Until that happens, **an artifact promoted to
 ACTIVE today has cleared Stage 1's statistical bar but has never been
-checked against real paper-trading performance.**
+checked against real paper-trading performance** -- the check itself now
+genuinely works end to end when invoked, it's just never invoked
+automatically yet.
 
 ### Stage 3 — Portfolio drawdown circuit breaker (real, running)
 

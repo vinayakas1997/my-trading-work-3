@@ -126,6 +126,7 @@ class HistoricalFillBroker:
                 filled_qty=o.get("filled_qty", 0),
                 limit_price=o.get("limit_price"), stop_price=o.get("stop_price"),
                 created_at=o.get("created_at", ""), updated_at=o.get("updated_at", ""),
+                filled_avg_price=o.get("fill_price"),
             ))
         return out
 

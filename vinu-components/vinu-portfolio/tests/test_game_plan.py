@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -20,6 +20,13 @@ def _resp(status_code=200, json_body=None):
     return resp
 
 
+def _force_research_link_unavailable():
+    return patch(
+        "vinu_portfolio.research_link.get_strategy_store",
+        side_effect=RuntimeError("not available"),
+    )
+
+
 class TestFetchTradePlan:
     def test_yaml_strategy_returns_none(self) -> None:
         svc = _service()
@@ -33,31 +40,53 @@ class TestFetchTradePlan:
         assert data is None
         assert found is False
 
+    def test_llm_strategy_with_real_artifact_returns_data_in_process(self) -> None:
+        from pathlib import Path
+        import tempfile
+
+        from vinu_research.models import Artifact
+        from vinu_research.storage.strategy_store import SqliteStrategyStore
+
+        store = SqliteStrategyStore(Path(tempfile.mktemp(suffix=".db")))
+        artifact = Artifact.create("trade_plan", "plan-aapl", universe=["AAPL"])
+        store.upsert_artifact(artifact)
+
+        svc = _service()
+        with patch("vinu_portfolio.research_link.get_strategy_store", return_value=store):
+            data, found = asyncio.run(
+                svc._fetch_trade_plan({"kind": "llm_python", "artifact_id": artifact.artifact_id})
+            )
+        assert found is True
+        assert data["artifact_id"] == artifact.artifact_id
+
     def test_llm_strategy_with_artifact_returns_data(self) -> None:
         svc = _service()
         plan_data = {"forecast": {"direction": "bullish"}, "p_failure": 0.3}
         svc._http.get = AsyncMock(return_value=_resp(200, plan_data))
-        data, found = asyncio.run(
-            svc._fetch_trade_plan({"kind": "llm_python", "artifact_id": "art_1"})
-        )
+        with _force_research_link_unavailable():
+            data, found = asyncio.run(
+                svc._fetch_trade_plan({"kind": "llm_python", "artifact_id": "art_1"})
+            )
         assert found is True
         assert data == plan_data
 
     def test_llm_strategy_non_200_returns_none(self) -> None:
         svc = _service()
         svc._http.get = AsyncMock(return_value=_resp(404))
-        data, found = asyncio.run(
-            svc._fetch_trade_plan({"kind": "llm_python", "artifact_id": "art_1"})
-        )
+        with _force_research_link_unavailable():
+            data, found = asyncio.run(
+                svc._fetch_trade_plan({"kind": "llm_python", "artifact_id": "art_1"})
+            )
         assert data is None
         assert found is False
 
     def test_llm_strategy_http_error_returns_none(self) -> None:
         svc = _service()
         svc._http.get = AsyncMock(side_effect=ConnectionError("down"))
-        data, found = asyncio.run(
-            svc._fetch_trade_plan({"kind": "llm_python", "artifact_id": "art_1"})
-        )
+        with _force_research_link_unavailable():
+            data, found = asyncio.run(
+                svc._fetch_trade_plan({"kind": "llm_python", "artifact_id": "art_1"})
+            )
         assert data is None
         assert found is False
 

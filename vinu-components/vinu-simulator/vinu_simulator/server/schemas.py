@@ -97,6 +97,15 @@ class CustomSimulateResponse(BaseModel):
     trade_count: int
     equity_points: int
     validation: dict[str, Any] | None = None
+    # Per-period portfolio returns -- one entry per equity_points row AFTER
+    # the first (the engine already drops the first row's undefined
+    # pct_change rather than NaN-filling it, so len(daily_returns) ==
+    # equity_points - 1 whenever equity_points > 0). Added for
+    # vinu-research's sweep-grid PBO computation (Combinatorially Symmetric
+    # Cross-Validation needs a real returns_matrix across several
+    # candidates, not just summary metrics). Additive field, safe for every
+    # existing caller that doesn't read it.
+    daily_returns: list[float] = Field(default_factory=list)
 
 
 class SimulateDryRunResponse(BaseModel):

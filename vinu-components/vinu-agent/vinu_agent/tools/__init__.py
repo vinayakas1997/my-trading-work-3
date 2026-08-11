@@ -48,6 +48,9 @@ def build_registry(
     teams_dir: str = "",
     run_store: Any = None,
     llm_call_store: Any = None,
+    strategy_store: Any = None,
+    ticker_summary_store: Any = None,
+    ticker_ledger_store: Any = None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
     subclasses = _discover_subclasses()
@@ -82,6 +85,12 @@ def build_registry(
             tool._run_store = run_store
         if llm_call_store is not None and hasattr(tool, "_llm_call_store"):
             tool._llm_call_store = llm_call_store
+        if strategy_store is not None and hasattr(tool, "_strategy_store"):
+            tool._strategy_store = strategy_store
+        if ticker_summary_store is not None and hasattr(tool, "_ticker_summary_store"):
+            tool._ticker_summary_store = ticker_summary_store
+        if ticker_ledger_store is not None and hasattr(tool, "_ticker_ledger_store"):
+            tool._ticker_ledger_store = ticker_ledger_store
         # Tools that need to reach the full tool pool (e.g. delegate_to_team,
         # which builds a scoped sub-registry for each team) get a
         # self-reference to the registry being built here, once construction

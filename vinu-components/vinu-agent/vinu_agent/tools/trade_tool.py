@@ -3,7 +3,7 @@ import logging
 import os
 
 from ..agent.tools import BaseTool
-from ..broker.alpaca import AlpacaBroker
+from ..broker.factory import get_live_broker
 from ..broker.historical_broker import HistoricalFillBroker
 from ..broker.kill_switch import AuditLogger
 from ..broker.mandate import TradingMandate
@@ -23,7 +23,7 @@ def _make_broker(as_of: str | None, session_id: str = ""):
             as_of=as_of,
             state_path=_replay_state_path(session_id),
         )
-    return AlpacaBroker()
+    return get_live_broker()
 
 
 class TradeTool(BaseTool):
@@ -178,19 +178,42 @@ class TradeTool(BaseTool):
                 "order_type": order_type, "estimated_value": estimated_value,
                 "take_profit_price": take_profit_price, "stop_loss_price": stop_loss_price,
             })
-            guard.pre_approve(symbol, side, qty)
-            order = broker.submit_order(
-                symbol=symbol,
-                qty=qty,
-                side=side,
-                order_type=order_type,
-                limit_price=limit_price,
-                stop_price=stop_price,
-                time_in_force=time_in_force,
-                take_profit_price=take_profit_price,
-                stop_loss_price=stop_loss_price,
-                stop_loss_limit_price=stop_loss_limit_price,
-            )
+
+            from ..broker.kill_switch import kill_switch_lock
+
+            # pre_approve()'s fresh re-check (including kill switch) and the
+            # actual order submission are both inside this lock --
+            # halt_trading() acquires the same lock, so a halt issued here
+            # either lands before this block starts or after it finishes,
+            # never in the gap between the check and the real order. Before
+            # this fix, pre_approve()'s result was also silently discarded --
+            # a halt engaged between the earlier guard.check() (line ~141)
+            # and this point would correctly report not-allowed here, but
+            # the order was submitted anyway.
+            with kill_switch_lock():
+                pre_result = guard.pre_approve(symbol, side, qty)
+                if not pre_result:
+                    AuditLogger.log("order_rejected", {
+                        "symbol": symbol, "side": side, "qty": qty,
+                        "reason": pre_result.reason,
+                    })
+                    return json.dumps({
+                        "status": "rejected",
+                        "reason": pre_result.reason,
+                        "mandate": mandate.to_dict(),
+                    })
+                order = broker.submit_order(
+                    symbol=symbol,
+                    qty=qty,
+                    side=side,
+                    order_type=order_type,
+                    limit_price=limit_price,
+                    stop_price=stop_price,
+                    time_in_force=time_in_force,
+                    take_profit_price=take_profit_price,
+                    stop_loss_price=stop_loss_price,
+                    stop_loss_limit_price=stop_loss_limit_price,
+                )
             return json.dumps({
                 "status": "submitted",
                 "order_id": order.get("id", ""),
@@ -198,7 +221,14 @@ class TradeTool(BaseTool):
                 "side": side,
                 "qty": qty,
                 "type": order_type,
-                "status": order.get("status", ""),
+                # Was a duplicate "status" key before this fix -- silently
+                # overwrote "submitted" with the broker's raw order status
+                # (e.g. "accepted"/"filled"/"pending_new"), so callers
+                # checking status == "submitted" to confirm a new order was
+                # created never actually saw that value once a real order
+                # came back. Broker's own status is real, separate
+                # information -- kept, under its own key.
+                "broker_status": order.get("status", ""),
             }, indent=2)
 
         except Exception as exc:

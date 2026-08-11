@@ -19,6 +19,20 @@ def _clear_orchestrator_llm_env(monkeypatch):
         monkeypatch.delenv(key, raising=False)
 
 
+class TestLoadConfigWatchlistSeedTickers:
+    def test_defaults_to_empty_list(self, monkeypatch) -> None:
+        monkeypatch.delenv("VINU_AGENT_WATCHLIST_SEED_TICKERS", raising=False)
+        assert load_config().watchlist_seed_tickers == []
+
+    def test_parses_comma_separated_list(self, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_AGENT_WATCHLIST_SEED_TICKERS", "AAPL,MSFT, NVDA")
+        assert load_config().watchlist_seed_tickers == ["AAPL", "MSFT", "NVDA"]
+
+    def test_blank_entries_and_whitespace_dropped(self, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_AGENT_WATCHLIST_SEED_TICKERS", "AAPL,, ,MSFT")
+        assert load_config().watchlist_seed_tickers == ["AAPL", "MSFT"]
+
+
 class TestLoadOrchestratorLlmConfig:
     def test_returns_none_when_nothing_set(self) -> None:
         assert _load_orchestrator_llm_config() is None

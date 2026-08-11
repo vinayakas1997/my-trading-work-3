@@ -21,6 +21,13 @@ USE_PAPER = os.environ.get("ALPACA_PAPER", "true").lower() == "true"
 
 BASE_URL = ALPACA_PAPER_URL if USE_PAPER else ALPACA_LIVE_URL
 
+# How many recent closed orders debrief.py's fill-based close detection pulls
+# per poll (broker/debrief.py::PositionCloseDetector). Needs to comfortably
+# exceed the number of fills expected between two consecutive polls -- too
+# low and a fill can scroll off the page before it's ever seen, silently
+# skipping that close's evidence write (same shape as any limit-based poll).
+DEBRIEF_ORDER_LOOKBACK = int(os.environ.get("VINU_DEBRIEF_ORDER_LOOKBACK", "50"))
+
 
 @dataclass
 class Account:
@@ -87,6 +94,11 @@ class Order:
     stop_price: float | None
     created_at: str
     updated_at: str
+    # Alpaca's real fill price for this order once status == "filled" -- the
+    # order-level fields above never carried this, so anything keying off a
+    # fill's actual price (e.g. debrief.py's close detection) had no way to
+    # get it except a separate current-price lookup.
+    filled_avg_price: float | None = None
 
     @classmethod
     def from_api(cls, data: dict) -> Order:
@@ -102,6 +114,7 @@ class Order:
             stop_price=float(data["stop_price"]) if data.get("stop_price") else None,
             created_at=data.get("created_at", ""),
             updated_at=data.get("updated_at", ""),
+            filled_avg_price=float(data["filled_avg_price"]) if data.get("filled_avg_price") else None,
         )
 
 

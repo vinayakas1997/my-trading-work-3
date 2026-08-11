@@ -29,6 +29,7 @@ from vinu_research.calibration import CalibrationGate, CalibrationTracker
 from vinu_research.config import ResearchConfig
 from vinu_research.forecast_skill import ForecastSkillConfig, generate_forecast
 from vinu_research.models import (
+    AngleCalibrationEntry,
     Artifact,
     ArtifactStatus,
     CalibrationEntry,
@@ -349,6 +350,18 @@ def record_realized_outcome(
     persist the result -- Phase 7's write path into Phase 4's calibration gate. Reuses
     `CalibrationTracker.add_entry`'s scoring exactly rather than recomputing Brier/directional/
     magnitude-error inline here.
+
+    Also fans the SAME scored outcome out to one AngleCalibrationEntry per
+    entry in `artifact.origin_angles` -- the real per-angle calibration
+    tracker (previously nonexistent, confirmed by reading this whole
+    module and calibration.py directly: nothing anywhere was keyed by
+    angle name). Never a second, independently-computed score -- every
+    angle attributed to this artifact gets the identical
+    directional_correct/brier_score/magnitude_error this one real close
+    produced. Empty `origin_angles` (every artifact whose research pass
+    didn't report angle usage, or that predates this field) means no
+    per-angle entries are written -- silently, not an error, since most
+    artifacts genuinely have no attribution data.
     """
     artifact = store.get_artifact(artifact_id)
     if artifact is None:
@@ -363,8 +376,24 @@ def record_realized_outcome(
     tracker = CalibrationTracker(artifact_id, config)
     entry = tracker.add_entry(plan.forecast, actual_return_pct)
     saved = store.append_calibration_entry(entry)
+
+    for angle_name in artifact.origin_angles:
+        angle_entry = AngleCalibrationEntry(
+            angle_name=angle_name,
+            artifact_id=artifact_id,
+            forecast_direction=entry.forecast_direction,
+            actual_return_pct=entry.actual_return_pct,
+            forecast_magnitude_pct=entry.forecast_magnitude_pct,
+            brier_score=entry.brier_score,
+            directional_correct=entry.directional_correct,
+            magnitude_error=entry.magnitude_error,
+            timestamp=entry.timestamp,
+        )
+        store.append_angle_calibration_entry(angle_entry)
+
     logger.info(
-        "[%s] Recorded realized outcome: actual_return_pct=%.4f", artifact_id, actual_return_pct,
+        "[%s] Recorded realized outcome: actual_return_pct=%.4f (attributed to %d angle(s))",
+        artifact_id, actual_return_pct, len(artifact.origin_angles),
     )
     return saved
 

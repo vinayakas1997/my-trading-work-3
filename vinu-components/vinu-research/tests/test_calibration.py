@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from vinu_research.calibration import CalibrationGate, CalibrationTracker
+from vinu_research.calibration import CalibrationGate, CalibrationTracker, get_angle_calibration
 from vinu_research.forecast_skill import ForecastSkillConfig
-from vinu_research.models import Forecast
+from vinu_research.models import AngleCalibrationEntry, Forecast, TradePlan
+from vinu_research.trade_plan_authoring import freeze_trade_plan
 
 
 class TestCalibrationTracker:
@@ -64,3 +65,37 @@ class TestCalibrationGate:
         assert gate.is_open() is True
         result = gate.check()
         assert result.passed is True
+
+
+def _frozen_artifact_id(strategy_store) -> str:
+    plan = TradePlan(symbol="AAPL", timeframe="daily", direction="long")
+    return freeze_trade_plan(strategy_store, plan).artifact_id
+
+
+class TestGetAngleCalibration:
+    def test_no_entries_returns_zero_not_an_error(self, strategy_store) -> None:
+        result = get_angle_calibration(strategy_store, "patchtst")
+        assert result.angle_name == "patchtst"
+        assert result.n_entries == 0
+
+    def test_reads_back_persisted_entries(self, strategy_store) -> None:
+        a1, a2 = _frozen_artifact_id(strategy_store), _frozen_artifact_id(strategy_store)
+        strategy_store.append_angle_calibration_entry(AngleCalibrationEntry(
+            angle_name="patchtst", artifact_id=a1, forecast_direction="long",
+            actual_return_pct=0.03, directional_correct=True, brier_score=0.01,
+        ))
+        strategy_store.append_angle_calibration_entry(AngleCalibrationEntry(
+            angle_name="patchtst", artifact_id=a2, forecast_direction="long",
+            actual_return_pct=-0.01, directional_correct=False, brier_score=0.5,
+        ))
+        result = get_angle_calibration(strategy_store, "patchtst")
+        assert result.n_entries == 2
+        assert result.accuracy == 0.5
+
+    def test_other_angles_do_not_bleed_in(self, strategy_store) -> None:
+        strategy_store.append_angle_calibration_entry(AngleCalibrationEntry(
+            angle_name="shock_personality", artifact_id=_frozen_artifact_id(strategy_store),
+            forecast_direction="long", actual_return_pct=0.03, directional_correct=True, brier_score=0.01,
+        ))
+        result = get_angle_calibration(strategy_store, "patchtst")
+        assert result.n_entries == 0

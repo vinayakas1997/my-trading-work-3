@@ -88,7 +88,18 @@ class FeedbackLoopWorker:
         pnl_attribution_ok = await self._push_pnl_attribution(symbol, position)
         personality_ok = await self._refresh_personality_stats(symbol)
 
+        # The real bookkeeping action (never reprocess this close) happens
+        # first, same "persist before writing evidence" ordering
+        # broker/debrief.py already uses -- see that module's docstring.
         mark_feedback_processed(self._book, position_id)
+
+        # Phase 5 (New-talk-agents/new-thinking/new-restructure/phases/
+        # phase-5-monitor-extend/): the two writes feedback_loop.py never
+        # made before this phase. Both best-effort/never-raising, same
+        # shape as the three calls above -- a failure here must never
+        # reverse or re-open the position close that already happened.
+        hypothesis_ok = await self._record_hypothesis_evidence(symbol, artifact_id, realized_return_pct)
+        ticker_ledger_ok = await self._write_ticker_ledger_closeout(symbol, artifact_id, realized_return_pct)
 
         return {
             "position_id": position_id,
@@ -98,6 +109,8 @@ class FeedbackLoopWorker:
             "calibration_recorded": calibration_ok,
             "pnl_attribution_recorded": pnl_attribution_ok,
             "personality_stats_refreshed": personality_ok,
+            "hypothesis_evidence_recorded": hypothesis_ok,
+            "ticker_ledger_recorded": ticker_ledger_ok,
         }
 
     async def _record_calibration_outcome(self, artifact_id: str, realized_return_pct: float) -> bool:
@@ -123,6 +136,94 @@ class FeedbackLoopWorker:
             return resp.status_code == 200
         except Exception as e:
             LOG.warning("Failed to push pnl_attribution for %s: %s", symbol, e)
+            return False
+
+    async def _record_hypothesis_evidence(
+        self, symbol: str, artifact_id: str, realized_return_pct: float,
+    ) -> bool:
+        """The write feedback_loop.py never made before Phase 5: a closed
+        position's outcome reaches HypothesisRegistry, which the
+        Planner's mandatory pre-proposal consult reads (New-talk-agents/
+        new-thinking/new-restructure/phases/phase-5-monitor-extend/).
+
+        Uses `metric="realized_return_pct"`, distinct from vinu-agent's
+        own independent debrief.py detector (`metric="realized_pnl"`, a
+        dollar amount, triggered by a different signal -- Alpaca fill
+        replay during an active chat session, not this worker's own book).
+        The two detectors can both fire for the same real close; the
+        distinct metric name is deliberate so a reader can tell them
+        apart rather than mistaking two real, independent observations
+        for a duplicate. See 04-implement-test.md for why this wasn't
+        deduplicated further.
+        """
+        if not symbol:
+            return False
+        try:
+            resp = await self._http.get(
+                f"{self._config.research_api_url}/research/hypotheses",
+                params={"symbol": symbol},
+            )
+            if resp.status_code != 200:
+                return False
+            hypotheses = resp.json().get("hypotheses", [])
+        except Exception as e:
+            LOG.warning("Failed to look up hypotheses for %s: %s", symbol, e)
+            return False
+
+        active_ids = [
+            h["hypothesis_id"] for h in hypotheses
+            if h.get("status") in ("testing", "exploring", "monitoring") and h.get("hypothesis_id")
+        ]
+        if not active_ids:
+            return False
+
+        conclusion = "supports" if realized_return_pct >= 0 else "contradicts"
+        reasoning = (
+            f"Position closed for {symbol}"
+            f"{f' (artifact {artifact_id})' if artifact_id else ''}: "
+            f"realized return {realized_return_pct:.4%}."
+        )
+
+        wrote_any = False
+        for hypothesis_id in active_ids:
+            try:
+                resp = await self._http.post(
+                    f"{self._config.research_api_url}/research/hypotheses/{hypothesis_id}/evidence",
+                    json={
+                        "metric": "realized_return_pct",
+                        "value": realized_return_pct,
+                        "conclusion": conclusion,
+                        "reasoning": reasoning,
+                    },
+                )
+                wrote_any = wrote_any or resp.status_code == 200
+            except Exception as e:
+                LOG.warning("Failed to write evidence for hypothesis %s: %s", hypothesis_id, e)
+        return wrote_any
+
+    async def _write_ticker_ledger_closeout(
+        self, symbol: str, artifact_id: str, realized_return_pct: float,
+    ) -> bool:
+        """The second write feedback_loop.py never made before Phase 5 --
+        via vinu-agent's cross-container TickerLedger endpoint (Phase 0
+        built the store, this is the first vinu-live writer to use it)."""
+        if not symbol:
+            return False
+        try:
+            resp = await self._http.post(
+                f"{self._config.agent_api_url}/agent/ticker-ledger/event",
+                json={
+                    "ticker": symbol,
+                    "stage": "monitor",
+                    "event_type": "position_closed",
+                    "text": f"Position closed, realized return {realized_return_pct:.4%}.",
+                    "ref_id": artifact_id,
+                    "source": "watchlist",
+                },
+            )
+            return resp.status_code == 200
+        except Exception as e:
+            LOG.warning("Failed to write TickerLedger close-out row for %s: %s", symbol, e)
             return False
 
     async def _refresh_personality_stats(self, symbol: str) -> bool:

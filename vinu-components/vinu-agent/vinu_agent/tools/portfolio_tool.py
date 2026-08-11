@@ -1,7 +1,7 @@
 import json
 import logging
 
-from ..broker.alpaca import AlpacaBroker
+from ..broker.factory import get_live_broker
 from ..broker.historical_broker import HistoricalFillBroker
 from ..agent.tools import BaseTool
 
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 def _make_broker(as_of: str | None, session_id: str = ""):
     if as_of:
         return HistoricalFillBroker(as_of=as_of, state_path=f"/data/replay_state/{session_id}.json")
-    return AlpacaBroker()
+    return get_live_broker()
 
 
 class PortfolioTool(BaseTool):

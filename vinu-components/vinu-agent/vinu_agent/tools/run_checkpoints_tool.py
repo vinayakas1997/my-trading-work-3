@@ -1,4 +1,9 @@
+import json
+import logging
+
 from ..agent.tools import BaseTool
+
+LOG = logging.getLogger(__name__)
 
 
 class RunCheckpointsTool(BaseTool):
@@ -29,15 +34,29 @@ class RunCheckpointsTool(BaseTool):
         self._services_config = {}
 
     def execute(self, **kwargs) -> str:
+        run_id = kwargs["run_id"]
+        latest_only = bool(kwargs.get("latest_only"))
+        try:
+            from ..broker.research_link import get_research_storage
+
+            storage = get_research_storage()
+            if latest_only:
+                checkpoint = storage.get_last_checkpoint(run_id)
+                return json.dumps({"run_id": run_id, "checkpoint": checkpoint})
+            checkpoints = storage.list_checkpoints(run_id)
+            return json.dumps({"run_id": run_id, "count": len(checkpoints), "checkpoints": checkpoints})
+        except Exception as exc:
+            LOG.debug("get_run_checkpoints: in-process read failed, falling back to HTTP: %s", exc)
+
         import httpx
 
         url = self._services_config.get("vinu_research", "http://localhost:8087")
         params = {}
-        if kwargs.get("latest_only"):
+        if latest_only:
             params["latest_only"] = True
 
         resp = httpx.get(
-            f"{url}/research/runs/{kwargs['run_id']}/checkpoints",
+            f"{url}/research/runs/{run_id}/checkpoints",
             params=params,
             timeout=30,
         )

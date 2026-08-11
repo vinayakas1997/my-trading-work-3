@@ -3,11 +3,24 @@ import asyncio
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 
 from vinu_infra.debug import setup_logging
 
-from .broker.alpaca import AlpacaBroker
+from .agent.planner_triage_hook import PlannerTriage
+from .agent.scheduler_workers import (
+    bootstrap_new_tickers,
+    build_channel_targets,
+    hypothesis_reader_for,
+    make_planner_on_yes,
+    make_summary_agent_fn,
+    run_significance_cycle,
+)
+from .agent.significance_triage import SignificanceFlagStore
+from .agent.skill_audit import SkillAuditStore, check_skill_edits
+from .agent.ticker_gate import ChangeGate, HttpRunLogReader, RunLogTrigger, run_gate_cycle
+from .broker.factory import get_live_broker
 from .broker.kill_switch import halt_trading, is_trading_halted, resume_trading
 from .broker.mandate import DEFAULT_MANDATE_PATH, TradingMandate
 from .config import load_config
@@ -31,6 +44,37 @@ def _parse_args(argv=None) -> argparse.Namespace:
     serve_p = sub.add_parser("serve", help="Start the FastAPI server")
     serve_p.add_argument("--host", default="127.0.0.1")
     serve_p.add_argument("--port", type=int, default=8086)
+
+    # ── skill-audit-worker ──
+    # Phase 9 scheduler-wiring (New-talk-agents/new-thinking/
+    # new-restructure/phases/phase-9-scheduler-wiring/): check_skill_edits()
+    # was correct and tested since Phase 6 but had no scheduled caller,
+    # same "not wired to a live loop" gap Phase 0/4/7 also flagged. This
+    # gives it one, mirroring vinu-live's `while True: cycle(); sleep()`
+    # worker pattern (see vinu_live/cli.py).
+    saw_p = sub.add_parser("skill-audit-worker", help="Run continuous skill-edit audit worker loop")
+    saw_p.add_argument("--interval", type=int, dest="interval_sec", default=None)
+
+    # ── planner-worker ──
+    # Phase 9 scheduler-wiring: mermaid-explanation.md's Planner (Section
+    # 2) = a deterministic triage hook (agent/planner_triage_hook.py, new)
+    # + the real, already-built `idea_generator` (teams/research/). This
+    # gives the whole watchlist path (RunLog -> Summary Agent refresh ->
+    # ChangeGate -> Planner triage -> research team hand-off) a scheduled
+    # caller for the first time -- RunLogTrigger/ChangeGate (Phase 0) were
+    # correct and tested since Phase 0 but had no live loop invoking them.
+    pw_p = sub.add_parser("planner-worker", help="Run continuous Planner triage + Summary Agent refresh worker loop")
+    pw_p.add_argument("--interval", type=int, dest="interval_sec", default=None)
+
+    # ── significance-worker ──
+    # Phase 9 scheduler-wiring: Significance Triage (Phase 7) was correct
+    # and tested but had no scheduled caller and no real delivery target.
+    # Telegram/Discord are independently gated on their own token+id being
+    # configured (agent/scheduler_workers.py's build_channel_targets) --
+    # either, both, or neither can be set; a flag is still recorded even
+    # with zero channels configured, just not delivered anywhere yet.
+    sw2_p = sub.add_parser("significance-worker", help="Run continuous Significance Triage detection + delivery worker loop")
+    sw2_p.add_argument("--interval", type=int, dest="interval_sec", default=None)
 
     # ── broker ──
     broker_p = sub.add_parser("broker", help="Broker operations")
@@ -111,9 +155,9 @@ async def _chat_loop(session_id: str = "") -> None:
 
 
 async def _cmd_broker(args) -> None:
-    broker = AlpacaBroker()
+    broker = get_live_broker()
     if not broker.is_configured():
-        print('{"status": "error", "error": "Alpaca API not configured"}')
+        print('{"status": "error", "error": "Broker API not configured"}')
         return
 
     if args.broker_cmd == "halt":
@@ -221,6 +265,123 @@ def _cmd_mandate(args) -> None:
             print(json.dumps({"status": "error", "error": f"Unknown mandate field: {key}"}))
 
 
+def resolve_worker_interval(args: argparse.Namespace | None, config, config_field: str = "skill_audit_worker_interval_sec") -> int:
+    """Unlike vinu-live's own resolve_worker_interval (vinu_live/cli.py),
+    there's no dedicated per-worker console script for any vinu-agent
+    worker -- each is only ever reached via its own subcommand through
+    main()'s dispatch, so args is always real here, never None."""
+    return args.interval_sec if args and args.interval_sec else getattr(config, config_field)
+
+
+def skill_audit_worker_main(args: argparse.Namespace) -> None:
+    config = load_config()
+    interval = resolve_worker_interval(args, config)
+    skills_root = Path(config.skills_dir)
+    data_root = Path(config.memory_dir).parent
+    print(f"[skill-audit-worker] Starting (interval={interval}s, skills_root={skills_root})")
+    print(f"[skill-audit-worker] Press Ctrl+C to stop.\n")
+
+    audit_store = SkillAuditStore(data_root / "skill_audit.db")
+    try:
+        while True:
+            entries = check_skill_edits(skills_root, audit_store)
+            print(f"[skill-audit-worker] Cycle: {len(entries)} new entr{'y' if len(entries) == 1 else 'ies'}")
+            for entry in entries:
+                print(f"  {entry.skill_path}: {entry.diff_summary}")
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print("\n[skill-audit-worker] Stopped by user.")
+    finally:
+        audit_store.close()
+
+
+def planner_worker_main(args: argparse.Namespace) -> None:
+    """Watchlist = TickerSummaryStore.list_summaries() -- tickers that
+    already have a Summary Agent read on file, per the decided watchlist
+    source (Phase 9's implementation record). Before each cycle's own
+    tickers are read, bootstrap_new_tickers() cold-starts a screener run
+    for any configured seed ticker (VINU_AGENT_WATCHLIST_SEED_TICKERS)
+    not yet in the store -- the watchlist bootstrap gap this worker used
+    to have no answer for. Per ticker, per cycle: RunLogTrigger refreshes
+    the Summary Agent if vinu-initial-analysis has a new run_id, then
+    ChangeGate (Phase 0, unmodified) decides whether anything actually
+    changed since the last Planner pass; only a "yes" reaches
+    PlannerTriage + the real research-team hand-off."""
+    config = load_config()
+    interval = resolve_worker_interval(args, config, "planner_worker_interval_sec")
+    print(f"[planner-worker] Starting (interval={interval}s)")
+    print(f"[planner-worker] Press Ctrl+C to stop.\n")
+
+    log = logging.getLogger(__name__)
+    with AgentService() as service:
+        run_log_trigger = RunLogTrigger(
+            HttpRunLogReader(config.services.get("vinu_initial_analysis")),
+            service.ticker_summary_store, service.ticker_ledger,
+        )
+        change_gate = ChangeGate(service.ticker_summary_store, service._strategy_store, service.ticker_ledger)
+        triage = PlannerTriage(service._strategy_store, hypothesis_reader_for(service), service.ticker_ledger)
+        summary_agent_fn = make_summary_agent_fn(service)
+        on_yes = make_planner_on_yes(service, triage)
+
+        try:
+            while True:
+                if config.watchlist_seed_tickers:
+                    bootstrapped = bootstrap_new_tickers(service, config.watchlist_seed_tickers)
+                    if bootstrapped:
+                        print(f"[planner-worker] Bootstrapped {len(bootstrapped)} new ticker(s): {', '.join(bootstrapped)}")
+                tickers = [s.ticker for s in service.ticker_summary_store.list_summaries()]
+                for ticker in tickers:
+                    try:
+                        run_log_trigger.refresh_if_stale(ticker, summary_agent_fn)
+                    except Exception:
+                        log.exception("summary refresh failed for %s, continuing", ticker)
+                run_gate_cycle(tickers, change_gate, on_yes)
+                print(f"[planner-worker] Cycle: {len(tickers)} ticker(s) on watchlist")
+                time.sleep(interval)
+        except KeyboardInterrupt:
+            print("\n[planner-worker] Stopped by user.")
+
+
+def significance_worker_main(args: argparse.Namespace) -> None:
+    """Watchlist = TickerSummaryStore.list_summaries(), same decided
+    source as planner-worker. Per cycle: all three pattern detectors
+    (repeated rejection, large funding, thesis-contradicting close) per
+    ticker, record + deliver any hit through whichever channels are
+    actually configured (see build_channel_targets -- zero, one, or both
+    of Telegram/Discord). The large-funding threshold is the mandate's own
+    max_order_value -- the one dollar ceiling already decided/committed
+    to, never a second number invented for this detector."""
+    config = load_config()
+    interval = resolve_worker_interval(args, config, "significance_worker_interval_sec")
+    print(f"[significance-worker] Starting (interval={interval}s)")
+    print(f"[significance-worker] Press Ctrl+C to stop.\n")
+
+    targets = build_channel_targets(config)
+    print(f"[significance-worker] {len(targets)} delivery channel(s) configured")
+
+    funding_threshold = TradingMandate.load().max_order_value
+
+    data_root = Path(config.memory_dir).parent
+    flag_store = SignificanceFlagStore(data_root / "significance_flags.db")
+    try:
+        with AgentService() as service:
+            try:
+                while True:
+                    tickers = [s.ticker for s in service.ticker_summary_store.list_summaries()]
+                    flags = asyncio.run(
+                        run_significance_cycle(
+                            tickers, service.ticker_ledger, flag_store, targets,
+                            funding_threshold=funding_threshold,
+                        ),
+                    )
+                    print(f"[significance-worker] Cycle: {len(tickers)} ticker(s) checked, {len(flags)} flag(s) raised")
+                    time.sleep(interval)
+            except KeyboardInterrupt:
+                print("\n[significance-worker] Stopped by user.")
+    finally:
+        flag_store.close()
+
+
 def main() -> None:
     setup_logging("agent")
     args = _parse_args()
@@ -241,6 +402,12 @@ def main() -> None:
         asyncio.run(_broker())
     elif args.command == "channel":
         _cmd_channel(args)
+    elif args.command == "skill-audit-worker":
+        skill_audit_worker_main(args)
+    elif args.command == "planner-worker":
+        planner_worker_main(args)
+    elif args.command == "significance-worker":
+        significance_worker_main(args)
     elif args.command == "swarm":
         asyncio.run(_cmd_swarm(args))
     elif args.command == "mandate":

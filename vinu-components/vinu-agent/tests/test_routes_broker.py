@@ -75,7 +75,7 @@ class TestBrokerAccountRoute:
         mock_broker.is_configured.return_value = True
         mock_broker.get_account.return_value = account
 
-        with patch("vinu_agent.server.routes_broker.AlpacaBroker", return_value=mock_broker):
+        with patch("vinu_agent.server.routes_broker.get_live_broker", return_value=mock_broker):
             resp = client.get("/broker/account")
 
         assert resp.status_code == 200
@@ -89,7 +89,7 @@ class TestBrokerAccountRoute:
         mock_broker.is_configured.return_value = True
         mock_broker.get_account.side_effect = RuntimeError("Alpaca unreachable")
 
-        with patch("vinu_agent.server.routes_broker.AlpacaBroker", return_value=mock_broker):
+        with patch("vinu_agent.server.routes_broker.get_live_broker", return_value=mock_broker):
             resp = client.get("/broker/account")
 
         assert resp.status_code == 200
@@ -116,7 +116,7 @@ class TestBrokerPositionsRoute:
         mock_broker.is_configured.return_value = True
         mock_broker.get_positions.return_value = [position]
 
-        with patch("vinu_agent.server.routes_broker.AlpacaBroker", return_value=mock_broker):
+        with patch("vinu_agent.server.routes_broker.get_live_broker", return_value=mock_broker):
             resp = client.get("/broker/positions")
 
         assert resp.status_code == 200

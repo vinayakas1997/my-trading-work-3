@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -38,6 +39,7 @@ from vinu_live.config import LiveConfig, load_config
 from vinu_live.reconciliation import ReconciliationEngine
 from vinu_live.trade_plan.condition_evaluator import find_triggered_rules
 from vinu_live.trade_plan.live_metrics import compute_live_metrics
+from vinu_live.trade_plan.rebalance_intake import RebalanceRequestQueue
 
 LOG = logging.getLogger(__name__)
 
@@ -46,7 +48,12 @@ _RETURNS_LOOKBACK_DAYS = 90
 
 
 class TradePlanOrchestrator:
-    def __init__(self, config: LiveConfig | None = None, book: BookBackend | None = None) -> None:
+    def __init__(
+        self,
+        config: LiveConfig | None = None,
+        book: BookBackend | None = None,
+        rebalance_queue: RebalanceRequestQueue | None = None,
+    ) -> None:
         self._config = config or load_config()
         self._http = httpx.AsyncClient(timeout=30.0)
         self._book = book or init_book(str(self._config.data_root / "trade_plan_book.db"))
@@ -54,10 +61,76 @@ class TradePlanOrchestrator:
         self._reconciler = ReconciliationEngine()
         self._cycle_count = 0
         self._last_prices: dict[str, float] = {}
+        # Phase 5: advisory intake for capital_allocator's rebalance
+        # requests -- never a direct action, folded into the ordinary
+        # per-cycle evaluation below, after the plan's own real
+        # invalidation/contingency rules, never before them. SQLite-backed
+        # at a shared, on-disk path (not per-instance in-memory) so a
+        # request submitted via the HTTP intake route's own throwaway
+        # TradePlanOrchestrator instance (server/app.py constructs a fresh
+        # one per request) is still visible to the long-running
+        # trade-plan-worker's orchestrator on its next real cycle.
+        # Injectable (same DI pattern as `book` above) so tests get an
+        # isolated queue instead of sharing config.data_root's real file.
+        self._rebalance_queue = rebalance_queue or RebalanceRequestQueue(
+            str(self._config.data_root / "rebalance_requests.db"),
+        )
+        # Phase 5: per-symbol debounce for the shock-angle trigger below --
+        # monotonic clock, not wall time (immune to clock adjustments).
+        self._last_shock_trigger: dict[str, float] = {}
 
     async def close(self) -> None:
         await self._http.aclose()
         self._book.close()
+        self._rebalance_queue.close()
+
+    def submit_rebalance_request(self, symbol: str, reason: str) -> None:
+        """Called by whatever eventually implements capital_allocator's
+        rebalancer (vinu-agent, a separate container) via this
+        orchestrator's HTTP intake route -- see server/app.py. Accepting
+        the request here only means it will be CONSIDERED on this
+        symbol's next evaluation, not that it will be honored."""
+        self._rebalance_queue.submit(symbol, reason)
+
+    # Provisional, not tuned -- same "flag it, don't pretend it's settled"
+    # discipline as _REBALANCE_PROTECT_GAIN_PCT above. Long enough that a
+    # genuine burst of shock events (the exact scenario this trigger
+    # exists to react to quickly) produces exactly one off-cycle check,
+    # not one per event.
+    _SHOCK_DEBOUNCE_SEC = 60.0
+
+    async def on_shock_event(self, symbol: str) -> dict[str, Any] | None:
+        """Off-cycle trigger (Phase 5, 01-plan.md item 3): shock_
+        clustering/shock_personality fired for `symbol`. Runs the exact
+        same per-symbol evaluation cycle() uses for its own per-plan loop,
+        just off-schedule for this one symbol -- not a separate decision
+        path. Debounced per symbol so a genuine burst of shock events
+        produces exactly one check, not a cost-runaway (02-guard-rail.md).
+        Returns None when debounced, no matching active plan, or no live
+        price -- all silent no-ops by design (an off-cycle miss is
+        recovered by the next scheduled cycle() regardless)."""
+        symbol = symbol.upper()
+        now = time.monotonic()
+        last = self._last_shock_trigger.get(symbol)
+        if last is not None and (now - last) < self._SHOCK_DEBOUNCE_SEC:
+            return None
+        self._last_shock_trigger[symbol] = now
+
+        plans = await self._fetch_active_trade_plans()
+        plan = next((p for p in plans if p.get("symbol") == symbol), None)
+        if plan is None:
+            return None
+
+        prices = await self._fetch_prices([symbol])
+        price = prices.get(symbol)
+        if price is None:
+            return None
+        portfolio_value = await self._fetch_portfolio_value()
+
+        position = self._find_open_position(symbol)
+        if position is None:
+            return await self._maybe_enter(plan, symbol, price, portfolio_value)
+        return await self._evaluate_open_position(plan, position, price, portfolio_value)
 
     async def cycle(self) -> dict[str, Any]:
         self._cycle_count += 1
@@ -251,8 +324,71 @@ class TradePlanOrchestrator:
                 position, price, portfolio_value, triggered_contingencies[0],
             )
 
+        rebalance_request = self._rebalance_queue.pending_for(symbol)
+        if rebalance_request is not None:
+            return await self._evaluate_rebalance_request(
+                position, price, portfolio_value, rebalance_request,
+            )
+
         LOG.info("No rule triggered for %s -- holding unchanged", symbol)
         return {"symbol": symbol, "action": "hold", "reason": "no_rule_triggered"}
+
+    # Provisional threshold, not tuned -- same "flag it, don't pretend
+    # it's settled" discipline as this build's other not-yet-tuned
+    # constants (N/K caps, completeness tolerance, PBO bands). Protects a
+    # real winner from being unwound just to satisfy a reallocation ask;
+    # a position within this band has little cost to giving up now.
+    _REBALANCE_PROTECT_GAIN_PCT = 0.05
+
+    async def _evaluate_rebalance_request(
+        self, position: Position, price: float, portfolio_value: float, request: Any,
+    ) -> dict[str, Any]:
+        """The rebalance request is advisory input ONLY -- this method is
+        reached exclusively when the plan's own real invalidation/
+        contingency rules found nothing to act on (see
+        _evaluate_open_position above). It can still decline: a real
+        unrealized gain beyond _REBALANCE_PROTECT_GAIN_PCT is a real
+        reason to hold, not honor the request, matching 02-guard-rail.md's
+        'orchestrator retains final say.'"""
+        symbol = position.symbol
+        self._rebalance_queue.consume(symbol)  # considered once, either way
+
+        favorable_move_pct = (
+            (price - position.avg_entry) / position.avg_entry if position.side == "long"
+            else (position.avg_entry - price) / position.avg_entry
+        ) if position.avg_entry > 0 else 0.0
+
+        if favorable_move_pct > self._REBALANCE_PROTECT_GAIN_PCT:
+            LOG.info(
+                "Declining rebalance request for %s -- unrealized gain %.2f%% protects the position",
+                symbol, favorable_move_pct * 100,
+            )
+            return {
+                "symbol": symbol, "action": "rebalance_declined",
+                "reason": request.reason, "unrealized_gain_pct": favorable_move_pct,
+            }
+
+        verdict, breaker_reason = await self._check_breaker(portfolio_value)
+        if verdict == BreakerVerdict.HALT:
+            LOG.warning("Breaker HALT -- skipping rebalance reduce for %s: %s", symbol, breaker_reason)
+            return {"symbol": symbol, "action": "rebalance_blocked_by_breaker", "reason": breaker_reason}
+
+        reduce_qty = position.qty * 0.5
+        side = "sell" if position.side == "long" else "buy"
+        order_result = await self._submit_order(symbol, side, reduce_qty)
+        if order_result.get("status") == "submitted":
+            reduce_position(self._book, position.position_id, reduce_qty, price)
+            LOG.info("Honored rebalance request for %s (reason: %s)", symbol, request.reason)
+            return {
+                "symbol": symbol, "action": "rebalance_honored",
+                "qty": reduce_qty, "reason": request.reason,
+            }
+
+        LOG.info("Rebalance reduce not filled for %s: broker status=%s", symbol, order_result.get("status"))
+        return {
+            "symbol": symbol, "action": "rebalance_not_filled",
+            "broker_status": order_result.get("status"), "reason": request.reason,
+        }
 
     async def _apply_invalidation(
         self, position: Position, price: float, portfolio_value: float, rule: dict[str, Any],

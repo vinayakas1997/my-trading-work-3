@@ -35,7 +35,7 @@ async def health() -> dict[str, Any]:
         "service": "vinu-strategy",
         "features_api_healthy": deps.get("features", {}).get("reachable", False),
         "correlation_api_healthy": deps.get("correlation", {}).get("reachable", False),
-        "total_strategies": len(_service._registry.list_strategies()),
+        "total_strategies": len(_service._registry.list()),
         "db_size_bytes": _service._meta_storage._db_path.stat().st_size if _service._meta_storage._db_path.exists() else 0,
     }
 

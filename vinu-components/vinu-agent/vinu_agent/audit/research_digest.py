@@ -43,29 +43,14 @@ class ResearchDigestReader:
         self._state_path = Path(state_path) if state_path else None
 
     def check_symbols(self, symbols: list[str]) -> list[dict[str, Any]]:
-        research_url = self._services_config.get("vinu_research")
-        if not research_url or not symbols:
+        if not symbols:
             return []
 
         seen = _load_state(self._state_path) if self._state_path else {}
         findings: list[dict[str, Any]] = []
 
-        import httpx
-
         for symbol in sorted(set(s for s in symbols if s)):
-            try:
-                resp = httpx.get(
-                    f"{research_url}/research/runs",
-                    params={"symbol": symbol, "limit": 1},
-                    timeout=5.0,
-                )
-                if resp.status_code != 200:
-                    continue
-                runs = resp.json()
-            except Exception:
-                logger.debug("ResearchDigestReader: fetch failed for %s", symbol, exc_info=True)
-                continue
-
+            runs = self._fetch_latest_run(symbol)
             if not isinstance(runs, list) or not runs:
                 continue
             run = runs[0]
@@ -93,3 +78,36 @@ class ResearchDigestReader:
             _save_state(self._state_path, seen)
 
         return findings
+
+    def _fetch_latest_run(self, symbol: str) -> list[dict[str, Any]] | None:
+        """In-process first (reads vinu-research's real local storage
+        directly, no network hop), HTTP fallback only if that raises --
+        same posture as trade_plan_calibration.py. Best-effort either way:
+        a total failure returns None, treated as "no findings" by the
+        caller, never raised."""
+        try:
+            from ..broker.research_link import get_research_storage
+
+            storage = get_research_storage()
+            records = storage.list_runs(symbol=symbol, limit=1)
+            return [r.to_dict() for r in records]
+        except Exception:
+            logger.debug("ResearchDigestReader: in-process read failed for %s, falling back to HTTP", symbol, exc_info=True)
+
+        research_url = self._services_config.get("vinu_research")
+        if not research_url:
+            return None
+        try:
+            import httpx
+
+            resp = httpx.get(
+                f"{research_url}/research/runs",
+                params={"symbol": symbol, "limit": 1},
+                timeout=5.0,
+            )
+            if resp.status_code != 200:
+                return None
+            return resp.json()
+        except Exception:
+            logger.debug("ResearchDigestReader: HTTP fetch also failed for %s", symbol, exc_info=True)
+            return None

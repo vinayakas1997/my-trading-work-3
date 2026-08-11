@@ -10,6 +10,7 @@ from vinu_live.book.positions import init_book, list_open_positions, open_positi
 from vinu_live.breaker.engine import BreakerVerdict
 from vinu_live.config import LiveConfig
 from vinu_live.trade_plan.orchestrator import TradePlanOrchestrator
+from vinu_live.trade_plan.rebalance_intake import RebalanceRequestQueue
 
 
 @pytest.fixture
@@ -25,7 +26,11 @@ def book():
 
 def _make_orchestrator(book, **config_overrides) -> TradePlanOrchestrator:
     config = LiveConfig(**config_overrides)
-    orch = TradePlanOrchestrator(config, book=book)
+    # In-memory, per-test-isolated -- config.data_root's real
+    # rebalance_requests.db would otherwise be shared (and polluted)
+    # across every test using this helper, since none of them override
+    # data_root.
+    orch = TradePlanOrchestrator(config, book=book, rebalance_queue=RebalanceRequestQueue(":memory:"))
     orch._http = MagicMock()
     return orch
 
@@ -255,6 +260,257 @@ class TestEvaluateOpenPosition:
         assert action["action"] == "exit_blocked_by_breaker"
         assert post_mock.call_count == 0
         assert list_open_positions(book, symbol="AAPL")[0].qty == 10.0
+
+
+class TestRebalanceRequestIntake:
+    """Phase 5 (New-talk-agents/new-thinking/new-restructure/phases/
+    phase-5-monitor-extend/): a rebalance request is advisory input only,
+    evaluated after (never before) the plan's own real invalidation/
+    contingency rules, and can be declined."""
+
+    def test_invalidation_still_takes_priority_over_a_pending_request(self, book) -> None:
+        """A rebalance request pending for the same symbol must never
+        preempt a real invalidation exit -- proves the fold-in happens
+        strictly after the existing rules, not instead of them."""
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._rebalance_queue.submit("AAPL", "free capital for candidate Y")
+        get_mock, post_mock = _router(
+            get_routes={
+                "/candles/AAPL": {"data": []},
+                "/angle/shock_clustering/AAPL": {"data": []},
+                "/broker/positions": [],
+            },
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o4"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        position = list_open_positions(book, symbol="AAPL")[0]
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 130.0, 100000.0))
+
+        assert action["action"] == "invalidation_exit"  # not rebalance_*
+
+    def test_rebalance_request_can_be_declined_by_orchestrator(self, book) -> None:
+        """No invalidation/contingency reason to act, but a real
+        unrealized gain protects the position -- the request is declined,
+        not force-executed."""
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._rebalance_queue.submit("AAPL", "free capital for candidate Y")
+        get_mock, post_mock = _router(
+            get_routes={
+                "/candles/AAPL": {"data": []},
+                "/angle/shock_clustering/AAPL": {"data": []},
+                "/broker/positions": [],
+            },
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        position = list_open_positions(book, symbol="AAPL")[0]
+        # 160 vs. entry 150 = +6.67%, above the protect-gain threshold (5%),
+        # and below both the plan's invalidation/contingency triggers.
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 160.0, 100000.0))
+
+        assert action["action"] == "rebalance_declined"
+        assert post_mock.call_count == 0  # no order submitted
+        assert list_open_positions(book, symbol="AAPL")[0].qty == 10.0  # unchanged
+
+    def test_rebalance_request_honored_when_no_protective_gain(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._rebalance_queue.submit("AAPL", "free capital for candidate Y")
+        get_mock, post_mock = _router(
+            get_routes={
+                "/candles/AAPL": {"data": []},
+                "/angle/shock_clustering/AAPL": {"data": []},
+                "/broker/positions": [],
+            },
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o5"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        position = list_open_positions(book, symbol="AAPL")[0]
+        # 151 vs. entry 150 = +0.67%, well under the protect-gain threshold.
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 151.0, 100000.0))
+
+        assert action["action"] == "rebalance_honored"
+        remaining = list_open_positions(book, symbol="AAPL")[0]
+        assert remaining.qty == pytest.approx(5.0)  # reduced by half
+
+    def test_rebalance_request_blocked_by_breaker(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._breaker_state.halted = True
+        orch._breaker_state.halted_reason = "manual test halt"
+        orch._rebalance_queue.submit("AAPL", "free capital for candidate Y")
+        get_mock, post_mock = _router(
+            get_routes={
+                "/candles/AAPL": {"data": []},
+                "/angle/shock_clustering/AAPL": {"data": []},
+                "/broker/positions": [],
+            },
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        position = list_open_positions(book, symbol="AAPL")[0]
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 151.0, 100000.0))
+
+        assert action["action"] == "rebalance_blocked_by_breaker"
+        assert post_mock.call_count == 0
+
+    def test_request_consumed_after_one_evaluation_not_reevaluated_every_cycle(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._rebalance_queue.submit("AAPL", "free capital for candidate Y")
+        get_mock, post_mock = _router(
+            get_routes={
+                "/candles/AAPL": {"data": []},
+                "/angle/shock_clustering/AAPL": {"data": []},
+                "/broker/positions": [],
+            },
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        position = list_open_positions(book, symbol="AAPL")[0]
+        asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 160.0, 100000.0))
+        assert orch._rebalance_queue.pending_for("AAPL") is None
+
+        # A second evaluation with nothing re-submitted holds normally,
+        # not re-declining the same (now-gone) request.
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 160.0, 100000.0))
+        assert action["action"] == "hold"
+
+    def test_no_pending_request_behaves_exactly_as_before(self, book, caplog) -> None:
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={
+                "/candles/AAPL": {"data": []},
+                "/angle/shock_clustering/AAPL": {"data": []},
+            },
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        position = list_open_positions(book, symbol="AAPL")[0]
+        with caplog.at_level("INFO"):
+            action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 151.0, 100000.0))
+
+        assert action["action"] == "hold"
+        assert "No rule triggered" in caplog.text
+
+
+class TestShockTrigger:
+    """Phase 5 (New-talk-agents/new-thinking/new-restructure/phases/
+    phase-5-monitor-extend/): an off-cycle check invoked when a shock
+    angle fires, using the exact same per-symbol evaluation as a normal
+    cycle -- not a separate decision path."""
+
+    _GET_ROUTES = {
+        "/research/artifacts": [{"artifact_id": "art_1", "status": "ACTIVE", "type": "trade_plan"}],
+        "/research/trade-plan/art_1": {"artifact_id": "art_1", "trade_plan_data": json.dumps(_SAMPLE_PLAN)},
+        "/candles/AAPL": {"data": [{"close": 151.0}]},
+        "/angle/shock_clustering/AAPL": {"data": []},
+        "/broker/account": {"configured": True, "equity": 100000.0},
+        "/broker/positions": [],
+    }
+
+    def test_shock_trigger_fires_off_cycle_check_for_open_position(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(self._GET_ROUTES)
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        action = asyncio.run(orch.on_shock_event("aapl"))  # lowercase in, uppercase convention out
+
+        assert action is not None
+        assert action["action"] == "hold"  # +0.67%, no rule triggered
+        assert action["symbol"] == "AAPL"
+
+    def test_shock_trigger_can_enter_a_new_position(self, book) -> None:
+        """No open position yet -- the off-cycle check still runs the
+        same real entry logic a normal cycle would."""
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            self._GET_ROUTES,
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o6"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        action = asyncio.run(orch.on_shock_event("AAPL"))
+
+        assert action["action"] == "entered"
+        assert len(list_open_positions(book, symbol="AAPL")) == 1
+
+    def test_shock_trigger_debounced_within_window(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(self._GET_ROUTES)
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        first = asyncio.run(orch.on_shock_event("AAPL"))
+        assert first is not None
+        calls_after_first = get_mock.call_count
+
+        # 4 more shock events in immediate succession -- same debounce
+        # window, must not trigger 4 more real evaluations.
+        for _ in range(4):
+            result = asyncio.run(orch.on_shock_event("AAPL"))
+            assert result is None
+
+        assert get_mock.call_count == calls_after_first  # no new fetches at all
+
+    def test_shock_trigger_fires_again_after_debounce_window_elapses(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(self._GET_ROUTES)
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        asyncio.run(orch.on_shock_event("AAPL"))
+        orch._last_shock_trigger["AAPL"] -= orch._SHOCK_DEBOUNCE_SEC + 1  # simulate elapsed time
+
+        second = asyncio.run(orch.on_shock_event("AAPL"))
+        assert second is not None
+
+    def test_shock_trigger_debounce_is_per_symbol_not_global(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        open_position(book, "MSFT", "long", 10.0, 250.0)
+        orch = _make_orchestrator(book)
+        routes = dict(self._GET_ROUTES)
+        routes["/research/artifacts"] = [
+            {"artifact_id": "art_1", "status": "ACTIVE", "type": "trade_plan"},
+            {"artifact_id": "art_2", "status": "ACTIVE", "type": "trade_plan"},
+        ]
+        msft_plan = {**_SAMPLE_PLAN, "symbol": "MSFT"}
+        routes["/research/trade-plan/art_2"] = {"artifact_id": "art_2", "trade_plan_data": json.dumps(msft_plan)}
+        routes["/candles/MSFT"] = {"data": [{"close": 251.0}]}
+        get_mock, post_mock = _router(routes)
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        aapl_result = asyncio.run(orch.on_shock_event("AAPL"))
+        msft_result = asyncio.run(orch.on_shock_event("MSFT"))
+
+        assert aapl_result is not None
+        assert msft_result is not None  # AAPL's debounce does not block MSFT
+
+    def test_shock_trigger_no_matching_active_plan_returns_none(self, book) -> None:
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router({"/research/artifacts": []})
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        action = asyncio.run(orch.on_shock_event("AAPL"))
+        assert action is None
 
 
 class TestReconciliation:

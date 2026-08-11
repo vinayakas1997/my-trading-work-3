@@ -198,6 +198,32 @@ def fetch_by_run(response: Response, ticker: str, granularity: str, time_range: 
     )
 
 
+@router.get("/latest-run/{ticker}", response_model=None)
+def latest_run(response: Response, ticker: str) -> Envelope:
+    """The single most recent run across ANY angle for this ticker -- not
+    scoped to one method/granularity/tier. Added for vinu-agent's Phase 0
+    RunLog-driven Summary Agent trigger (see New-talk-agents/new-thinking/
+    new-restructure/phases/phase-0-foundation-plumbing/01-plan.md): "has
+    RunLog produced a run_id newer than the one the Summary Agent last
+    saw for this ticker" needs exactly this cross-angle latest-run_id
+    query, which RunLog.get_runs() already supported -- this route is the
+    only new piece, not new logic in RunLog itself."""
+    svc = get_service()
+    ticker = ticker.upper()
+    runs = svc.run_log.get_runs(symbol=ticker, limit=1)
+    if not runs:
+        response.status_code = 404
+        return Envelope(run_id=None, status="not_found", computed_at=None, tier=None, data=None)
+    latest = runs[0]
+    return Envelope(
+        run_id=latest["run_id"],
+        status="ok",
+        computed_at=latest.get("started_at"),
+        tier=latest.get("tier"),
+        data={"angle_name": latest.get("angle_name"), "granularity": latest.get("granularity")},
+    )
+
+
 @router.get("/factsheet/{ticker}/{method}", response_model=None)
 def factsheet(response: Response, ticker: str, method: str, tier: str = "tier2") -> Envelope:
     """The plain-text fact sheet document (`storage/factsheet.py`) for one

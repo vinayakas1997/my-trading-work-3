@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -38,7 +39,7 @@ class PortfolioComparisonTool(BaseTool):
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             portfolio_data = await self._fetch_portfolio(client, portfolio_api)
-            artifacts = await self._fetch_artifacts(client, research_api)
+            artifacts = await self._fetch_artifacts(research_api)
 
         if format == "json":
             return json.dumps({
@@ -57,14 +58,31 @@ class PortfolioComparisonTool(BaseTool):
             logger.warning("Failed to fetch portfolio: %s", e)
         return {"status": "unavailable"}
 
-    async def _fetch_artifacts(self, client: httpx.AsyncClient, url: str) -> list[dict[str, Any]]:
+    async def _fetch_artifacts(self, research_api_url: str) -> list[dict[str, Any]]:
+        """In-process first (reads vinu-research's real local strategy_store
+        directly), HTTP fallback only if that raises -- see
+        vinu_agent/broker/research_link.py."""
         try:
-            resp = await client.get(
-                f"{url}/artifacts",
-                params={"status": "ACTIVE,MONITORING,BENCHING"},
+            from ..broker.research_link import get_strategy_store, serialize_artifact_summary
+            from vinu_research.models import ArtifactStatus
+
+            store = get_strategy_store()
+            artifacts = await asyncio.to_thread(
+                store.list_artifacts_by_statuses,
+                [ArtifactStatus.ACTIVE, ArtifactStatus.MONITORING, ArtifactStatus.BENCHING],
             )
-            if resp.status_code == 200:
-                return resp.json()
+            return [serialize_artifact_summary(a) for a in artifacts]
+        except Exception as e:
+            logger.debug("compare_portfolio: in-process artifact read failed, falling back to HTTP: %s", e)
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{research_api_url}/artifacts",
+                    params={"status": "ACTIVE,MONITORING,BENCHING"},
+                )
+                if resp.status_code == 200:
+                    return resp.json()
         except Exception as e:
             logger.warning("Failed to fetch artifacts: %s", e)
         return []
@@ -99,5 +117,4 @@ class PortfolioComparisonTool(BaseTool):
         return "\n".join(lines)
 
     def execute(self, **kwargs) -> str:
-        import asyncio
         return asyncio.run(self.execute_async(**kwargs))

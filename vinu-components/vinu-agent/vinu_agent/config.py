@@ -44,6 +44,41 @@ class AgentConfig:
     orchestrator_dir: str = ""
     sessions_dir: str = ""
     memory_dir: str = ""
+    # Skill files change rarely -- matches vinu-live's original (pre-split)
+    # worker_interval_sec default rather than inventing a new number; not
+    # independently tuned. See agent/skill_audit.py's check_skill_edits().
+    skill_audit_worker_interval_sec: int = 3600
+    # Longer than skill-audit-worker/shadow-worker on purpose: each cycle
+    # can fire real LLM team calls (screener + research), not just
+    # deterministic checks -- 1800s (30 min) is a first-pass, unvalidated
+    # default, same category as every other un-pinned threshold across
+    # this build.
+    planner_worker_interval_sec: int = 1800
+    # Significance Triage delivery (Phase 7, Phase 9 scheduler-wiring) --
+    # reuses TELEGRAM_TOKEN/DISCORD_TOKEN, the same env var names
+    # `cli.py`'s existing `channel list` command already reads. Empty by
+    # default: a channel with no token configured is simply skipped, not
+    # an error -- see agent/scheduler_workers.py's significance target
+    # builder. Interval shorter than planner-worker (this is detection +
+    # a notification, not an LLM team run) but not so short it spams --
+    # first-pass, unvalidated default, same category as every other
+    # un-pinned threshold across this build.
+    telegram_token: str = ""
+    telegram_admin_chat_id: str = ""
+    discord_token: str = ""
+    discord_admin_channel_id: str = ""
+    significance_worker_interval_sec: int = 900
+    # Watchlist bootstrap gap: TickerSummaryStore.list_summaries() (every
+    # scheduled worker's watchlist source) never gains a genuinely new
+    # ticker on its own -- confirmed by reading every writer directly, each
+    # is only ever invoked FOR a ticker already drawn from that same store.
+    # This static, operator-provided seed list is the one place a new
+    # ticker enters that loop (see agent/scheduler_workers.py's
+    # discover_new_tickers/bootstrap_new_tickers) -- deliberately not an
+    # invented external market-data discovery integration. Empty by
+    # default: no seed list configured means no bootstrap happens, same
+    # "skip, don't guess" contract as every other optional gate.
+    watchlist_seed_tickers: list = field(default_factory=list)
     services: dict = field(default_factory=lambda: {
         "vinu_simulator": os.environ.get("VINU_SIMULATOR_API_URL", "http://localhost:8085"),
         "vinu_tools": os.environ.get("VINU_TOOLS_API_URL", "http://localhost:8082"),
@@ -109,4 +144,14 @@ def load_config() -> AgentConfig:
         orchestrator_dir=os.environ.get("VINU_AGENT_ORCHESTRATOR_DIR", str(Path(__file__).parent.parent / "orchestrator")),
         sessions_dir=os.environ.get("VINU_AGENT_SESSIONS_DIR", str(data_root / "sessions")),
         memory_dir=os.environ.get("VINU_AGENT_MEMORY_DIR", str(data_root / "memory")),
+        skill_audit_worker_interval_sec=int(os.environ.get("VINU_AGENT_SKILL_AUDIT_INTERVAL", "3600")),
+        planner_worker_interval_sec=int(os.environ.get("VINU_AGENT_PLANNER_INTERVAL", "1800")),
+        telegram_token=os.environ.get("TELEGRAM_TOKEN", ""),
+        telegram_admin_chat_id=os.environ.get("VINU_AGENT_TELEGRAM_ADMIN_CHAT_ID", ""),
+        discord_token=os.environ.get("DISCORD_TOKEN", ""),
+        discord_admin_channel_id=os.environ.get("VINU_AGENT_DISCORD_ADMIN_CHANNEL_ID", ""),
+        significance_worker_interval_sec=int(os.environ.get("VINU_AGENT_SIGNIFICANCE_INTERVAL", "900")),
+        watchlist_seed_tickers=[
+            t.strip() for t in os.environ.get("VINU_AGENT_WATCHLIST_SEED_TICKERS", "").split(",") if t.strip()
+        ],
     )

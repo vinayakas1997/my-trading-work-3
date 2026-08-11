@@ -29,6 +29,17 @@ class Evidence:
     timestamp: str = ""
     metrics_snapshot: dict[str, float] | None = None
     report_path: str | None = None
+    # Phase 7 (New-talk-agents/new-thinking/new-restructure/phases/
+    # phase-7-significance-triage/): "system" for every existing/
+    # automated evidence write, "human_override" only when a human
+    # responds to a Significance Triage flag -- see agent/
+    # significance_triage.py's record_human_override(), the one call
+    # site allowed to set this to anything else.
+    source: str = "system"
+    # Phase 7: links this evidence back to whatever prompted it outside
+    # HypothesisRegistry's own world -- a Significance Triage flag_id, for
+    # a human_override write. Empty for every non-override write.
+    ref_id: str = ""
 
 
 @dataclass
@@ -48,9 +59,17 @@ class Hypothesis:
     best_sharpe: float = 0.0
     created_at: str = ""
     updated_at: str = ""
+    # Phase 6 (New-talk-agents/new-thinking/new-restructure/phases/
+    # phase-6-thesis-intake/): "system" for every existing/watchlist-
+    # driven hypothesis, "human" only via create_from_human() below --
+    # lets the Planner's pre-proposal consult (and any other reader) tell
+    # a human-submitted theory apart from a system-generated one.
+    source: str = "system"
 
     @classmethod
-    def create(cls, title: str, thesis: str, universe: list[str] | None = None) -> Hypothesis:
+    def create(
+        cls, title: str, thesis: str, universe: list[str] | None = None, *, source: str = "system",
+    ) -> Hypothesis:
         import hashlib
         now = datetime.now(timezone.utc).isoformat()
         raw = f"{title}:{thesis}:{now}"
@@ -62,7 +81,21 @@ class Hypothesis:
             universe=universe or [],
             created_at=now,
             updated_at=now,
+            source=source,
         )
+
+    @classmethod
+    def create_from_human(
+        cls, title: str, thesis: str, universe: list[str] | None = None, strategy_type: str = "",
+    ) -> Hypothesis:
+        """Thesis Intake's ONLY entry point for registering a human-
+        submitted theory -- source="human" is hardcoded here, not an
+        optional parameter a call site could omit or mistype
+        (02-guard-rail.md: 'a required parameter with no default,' made
+        structural by not exposing a source parameter here at all)."""
+        h = cls.create(title, thesis, universe, source="human")
+        h.strategy_type = strategy_type
+        return h
 
 
 @dataclass
@@ -81,6 +114,24 @@ class Goal:
 class ArtifactStatus(Enum):
     CREATED = "CREATED"
     BENCHING = "BENCHING"
+    # Phase 2 (New-talk-agents/new-thinking/new-restructure/phases/
+    # phase-2-funding-mechanics/): "approved by risk_gatekeeper, waiting
+    # for capital_allocator's next batched cadence run to actually fund
+    # it." Added alongside BENCHING->ACTIVE / MONITORING->ACTIVE in
+    # _ALLOWED_TRANSITIONS (not replacing them) -- vinu-live's
+    # ShadowEvaluator promotes BENCHING->ACTIVE directly via its own HTTP
+    # call, independent of risk_gatekeeper_hook.py; that path is
+    # deliberately left untouched here (see Phase 4's still-open question
+    # on how the two promotion paths should ultimately reconcile).
+    PEND = "PEND"
+    # Phase 3: "funding was decided (risk_gatekeeper approved, capital_
+    # allocator computed a size), but execution is held because the Kill
+    # Switch is engaged for this artifact's scope." Never ACTIVE while
+    # blocked -- Monitor's shadow comparisons and the next allocation
+    # cycle's ranking both assume ACTIVE means real deployed capital.
+    # Auto-retried on the next cadence run once resumed, no manual nudge
+    # required -- see agent/capital_allocator_hook.py.
+    PENDBLOCK = "PENDBLOCK"
     ACTIVE = "ACTIVE"
     MONITORING = "MONITORING"
     DECAYED = "DECAYED"
@@ -123,13 +174,38 @@ class Artifact:
     last_revalidation_verdict: bool | None = None
     # Phase 4 — frozen trade-plan JSON for type="trade_plan" artifacts
     trade_plan_data: str = ""
+    # Phase 2 -- the specific dollar size risk_gatekeeper approved (from
+    # exposure_reviewer's concentration-limit check), set when the artifact
+    # enters PEND. capital_allocator's funding amount is capped at
+    # min(this, vinu-portfolio's computed size) -- the portfolio engine may
+    # size down for real collective constraints, never up past what was
+    # actually approved for this specific candidate. 0.0 for any artifact
+    # that never went through the PEND path (e.g. pre-Phase-2 artifacts).
+    approved_size: float = 0.0
+    # Real angle attribution, prospective only -- populated from the
+    # research team's own final-answer JSON (the "angles_used" field it
+    # must report, drawn from the real angle context it was actually
+    # given, never invented after the fact). Empty for every artifact
+    # created before this field existed and for any artifact whose
+    # research pass didn't report angle usage -- there is no way to
+    # retroactively reconstruct which angles informed an already-written
+    # artifact, so this is never backfilled. See calibration.py's
+    # AngleCalibrationEntry -- this is what makes per-angle calibration
+    # possible at all, where none existed before.
+    origin_angles: list[str] = field(default_factory=list)
 
     @classmethod
     def create(cls, type_: str, name: str, universe: list[str] | None = None) -> Artifact:
         import hashlib
+        import uuid
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
-        raw = f"{type_}:{name}:{now}"
+        # uuid4() makes this genuinely non-deterministic -- without it, two
+        # calls with the same type_/name in the same microsecond (a retried
+        # write, or two callers racing) produced the *same* artifact_id,
+        # which upsert_artifact()'s INSERT OR REPLACE would then silently
+        # treat as an update, not a conflict.
+        raw = f"{type_}:{name}:{now}:{uuid.uuid4().hex}"
         h = hashlib.sha256(raw.encode()).hexdigest()[:12]
         return cls(
             artifact_id=f"art_{h}",
@@ -281,6 +357,44 @@ class CalibrationResult:
     magnitude_mape: float = 0.0
     passed: bool = False
     reasons: list[str] = field(default_factory=list)
+    timestamp: str = ""
+
+
+@dataclass
+class AngleCalibrationEntry:
+    """Per-angle counterpart to CalibrationEntry -- same real outcome (one
+    closed trade-plan position's realized return vs. its frozen forecast),
+    attributed to one of the angle(s) that actually informed the artifact
+    (Artifact.origin_angles), so one closed position with N origin angles
+    produces N entries, one per angle, all scoring the identical outcome.
+    Never a separate, independently-computed score -- see
+    calibration.py's record_angle_calibration_entries."""
+    angle_name: str
+    artifact_id: str
+    forecast_direction: str
+    actual_return_pct: float
+    forecast_magnitude_pct: float = 0.0
+    brier_score: float = 0.0
+    directional_correct: bool = False
+    magnitude_error: float = 0.0
+    timestamp: str = ""
+
+
+@dataclass
+class AngleCalibrationResult:
+    """Aggregate accuracy for one angle across every artifact it has ever
+    been attributed to. Deliberately no pass/fail gate (unlike
+    CalibrationResult/CalibrationGate) -- CalibrationGate's null/threshold
+    values were decided for the trade-plan-approval gate specifically;
+    nothing has established they transfer to per-angle scoring, and
+    inventing a second set of thresholds for this would be exactly the
+    kind of ungrounded number this project's discipline avoids. This is
+    an observability signal, not a gate, until real usage says otherwise."""
+    angle_name: str
+    n_entries: int = 0
+    accuracy: float = 0.0
+    brier_mean: float = 0.0
+    magnitude_mape: float = 0.0
     timestamp: str = ""
 
 

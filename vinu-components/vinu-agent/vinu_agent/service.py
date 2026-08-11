@@ -14,6 +14,8 @@ from .session.service import SessionService
 from .session.store import SessionStore
 from .storage.llm_calls import LlmCallLogStore
 from .storage.team_runs import TeamRunStore
+from .storage.ticker_ledger import TickerLedgerStore
+from .storage.ticker_summaries import TickerSummaryStore
 from .swarm.models import SwarmRun
 from .swarm.runtime import SwarmRuntime
 from .swarm.store import SwarmStore
@@ -52,6 +54,22 @@ class AgentService:
         )
         self._team_run_store = TeamRunStore(data_root / "team_runs.db")
         self._llm_call_store = LlmCallLogStore(data_root / "llm_calls.db")
+        # The SAME real vinu-research strategy_store.db OrderGuard already
+        # reads (see broker/research_link.py) -- one shared storage, not a
+        # second copy, so a research-team PASS is visible to the same
+        # active-artifact check that gates real orders.
+        from .broker.research_link import get_strategy_store
+        self._strategy_store = get_strategy_store()
+        # The screener team's durable per-ticker summary output -- see
+        # storage/ticker_summaries.py and agent/screener_summary_writer.py.
+        self._ticker_summary_store = TickerSummaryStore(data_root / "ticker_summaries.db")
+        # The narrative index of every ticker-relevant event across the
+        # whole pipeline -- see storage/ticker_ledger.py and
+        # New-talk-agents/new-thinking/new-restructure/phases/
+        # phase-0-foundation-plumbing/. Built here (Phase 0) even though
+        # most of its real write points land in later phases, per that
+        # phase's own plan: get the schema/store right once, early.
+        self._ticker_ledger_store = TickerLedgerStore(data_root / "ticker_ledger.db")
         self._session_service = SessionService(
             store=self._store,
             event_bus=self._event_bus,
@@ -66,6 +84,9 @@ class AgentService:
             orchestrator_dir=self._config.orchestrator_dir,
             run_store=self._team_run_store,
             llm_call_store=self._llm_call_store,
+            strategy_store=self._strategy_store,
+            ticker_summary_store=self._ticker_summary_store,
+            ticker_ledger_store=self._ticker_ledger_store,
         )
         self._swarm_store = SwarmStore(
             Path(self._config.sessions_dir) / ".." / "swarm"
@@ -90,6 +111,14 @@ class AgentService:
     @property
     def unified_memory(self) -> UnifiedMemoryStore:
         return self._unified_memory
+
+    @property
+    def ticker_ledger(self) -> TickerLedgerStore:
+        return self._ticker_ledger_store
+
+    @property
+    def ticker_summary_store(self) -> TickerSummaryStore:
+        return self._ticker_summary_store
 
     async def create_session(self, title: str = "", as_of: str | None = None) -> Session:
         config = {"as_of": as_of} if as_of else None
@@ -121,6 +150,12 @@ class AgentService:
             self._facts_registry.close()
         if hasattr(self, "_team_run_store"):
             self._team_run_store.close()
+        if hasattr(self, "_strategy_store"):
+            self._strategy_store.close()
+        if hasattr(self, "_ticker_summary_store"):
+            self._ticker_summary_store.close()
+        if hasattr(self, "_ticker_ledger_store"):
+            self._ticker_ledger_store.close()
         if hasattr(self, "_llm_call_store"):
             self._llm_call_store.close()
 

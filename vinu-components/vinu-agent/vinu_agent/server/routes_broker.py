@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from ..broker.alpaca import AlpacaBroker
+from ..broker.factory import get_live_broker
 from ..broker.kill_switch import halt_trading, is_trading_halted, resume_trading
 from ..broker.performance_store import get_store
 from ..tools.trade_tool import TradeTool
@@ -60,7 +60,7 @@ async def broker_account() -> dict[str, Any]:
     broker credentials. Returns configured=False (not an error) until a broker
     account exists, so callers can treat that as "no signal yet", not a failure.
     """
-    broker = AlpacaBroker()
+    broker = get_live_broker()
     if not broker.is_configured():
         return {"configured": False, "equity": None, "cash": None}
     try:
@@ -77,7 +77,7 @@ async def broker_account() -> dict[str, Any]:
 
 @router.get("/broker/positions")
 async def broker_positions() -> list[dict[str, Any]]:
-    broker = AlpacaBroker()
+    broker = get_live_broker()
     if not broker.is_configured():
         return []
     positions = await asyncio.to_thread(broker.get_positions)

@@ -5,12 +5,13 @@ import pytest
 from vinu_research.config import ResearchConfig
 from vinu_research.forecast_skill import (
     ForecastSkillConfig,
+    compute_angle_calibration,
     compute_brier_score,
     compute_calibration,
     compute_directional_error,
     generate_forecast,
 )
-from vinu_research.models import CalibrationEntry, Forecast
+from vinu_research.models import AngleCalibrationEntry, CalibrationEntry, Forecast
 
 
 class TestBrierScore:
@@ -82,6 +83,36 @@ class TestComputeCalibration:
         ]
         result = compute_calibration(entries, ForecastSkillConfig(min_calibration_window=10))
         assert result.passed is False
+
+
+class TestComputeAngleCalibration:
+    def test_empty_entries(self) -> None:
+        result = compute_angle_calibration("patchtst", [])
+        assert result.angle_name == "patchtst"
+        assert result.n_entries == 0
+
+    def test_aggregates_across_entries(self) -> None:
+        entries = [
+            AngleCalibrationEntry(
+                angle_name="patchtst", artifact_id=f"a{i}", forecast_direction="long",
+                actual_return_pct=0.02, directional_correct=True, brier_score=0.01,
+                forecast_magnitude_pct=0.02, magnitude_error=0.05,
+            )
+            for i in range(5)
+        ]
+        result = compute_angle_calibration("patchtst", entries)
+        assert result.angle_name == "patchtst"
+        assert result.n_entries == 5
+        assert result.accuracy == 1.0
+        assert result.brier_mean == pytest.approx(0.01)
+
+    def test_no_pass_fail_gate_unlike_trade_plan_calibration(self) -> None:
+        """AngleCalibrationResult deliberately has no `passed`/`reasons`
+        fields at all -- there's no established null-threshold for
+        per-angle scoring, see the module docstring."""
+        result = compute_angle_calibration("patchtst", [])
+        assert not hasattr(result, "passed")
+        assert not hasattr(result, "reasons")
 
 
 class _StubLlmClient:

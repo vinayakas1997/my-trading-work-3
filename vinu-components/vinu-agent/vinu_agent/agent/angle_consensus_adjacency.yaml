@@ -1,0 +1,35 @@
+# Categorical-adjacency table for Phase 8's cross-angle consensus check
+# (New-talk-agents/new-thinking/new-restructure/phases/
+# phase-8-summary-agent-polish/). Which labels from two different
+# categorical angles count as "adjacent enough to agree" -- a companion
+# config file, not embedded in a prompt, same pattern as
+# skills/strategy-tags/tags.yaml. Corrected here as more angle pairs get
+# wired in, no prompt/code redeploy needed.
+#
+# Every label below was confirmed against the angles' own real
+# classification code, not guessed:
+#   - regime_analysis: vinu-initial-analysis/vinu_initial_analysis/
+#     angles/regime_analysis/compute.py -- bull, bear, sideways, high_vol
+#   - trend_lifecycle: vinu-initial-analysis/vinu_initial_analysis/
+#     angles/trend_lifecycle/lifecycle.py -- uptrend, downtrend, topping,
+#     basing, sideways
+#
+# Lookup is order-independent (agent/angle_consensus.py checks both
+# [angle_a][angle_b] and [angle_b][angle_a]) -- only list each pair once.
+
+regime_analysis:
+  trend_lifecycle:
+    # bull regime aligns with an intact uptrend or an accumulation/basing
+    # phase (a bull regime forming before the lifecycle trend confirms it
+    # is not a contradiction, it's an early read).
+    bull: [uptrend, basing]
+    # bear regime aligns with a confirmed downtrend or a topping/
+    # exhaustion pattern (bear forming before lifecycle confirms breakdown
+    # is the same early-read case as bull/basing above).
+    bear: [downtrend, topping]
+    sideways: [sideways, basing]
+    # high_vol says nothing about directional lifecycle stage on its own --
+    # no adjacency claimed either way; only an exact "sideways"=="sideways"
+    # match (handled separately as exact-match, not listed here) would
+    # ever agree with a high_vol regime under this table.
+    high_vol: []

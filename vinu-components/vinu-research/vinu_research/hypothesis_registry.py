@@ -4,8 +4,10 @@ import json
 import logging
 import os
 import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from vinu_infra.debug import debug_log
 from vinu_research.models import Evidence, Hypothesis, HypothesisStatus
@@ -29,11 +31,70 @@ _data_root_env = os.environ.get("VINU_RESEARCH_DATA_ROOT", "").strip()
 HYPOTHESES_DIR = Path(_data_root_env) if _data_root_env else (Path.home() / ".vinu")
 HYPOTHESES_PATH = HYPOTHESES_DIR / "hypotheses.json"
 
+# Every mutating method below is a load-whole-file -> mutate-in-memory ->
+# write-whole-file-back sequence. Without a lock spanning that whole
+# sequence, two concurrent callers (two async sessions, a scheduler racing a
+# live session) both load the same base state, both mutate their own copy,
+# and whichever writes second silently overwrites the first's change --
+# lost, not duplicated, and with no trace that it happened. A lockfile
+# (exclusive-create, not fcntl/msvcrt) is used instead of a bare
+# threading.Lock because the real hazard is cross-process, not just
+# cross-thread: `vinu_agent`'s async service and any separate scheduler
+# process both open their own HypothesisRegistry against the same path.
+_LOCK_ACQUIRE_TIMEOUT_S = 10.0
+_LOCK_POLL_INTERVAL_S = 0.05
+_LOCK_STALE_AFTER_S = 30.0
+
 
 class HypothesisRegistry:
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or HYPOTHESES_PATH
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock_path = Path(str(self._path) + ".lock")
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        deadline = time.monotonic() + _LOCK_ACQUIRE_TIMEOUT_S
+        fd: int | None = None
+        while fd is None:
+            try:
+                fd = os.open(str(self._lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                try:
+                    age = time.time() - os.path.getmtime(self._lock_path)
+                except OSError:
+                    # Lock file vanished between the failed open and the
+                    # mtime check (another holder just released it) -- retry
+                    # the open immediately rather than waiting out the poll.
+                    continue
+                if age > _LOCK_STALE_AFTER_S:
+                    # Holder crashed without releasing -- a live holder never
+                    # leaves the lock in place this long, since every
+                    # critical section here is a single in-memory JSON
+                    # mutation, not I/O-bound work.
+                    LOG.warning(
+                        "hypotheses.json.lock is %.0fs old, assuming its holder crashed and clearing it",
+                        age,
+                    )
+                    try:
+                        os.unlink(self._lock_path)
+                    except OSError:
+                        pass
+                    continue
+                if time.monotonic() > deadline:
+                    raise TimeoutError(
+                        f"Timed out after {_LOCK_ACQUIRE_TIMEOUT_S}s waiting for "
+                        f"{self._lock_path} (held by another process/thread)"
+                    )
+                time.sleep(_LOCK_POLL_INTERVAL_S)
+        try:
+            yield
+        finally:
+            os.close(fd)
+            try:
+                os.unlink(self._lock_path)
+            except OSError:
+                pass
 
     def _load(self) -> dict[str, Any]:
         if not self._path.exists():
@@ -95,6 +156,8 @@ class HypothesisRegistry:
                     "timestamp": e.timestamp,
                     "metrics_snapshot": e.metrics_snapshot,
                     "report_path": e.report_path,
+                    "source": e.source,
+                    "ref_id": e.ref_id,
                 }
                 for e in h.evidence
             ],
@@ -102,6 +165,7 @@ class HypothesisRegistry:
             "best_sharpe": h.best_sharpe,
             "created_at": h.created_at,
             "updated_at": h.updated_at,
+            "source": h.source,
         }
 
     def _from_dict(self, d: dict[str, Any]) -> Hypothesis:
@@ -118,6 +182,8 @@ class HypothesisRegistry:
                     timestamp=e.get("timestamp", ""),
                     metrics_snapshot=e.get("metrics_snapshot"),
                     report_path=e.get("report_path"),
+                    source=e.get("source", "system"),
+                    ref_id=e.get("ref_id", ""),
                 ))
         return Hypothesis(
             hypothesis_id=d["hypothesis_id"],
@@ -135,16 +201,18 @@ class HypothesisRegistry:
             best_sharpe=float(d.get("best_sharpe", 0.0)),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
+            source=d.get("source", "system"),  # pre-Phase-6 rows have no source column -- system is accurate
         )
 
     def create(self, hypothesis: Hypothesis) -> Hypothesis:
-        data = self._load()
-        hypotheses = data["hypotheses"]
-        if hypothesis.hypothesis_id in hypotheses:
-            raise ValueError(f"Hypothesis {hypothesis.hypothesis_id} already exists")
-        hypotheses[hypothesis.hypothesis_id] = self._to_dict(hypothesis)
-        self._write(data)
-        return hypothesis
+        with self._locked():
+            data = self._load()
+            hypotheses = data["hypotheses"]
+            if hypothesis.hypothesis_id in hypotheses:
+                raise ValueError(f"Hypothesis {hypothesis.hypothesis_id} already exists")
+            hypotheses[hypothesis.hypothesis_id] = self._to_dict(hypothesis)
+            self._write(data)
+            return hypothesis
 
     def get(self, hypothesis_id: str) -> Hypothesis | None:
         data = self._load()
@@ -154,20 +222,22 @@ class HypothesisRegistry:
         return self._from_dict(raw)
 
     def update(self, hypothesis: Hypothesis) -> Hypothesis:
-        data = self._load()
-        if hypothesis.hypothesis_id not in data["hypotheses"]:
-            raise KeyError(f"Hypothesis {hypothesis.hypothesis_id} not found")
-        data["hypotheses"][hypothesis.hypothesis_id] = self._to_dict(hypothesis)
-        self._write(data)
-        return hypothesis
+        with self._locked():
+            data = self._load()
+            if hypothesis.hypothesis_id not in data["hypotheses"]:
+                raise KeyError(f"Hypothesis {hypothesis.hypothesis_id} not found")
+            data["hypotheses"][hypothesis.hypothesis_id] = self._to_dict(hypothesis)
+            self._write(data)
+            return hypothesis
 
     def delete(self, hypothesis_id: str) -> bool:
-        data = self._load()
-        if hypothesis_id not in data["hypotheses"]:
-            return False
-        del data["hypotheses"][hypothesis_id]
-        self._write(data)
-        return True
+        with self._locked():
+            data = self._load()
+            if hypothesis_id not in data["hypotheses"]:
+                return False
+            del data["hypotheses"][hypothesis_id]
+            self._write(data)
+            return True
 
     def list_all(
         self,
@@ -181,86 +251,90 @@ class HypothesisRegistry:
         return sorted(result, key=lambda h: h.created_at, reverse=True)
 
     def link_backtest(self, hypothesis_id: str, run_card_path: str) -> Hypothesis | None:
-        data = self._load()
-        raw = data["hypotheses"].get(hypothesis_id)
-        if raw is None:
-            LOG.warning("Cannot link backtest: hypothesis %s not found", hypothesis_id)
-            return None
-        if run_card_path not in raw["run_cards"]:
-            raw["run_cards"].append(run_card_path)
-        raw["updated_at"] = __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ).isoformat()
-        self._write(data)
-        return self._from_dict(raw)
+        with self._locked():
+            data = self._load()
+            raw = data["hypotheses"].get(hypothesis_id)
+            if raw is None:
+                LOG.warning("Cannot link backtest: hypothesis %s not found", hypothesis_id)
+                return None
+            if run_card_path not in raw["run_cards"]:
+                raw["run_cards"].append(run_card_path)
+            raw["updated_at"] = __import__("datetime").datetime.now(
+                __import__("datetime").timezone.utc
+            ).isoformat()
+            self._write(data)
+            return self._from_dict(raw)
 
     def add_evidence(self, hypothesis_id: str, evidence: Evidence) -> Hypothesis | None:
-        data = self._load()
-        raw = data["hypotheses"].get(hypothesis_id)
-        if raw is None:
-            LOG.warning("Cannot add evidence: hypothesis %s not found", hypothesis_id)
-            return None
-        h = self._from_dict(raw)
-        h.evidence.append(evidence)
-        if evidence.value > h.best_sharpe:
-            h.best_sharpe = evidence.value
-        if h.status == HypothesisStatus.rejected:
-            LOG.warning(
-                "Evidence added to rejected hypothesis %s — status unchanged",
-                hypothesis_id,
-            )
-        else:
-            if evidence.conclusion == "supports" and h.best_sharpe > 0.3:
-                h.status = HypothesisStatus.testing if h.status == HypothesisStatus.exploring else h.status
-            if evidence.conclusion == "supports" and h.best_sharpe > 0.5:
-                h.status = HypothesisStatus.validated
-        h.updated_at = __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ).isoformat()
-        data["hypotheses"][hypothesis_id] = self._to_dict(h)
-        self._write(data)
-        return h
-
-    def add_evidence_batch(self, hypothesis_id: str, evidence_list: list[Evidence]) -> Hypothesis | None:
-        data = self._load()
-        raw = data["hypotheses"].get(hypothesis_id)
-        if raw is None:
-            LOG.warning("Cannot add evidence batch: hypothesis %s not found", hypothesis_id)
-            return None
-        h = self._from_dict(raw)
-        debug_log(f"add_evidence_batch: {hypothesis_id} count={len(evidence_list)}", level=2)
-        now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
-        for evidence in evidence_list:
+        with self._locked():
+            data = self._load()
+            raw = data["hypotheses"].get(hypothesis_id)
+            if raw is None:
+                LOG.warning("Cannot add evidence: hypothesis %s not found", hypothesis_id)
+                return None
+            h = self._from_dict(raw)
             h.evidence.append(evidence)
             if evidence.value > h.best_sharpe:
                 h.best_sharpe = evidence.value
             if h.status == HypothesisStatus.rejected:
-                continue
-            if evidence.conclusion == "supports" and h.best_sharpe > 0.3:
-                h.status = HypothesisStatus.testing if h.status == HypothesisStatus.exploring else h.status
-            if evidence.conclusion == "supports" and h.best_sharpe > 0.5:
-                h.status = HypothesisStatus.validated
-        h.updated_at = now
-        data["hypotheses"][hypothesis_id] = self._to_dict(h)
-        self._write(data)
-        return h
+                LOG.warning(
+                    "Evidence added to rejected hypothesis %s — status unchanged",
+                    hypothesis_id,
+                )
+            else:
+                if evidence.conclusion == "supports" and h.best_sharpe > 0.3:
+                    h.status = HypothesisStatus.testing if h.status == HypothesisStatus.exploring else h.status
+                if evidence.conclusion == "supports" and h.best_sharpe > 0.5:
+                    h.status = HypothesisStatus.validated
+            h.updated_at = __import__("datetime").datetime.now(
+                __import__("datetime").timezone.utc
+            ).isoformat()
+            data["hypotheses"][hypothesis_id] = self._to_dict(h)
+            self._write(data)
+            return h
+
+    def add_evidence_batch(self, hypothesis_id: str, evidence_list: list[Evidence]) -> Hypothesis | None:
+        with self._locked():
+            data = self._load()
+            raw = data["hypotheses"].get(hypothesis_id)
+            if raw is None:
+                LOG.warning("Cannot add evidence batch: hypothesis %s not found", hypothesis_id)
+                return None
+            h = self._from_dict(raw)
+            debug_log(f"add_evidence_batch: {hypothesis_id} count={len(evidence_list)}", level=2)
+            now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+            for evidence in evidence_list:
+                h.evidence.append(evidence)
+                if evidence.value > h.best_sharpe:
+                    h.best_sharpe = evidence.value
+                if h.status == HypothesisStatus.rejected:
+                    continue
+                if evidence.conclusion == "supports" and h.best_sharpe > 0.3:
+                    h.status = HypothesisStatus.testing if h.status == HypothesisStatus.exploring else h.status
+                if evidence.conclusion == "supports" and h.best_sharpe > 0.5:
+                    h.status = HypothesisStatus.validated
+            h.updated_at = now
+            data["hypotheses"][hypothesis_id] = self._to_dict(h)
+            self._write(data)
+            return h
 
     def reject_with_reason(self, hypothesis_id: str, reason: str) -> Hypothesis | None:
-        data = self._load()
-        raw = data["hypotheses"].get(hypothesis_id)
-        if raw is None:
-            LOG.warning("Cannot reject: hypothesis %s not found", hypothesis_id)
-            return None
-        h = self._from_dict(raw)
-        debug_log(f"reject_with_reason: {hypothesis_id} reason={reason}", level=2)
-        h.status = HypothesisStatus.rejected
-        h.invalidation_reason = reason
-        h.updated_at = __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ).isoformat()
-        data["hypotheses"][hypothesis_id] = self._to_dict(h)
-        self._write(data)
-        return h
+        with self._locked():
+            data = self._load()
+            raw = data["hypotheses"].get(hypothesis_id)
+            if raw is None:
+                LOG.warning("Cannot reject: hypothesis %s not found", hypothesis_id)
+                return None
+            h = self._from_dict(raw)
+            debug_log(f"reject_with_reason: {hypothesis_id} reason={reason}", level=2)
+            h.status = HypothesisStatus.rejected
+            h.invalidation_reason = reason
+            h.updated_at = __import__("datetime").datetime.now(
+                __import__("datetime").timezone.utc
+            ).isoformat()
+            data["hypotheses"][hypothesis_id] = self._to_dict(h)
+            self._write(data)
+            return h
 
     def query_by_symbol(self, symbol: str, status: HypothesisStatus | None = None) -> list[Hypothesis]:
         data = self._load()
