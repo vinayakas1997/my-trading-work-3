@@ -168,7 +168,6 @@ Prefer repository methods to keep column lists consistent with `ARTICLE_COLUMNS`
 |-----------|---------|
 | `tests/analysis/test_persist.py` | Upsert + threads via repo |
 | `tests/analysis/test_fts.py` | `search_articles()` |
-| `tests/test_llm_analyze.py` | Direct repo fixture |
 | `tests/rss/test_feed_health.py` | `repo.conn` for health |
 
 ## 11. Troubleshooting

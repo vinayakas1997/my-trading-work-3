@@ -22,7 +22,6 @@
 | ID                                                                                                                | Priority | Title                            | Status   | Spec                                             | Document when done                                                                               |
 | ----------------------------------------------------------------------------------------------------------------- | -------- | -------------------------------- | -------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
 | [TASK-N04](../../../../vinu-news-stock-price-enhancement/enhancement-doc1.md#task-n04--sec-filing-text-ingest)    | MEDIUM   | SEC filing text ingest           | **TODO** | `providers/sec_filings.py` (new)                 | [ch08](../part-1-ingestion/ch08-ticker-news-providers.md)                                        |
-| [TASK-N05](../../../../vinu-news-stock-price-enhancement/enhancement-doc1.md#task-n05--llm-market--ticker-digest) | MEDIUM   | LLM market / ticker digest       | **TODO** | `analysis/llm/digest.py`, `POST /news/summarize` | [ch15](../part-2-analysis/ch15-llm-layer.md)                                                     |
 | [TASK-N06](../../../../vinu-news-stock-price-enhancement/enhancement-doc1.md#task-n06--rss-ingestion-hardening)   | MEDIUM   | RSS ingestion hardening          | **TODO** | ETag, backoff, retry in `rss/fetch/`             | [ch05](../part-1-ingestion/ch05-fetch-parse.md), [ch07](../part-1-ingestion/ch07-feed-health.md) |
 | [TASK-N07](../../../../vinu-news-stock-price-enhancement/enhancement-doc1.md#low-priority-tasks)                  | LOW      | Social sentiment feeds           | **TODO** | Optional Stocktwits/Reddit providers             | [ch08](../part-1-ingestion/ch08-ticker-news-providers.md)                                        |
 | [TASK-N08](../../../../vinu-news-stock-price-enhancement/enhancement-doc1.md#low-priority-tasks)                  | LOW      | Python scrapers (BoJ, calendars) | **TODO** | `rss/scrapers/` (new)                            | [ch03](../part-1-ingestion/ch03-rss-architecture.md)                                             |
@@ -70,7 +69,6 @@ Depends on [ch16](../part-2-analysis/ch16-price-reaction.md) (done) + vinu-stock
 
 | ID       | Chapter                                                                         |
 | -------- | ------------------------------------------------------------------------------- |
-| TASK-N01 | [ch15](../part-2-analysis/ch15-llm-layer.md) — on-demand LLM analyze            |
 | TASK-N02 | [ch08](../part-1-ingestion/ch08-ticker-news-providers.md) — ticker news (Yahoo) |
 | TASK-N03 | [ch16](../part-2-analysis/ch16-price-reaction.md) — price reaction              |
 | TASK-X01 | [ch25](../part-4-operations/ch25-watchlist-settings.md) — shared watchlist      |

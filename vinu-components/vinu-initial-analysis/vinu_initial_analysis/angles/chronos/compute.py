@@ -53,6 +53,14 @@ _MODEL_REGISTRY_NAME = "chronos-t5-large"
 _PIPELINE_CACHE: dict[str, Any] = {}
 
 
+def _resolve_device() -> str:
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
+
 def _checkpoint_path() -> str:
     """Resolve the local weights dir, auto-downloading if absent."""
     from vinu_infra.models import ensure_model
@@ -68,8 +76,10 @@ def _get_pipeline():
     import torch
     from chronos import ChronosPipeline
 
+    device = _resolve_device()
+    dtype = torch.bfloat16 if device == "cuda" else torch.float32
     pipeline = ChronosPipeline.from_pretrained(
-        _checkpoint_path(), device_map="cpu", dtype=torch.float32
+        _checkpoint_path(), device_map=device, dtype=dtype
     )
     _PIPELINE_CACHE[CHECKPOINT] = pipeline
     return pipeline
@@ -117,11 +127,17 @@ def _forecast(context: np.ndarray) -> dict[str, Any]:
         import torch
 
         pipeline = _get_pipeline()
+        # The MeanScaleUniformBins tokenizer always stays on CPU
+        # (amazon-science/chronos-forecasting#208): bucketization and the
+        # EOS append build their tensors on CPU, so passing a CUDA context
+        # tensor raises a device-mismatch RuntimeError. The maintainer's
+        # official workaround is to keep the context on CPU and let the
+        # pipeline move the quantized data to the model's device internally.
         ctx_tensor = torch.tensor(context, dtype=torch.float32)
         samples = pipeline.predict(
             inputs=ctx_tensor, prediction_length=PREDICTION_LENGTH, num_samples=64
         )
-        samples_np = samples[0].numpy()  # (num_samples, prediction_length)
+        samples_np = samples[0].detach().cpu().numpy()  # (num_samples, prediction_length)
         p10, median, p90 = np.quantile(samples_np, [0.1, 0.5, 0.9], axis=0)
         forecast = {
             "median_forecast": median.tolist(),

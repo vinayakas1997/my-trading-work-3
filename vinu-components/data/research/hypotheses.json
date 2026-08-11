@@ -143,6 +143,42 @@
       "best_sharpe": 0.0,
       "created_at": "2026-08-04T07:32:04.902814+00:00",
       "updated_at": "2026-08-04T07:32:04.902814+00:00"
+    },
+    "hyp_3da0f749bbfe": {
+      "hypothesis_id": "hyp_3da0f749bbfe",
+      "title": "SMA crossover baseline with regime filter",
+      "thesis": "SMA crossover baseline with regime filter",
+      "status": "validated",
+      "universe": [
+        "AAPL"
+      ],
+      "signal_definition": "",
+      "run_cards": [],
+      "strategy_type": "SMA crossover baseline with regime filter",
+      "indicators_used": [],
+      "params_tested": {},
+      "evidence": [
+        {
+          "run_id": 3,
+          "iteration": 1,
+          "metric": "sharpe",
+          "value": 1.3707809194103726,
+          "conclusion": "supports",
+          "reasoning": "Monte Carlo validation gate failed: Trade-permutation p-value: insufficient data (skipped); Block-bootstrap p-value: insufficient data (skipped); Price-path resample p-value 0.6310 >= 0.1 (FAIL); Walk-forward consistency 0.20 < 0.60 (FAIL); Bootstrap Sharpe CI lower bound 0.0000 <= 0 (FAIL); BCa bootstrap CI lower bound -1.5954 <= 0 (FAIL); Placebo test: insufficient data (skipped)",
+          "timestamp": "",
+          "metrics_snapshot": {
+            "sharpe": 1.3707809194103726,
+            "max_dd": -0.0020256856919826927,
+            "trade_count": 2,
+            "win_rate": 0.010101010101010102
+          },
+          "report_path": null
+        }
+      ],
+      "invalidation_reason": null,
+      "best_sharpe": 1.3707809194103726,
+      "created_at": "2026-08-11T17:32:49.148460+00:00",
+      "updated_at": "2026-08-11T17:33:19.769694+00:00"
     }
   }
 }

@@ -1,0 +1,17 @@
+{
+  "id": 3,
+  "user_idea": "SMA crossover baseline with regime filter",
+  "symbol": "AAPL",
+  "from_date": "2025-07-01",
+  "to_date": "2025-12-31",
+  "status": "done",
+  "total_iterations": 1,
+  "best_iteration": -1,
+  "best_sharpe": 0.0,
+  "best_max_dd": 0.0,
+  "deflated_sharpe": 0.0,
+  "holdout_passed": null,
+  "stress_test_passed": null,
+  "report_md": "=== FINAL RESEARCH REPORT ===\n\nStrategy: SMA crossover baseline with regime filter\nTicker: AAPL\nTime Period: 2025-07-01 \u2192 2025-12-31\nIterations: 1\n\nIteration History:\n  Iter   Sharpe     MaxDD      WinRate    Verdict   \n  --------------------------------------------------\n  1      1.37       -0.2%      1%         STOP      \n\nKey Findings:\n  1. Trade-permutation p-value: insufficient data (skipped)\n  2. Bootstrap Sharpe CI lower bound 0.0000 <= 0 (FAIL)\n  3. Block-bootstrap p-value: insufficient data (skipped)\n  4. BCa bootstrap CI lower bound -1.5954 <= 0 (FAIL)\n  5. Placebo test: insufficient data (skipped)\n  6. Price-path resample p-value 0.6310 >= 0.1 (FAIL)\n  7. Walk-forward consistency 0.20 < 0.60 (FAIL)\n\nOptimized Strategy Code:\n```python\nfrom __future__ import annotations\n\nimport pandas as pd\nimport numpy as np\n\nfrom vinu_simulator.engine.strategies import BaseStrategy\n\n\nclass UserStrategy(BaseStrategy):\n    def __init__(self, fast_period=None, slow_period=None):\n        self.fast_period = fast_period or 20\n        self.slow_period = slow_period or 50\n\n    def generate_weights(self, data: pd.DataFrame) -> pd.Series:\n        fast_ma = data['close'].rolling(int(20)).mean()\n        slow_ma = data['close'].rolling(int(50)).mean()\n        signal = (fast_ma > slow_ma).astype(int).diff()\n        return signal * 0.98\n\n```\n",
+  "summary_text": ""
+}

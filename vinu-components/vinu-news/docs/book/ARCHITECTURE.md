@@ -13,7 +13,6 @@
 | | |
 |---|---|
 | **Textbook index** | [INDEX.md](../INDEX.md) |
-| **Prompts** | [ch15b — LLM prompts](part-2-analysis/ch15b-llm-prompts.md) |
 | **Yet to build** | [Appendix E](part-5-appendices/apx-e-yet-to-build.md) |
 | **Stock prices** | [vinu-stock-price INDEX](../../../vinu-stock-price/docs/INDEX.md) |
 
@@ -21,21 +20,20 @@
 
 ## Quick dependency table
 
-| Capability | LLM required? | Stock API required? | Detail chapter |
-|------------|---------------|---------------------|----------------|
-| RSS ingest + configurable enrichment | No | No | [ch10](part-2-analysis/ch10-pipeline-overview.md) |
-| FTS search, threads | No | No | [ch19](part-3-data/ch19-table-analytics-fts.md) |
-| `POST /news/analyze` | **Yes** | No | [ch15](part-2-analysis/ch15-llm-layer.md) |
-| Price reaction on `/ticker/{sym}` | No | **Yes** | [ch16](part-2-analysis/ch16-price-reaction.md) |
-| Shared watchlist sync | No | No (file only) | [ch25](part-4-operations/ch25-watchlist-settings.md) |
+| Capability | Stock API required? | Detail chapter |
+|------------|---------------------|----------------|
+| RSS ingest + configurable enrichment | No | [ch10](part-2-analysis/ch10-pipeline-overview.md) |
+| FTS search, threads | No | [ch19](part-3-data/ch19-table-analytics-fts.md) |
+| Price reaction on `/ticker/{sym}` | **Yes** | [ch16](part-2-analysis/ch16-price-reaction.md) |
+| Shared watchlist sync | No (file only) | [ch25](part-4-operations/ch25-watchlist-settings.md) |
 
-**Rule of thumb:** Ingest always uses **rules only**. LLM is **on-demand**. Price reaction uses **vinu-stock-price**, not LLM.
+**Rule of thumb:** Ingest always uses **rules only**. Price reaction uses **vinu-stock-price**.
 
 ---
 
-## 1. Without LLM (default — always on)
+## 1. Default pipeline (always on)
 
-No Ollama, no OpenAI key, no `VINU_LLM_*` required. Every poll uses **deterministic rule enrichment** with per-stage toggles in `analysis.yaml`.
+Every poll uses **deterministic rule enrichment** with per-stage toggles in `analysis.yaml`.
 
 ```mermaid
 flowchart TB
@@ -76,7 +74,7 @@ flowchart TB
 | HTTP API | `NewsService` + DB | [ch22](part-4-operations/ch22-http-api.md), [ch26](part-4-operations/ch26-service-facade.md) |
 | Ticker news | Yahoo provider | [ch08](part-1-ingestion/ch08-ticker-news-providers.md) |
 
-**Works when LLM is down:** yes — ingest, search, threads, rule sentiment all continue.
+**Works without any external AI service:** yes — ingest, search, threads, rule sentiment all continue.
 
 **Code entry:** `process_batch()` in `vinu_news/analysis/pipeline.py` — no LLM imports.
 
@@ -102,56 +100,13 @@ Detail: [ch16 — Price Reaction](part-2-analysis/ch16-price-reaction.md).
 
 ---
 
-## 3. With LLM (optional add-on)
-
-LLM runs **only on demand** via `POST /news/analyze`. Ingest **never** calls the LLM.
+## 3. Combined view
 
 ```mermaid
 flowchart TB
-  subgraph base [Always running - section 1]
-    Ingest[RSS + rule pipeline]
-    Ingest --> DB[(articles)]
-  end
-
-  subgraph llm [LLM path - on demand]
-    User[POST /news/analyze] --> Analyze[analyze_article]
-    Analyze --> Lookup[Load article from DB]
-    Lookup --> CacheHit{news_analysis cache?}
-    CacheHit -->|TTL hit| Return[Return JSON]
-    CacheHit -->|miss| LLM[LlmClient]
-    LLM --> Ollama[Ollama / OpenAI-compatible API]
-    Ollama --> Save[save_analysis]
-    Save --> Return
-  end
-
-  DB --> Lookup
-```
-
-| Dependency | Env | If missing |
-|------------|-----|------------|
-| LLM server | `VINU_LLM_BASE_URL`, `VINU_LLM_MODEL` | `/news/analyze` → 503; ingest OK |
-| API key | `VINU_LLM_API_KEY` | Optional for local Ollama |
-| Article in DB | prior ingest | 404 |
-| Prompts | `analysis/llm/prompts.py` | [ch15b](part-2-analysis/ch15b-llm-prompts.md) |
-
-**Future:** TASK-N05 digest — [Appendix E](part-5-appendices/apx-e-yet-to-build.md).
-
-Detail: [ch15 — LLM Layer](part-2-analysis/ch15-llm-layer.md).
-
----
-
-## 4. Combined view
-
-```mermaid
-flowchart TB
-  subgraph always [Always - no LLM]
+  subgraph always [Always on]
     RSS[RSS + rules] --> SQLite[(news.db)]
     SQLite --> API[HTTP read routes]
-  end
-
-  subgraph optLLM [Optional LLM]
-    API2[POST /news/analyze] --> LLM[Ollama]
-    LLM --> Cache[(news_analysis)]
   end
 
   subgraph optStock [Optional stock]
@@ -159,18 +114,16 @@ flowchart TB
     Stock --> PRC[(article_price_reaction)]
   end
 
-  SQLite --> API2
   SQLite --> API3
 ```
 
 ---
 
-## 5. Environment variables by layer
+## 4. Environment variables by layer
 
 | Layer | Variables |
 |-------|-----------|
 | Base | `VINU_NEWS_DB_PATH`, `VINU_NEWS_MODE`, `VINU_NEWS_MAX_WORKERS` (default 8), watchlist settings |
-| LLM | `VINU_LLM_BASE_URL`, `VINU_LLM_MODEL`, `VINU_LLM_API_KEY`, `VINU_LLM_TTL_SEC`, `VINU_LLM_CONCURRENCY` |
 | Stock | `VINU_STOCK_API_URL` |
 | Shared watchlist | `VINU_SHARED_WATCHLIST_PATH` |
 
@@ -178,13 +131,11 @@ Full list: [ch24 — Config & Env](part-4-operations/ch24-config-env.md).
 
 ---
 
-## 6. Related chapters
+## 5. Related chapters
 
 | Topic | Chapter |
 |-------|---------|
 | Preface & reading paths | [ch00](part-0-getting-started/ch00-preface.md) |
 | Rule pipeline detail | [ch10](part-2-analysis/ch10-pipeline-overview.md) |
-| LLM API & cache | [ch15](part-2-analysis/ch15-llm-layer.md) |
-| Prompt text | [ch15b](part-2-analysis/ch15b-llm-prompts.md) |
 | Price reaction | [ch16](part-2-analysis/ch16-price-reaction.md) |
 | Open work | [apx-e](part-5-appendices/apx-e-yet-to-build.md) |

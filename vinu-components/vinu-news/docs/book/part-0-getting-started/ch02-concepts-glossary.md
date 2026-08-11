@@ -200,7 +200,6 @@ LIMIT 10;
 | Cosine dedup §5 | `post_enrichment/cosine_dedup/` |
 | NER + synonyms §4 | `post_enrichment/ner/`, `synonyms/` |
 | FTS5 search §7 | `articles_fts` virtual table |
-| LLM analyze §8 | `POST /news/analyze` (optional local LLM) |
 
 Extensions beyond Fincept: `ticker_dominance`, `article_ticker_mentions`, `story_threads`, cross-batch threading.
 

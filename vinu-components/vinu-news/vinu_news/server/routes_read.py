@@ -5,8 +5,6 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 
 from vinu_news.server.schemas import (
-    AnalyzeRequest,
-    AnalyzeResponse,
     DataResponse,
     PollStatusResponse,
     ThreadDetailResponse,
@@ -145,15 +143,3 @@ def articles_since(
     service = get_service()
     rows = service.get_articles_since(ts, limit)
     return DataResponse(count=len(rows), data=rows)
-
-
-@router.post("/analyze", response_model=AnalyzeResponse)
-def analyze_news(body: AnalyzeRequest) -> AnalyzeResponse:
-    service = get_service()
-    try:
-        result = service.analyze_article(body.url_or_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return AnalyzeResponse(**result)

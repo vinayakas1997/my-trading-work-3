@@ -28,7 +28,6 @@ flowchart TD
   Persist --> TDS[thread_daily_snapshots]
   Persist --> TDS2[ticker_daily_stats]
   Poll[update_feed_health] --> FH[feed_health]
-  LLM[analyze cache] --> NA[news_analysis]
   Price[price reaction] --> APR[article_price_reaction]
   A --> FTS[articles_fts virtual]
 ```
@@ -58,7 +57,7 @@ flowchart TD
 | **Base** | `articles`, `article_ticker_mentions` | One row per lead headline |
 | **Derived** | `story_threads`, `thread_daily_snapshots`, `ticker_daily_stats` | Rollups from persist events |
 | **Ops** | `feed_health` | RSS poll reliability |
-| **Extension** | `news_analysis`, `article_price_reaction` | LLM cache, price reaction |
+| **Extension** | `article_price_reaction` | Price reaction |
 | **Search** | `articles_fts` | FTS5 virtual (from `fts.py`) |
 | **Settings** | `vinu_settings` | mode, poll_interval_sec |
 
@@ -72,7 +71,6 @@ flowchart TD
 | `thread_daily_snapshots` | rollup | every persist on thread | Daily intensity |
 | `ticker_daily_stats` | rollup | persist with primary ticker | Ticker volume by day |
 | `feed_health` | ops | `update_feed_health` | Source reliability |
-| `news_analysis` | extension | LLM analyze | URL → analysis JSON cache |
 | `article_price_reaction` | extension | price integration | 1h/1d price change |
 | `articles_fts` | virtual | triggers on `articles` | Keyword search |
 
@@ -101,7 +99,7 @@ flowchart TD
 sqlite3 ./data/news.db ".tables"
 ```
 
-Expected tables include: `articles`, `article_ticker_mentions`, `story_threads`, `thread_daily_snapshots`, `ticker_daily_stats`, `feed_health`, `news_analysis`, `article_price_reaction`, `articles_fts`, `vinu_settings`.
+Expected tables include: `articles`, `article_ticker_mentions`, `story_threads`, `thread_daily_snapshots`, `ticker_daily_stats`, `feed_health`, `article_price_reaction`, `articles_fts`, `vinu_settings`.
 
 ```sql
 SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;
@@ -135,7 +133,7 @@ Table row counts:
 SELECT 'articles' AS tbl, COUNT(*) AS n FROM articles
 UNION ALL SELECT 'story_threads', COUNT(*) FROM story_threads
 UNION ALL SELECT 'feed_health', COUNT(*) FROM feed_health
-UNION ALL SELECT 'news_analysis', COUNT(*) FROM news_analysis;
+UNION ALL SELECT 'article_price_reaction', COUNT(*) FROM article_price_reaction;
 ```
 
 Index listing on articles:
@@ -168,7 +166,7 @@ WHERE type='index' AND tbl_name='articles';
 |-------------------|-----------------|
 | `step_1_1_news.md` SQLite schema | `schema.sql` |
 | FTS5 §7 | `articles_fts` via `fts.py` |
-| Extensions | `story_threads`, rollups, `news_analysis` |
+| Extensions | `story_threads`, rollups |
 
 ## 13. Related chapters
 

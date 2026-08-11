@@ -89,7 +89,7 @@ pytest tests/rss/ -v
 ### Example C — TASK integration tests
 
 ```bash
-pytest tests/test_llm_analyze.py tests/test_ticker_news_provider.py \
+pytest tests/test_ticker_news_provider.py \
        tests/test_price_reaction.py tests/test_watchlist_sync.py -v
 ```
 
@@ -117,7 +117,6 @@ Tests use temporary SQLite files — no production DB queries required.
 | `test_settings_watchlist.py` | `settings/`, `watchlist/`, `storage/` | CRUD, env seed, factory |
 | `test_watchlist_sync.py` | `watchlist/shared.py` | TASK-X01 shared JSON merge |
 | `test_ticker_news_provider.py` | `providers/` | TASK-N02 registry mock fetch |
-| `test_llm_analyze.py` | `analysis/llm/` | TASK-N01 cache + mock LLM |
 | `test_price_reaction.py` | `price_reaction.py` | TASK-N03 percent math |
 
 ### RSS tests (`tests/rss/`)
@@ -155,7 +154,6 @@ Tests use temporary SQLite files — no production DB queries required.
 | `providers/` | `test_ticker_news_provider.py` |
 | `collection/filter.py` | `test_filter.py`, `test_ingest_filter.py` |
 | `analysis/enrichment/` | `test_enrichment.py` |
-| `analysis/llm/` | `test_llm_analyze.py` |
 | `analysis/post_enrichment/price_reaction.py` | `test_price_reaction.py` |
 | `analysis/storage/persist.py` | `test_persist.py` |
 | `analysis/storage/fts.py` | `test_fts.py` |

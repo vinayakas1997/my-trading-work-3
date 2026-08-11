@@ -4,7 +4,6 @@ tests/test_api.py
 tests/test_cli_continuous.py
 tests/test_filter.py
 tests/test_ingest_filter.py
-tests/test_llm_analyze.py
 tests/test_price_reaction.py
 tests/test_settings_watchlist.py
 tests/test_ticker_news_provider.py
@@ -40,11 +39,6 @@ vinu_news/analysis/enrichment/threat.py
 vinu_news/analysis/enrichment/ticker_db.py
 vinu_news/analysis/enrichment/ticker_dominance.py
 vinu_news/analysis/enrichment/ticker_extractor.py
-vinu_news/analysis/llm/__init__.py
-vinu_news/analysis/llm/analyze.py
-vinu_news/analysis/llm/cache.py
-vinu_news/analysis/llm/client.py
-vinu_news/analysis/llm/prompts.py
 vinu_news/analysis/post_enrichment/__init__.py
 vinu_news/analysis/post_enrichment/headline_cleanup.py
 vinu_news/analysis/post_enrichment/post_process.py

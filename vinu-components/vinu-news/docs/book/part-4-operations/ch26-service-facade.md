@@ -28,7 +28,6 @@ flowchart TB
   NS --> RSS[poll_all_feeds]
   NS --> Pipe[process_batch]
   NS --> Filter[filter_leads_for_mode]
-  NS --> LLM[analyze_article]
   NS --> Price[enrich_article_with_reaction]
 ```
 
@@ -84,7 +83,6 @@ flowchart TB
 | Query | `get_latest()`, `get_articles_since()`, `get_ticker_news()`, `get_watchlist_news()`, `search()`, `get_high_impact()` |
 | Threads | `get_active_threads()`, `get_thread_detail()`, `get_thread_timeline()` |
 | Analytics | `get_ticker_stats()` |
-| LLM | `analyze_article()` |
 | Ops | `health()` |
 | Static helpers | `ts_days_ago()`, `date_range_days()` |
 
@@ -111,10 +109,6 @@ Thin backward-compatible wrapper around `run_ingestion_cycle(source="ticker_news
 ### Read paths with price reaction
 
 `get_ticker_news()`, `get_thread_detail()`, `get_thread_timeline()` call `_enrich_with_price_reaction()` which lazy-fetches candles (Ch 16).
-
-### `analyze_article`
-
-Delegates to `analysis.llm.analyze`; wraps `LlmClientError` as `RuntimeError` for HTTP 503.
 
 ## 6. Configuration
 
@@ -172,7 +166,6 @@ All HTTP routes use a shared `NewsService` instance:
 | POST | `/ingest/trigger` | `run_ingestion_cycle()` |
 | POST | `/ingest/ticker-news` | `run_ticker_news_ingest()` |
 | GET | `/latest` | `get_latest()` |
-| POST | `/news/analyze` | `analyze_article()` |
 | CLI | `vinu-news-ingest --once` | `run_ingestion_cycle()` |
 
 ## 9. SQL / queries (if applicable)
@@ -213,7 +206,6 @@ svc.storage.repo.conn.execute("SELECT COUNT(*) FROM articles").fetchone()
 - [Chapter 06 — Ingestion Orchestration](../part-1-ingestion/ch06-ingestion-orchestration.md)
 - [Chapter 08 — Ticker News Providers](../part-1-ingestion/ch08-ticker-news-providers.md)
 - [Chapter 09 — Collection Filter](../part-1-ingestion/ch09-collection-filter.md)
-- [Chapter 15 — LLM Layer](../part-2-analysis/ch15-llm-layer.md)
 - [Chapter 16 — Price Reaction](../part-2-analysis/ch16-price-reaction.md)
 - [Chapter 22 — HTTP API](ch22-http-api.md)
 - [Chapter 25 — Watchlist & Settings](ch25-watchlist-settings.md)

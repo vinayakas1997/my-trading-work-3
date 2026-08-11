@@ -1,0 +1,394 @@
+{
+  "run_id": "deterministic_AAPL_20260811T170755Z",
+  "ticker": "AAPL",
+  "from_date": "2025-07-01",
+  "to_date": "2025-12-31",
+  "timeframe": "1d",
+  "steps": [
+    {
+      "name": "features",
+      "status": "ok",
+      "duration_sec": 0.045,
+      "started_at": "2026-08-11T17:07:55.071410+00:00",
+      "finished_at": "2026-08-11T17:07:55.117173+00:00",
+      "response_summary": {
+        "id": 6,
+        "title": "pipeline-run-AAPL",
+        "slug": "pipeline_run_aapl",
+        "symbols": [
+          "AAPL"
+        ],
+        "from_ts": 1751328000,
+        "to_ts": 1767139200,
+        "interval": "1d",
+        "preset": null,
+        "features": [
+          "sma_20",
+          "rsi_14"
+        ],
+        "conditions": null,
+        "status": "done",
+        "file_path": "/data/runs/6_pipeline_run_aapl",
+        "error_message": null,
+        "request_hash": "14a00ed4a5350ca007e46c6ce003579264b599ed7e2fba4e99f6b41079c9e8c8",
+        "created_at": "2026-08-11T15:27:03+00:00",
+        "updated_at": "2026-08-11T15:27:19+00:00",
+        "row_count": 127,
+        "ml_model": null,
+        "ml_label": null
+      }
+    },
+    {
+      "name": "initial_analysis",
+      "status": "ok",
+      "duration_sec": 95.376,
+      "started_at": "2026-08-11T17:07:55.117173+00:00",
+      "finished_at": "2026-08-11T17:09:30.493597+00:00",
+      "response_summary": {
+        "arima": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "backtesting_44_metrics": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "chronos": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "cross_attention_gcn_news_price_fusion": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "dlinear": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "drawdown_deep_dive": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "exponential_smoothing": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "garch": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "itransformer": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "kalman_filters": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "kronos": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "lag_llama": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "lpatchtst": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "lstm": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "ml_model_pipeline": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "moirai": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "moment": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "news_first_analysis": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "news_price_causality": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "patchtst": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "peer_relative_strength": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "pnl_attribution": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "regime_analysis": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "shock_clustering": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "shock_personality": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "tft": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "timer_timerxl": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "timesfm": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "tips_regime_aware_transformer": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "trend_lifecycle": {
+          "status": "completed",
+          "row_count": 0
+        },
+        "trend_session_structure": {
+          "status": "completed",
+          "row_count": 0
+        }
+      }
+    },
+    {
+      "name": "strategy",
+      "status": "ok",
+      "duration_sec": 31.413,
+      "started_at": "2026-08-11T17:09:30.493597+00:00",
+      "finished_at": "2026-08-11T17:10:01.906225+00:00",
+      "response_summary": {
+        "strategy_name": "e2e_easy_sma_crossover",
+        "run_id": "e2e_easy_sma_crossover_20260811_170930",
+        "timestamp": "2026-08-11T17:10:01.903430",
+        "weights": [
+          {
+            "symbol": "AAPL",
+            "weight": 0.25,
+            "signal_value": 0.0
+          }
+        ],
+        "metadata": {
+          "symbol_count": 1,
+          "weights": {
+            "AAPL": 0.25
+          }
+        },
+        "rule_trace": {
+          "AAPL": [
+            {
+              "rule": "bear_exit",
+              "fired": false,
+              "conditions": [
+                {
+                  "source": "angles",
+                  "key": "regime_analysis.regime",
+                  "operator": "eq",
+                  "expected": "bear",
+                  "actual": null,
+                  "met": false,
+                  "reason": "FAIL: key not found in context"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "simulator",
+      "status": "ok",
+      "duration_sec": 1.618,
+      "started_at": "2026-08-11T17:10:01.906225+00:00",
+      "finished_at": "2026-08-11T17:10:03.524824+00:00",
+      "response_summary": {
+        "run_id": "b94b2367-6724-4009-8664-e3d3cfd430ff",
+        "strategy_name": "SmaCrossover",
+        "timestamp": "2026-08-11T15:28:53.811655Z",
+        "metrics": {
+          "total_return": 0.04211159475645432,
+          "cagr": 0.08599657592584053,
+          "annual_volatility": 0.1847400435517047,
+          "sharpe_ratio": 0.538156662397968,
+          "sortino_ratio": 0.5488969217325115,
+          "max_drawdown": -0.061983562525710224,
+          "calmar_ratio": 1.3874093779325758,
+          "win_rate": 0.3333333333333333,
+          "skewness": 0.1819852467703979,
+          "kurtosis": 5.433758167663313,
+          "var_95": -0.01636126836658297,
+          "var_99": -0.03681792574478043,
+          "cvar_95": -0.028385226454039243,
+          "tail_ratio": 1.134165588811104,
+          "max_dd_duration_days": 41.0,
+          "avg_drawdown": -0.03271654463110489,
+          "recovery_time_days": 0.0,
+          "profit_factor": 1.127099184238382,
+          "avg_win_pct": 0.01049566230999506,
+          "avg_loss_pct": -0.008321452646707918,
+          "win_loss_ratio": 1.2612776585524752,
+          "hit_rate": 0.3333333333333333,
+          "sharpe_standard_error": 0.10734210440221047,
+          "sharpe_p_value": 5.345647811156432e-07,
+          "sharpe_ci_95_low": 0.3277661377696355,
+          "sharpe_ci_95_high": 0.7485471870263005,
+          "probabilistic_sharpe_ratio": 0.9999997327176094,
+          "annual_turnover": 16.0737991524948
+        },
+        "benchmark_metrics": {},
+        "trade_count": 8,
+        "equity_points": 127,
+        "validation": null,
+        "daily_returns": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          -0.0020371127971055003,
+          -0.03761948210966359,
+          0.005165645476066016,
+          -0.004272270748615137,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          -0.0020754915195781987,
+          0.01564821157361007,
+          -0.0018936122356537632,
+          -0.004829248596804336,
+          -0.0032495647843926445,
+          -0.0014779386931220717,
+          -0.019894637842015506,
+          -0.004752595474518229,
+          0.012629973935367467,
+          -0.0026002628545881423,
+          0.009500237245144705,
+          0.008622948489151572,
+          0.00568502025193296,
+          -0.0013808570368937234,
+          0.019401941606510764,
+          0.007206133724965147,
+          0.005134461060204876,
+          -0.0001674830503801683,
+          -0.00741236642505716,
+          -0.01982953872103388,
+          -0.027289928717637912,
+          0.013983529839761921,
+          0.01763113193061483,
+          0.011536145511699125,
+          0.005893073252151604,
+          0.0035404177364948275,
+          -0.0046619040639627185,
+          0.031646886532470386,
+          0.043723645037655245,
+          -0.006544396497524474,
+          -0.008757046244148081,
+          0.018584095822638202,
+          -0.005664944598449573,
+          -0.004243445897172737,
+          0.0007497135173255565,
+          0.003430326974727116,
+          0.007819556456175825,
+          0.002378351810212953,
+          -0.005367767164680348,
+          -0.000664815253193729,
+          0.005987317738901599,
+          -0.015443256202791078,
+          -0.03441325665013095,
+          0.009165672642288403,
+          0.0017029548933520378,
+          0.005828776348287823,
+          -0.007847393934147684,
+          0.01870557330199807,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          -0.001959760481524464,
+          0.0009710183814350959,
+          0.003022161152747449,
+          0.047167333478611795,
+          -0.0429824687166126,
+          -0.0065327909315360255,
+          0.007210906491046831,
+          -0.0017063572680158234,
+          -0.0003344231543397358,
+          -0.005761436638107131,
+          0.004448928736732416,
+          0.022294998646581687,
+          -0.00680841466292037,
+          -0.0017595945079803554,
+          -0.0019095874832936177,
+          -0.016667272421180268,
+          -0.002057920188286433,
+          0.003936858463603032,
+          -0.007805493912305117,
+          0.016750095837963386,
+          0.01847326281481365,
+          0.0017909064979164668,
+          0.0,
+          0.0,
+          -0.001978365019849826,
+          0.010304527658529183,
+          -0.006729519094117342,
+          -0.013232641292944103,
+          -0.005650118860909159,
+          -0.00305689271336107,
+          -0.0025973076362225678,
+          0.005280477731920863,
+          -0.0022306159355055533,
+          0.0008293364879055076,
+          -0.015095827802338757,
+          0.0016095393898591936,
+          -0.009860847560660524,
+          0.001438529770428687,
+          0.003987192769988157,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    }
+  ]
+}

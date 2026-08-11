@@ -55,7 +55,6 @@ flowchart LR
 | `SettingsResponse` | `mode`, `poll_interval_sec` |
 | `WatchlistResponse` | `tickers` |
 | `ThreadDetailResponse` | thread metadata + articles |
-| `AnalyzeResponse` | LLM analysis result |
 | `IngestTriggerResponse` | `ok`, `summary` dict |
 
 ## 5. Logic (step by step)
@@ -103,15 +102,6 @@ curl -i http://localhost:8080/threads/nonexistent-thread-id
 # HTTP 404 {"detail":"Thread not found"}
 ```
 
-LLM analyze when article missing or LLM down:
-
-```bash
-curl -X POST http://localhost:8080/news/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"url_or_id":"https://unknown.example/article"}'
-# 404 ValueError or 503 RuntimeError if LLM unavailable
-```
-
 ## 8. API / CLI (if applicable)
 
 ### Read routes (`routes_read.py`)
@@ -129,7 +119,6 @@ curl -X POST http://localhost:8080/news/analyze \
 | GET | `/threads/{thread_id}/timeline` | — | `DataResponse` |
 | GET | `/stats/ticker/{symbol}` | `days` 1–365 | `DataResponse` |
 | GET | `/articles/since` | `ts` (unix sec), `limit` | `DataResponse` |
-| POST | `/news/analyze` | body: `{"url_or_id":"..."}` | `AnalyzeResponse` |
 
 ### Config routes (`routes_config.py`)
 
@@ -146,7 +135,6 @@ curl -X POST http://localhost:8080/news/analyze \
 | POST | `/backfill/{ticker}/toggle` | body: `{"enabled": bool}` | Enable/disable backfill for ticker |
 | POST | `/backfill/trigger` | `ticker?` (single ticker, else all enabled) | Async — `{"ok": true, "summary": {"job_id": ..., "status": "running"}}`; `409` if a backfill job is already running |
 | GET | `/backfill/job/{job_id}` | — | Job status: `running` \| `done` \| `failed`, plus `results` (list of per-ticker outcomes) or `error` |
-| POST | `/analyze/backfill` | body: `{"limit": 500}` | Submit unanalyzed articles to LLM analysis queue |
 
 ### App route (`app.py`)
 
@@ -183,7 +171,6 @@ SELECT COUNT(*) FROM articles WHERE sort_ts >= strftime('%s', 'now', '-1 day');
 | Empty `/ticker/{sym}` | Ticker mode + no matches | Add watchlist; trigger ingest |
 | `/search` empty | FTS syntax or empty DB | Use `AND`/`OR`; ingest first |
 | PATCH 400 | Invalid mode value | Use `ticker` or `all` |
-| `/news/analyze` 503 | LLM not running | Start Ollama; check `VINU_LLM_*` |
 | Poll interval unchanged | Applies next sleep cycle | Wait for ingest loop |
 | CORS from browser | Not configured | Use `/ui` or same origin |
 

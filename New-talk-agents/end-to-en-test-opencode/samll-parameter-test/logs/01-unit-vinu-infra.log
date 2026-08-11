@@ -1,0 +1,11 @@
+........................................................................ [ 75%]
+.......................                                                  [100%]
+============================== warnings summary ===============================
+tests\test_sqlite.py:8
+  C:\Users\vinay\Desktop\my-trading-work-3\vinu-components\vinu-infra\tests\test_sqlite.py:8: PytestCollectionWarning: cannot collect test class 'TestBackend' because it has a __init__ constructor (from: tests/test_sqlite.py)
+    class TestBackend(SQLiteBackend):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+95 passed, 1 warning in 1.35s
+
+---STDERR---

@@ -124,6 +124,11 @@ services:
     env_file: .env
     environment:
       VINU_MODELS_DIR: /models
+      HF_HOME: /home/app/.cache/huggingface
+      # Triton (torch 2.13 CUDA kernels) JIT-compiles a .so and must mmap it;
+      # the default /tmp tmpfs is noexec here, so give it a dedicated
+      # executable tmpfs (see tmpfs: /triton-cache).
+      TRITON_CACHE_DIR: /triton-cache
     ports:
       - "127.0.0.1:8083:8083"
     volumes:
@@ -141,9 +146,17 @@ services:
     tmpfs:
       - /tmp
       - /home/app/.cache
-    mem_limit: 1g
-    cpus: 1
+      - /triton-cache:rw,exec,relatime
+    mem_limit: 8g
+    cpus: 4
     pids_limit: 256
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/analysis/health', timeout=3)"]

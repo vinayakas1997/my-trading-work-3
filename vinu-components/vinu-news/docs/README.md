@@ -2,13 +2,12 @@
 
 **Start at the textbook:** [**INDEX.md**](INDEX.md) — chapter-based guide for operators, researchers, and contributors.
 
-**Architecture (LLM vs rules):** [**book/ARCHITECTURE.md**](book/ARCHITECTURE.md)
+**Architecture:** [**book/ARCHITECTURE.md**](book/ARCHITECTURE.md)
 
 | Guide | Description |
 |-------|-------------|
-| [**book/ARCHITECTURE.md**](book/ARCHITECTURE.md) | **LLM vs rules** — single-page system diagrams (in textbook) |
+| [**book/ARCHITECTURE.md**](book/ARCHITECTURE.md) | Single-page system diagrams (in textbook) |
 | [**Textbook INDEX**](INDEX.md) | Master index: ingestion, analysis, data, API, CLI |
-| [**Complete Guide**](complete_guide_news_analysis.md) | Legacy monolithic reference (redirect banner) |
 | [**News Derived Tables**](news_derived_tables.md) | Legacy schema/SQL reference |
 | [**Component Status**](news_componete_still_missing.md) | Gaps and roadmap |
 

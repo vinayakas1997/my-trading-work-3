@@ -1,0 +1,11 @@
+........................................................................ [ 59%]
+..................................................                       [100%]
+============================== warnings summary ===============================
+tests/test_api_v1.py::test_fetch_runs_every_method_successfully[llm-sentiment-classifier-alternatives]
+  C:\Users\vinay\AppData\Local\Programs\Python\Python312\Lib\site-packages\transformers\models\bert\tokenization_bert.py:104: DeprecationWarning: Deprecated in 0.9.0: WordPiece.__init__ will not create from files anymore, try `WordPiece.from_file` instead
+    self._tokenizer = Tokenizer(WordPiece(self._vocab, unk_token=str(unk_token)))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+122 passed, 1 warning in 34.78s
+
+---STDERR---

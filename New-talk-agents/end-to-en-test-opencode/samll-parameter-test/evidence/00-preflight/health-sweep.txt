@@ -1,0 +1,10 @@
+news                   -> HTTP 200 | {"status":"ok","storage":"sqlite","db_path":"/data/vinu_news.db","article_count":16538,"mode":"ticker","watchlist_count":3,"llm_model":"google/gemma-4-31b-it:fr
+stock                  -> HTTP 200 | {"meta_db":"/data/vinu_stock_price.db","data_root":"/data","symbol_count":3,"watchlist_size":3,"providers":[{"id":"alpaca","enabled":true,"priority":1,"configur
+features               -> HTTP 200 | {"ok":true,"info":{"db_path":"/data/meta.db","db_size_bytes":24576,"total_request_count":5,"status_counts":{"done":5},"data_dir":"/data","stock_api_url":"http:/
+initial_analysis       -> HTTP 200 | {"status":"ok","service":"vinu-initial-analysis","news_api_url":"http://news-api:8080","stock_api_url":"http://stock-api:8081","data_root":"/data","symbols_with
+quant_core_strategy    -> HTTP 200 | {"status":"ok","service":"vinu-strategy","features_api_healthy":true,"correlation_api_healthy":true,"total_strategies":0,"db_size_bytes":24576}
+quant_core_sim         -> HTTP 200 | {"status":"ok","service":"vinu-simulator","strategy_api_healthy":true,"stock_api_healthy":true,"features_api_healthy":true,"uptime_seconds":13790.295711040497,"
+agent                  -> HTTP 200 | {"status":"ok","service":"vinu-agent","uptime_seconds":514.9217550754547,"active_sessions":0,"skills_loaded":31,"llm_provider":"openai","llm_model":"google/gemm
+research               -> HTTP 200 | {"db_path":"/data/research_meta.db","db_size_bytes":36864,"total_runs":0,"status_counts":{},"dependencies":{"simulator":{"reachable":true,"status_code":404},"fe
+portfolio              -> HTTP 200 | {"status":"ok","service":"vinu-portfolio"}
+live                   -> HTTP 200 | {"status":"ok","service":"vinu-live"}

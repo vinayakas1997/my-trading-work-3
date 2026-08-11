@@ -5,8 +5,8 @@ const REFRESH_INTERVAL_MS = 10000;
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('settings'); // 'settings' | 'search' | 'info'
-  const [health, setHealth] = useState({ article_count: 0, mode: '', llm_model: '', llm_active: false });
-  const [settings, setSettings] = useState({ mode: 'ticker', poll_interval_sec: 600, llm_analysis_mode: 'manual', llm_analysis_concurrency: 3, active_tiers: [1, 2, 3, 4] });
+  const [health, setHealth] = useState({ article_count: 0, mode: '' });
+  const [settings, setSettings] = useState({ mode: 'ticker', poll_interval_sec: 600, active_tiers: [1, 2, 3, 4] });
   const [watchlist, setWatchlist] = useState([]);
   const [newTickerInput, setNewTickerInput] = useState('');
   const [providers, setProviders] = useState([]);
@@ -28,7 +28,6 @@ export default function App() {
   const [articles, setArticles] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [loadingArticles, setLoadingArticles] = useState(false);
-  const [analyzingUrls, setAnalyzingUrls] = useState({}); // link -> boolean
   const [expandedThreads, setExpandedThreads] = useState({}); // threadId -> ThreadDetail object
 
   // Info Panel state
@@ -78,11 +77,9 @@ export default function App() {
       setHealth({
         article_count: data.article_count,
         mode: data.mode,
-        llm_model: data.llm_model,
-        llm_active: data.llm_active,
       });
     } catch (e) {
-      setHealth({ article_count: 'offline', mode: 'offline', llm_model: '', llm_active: false });
+      setHealth({ article_count: 'offline', mode: 'offline' });
     }
   };
 
@@ -93,8 +90,6 @@ export default function App() {
       setSettings({
         mode: data.mode,
         poll_interval_sec: data.poll_interval_sec,
-        llm_analysis_mode: data.llm_analysis_mode,
-        llm_analysis_concurrency: data.llm_analysis_concurrency,
         active_tiers: data.active_tiers || [1, 2, 3, 4],
       });
     } catch (e) {
@@ -430,28 +425,6 @@ export default function App() {
     }
   };
 
-  // Run on-demand LLM Analysis
-  const runLlmAnalysis = async (url) => {
-    setAnalyzingUrls(prev => ({ ...prev, [url]: true }));
-    try {
-      const data = await api('/news/analyze', {
-        method: 'POST',
-        body: JSON.stringify({ url_or_id: url }),
-      });
-      // Replace the article object in state with the newly enriched analysis
-      setArticles(prev =>
-        prev.map(art =>
-          art.link === url ? { ...art, llm_analysis: JSON.stringify(data.analysis) } : art
-        )
-      );
-      showToast('Deep LLM Analysis completed.');
-    } catch (e) {
-      showToast('LLM Analysis failed: ' + e.message);
-    } finally {
-      setAnalyzingUrls(prev => ({ ...prev, [url]: false }));
-    }
-  };
-
   // Expand thread detail
   const toggleThread = async (threadId) => {
     if (expandedThreads[threadId]) {
@@ -565,59 +538,6 @@ export default function App() {
     return new Date(ts * 1000).toLocaleTimeString();
   };
 
-  const renderLlmColumn = (art) => {
-    const isAnalyzing = analyzingUrls[art.link];
-    if (isAnalyzing) {
-      return (
-        <div style={{ flex: 1, padding: '1.5rem', background: '#1e1b4b', border: '1px dashed #4f46e5', borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', minHeight: '120px' }}>
-          <span style={{ fontSize: '0.85rem', color: '#818cf8', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-            <svg className="animate-spin" viewBox="0 0 50 50" style={{ width: '16px', height: '16px', stroke: '#818cf8', fill: 'none', strokeWidth: 5, strokeLinecap: 'round' }}>
-              <circle cx="25" cy="25" r="20"></circle>
-            </svg>
-            Analyzing with LLM...
-          </span>
-        </div>
-      );
-    }
-
-    if (art.llm_analysis) {
-      try {
-        const parsed = JSON.parse(art.llm_analysis);
-        return (
-          <div style={{ flex: 1, padding: '1rem 1.25rem', background: 'rgba(109, 40, 217, 0.05)', border: '1px solid rgba(139, 92, 246, 0.3)', borderRadius: '8px', fontSize: '0.85rem', color: '#ddd' }}>
-            <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.85rem', fontWeight: 700, color: '#c084fc', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-              🧠 Deep LLM Analysis
-            </h4>
-            <p style={{ margin: '0 0 0.75rem 0', lineHeight: 1.5, color: '#e5e7eb' }}>{parsed.summary || ""}</p>
-            <div style={{ fontSize: '0.78rem', color: '#a78bfa', fontWeight: 600, display: 'flex', flexDirection: 'column', gap: '0.35rem', borderTop: '1px dashed rgba(167, 139, 250, 0.3)', paddingTop: '0.5rem' }}>
-              <div>Sentiment Score: <strong style={{ color: '#fff' }}>{parsed.sentiment_score}</strong></div>
-              <div>Confidence: <strong style={{ color: '#fff' }}>{parsed.confidence}%</strong></div>
-              {parsed.risk_flags && parsed.risk_flags.length ? (
-                <div>Risk Flags: <span style={{ color: '#f43f5e' }}>{parsed.risk_flags.join(', ')}</span></div>
-              ) : null}
-            </div>
-          </div>
-        );
-      } catch (e) {
-        console.error("Failed to parse llm_analysis JSON:", e);
-      }
-    }
-
-    return (
-      <div style={{ flex: 1, padding: '1.5rem', background: 'rgba(255, 255, 255, 0.02)', border: '1px dashed var(--border-color)', borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', minHeight: '120px' }}>
-        <span style={{ fontSize: '1.5rem', marginBottom: '0.25rem' }}>🧠</span>
-        <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginBottom: '0.75rem' }}>No LLM analysis cached for this article</span>
-        <button
-          className="btn-primary"
-          style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}
-          onClick={() => runLlmAnalysis(art.link)}
-        >
-          Run LLM Analysis
-        </button>
-      </div>
-    );
-  };
-
   // Pagination bounds
   const totalArticles = articles.length;
   const totalPages = Math.max(1, Math.ceil(totalArticles / PAGE_SIZE));
@@ -649,11 +569,6 @@ export default function App() {
           <span className={`health ${health.mode === 'offline' ? 'err' : 'ok'}`} style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem', borderRadius: '999px', background: health.mode === 'offline' ? 'var(--danger-bg)' : 'var(--success-bg)', color: health.mode === 'offline' ? 'var(--danger)' : 'var(--success)', fontWeight: 600, border: `1px solid ${health.mode === 'offline' ? 'rgba(239,68,68,0.2)' : 'rgba(16,185,129,0.2)'}` }}>
             {health.article_count} articles · {health.mode}
           </span>
-          {health.llm_model && (
-            <span className={`health ${health.llm_active ? 'ok' : 'err'}`} style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem', borderRadius: '999px', background: health.llm_active ? 'var(--success-bg)' : 'var(--danger-bg)', color: health.llm_active ? 'var(--success)' : 'var(--danger)', fontWeight: 600, border: `1px solid ${health.llm_active ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}` }}>
-              LLM: {health.llm_model} · {health.llm_active ? 'active' : 'unavailable'}
-            </span>
-          )}
         </div>
       </header>
 
@@ -737,50 +652,6 @@ export default function App() {
               style={{ width: '100%', marginBottom: '0.5rem' }}
             />
             <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>Applies after the current ingest sleep cycle ends.</span>
-          </div>
-
-          {/* LLM Configuration */}
-          <div className="glass-card">
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: '0 0 1rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              🧠 Deep LLM Analysis
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontWeight: 500 }}>
-                <input
-                  type="radio"
-                  name="settings-llm-mode"
-                  value="auto"
-                  checked={settings.llm_analysis_mode === 'auto'}
-                  onChange={() => updateSettingField({ llm_analysis_mode: 'auto' })}
-                  style={{ width: '16px', height: '16px', accentColor: 'var(--primary)' }}
-                />
-                Auto — analyze every new article in the background
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontWeight: 500 }}>
-                <input
-                  type="radio"
-                  name="settings-llm-mode"
-                  value="manual"
-                  checked={settings.llm_analysis_mode === 'manual'}
-                  onChange={() => updateSettingField({ llm_analysis_mode: 'manual' })}
-                  style={{ width: '16px', height: '16px', accentColor: 'var(--primary)' }}
-                />
-                Manual — only analyze via "Run LLM Analysis" button
-              </label>
-            </div>
-
-            <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-              Background analysis concurrency (1-20)
-            </label>
-            <input
-              type="number"
-              min="1"
-              max="20"
-              value={settings.llm_analysis_concurrency}
-              onChange={(e) => updateSettingField({ llm_analysis_concurrency: parseInt(e.target.value, 10) })}
-              style={{ width: '100%', marginBottom: '0.5rem' }}
-            />
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>Max concurrent LLM queries when Auto is active.</span>
           </div>
 
           {/* Watchlist management */}
@@ -1240,11 +1111,6 @@ export default function App() {
                         )}
                       </div>
                     </div>
-
-                    {/* LLM analysis column */}
-                    <div style={{ flex: 1, minWidth: '300px', display: 'flex', flexDirection: 'column' }}>
-                      {renderLlmColumn(art)}
-                    </div>
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '0.8rem', marginTop: '0.25rem' }}>
@@ -1538,7 +1404,6 @@ export default function App() {
 
                 <h3 style={{ fontSize: '0.95rem', fontWeight: 700, marginTop: '1.5rem', marginBottom: '0.5rem', color: 'var(--primary)', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.25rem' }}>3. Enrichment &amp; Integrations</h3>
                 <ul style={{ paddingLeft: '1.2rem', fontSize: '0.88rem', lineSpacing: '1.6', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.35rem', margin: 0 }}>
-                  <li><strong>news_analysis</strong>: Caches the on-demand, deep LLM analysis (sentiment, confidence score, risk flags, and summary).</li>
                   <li><strong>article_price_reaction</strong>: Tracks price differences before and after an article is published for primary tickers (integrates with stock service).</li>
                 </ul>
               </div>
@@ -1612,52 +1477,6 @@ export default function App() {
   subgraph API [HTTP API]
     Articles --> Routes[GET /latest /ticker /search /threads]
   end`}
-                  </pre>
-                </div>
-
-                {/* LLM Flow */}
-                <div className="glass-card animate-fade-in">
-                  <h2 style={{ fontSize: '1.25rem', marginTop: 0, marginBottom: '0.5rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    🧠 Deep Article Analysis Pipeline (With LLM)
-                  </h2>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.25rem', fontStyle: 'italic' }}>
-                    On-demand intelligence trigger. Only runs when a client asks to analyze an article's context.
-                  </p>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', fontSize: '0.88rem', color: 'var(--text-muted)' }}>
-                    <div style={{ background: 'rgba(255,255,255,0.01)', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-                      <strong style={{ color: 'var(--text-main)', display: 'block', marginBottom: '0.25rem' }}>1. API Request Trigger</strong>
-                      Client sends a <code>POST /news/analyze</code> containing the article ID or link. The system looks up the article in the raw <code>articles</code> table.
-                    </div>
-                    <div style={{ background: 'rgba(255,255,255,0.01)', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-                      <strong style={{ color: 'var(--text-main)', display: 'block', marginBottom: '0.25rem' }}>2. Cache Table Lookup</strong>
-                      The system queries the <code>news_analysis</code> cache table. If a match is found and its age is within the configured TTL (e.g. 24 hours), the cached JSON result is returned immediately.
-                    </div>
-                    <div style={{ background: 'rgba(255,255,255,0.01)', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-                      <strong style={{ color: 'var(--text-main)', display: 'block', marginBottom: '0.25rem' }}>3. LLM API Query &amp; Cache Store</strong>
-                      On a cache miss, the system formats the user prompt (injecting article details), queries the OpenAI-compatible or local Ollama service, parses and standardizes the JSON response, stores it in <code>news_analysis</code>, and returns it.
-                    </div>
-                  </div>
-
-                  <pre className="mermaid" style={{ marginTop: '1.25rem', background: '#0e131f', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-{`flowchart TD
-  subgraph base [Always running - section 1]
-    Ingest[RSS + rule pipeline]
-    Ingest --> DB[(articles)]
-  end
-
-  subgraph llm [LLM path - on demand]
-    User[POST /news/analyze] --> Analyze[analyze_article]
-    Analyze --> Lookup[Load article from DB]
-    Lookup --> CacheHit{news_analysis cache?}
-    CacheHit -->|TTL hit| Return[Return JSON]
-    CacheHit -->|miss| LLM[LlmClient]
-    LLM --> Ollama[Ollama / OpenAI-compatible API]
-    Ollama --> Save[save_analysis]
-    Save --> Return
-  end
-
-  DB --> Lookup`}
                   </pre>
                 </div>
               </div>

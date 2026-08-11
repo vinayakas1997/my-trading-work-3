@@ -88,8 +88,6 @@ class SqliteBackend:
         *,
         mode: str | None = None,
         poll_interval_sec: int | None = None,
-        llm_analysis_mode: str | None = None,
-        llm_analysis_concurrency: int | None = None,
         active_tiers: list[int] | None = None,
         backfill_start_date: str | None = None,
         backfill_pause_on_error: bool | None = None,
@@ -97,8 +95,6 @@ class SqliteBackend:
         return self._settings.patch(
             mode=mode,
             poll_interval_sec=poll_interval_sec,
-            llm_analysis_mode=llm_analysis_mode,
-            llm_analysis_concurrency=llm_analysis_concurrency,
             active_tiers=active_tiers,
             backfill_start_date=backfill_start_date,
             backfill_pause_on_error=backfill_pause_on_error,
@@ -144,9 +140,8 @@ class SqliteBackend:
         tiers: list[int] | None = None,
     ) -> list[dict[str, Any]]:
         query = """
-            SELECT a.*, n.analysis_json AS llm_analysis
+            SELECT a.*
             FROM articles a
-            LEFT JOIN news_analysis n ON a.link = n.url
             WHERE a.is_lead = 1
         """
         params = []
@@ -199,10 +194,9 @@ class SqliteBackend:
             return []
         placeholders = ", ".join("?" for _ in tickers)
         query = f"""
-            SELECT a.*, m.ticker AS mention_ticker, m.dominance, m.is_primary, n.analysis_json AS llm_analysis
+            SELECT a.*, m.ticker AS mention_ticker, m.dominance, m.is_primary
             FROM article_ticker_mentions m
             JOIN articles a ON a.id = m.article_id
-            LEFT JOIN news_analysis n ON a.link = n.url
             WHERE m.ticker IN ({placeholders})
         """
         params: list[Any] = [t.upper() for t in tickers]

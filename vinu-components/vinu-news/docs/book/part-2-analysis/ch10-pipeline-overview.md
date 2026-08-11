@@ -179,7 +179,7 @@ All stored rows have `is_lead = 1`.
 | §5 Cosine dedup | In post-process |
 | Lead-only persist | Non-leads dropped before persist |
 
-~**95%** of Fincept Step 1 news stack implemented; on-demand LLM analyze (ch15), ticker news (ch08), and price reaction (ch16) are in place. LLM digest, scrapers, and trading hooks remain.
+~**95%** of Fincept Step 1 news stack implemented; ticker news (ch08) and price reaction (ch16) are in place. Scrapers and trading hooks remain.
 
 ## 13. Related chapters
 

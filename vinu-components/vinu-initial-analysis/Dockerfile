@@ -7,9 +7,14 @@ FROM python:3.12-slim
 ENV PIP_DEFAULT_TIMEOUT=180 \
     PIP_RETRIES=10
 
+# Triton (torch 2.13 CUDA kernels) JIT-compiles its driver shim with the C
+# compiler at first CUDA use, so the image needs gcc at runtime; point its
+# cache at the writable /tmp tmpfs (rootfs is read-only).
+ENV TRITON_CACHE_DIR=/tmp/triton
+
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 COPY vinu-infra /app/vinu-infra

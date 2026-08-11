@@ -71,6 +71,14 @@ FALLBACK_REASON = (
 _MODEL_CACHE: dict[str, Any] = {}
 
 
+def _resolve_device() -> str:
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
+
 def _checkpoint_path() -> str:
     """Resolve the local weights dir, auto-downloading if absent."""
     from vinu_infra.models import ensure_model
@@ -88,6 +96,7 @@ def _get_model():
     model = AutoModelForCausalLM.from_pretrained(
         _checkpoint_path(), trust_remote_code=True
     )
+    model.to(_resolve_device())
     model.eval()
     _MODEL_CACHE[ANGLE_NAME] = model
     return model
@@ -161,10 +170,10 @@ def _forecast(closes: np.ndarray) -> dict[str, Any]:
 
         seq = torch.tensor(
             np.log(np.clip(context, 1e-8, None)), dtype=torch.float32
-        ).unsqueeze(0)
+        ).unsqueeze(0).to(_resolve_device())
         with torch.no_grad():
             out = model(input_ids=seq, max_output_length=HORIZON, revin=True, use_cache=False)
-        point = np.exp(out.logits[0].numpy())  # (HORIZON,)
+        point = np.exp(out.logits[0].detach().cpu().numpy())  # (HORIZON,)
         last = float(closes[-1])
         p10, p90 = _quantile_bands(point, closes, last)
         return {

@@ -32,8 +32,6 @@ class StorageBackend(Protocol):
         *,
         mode: str | None = None,
         poll_interval_sec: int | None = None,
-        llm_analysis_mode: str | None = None,
-        llm_analysis_concurrency: int | None = None,
         active_tiers: list[int] | None = None,
         backfill_start_date: str | None = None,
         backfill_pause_on_error: bool | None = None,

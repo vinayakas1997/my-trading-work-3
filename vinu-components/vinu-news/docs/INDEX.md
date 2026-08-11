@@ -52,8 +52,6 @@ Start here for chapter-based documentation. Legacy monolithic guides remain with
 | [12c](book/part-2-analysis/ch12c-credibility-language.md) | Credibility, language, summary | REVIEW | `source_credibility.py`, `language.py` | 10 min |
 | [13](book/part-2-analysis/ch13-post-enrichment.md) | NER, synonyms, dedup, lead | REVIEW | `post_enrichment/` | 20 min |
 | [14](book/part-2-analysis/ch14-story-threads-persist.md) | Threading + persist | REVIEW | `storage/persist.py`, `threading/` | 15 min |
-| [15](book/part-2-analysis/ch15-llm-layer.md) | LLM analyze, digest, cache | REVIEW | `analysis/llm/` | 15 min |
-| [15b](book/part-2-analysis/ch15b-llm-prompts.md) | LLM prompts reference | REVIEW | `analysis/llm/prompts.py` | 5 min |
 | [16](book/part-2-analysis/ch16-price-reaction.md) | News ↔ stock price join | REVIEW | `integrations/`, `price_reaction.py` | 15 min |
 
 ### Part 3 — Data
@@ -85,13 +83,11 @@ Start here for chapter-based documentation. Legacy monolithic guides remain with
 | [A3](book/part-5-appendices/apx-c-test-map.md) | Test file → module map | REVIEW | 10 min |
 | [A4](book/part-5-appendices/apx-d-roadmap-gaps.md) | still_missing + enhancement tasks | REVIEW | 15 min |
 | [A5](book/part-5-appendices/apx-e-yet-to-build.md) | **Yet to build** (TODO only) | REVIEW | 5 min |
-| [A6](book/part-5-appendices/apx-f-issues-index.md) | **Issues & changelog** (date-wise index) | REVIEW | 5 min |
 
 ## Enhancement task → chapter map
 
 | Task | Chapter | Notes |
 |------|---------|-------|
-| TASK-N01 | ch15, ch15b | LLM article analysis + prompts |
 | TASK-N02 | ch08 | Ticker-specific news |
 | TASK-N03 | ch16 | Price reaction tagging |
 | TASK-X01 | ch25 | Shared watchlist sync |
@@ -100,6 +96,5 @@ Start here for chapter-based documentation. Legacy monolithic guides remain with
 
 | Guide | Status |
 |-------|--------|
-| [complete_guide_news_analysis.md](complete_guide_news_analysis.md) | Redirect banner → this INDEX |
 | [news_derived_tables.md](news_derived_tables.md) | Redirect banner → ch17–ch20 |
 | [news_componete_still_missing.md](news_componete_still_missing.md) | → apx-d-roadmap-gaps |

@@ -36,7 +36,6 @@ flowchart LR
 
 | File | Responsibility |
 |------|----------------|
-| `docs/complete_guide_news_analysis.md` §13 | Source mapping (legacy) |
 | `personal_understanding/` | Original Fincept notes |
 | `docs/book/part-*/ch*.md` | Detailed implementation chapters |
 
@@ -126,7 +125,7 @@ WHERE type='table'
 ORDER BY name;
 ```
 
-Expected tables include: `articles`, `story_threads`, `feed_health`, `articles_fts`, `news_analysis`, `article_price_reaction`.
+Expected tables include: `articles`, `story_threads`, `feed_health`, `articles_fts`, `article_price_reaction`.
 
 ## 10. Tests
 
@@ -159,4 +158,3 @@ This appendix **is** the mapping. Primary sources:
 - [Chapter 02 — Concepts Glossary](../part-0-getting-started/ch02-concepts-glossary.md)
 - [Chapter 10 — Pipeline Overview](../part-2-analysis/ch10-pipeline-overview.md)
 - [Appendix D — Roadmap & Gaps](apx-d-roadmap-gaps.md)
-- [docs/complete_guide_news_analysis.md](../../complete_guide_news_analysis.md) (legacy §13)

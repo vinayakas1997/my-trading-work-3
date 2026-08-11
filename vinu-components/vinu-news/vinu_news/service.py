@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import logging
-import queue
-import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 from vinu_news.rss.config.feed_loader import load_feeds
@@ -21,7 +18,6 @@ from vinu_news.providers.registry import TickerNewsRegistry
 from vinu_news.settings.store import PollStatusView, SettingsView
 from vinu_news.storage.base import StorageBackend
 from vinu_news.storage.factory import create_storage
-from vinu_news.net import request as http_request
 
 _BACKFILL_CHUNK_DAYS = 30
 _BACKFILL_START_DEFAULT_TS = int(
@@ -29,183 +25,6 @@ _BACKFILL_START_DEFAULT_TS = int(
 )
 
 LOG = logging.getLogger(__name__)
-
-
-class AutoAnalysisWorker:
-    """Thread-safe background worker for LLM analysis with rate limiting.
-    
-    Uses a fixed pool of worker threads that pull from a shared queue,
-    preventing LLM overload and providing predictable resource usage.
-    """
-    
-    def __init__(
-        self,
-        db_path: Path,
-        config: VinuConfig,
-        concurrency: int,
-        queue_maxsize: int = 1000,
-    ):
-        self.db_path = db_path
-        self.config = config
-        self.concurrency = max(1, concurrency)
-        self.queue: queue.Queue[str] = queue.Queue(maxsize=queue_maxsize)
-        self.running = False
-        self.workers: list[threading.Thread] = []
-        
-        # Start worker threads
-        self._start_workers()
-    
-    def _start_workers(self) -> None:
-        """Start fixed pool of worker threads."""
-        self.running = True
-        for _ in range(self.concurrency):
-            worker = threading.Thread(
-                target=self._worker_loop,
-                daemon=True,
-                name=f"llm-analysis-worker",
-            )
-            worker.start()
-            self.workers.append(worker)
-    
-    def _worker_loop(self) -> None:
-        """Worker loop: pull links from queue and analyze.
-
-        Keeps draining the queue even after shutdown() sets running=False —
-        only exits once the queue is actually empty (checked via the
-        queue.Empty timeout, not by abandoning whatever's still queued the
-        moment shutdown() is called). This lets shutdown() return
-        immediately without either blocking the caller or silently
-        dropping already-submitted work; see shutdown()'s docstring.
-        """
-        from vinu_news.analysis.llm.analyze import analyze_article
-        from vinu_news.analysis.storage.repository import NewsRepository
-
-        while True:
-            try:
-                link = self.queue.get(timeout=1.0)
-            except queue.Empty:
-                if not self.running:
-                    return
-                continue
-
-            try:
-                repo = NewsRepository(self.db_path)
-                try:
-                    analyze_article(repo, link, config=self.config)
-                finally:
-                    repo.close()
-            except Exception:
-                LOG.warning("Auto LLM analysis failed for %s", link, exc_info=True)
-            finally:
-                self.queue.task_done()
-    
-    def submit(self, link: str) -> bool:
-        """Submit a link for analysis. Returns False if queue is full."""
-        try:
-            self.queue.put_nowait(link)
-            return True
-        except queue.Full:
-            LOG.warning("Analysis queue full, skipping analysis for %s", link)
-            return False
-    
-    def shutdown(self) -> None:
-        """Returns immediately, without waiting for the queue to drain —
-        workers keep running as daemon threads and finish draining
-        whatever's already queued on their own (see _worker_loop), they
-        just won't accept work submitted after this call. Workers are
-        daemon threads pulling from a queue shared only within this
-        process's lifetime, and
-        analyze_article() already swallows and logs its own failures
-        (_worker_loop's try/except) — nothing downstream depends on a
-        given NewsService() call's queued items finishing before that
-        call returns. Blocking here on self.queue.join() previously meant
-        every single `with NewsService()` use (there are several per
-        ingest cycle) synchronously waited for the *entire* backlog of
-        queued LLM-analysis calls to finish before returning — with real
-        LLM latency and a nontrivial backlog, that turned each NewsService
-        open into a multi-hour block, starving every step scheduled after
-        it in the same ingest-loop iteration (including FinBERT scoring).
-        """
-        self.running = False
-
-    def backfill_unanalyzed(self, limit: int = 500) -> int:
-        """Find articles missing LLM analysis and submit them to the queue.
-
-        Only articles that mention a watchlist ticker are queued, so the LLM
-        is not spent analyzing irrelevant general-news articles.
-
-        Returns the number of articles submitted.
-        """
-        from vinu_news.analysis.storage.repository import NewsRepository
-
-        repo = NewsRepository(self.db_path)
-        try:
-            watchlist = [
-                row["ticker"]
-                for row in repo.conn.execute(
-                    "SELECT ticker FROM watchlist_tickers"
-                ).fetchall()
-            ]
-            if not watchlist:
-                LOG.info("Backfill: no watchlist tickers, skipping analysis backfill")
-                return 0
-            placeholders = ",".join("?" for _ in watchlist)
-            rows = repo.conn.execute(
-                f"""
-                SELECT DISTINCT a.link FROM articles a
-                JOIN article_ticker_mentions m ON a.id = m.article_id
-                LEFT JOIN news_analysis n ON a.link = n.url
-                WHERE n.url IS NULL
-                  AND m.ticker IN ({placeholders})
-                ORDER BY a.sort_ts DESC
-                LIMIT ?
-                """,
-                (*watchlist, limit),
-            ).fetchall()
-        finally:
-            repo.close()
-
-        if not rows:
-            LOG.info("Backfill: no unanalyzed articles found")
-            return 0
-
-        submitted = 0
-        for row in rows:
-            link = row["link"]
-            if link and self.submit(link):
-                submitted += 1
-
-        LOG.info(
-            "Backfill: submitted %d / %d unanalyzed articles",
-            submitted, len(rows),
-        )
-        return submitted
-
-
-def _run_auto_analysis_batch(
-    db_path: Path, config: VinuConfig, links: list[str], concurrency: int
-) -> None:
-    """Background worker: deep-analyze newly ingested links via the LLM.
-
-    Runs off the main ingest thread so a slow/unreachable LLM never delays
-    fetching or the next poll cycle. Each worker opens its own DB
-    connection since sqlite3 connections aren't safe to share across
-    threads.
-    """
-    from vinu_news.analysis.llm.analyze import analyze_article
-    from vinu_news.analysis.storage.repository import NewsRepository
-
-    def _one(link: str) -> None:
-        repo = NewsRepository(db_path)
-        try:
-            analyze_article(repo, link, config=config)
-        except Exception:
-            LOG.warning("Auto LLM analysis failed for %s", link, exc_info=True)
-        finally:
-            repo.close()
-
-    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
-        list(pool.map(_one, links))
 
 
 @dataclass
@@ -270,30 +89,6 @@ class NewsService:
         )
         self._owns_storage = storage is None
         self._stock_client_instance: Any | None = None
-        self._auto_analysis_worker: AutoAnalysisWorker | None = None
-
-        # Initialize auto-analysis worker from DB settings (with env fallback)
-        try:
-            db_settings = self._storage.get_settings()
-            llm_analysis_mode = db_settings.llm_analysis_mode
-            llm_analysis_concurrency = db_settings.llm_analysis_concurrency
-        except Exception:
-            llm_analysis_mode = self._config.llm_analysis_mode
-            llm_analysis_concurrency = self._config.llm_analysis_concurrency
-
-        if llm_analysis_mode == "auto":
-            # Use the actually-injected storage's db_path when available
-            # (e.g. a test-supplied SqliteBackend), not the config-derived
-            # one — the two only coincidentally pointed at the same file
-            # before storage roots became required, which masked this.
-            worker_db_path = getattr(self._storage, "db_path", None) or self._config.db_path
-            self._auto_analysis_worker = AutoAnalysisWorker(
-                db_path=worker_db_path,
-                config=self._config,
-                concurrency=llm_analysis_concurrency,
-            )
-            # Backfill any articles ingested while analysis was off
-            self._auto_analysis_worker.backfill_unanalyzed()
 
     def _stock_client(self):
         if self._stock_client_instance is None:
@@ -301,42 +96,6 @@ class NewsService:
 
             self._stock_client_instance = StockPriceClient(self._config.stock_api_url)
         return self._stock_client_instance
-
-    def _maybe_auto_analyze(self, links: list[str], settings: SettingsView) -> None:
-        if not links or settings.llm_analysis_mode != "auto":
-            return
-        from vinu_news.analysis.llm.client import LlmClient
-
-        if not LlmClient(self._config).is_configured():
-            return
-        if self._auto_analysis_worker is None:
-            return
-
-        # Only analyze articles that mention a watchlist ticker, so the LLM is
-        # not spent on irrelevant general-news articles the watchlist never uses.
-        watchlist = set(self._storage.get_watchlist())
-        if not watchlist:
-            return
-        link_placeholders = ",".join("?" for _ in links)
-        ticker_placeholders = ",".join("?" for _ in watchlist)
-        rows = self._storage.repo.conn.execute(
-            f"""
-            SELECT DISTINCT a.link FROM articles a
-            JOIN article_ticker_mentions m ON a.id = m.article_id
-            WHERE a.link IN ({link_placeholders})
-              AND m.ticker IN ({ticker_placeholders})
-            """,
-            (*links, *watchlist),
-        ).fetchall()
-        relevant_links = {row["link"] for row in rows}
-
-        # Submit links to the shared analysis queue
-        for link in links:
-            if link not in relevant_links:
-                continue
-            if not self._auto_analysis_worker.submit(link):
-                LOG.warning("Analysis queue full, skipping analysis for remaining links")
-                break
 
     def _enrich_with_price_reaction(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         from vinu_news.analysis.post_enrichment.price_reaction import enrich_article_with_reaction
@@ -354,9 +113,6 @@ class NewsService:
             self._storage.close()
         if self._stock_client_instance is not None:
             self._stock_client_instance.close()
-        if self._auto_analysis_worker is not None:
-            self._auto_analysis_worker.shutdown()
-            self._auto_analysis_worker = None
 
     def __enter__(self) -> NewsService:
         return self
@@ -372,8 +128,6 @@ class NewsService:
         *,
         mode: str | None = None,
         poll_interval_sec: int | None = None,
-        llm_analysis_mode: str | None = None,
-        llm_analysis_concurrency: int | None = None,
         active_tiers: list[int] | None = None,
         backfill_start_date: str | None = None,
         backfill_pause_on_error: bool | None = None,
@@ -381,27 +135,10 @@ class NewsService:
         result = self._storage.patch_settings(
             mode=mode,
             poll_interval_sec=poll_interval_sec,
-            llm_analysis_mode=llm_analysis_mode,
-            llm_analysis_concurrency=llm_analysis_concurrency,
             active_tiers=active_tiers,
             backfill_start_date=backfill_start_date,
             backfill_pause_on_error=backfill_pause_on_error,
         )
-
-        # If auto-analysis was enabled at runtime, start the worker
-        if llm_analysis_mode == "auto" and self._auto_analysis_worker is None:
-            self._auto_analysis_worker = AutoAnalysisWorker(
-                db_path=self._config.db_path,
-                config=self._config,
-                concurrency=result.llm_analysis_concurrency,
-            )
-            # Backfill articles ingested while analysis was off
-            self._auto_analysis_worker.backfill_unanalyzed()
-
-        # If auto-analysis was disabled at runtime, shut down the worker
-        if llm_analysis_mode == "manual" and self._auto_analysis_worker is not None:
-            self._auto_analysis_worker.shutdown()
-            self._auto_analysis_worker = None
 
         return result
 
@@ -658,7 +395,6 @@ class NewsService:
             thread_matched_skipped = persist_result.thread_matched_skipped
             threads_created = persist_result.threads_created
             threads_updated = persist_result.threads_updated
-            self._maybe_auto_analyze(persist_result.inserted_links, settings)
 
         return IngestionCycleResult(
             feeds_polled=feeds_polled, feeds_failed=feeds_failed,
@@ -688,22 +424,7 @@ class NewsService:
         )
 
     def health(self) -> dict[str, Any]:
-        info = self._storage.health_info()
-        info["llm_model"] = self._config.llm_model
-        
-        # Check if LLM is active
-        llm_active = False
-        if self._config.llm_base_url:
-            try:
-                res = http_request(
-                    "GET", self._config.llm_base_url.rstrip("/") + "/models", timeout=1.0
-                )
-                if res.status_code == 200:
-                    llm_active = True
-            except Exception:
-                pass
-        info["llm_active"] = llm_active
-        return info
+        return self._storage.health_info()
 
     @staticmethod
     def ts_days_ago(days: int) -> int:
@@ -743,22 +464,6 @@ class NewsService:
             start_ts = from_ts
         rows = self._storage.get_news_for_ticker(symbol, start_ts, to_ts, limit)
         return self._enrich_with_price_reaction(rows)
-
-    def analyze_article(self, url_or_id: str) -> dict[str, Any]:
-        from vinu_news.analysis.llm.analyze import analyze_article as llm_analyze
-        from vinu_news.analysis.llm.client import LlmClientError
-
-        try:
-            return llm_analyze(self._storage.repo, url_or_id, config=self._config)
-        except LlmClientError as exc:
-            raise RuntimeError(str(exc)) from exc
-
-    def backfill_analysis(self, limit: int = 500) -> dict[str, Any]:
-        """Submit unanalyzed articles to the LLM analysis queue."""
-        if self._auto_analysis_worker is None:
-            return {"submitted": 0, "error": "auto-analysis not enabled"}
-        submitted = self._auto_analysis_worker.backfill_unanalyzed(limit=limit)
-        return {"submitted": submitted}
 
     def backfill_finbert_sentiment(self, limit: int = 500) -> dict[str, Any]:
         """Score articles missing finbert_score with FinBERT (batched inference)."""

@@ -7,15 +7,12 @@ from dataclasses import dataclass
 from typing import Any
 
 VALID_MODES = frozenset({"all", "ticker"})
-VALID_LLM_ANALYSIS_MODES = frozenset({"auto", "manual"})
 VALID_TIERS = frozenset({1, 2, 3, 4})
 DEFAULT_ACTIVE_TIERS = "1,2,3,4"
 
 DEFAULTS: dict[str, str] = {
     "mode": "ticker",
     "poll_interval_sec": "600",
-    "llm_analysis_mode": "auto",
-    "llm_analysis_concurrency": "3",
     "active_tiers": DEFAULT_ACTIVE_TIERS,
     "backfill_start_date": "2023-01-01",
     "backfill_pause_on_error": "true",
@@ -74,8 +71,6 @@ class PollStatusView:
 class SettingsView:
     mode: str
     poll_interval_sec: int
-    llm_analysis_mode: str
-    llm_analysis_concurrency: int
     active_tiers: list[int]
     backfill_start_date: str
     backfill_pause_on_error: bool
@@ -84,8 +79,6 @@ class SettingsView:
         return {
             "mode": self.mode,
             "poll_interval_sec": self.poll_interval_sec,
-            "llm_analysis_mode": self.llm_analysis_mode,
-            "llm_analysis_concurrency": self.llm_analysis_concurrency,
             "active_tiers": self.active_tiers,
             "backfill_start_date": self.backfill_start_date,
             "backfill_pause_on_error": self.backfill_pause_on_error,
@@ -123,21 +116,12 @@ class SettingsStore:
             interval = int(data["poll_interval_sec"])
         except (TypeError, ValueError):
             interval = int(DEFAULTS["poll_interval_sec"])
-        llm_analysis_mode = data["llm_analysis_mode"].lower()
-        if llm_analysis_mode not in VALID_LLM_ANALYSIS_MODES:
-            llm_analysis_mode = DEFAULTS["llm_analysis_mode"]
-        try:
-            concurrency = int(data["llm_analysis_concurrency"])
-        except (TypeError, ValueError):
-            concurrency = int(DEFAULTS["llm_analysis_concurrency"])
         active_tiers = parse_active_tiers(data.get("active_tiers", DEFAULT_ACTIVE_TIERS))
         backfill_start_date = data.get("backfill_start_date", "2023-01-01")
         backfill_pause_on_error = data.get("backfill_pause_on_error", "true").lower() == "true"
         return SettingsView(
             mode=mode,
             poll_interval_sec=max(60, interval),
-            llm_analysis_mode=llm_analysis_mode,
-            llm_analysis_concurrency=max(1, min(20, concurrency)),
             active_tiers=active_tiers,
             backfill_start_date=backfill_start_date,
             backfill_pause_on_error=backfill_pause_on_error,
@@ -148,8 +132,6 @@ class SettingsStore:
         *,
         mode: str | None = None,
         poll_interval_sec: int | None = None,
-        llm_analysis_mode: str | None = None,
-        llm_analysis_concurrency: int | None = None,
         active_tiers: list[int] | None = None,
         backfill_start_date: str | None = None,
         backfill_pause_on_error: bool | None = None,
@@ -161,15 +143,6 @@ class SettingsStore:
             self._set("mode", normalized)
         if poll_interval_sec is not None:
             self._set("poll_interval_sec", str(max(60, poll_interval_sec)))
-        if llm_analysis_mode is not None:
-            normalized_llm_mode = llm_analysis_mode.lower()
-            if normalized_llm_mode not in VALID_LLM_ANALYSIS_MODES:
-                raise ValueError(
-                    f"llm_analysis_mode must be one of {sorted(VALID_LLM_ANALYSIS_MODES)}"
-                )
-            self._set("llm_analysis_mode", normalized_llm_mode)
-        if llm_analysis_concurrency is not None:
-            self._set("llm_analysis_concurrency", str(max(1, min(20, llm_analysis_concurrency))))
         if active_tiers is not None:
             self._set("active_tiers", format_active_tiers(active_tiers))
         if backfill_start_date is not None:

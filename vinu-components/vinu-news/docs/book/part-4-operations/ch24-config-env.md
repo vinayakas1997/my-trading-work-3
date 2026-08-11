@@ -63,11 +63,6 @@ flowchart TD
 | `VINU_NEWS_PORT` | `8080` | API port |
 | `VINU_STOCK_API_URL` | `http://127.0.0.1:8081` | vinu-stock-price integration |
 | `VINU_SHARED_WATCHLIST_PATH` | empty | Shared watchlist JSON path |
-| `VINU_LLM_BASE_URL` | `http://127.0.0.1:11434/v1` | OpenAI-compatible LLM |
-| `VINU_LLM_MODEL` | `llama3.2` | Model name |
-| `VINU_LLM_API_KEY` | empty | Optional API key |
-| `VINU_LLM_TTL_SEC` | `86400` | Analysis cache TTL |
-| `llm_analysis_concurrency` | DB (seeded by env) | `4` | Auto-analysis worker pool size |
 | `FMP_API_KEY` | empty | Future FMP ticker news |
 | `VINU_NEWS_DATABASE_URL` | — | Postgres URL (v1.1, README) |
 
@@ -94,7 +89,7 @@ flowchart TD
 
 1. `load_dotenv()` loads package `.env` then cwd `.env`.
 2. `load_config()` builds immutable `VinuConfig`.
-3. First DB init: `settings_env_defaults()` seeds `mode`, `poll_interval_sec`, and `llm_analysis_concurrency` from env.
+3. First DB init: `settings_env_defaults()` seeds `mode` and `poll_interval_sec` from env.
 4. **After first init, DB is authoritative** — `.env` changes alone do not override stored values.
 5. Ingest reads mode at **start of each cycle** — no restart needed after PATCH.
 6. Poll interval change applies on **next sleep** after current cycle completes.
@@ -201,7 +196,6 @@ Expected rows: `mode`, `poll_interval_sec`.
 | Mode won't change from .env | Stored in DB | PATCH `/settings` or new volume |
 | Too many duplicate merges | Low similarity threshold | Raise to 0.30–0.35 |
 | Stories not threading | Threshold too high | Lower `thread_match_threshold` |
-| LLM analyze fails | Wrong `VINU_LLM_*` | Start Ollama; check base URL |
 | Price reaction empty | vinu-stock-price down | Check `VINU_STOCK_API_URL` |
 | Postgres selected | Stub backend | Use `VINU_NEWS_STORAGE=sqlite` |
 

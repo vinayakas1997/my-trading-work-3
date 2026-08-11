@@ -9,7 +9,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from vinu_news.server.schemas import (
-    AnalysisBackfillRequest,
     SettingsPatchRequest,
     SettingsResponse,
     ToggleEnabledRequest,
@@ -53,8 +52,6 @@ def read_settings() -> SettingsResponse:
     return SettingsResponse(
         mode=view.mode,
         poll_interval_sec=view.poll_interval_sec,
-        llm_analysis_mode=view.llm_analysis_mode,
-        llm_analysis_concurrency=view.llm_analysis_concurrency,
         active_tiers=view.active_tiers,
         backfill_start_date=view.backfill_start_date,
         backfill_pause_on_error=view.backfill_pause_on_error,
@@ -68,8 +65,6 @@ def patch_settings(body: SettingsPatchRequest) -> SettingsResponse:
         view = service.patch_settings(
             mode=body.mode,
             poll_interval_sec=body.poll_interval_sec,
-            llm_analysis_mode=body.llm_analysis_mode,
-            llm_analysis_concurrency=body.llm_analysis_concurrency,
             active_tiers=body.active_tiers,
             backfill_start_date=body.backfill_start_date,
             backfill_pause_on_error=body.backfill_pause_on_error,
@@ -79,8 +74,6 @@ def patch_settings(body: SettingsPatchRequest) -> SettingsResponse:
     return SettingsResponse(
         mode=view.mode,
         poll_interval_sec=view.poll_interval_sec,
-        llm_analysis_mode=view.llm_analysis_mode,
-        llm_analysis_concurrency=view.llm_analysis_concurrency,
         active_tiers=view.active_tiers,
         backfill_start_date=view.backfill_start_date,
         backfill_pause_on_error=view.backfill_pause_on_error,
@@ -276,14 +269,6 @@ def backfill_job_status(job_id: str) -> dict:
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
-
-
-@router.post("/analyze/backfill")
-def trigger_analysis_backfill(body: AnalysisBackfillRequest = AnalysisBackfillRequest()) -> dict:
-    """Submit all unanalyzed articles to the LLM analysis queue."""
-    service = get_service()
-    result = service.backfill_analysis(limit=body.limit)
-    return result
 
 
 _finbert_lock = threading.Lock()

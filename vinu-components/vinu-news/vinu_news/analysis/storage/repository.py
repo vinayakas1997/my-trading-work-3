@@ -214,10 +214,9 @@ class NewsRepository(SQLiteBackend):
     def search_articles(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             f"""
-            SELECT {_ARTICLE_COLS_A}, n.analysis_json AS llm_analysis
+            SELECT {_ARTICLE_COLS_A}
             FROM articles a
             JOIN articles_fts ON a.rowid = articles_fts.rowid
-            LEFT JOIN news_analysis n ON a.link = n.url
             WHERE articles_fts MATCH ?
             ORDER BY rank
             LIMIT ?
@@ -234,10 +233,9 @@ class NewsRepository(SQLiteBackend):
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         query = f"""
-            SELECT {_ARTICLE_COLS_A}, m.ticker AS mention_ticker, m.dominance, m.is_primary, n.analysis_json AS llm_analysis
+            SELECT {_ARTICLE_COLS_A}, m.ticker AS mention_ticker, m.dominance, m.is_primary
             FROM article_ticker_mentions m
             JOIN articles a ON a.id = m.article_id
-            LEFT JOIN news_analysis n ON a.link = n.url
             WHERE m.ticker = ?
         """
         params: list[Any] = [ticker.upper()]

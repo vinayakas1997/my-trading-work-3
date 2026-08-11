@@ -4,7 +4,7 @@
 
 This document tracks what is **built** vs what remains to match the full Fincept news stack (from `personal_understanding/step_1_1_news.md`, `step1_ingestion_streaming.md`, and `news_intelligence_pipeline.md`).
 
-**Detailed guides:** [`docs/complete_guide_news_analysis.md`](docs/complete_guide_news_analysis.md) · [`docs/news_derived_tables.md`](docs/news_derived_tables.md) · [`docs/README.md`](docs/README.md)
+**Detailed guides:** [`docs/news_derived_tables.md`](docs/news_derived_tables.md) · [`docs/README.md`](docs/README.md)
 
 ---
 
@@ -81,13 +81,7 @@ These were gaps in earlier versions of this doc; all are implemented now:
 
 ## Remaining gaps
 
-### 1. LLM deep analysis cache
-
-**Status:** Done (TASK-N01). `POST /news/analyze` with OpenAI-compatible local LLM; cached in `news_analysis` table.
-
----
-
-### 2. LLM headline summarization / market digest
+### 1. LLM headline summarization / market digest
 
 **Fincept reference:** `step_1_1_news.md` §8 — `/news/summarize`
 
@@ -98,7 +92,7 @@ These were gaps in earlier versions of this doc; all are implemented now:
 
 ---
 
-### 3. Ticker daily summaries table (proposal)
+### 2. Ticker daily summaries table (proposal)
 
 **Fincept reference:** `step_1_1_news.md` §9 — `ticker_summaries`
 
@@ -110,7 +104,7 @@ These were gaps in earlier versions of this doc; all are implemented now:
 
 ---
 
-### 4. Python scrapers (non-RSS sources)
+### 3. Python scrapers (non-RSS sources)
 
 **Fincept reference:** `step1_ingestion_streaming.md` §5 — method 2
 
@@ -122,7 +116,7 @@ These were gaps in earlier versions of this doc; all are implemented now:
 
 ---
 
-### 5. Ingestion hardening (optional)
+### 4. Ingestion hardening (optional)
 
 - Retry once on timeout
 - Exponential backoff per dead feed
@@ -133,7 +127,7 @@ These were gaps in earlier versions of this doc; all are implemented now:
 
 ---
 
-### 6. UI / GUI state columns
+### 5. UI / GUI state columns
 
 **Fincept reference:** `step_1_1_news.md` §4 Category 3
 
@@ -144,7 +138,7 @@ These were gaps in earlier versions of this doc; all are implemented now:
 
 ---
 
-### 7. DataHub pub/sub + News UI
+### 6. DataHub pub/sub + News UI
 
 **Fincept reference:** `news_intelligence_pipeline.md` §6, `architectural_mind_map.md`
 
@@ -155,7 +149,7 @@ These were gaps in earlier versions of this doc; all are implemented now:
 
 ---
 
-### 8. Trading pipeline integration (Steps 2–5)
+### 7. Trading pipeline integration (Steps 2–5)
 
 **Fincept reference:** `stock_analysis_lifecycle.md`
 
@@ -201,13 +195,12 @@ The remaining **~8%** is mostly **intelligence, ops polish, and trading integrat
 
 ### With LLM (smarter analysis)
 
-5. **LLM analyze on-demand** — user picks URL, cache result in a `news_analysis` table
-6. **LLM ticker digest** — built on existing `ticker_daily_stats` + source article IDs
+5. **LLM ticker digest** — built on existing `ticker_daily_stats` + source article IDs
 
 ### For trading use
 
-7. **Wire news → strategy** — e.g. filter: HIGH impact + BULLISH on AAPL in last 2 hours
-8. **Optional OHLCV join** — news intensity vs price move (separate price data source)
+6. **Wire news → strategy** — e.g. filter: HIGH impact + BULLISH on AAPL in last 2 hours
+7. **Optional OHLCV join** — news intensity vs price move (separate price data source)
 
 ---
 

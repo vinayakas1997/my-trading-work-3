@@ -11,7 +11,6 @@ vinu-news/vinu_news/analysis/data/news.db
 Schema source of truth: [`vinu-news/vinu_news/analysis/storage/schema.sql`](../vinu-news/vinu_news/analysis/storage/schema.sql).
 
 Related docs:
-- Architecture and modules: [`complete_guide_news_analysis.md`](complete_guide_news_analysis.md)
 - What's still missing: [`news_componete_still_missing.md`](../news_componete_still_missing.md)
 
 ---
@@ -499,6 +498,5 @@ See [`news_componete_still_missing.md`](../news_componete_still_missing.md):
 
 | Table | Purpose |
 |-------|---------|
-| `news_analysis` | LLM deep analysis cache per URL |
 | `ticker_summaries` | LLM daily digest per ticker |
 | OHLCV join | External price data correlation |

@@ -50,6 +50,14 @@ DECILE_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 _MODEL_CACHE: dict[str, Any] = {}
 
 
+def _resolve_device() -> str:
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
+
 def _checkpoint_path() -> str:
     """Resolve the local weights dir, auto-downloading if absent."""
     from vinu_infra.models import ensure_model
@@ -61,9 +69,12 @@ def _get_model():
     if CHECKPOINT in _MODEL_CACHE:
         return _MODEL_CACHE[CHECKPOINT]
 
+    import torch
     import timesfm
 
     model = timesfm.TimesFM_2p5_200M_torch.from_pretrained(_checkpoint_path())
+    model.model.to(_resolve_device())
+    model.model.device = torch.device(_resolve_device())
     model.compile(
         timesfm.ForecastConfig(
             max_context=MAX_CONTEXT,

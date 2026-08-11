@@ -97,12 +97,6 @@ CREATE TABLE IF NOT EXISTS feed_health (
     last_error        TEXT
 );
 
-CREATE TABLE IF NOT EXISTS news_analysis (
-    url             TEXT PRIMARY KEY,
-    analysis_json   TEXT NOT NULL,
-    created_at      INTEGER NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS article_price_reaction (
     article_id        TEXT PRIMARY KEY,
     price_change_1h REAL,

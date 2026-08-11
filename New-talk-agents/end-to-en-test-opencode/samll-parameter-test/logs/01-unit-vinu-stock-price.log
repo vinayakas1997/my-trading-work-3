@@ -1,0 +1,14 @@
+............................................                             [100%]
+============================== warnings summary ===============================
+tests/test_indicators.py::test_apply_sma_and_rsi
+  C:\Users\vinay\Desktop\my-trading-work-3\vinu-components\vinu-stock-price\vinu_stock\query\indicators.py:125: RuntimeWarning: divide by zero encountered in divide
+    rs = np.where(avg_loss == 0, np.nan, avg_gain / avg_loss)
+
+tests/test_query_engine_resilience.py::test_fetch_candles_returns_empty_not_raises_when_all_files_corrupt
+  C:\Users\vinay\Desktop\my-trading-work-3\vinu-components\vinu-stock-price\vinu_stock\query\engine.py:148: RuntimeWarning: Skipping 1 unreadable parquet file(s) for JNJ: ['C:\\Users\\vinay\\AppData\\Local\\Temp\\pytest-of-vinay\\pytest-483\\test_fetch_candles_returns_emp0\\prices\\1m\\JNJ\\live\\JNJ_corrupt.parquet']
+    df = _load_symbol_frame(data_root, sym)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+44 passed, 2 warnings in 3.82s
+
+---STDERR---

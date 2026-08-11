@@ -15,12 +15,6 @@ DEFAULT_POLL_INTERVAL_SEC = 600
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8080
 DEFAULT_STOCK_API_URL = "http://127.0.0.1:8081"
-DEFAULT_LLM_BASE_URL = "http://127.0.0.1:11434/v1"
-DEFAULT_LLM_MODEL = "llama3.2"
-DEFAULT_LLM_TTL_SEC = 86400
-DEFAULT_LLM_MAX_TOKENS = 8000
-DEFAULT_LLM_ANALYSIS_MODE = "auto"
-DEFAULT_LLM_ANALYSIS_CONCURRENCY = 3
 DEFAULT_ACTIVE_TIERS = "1,2,3,4"
 DEFAULT_MAX_WORKERS = 8
 
@@ -48,13 +42,6 @@ class VinuConfig:
     port: int
     shared_watchlist_path: Path | None
     stock_api_url: str
-    llm_base_url: str
-    llm_model: str
-    llm_api_key: str | None
-    llm_ttl_sec: int
-    llm_max_tokens: int
-    llm_analysis_mode: str
-    llm_analysis_concurrency: int
     fmp_api_key: str
     alpaca_api_key: str
     alpaca_api_secret: str
@@ -79,19 +66,6 @@ def load_config() -> VinuConfig:
         port=int(os.environ.get("VINU_NEWS_PORT", str(DEFAULT_PORT))),
         shared_watchlist_path=shared_path,
         stock_api_url=os.environ.get("VINU_STOCK_API_URL", DEFAULT_STOCK_API_URL),
-        llm_base_url=os.environ.get("VINU_LLM_BASE_URL", DEFAULT_LLM_BASE_URL),
-        llm_model=os.environ.get("VINU_LLM_MODEL", DEFAULT_LLM_MODEL),
-        llm_api_key=os.environ.get("VINU_LLM_API_KEY") or None,
-        llm_ttl_sec=int(os.environ.get("VINU_LLM_TTL_SEC", str(DEFAULT_LLM_TTL_SEC))),
-        llm_max_tokens=int(os.environ.get("VINU_LLM_MAX_TOKENS", str(DEFAULT_LLM_MAX_TOKENS))),
-        llm_analysis_mode=os.environ.get(
-            "VINU_LLM_ANALYSIS_MODE", DEFAULT_LLM_ANALYSIS_MODE
-        ).lower(),
-        llm_analysis_concurrency=int(
-            os.environ.get(
-                "VINU_LLM_ANALYSIS_CONCURRENCY", str(DEFAULT_LLM_ANALYSIS_CONCURRENCY)
-            )
-        ),
         fmp_api_key=os.environ.get("FMP_API_KEY", ""),
         alpaca_api_key=os.environ.get("ALPACA_API_KEY", ""),
         alpaca_api_secret=os.environ.get("ALPACA_API_SECRET", ""),
@@ -107,7 +81,5 @@ def settings_env_defaults() -> dict[str, str]:
     return {
         "mode": cfg.default_mode,
         "poll_interval_sec": str(cfg.default_poll_interval_sec),
-        "llm_analysis_mode": cfg.llm_analysis_mode,
-        "llm_analysis_concurrency": str(cfg.llm_analysis_concurrency),
         "active_tiers": os.environ.get("VINU_NEWS_ACTIVE_TIERS", DEFAULT_ACTIVE_TIERS),
     }

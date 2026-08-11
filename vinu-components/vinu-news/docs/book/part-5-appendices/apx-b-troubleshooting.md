@@ -36,7 +36,6 @@ flowchart LR
 
 | File | Responsibility |
 |------|----------------|
-| `docs/complete_guide_news_analysis.md` §14 | Legacy source |
 | `docs/book/part-*/ch*.md` §11 | Per-module troubleshooting |
 | `feed_health` table | Feed diagnostics |
 | `IngestionCycleResult` | Ingest counters |
@@ -72,7 +71,6 @@ flowchart LR
 |-----|----------|---------|--------|
 | `VINU_NEWS_MODE` | env | `ticker` | Zero inserts if empty watchlist |
 | `VINU_SHARED_WATCHLIST_PATH` | env | none | Required for sync |
-| `VINU_LLM_BASE_URL` | env | Ollama URL | 503 if unreachable |
 | `VINU_STOCK_API_URL` | env | `:8081` | Missing price fields |
 
 ## 7. Worked examples
@@ -136,7 +134,6 @@ WHERE fail_streak >= 3;
 | Feed always failing | Bad URL, cloaking, timeout | Check `feed_health.last_error` |
 | Beat/miss merged | Gate disabled or no ticker | Enable overlap gate; check synonyms (Ch 13) |
 | Tests fail on Windows | DB file locked | Ensure `repo.close()` / `with NewsService()` |
-| HTTP 503 on `/news/analyze` | LLM down | Start Ollama; check env (Ch 15) |
 | HTTP 400 on `/watchlist/sync` | Path not set | `VINU_SHARED_WATCHLIST_PATH` |
 | No `price_change_*` fields | Stock API down | Start vinu-stock-price (Ch 16) |
 | All feeds fail in Docker | Network egress blocked | Verify container network |
@@ -171,7 +168,6 @@ If this appendix does not cover your issue:
 
 | Fincept reference | Implementation |
 |-------------------|----------------|
-| `complete_guide` §14 | This appendix |
 | Operational monitoring | `feed_health`, `/health`, ingest counters |
 
 ## 13. Related chapters
@@ -179,6 +175,5 @@ If this appendix does not cover your issue:
 - [Chapter 01 — Install & First Run](../part-0-getting-started/ch01-install-first-run.md)
 - [Chapter 07 — Feed Health](../part-1-ingestion/ch07-feed-health.md)
 - [Chapter 09 — Collection Filter](../part-1-ingestion/ch09-collection-filter.md)
-- [Chapter 15 — LLM Layer](../part-2-analysis/ch15-llm-layer.md)
 - [Chapter 16 — Price Reaction](../part-2-analysis/ch16-price-reaction.md)
 - [Appendix C — Test Map](apx-c-test-map.md)
