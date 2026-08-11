@@ -8,7 +8,7 @@ class StrategyTool(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
-            "strategy_name": {"type": "string", "description": "Name of the registered strategy"},
+            "strategy_name": {"type": "string", "description": "Name of the registered strategy (use list_strategies to see valid names)"},
             "symbol": {"type": "string", "description": "Stock symbol"},
             "date": {"type": "string", "description": "Evaluation date YYYY-MM-DD (optional, currently unused)"},
         },
@@ -23,7 +23,7 @@ class StrategyTool(BaseTool):
         import httpx
         url = self._services_config.get("vinu_strategy", "http://localhost:8084")
         resp = httpx.post(
-            f"{url}/strategies/{kwargs['strategy_name']}/evaluate",
+            f"{url}/strategy/strategies/{kwargs['strategy_name']}/evaluate",
             params={"symbols": kwargs["symbol"]},
             timeout=60,
         )

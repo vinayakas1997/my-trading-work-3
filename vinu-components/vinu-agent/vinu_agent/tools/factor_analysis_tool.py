@@ -52,8 +52,8 @@ Use this to find the right factors for a given trading strategy or market regime
 
     def _get_registry(self):
         if self._registry is None:
-            from vinu_tools.compute.alpha_registry import Registry
-            self._registry = Registry()
+            from vinu_tools.compute.registry import get_alpha_registry
+            self._registry = get_alpha_registry()
         return self._registry
 
     def execute(self, **kwargs) -> str:

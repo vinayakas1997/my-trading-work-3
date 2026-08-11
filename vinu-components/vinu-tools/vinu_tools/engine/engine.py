@@ -110,6 +110,7 @@ def _interval_seconds(interval: str) -> int:
         "5m": 300,
         "15m": 900,
         "1h": 3600,
+        "4h": 4 * 3600,
         "1d": SECONDS_PER_DAY,
     }
     if interval not in mapping:

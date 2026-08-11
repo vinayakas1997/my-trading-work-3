@@ -59,9 +59,9 @@ def _allocate_by_expression(
         except ExpressionError as e:
             LOG.warning("Expression eval failed for '%s': %s", sym, e)
             val = 0.0
-        long_val = max(0.0, val) if val is not None else 0.0
-        weights[sym] = long_val
-        total += long_val
+        val = val if val is not None else 0.0
+        weights[sym] = val
+        total += abs(val)
 
     if total <= 0:
         return allocate_equal(candidates)

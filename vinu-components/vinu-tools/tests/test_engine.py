@@ -5,12 +5,24 @@ from __future__ import annotations
 from pathlib import Path
 
 import pyarrow.parquet as pq
+import pytest
 
-from vinu_tools.engine.engine import FeatureEngine
+from vinu_tools.engine.engine import FeatureEngine, _interval_seconds
 from vinu_tools.service import FeatureService
 from vinu_tools.storage.models import STATUS_DONE, STATUS_PENDING
 from vinu_tools.worker.runner import FeatureWorker
 from tests.conftest import MockCandleClient
+
+
+def test_interval_seconds_supports_4h():
+    assert _interval_seconds("1m") == 60
+    assert _interval_seconds("5m") == 300
+    assert _interval_seconds("15m") == 900
+    assert _interval_seconds("1h") == 3600
+    assert _interval_seconds("4h") == 14400
+    assert _interval_seconds("1d") == 86400
+    with pytest.raises(ValueError):
+        _interval_seconds("7d")
 
 
 def test_engine_writes_parquet_and_manifest(config, backend):

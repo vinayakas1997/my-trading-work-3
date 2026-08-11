@@ -20,7 +20,7 @@ class RunCheckpointsTool(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
-            "run_id": {"type": "integer", "description": "Research run ID (from run_research's response or list_runs)"},
+            "run_id": {"type": "integer", "description": "Research run ID (from run_research's response or list_research_runs)"},
             "latest_only": {
                 "type": "boolean",
                 "description": "Return only the most recent checkpoint instead of the full list (optional, default false)",

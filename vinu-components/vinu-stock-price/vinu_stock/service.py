@@ -49,7 +49,14 @@ class StockService:
         self._owns_backend = backend is None
         self._registry = ProviderRegistry(self._config)
         self._duckdb_conn = duckdb.connect()
-        self._data_root: Path = Path(self._backend.get_settings().data_root)
+        # data_root is resolved from the environment (VINU_STOCK_DATA_ROOT via
+        # load_config()) -- the environment is the source of truth, NOT the
+        # persisted vinu_settings row. A stale row (e.g. a Windows host path
+        # seeded by a prior host-side run) used to silently override the
+        # container's /data mount and make every candle query return empty.
+        # Runtime PATCH /stock/settings data_root changes still apply
+        # in-process; the env value re-asserts on the next start.
+        self._data_root: Path = self._config.data_root
 
     @property
     def data_root(self) -> Path:
