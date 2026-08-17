@@ -6,6 +6,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from vinu_infra.secrets_loader import load_secret
+
 DEFAULT_FEATURES_API_URL = "http://127.0.0.1:8082"
 DEFAULT_SIMULATOR_API_URL = "http://127.0.0.1:8085"
 DEFAULT_CORRELATION_API_URL = "http://127.0.0.1:8083"
@@ -83,6 +85,8 @@ class ResearchConfig:
     walk_forward_gap_days: int = 5
     walk_forward_min_train_days: int = 252
     walk_forward_step_size_days: int = 63
+    walk_forward_stability_threshold: float = 0.5
+    walk_forward_min_completed_windows: int = 2
     stock_price_api_url: str = DEFAULT_STOCK_PRICE_API_URL
     benchmark_symbol: str = DEFAULT_BENCHMARK_SYMBOL
     # "llm"/"hybrid": LLM drives every iteration (fresh generation on iteration 1,
@@ -196,7 +200,7 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         llm_enabled=os.environ.get("VINU_RESEARCH_LLM_ENABLED", "false").lower() == "true",
         llm_base_url=os.environ.get("VINU_LLM_BASE_URL", DEFAULT_LLM_BASE_URL),
         llm_model=os.environ.get("VINU_LLM_MODEL", DEFAULT_LLM_MODEL),
-        llm_api_key=os.environ.get("VINU_LLM_API_KEY") or None,
+        llm_api_key=load_secret("vinu_llm_api_key", "VINU_LLM_API_KEY") or None,
         llm_ttl_sec=int(os.environ.get("VINU_RESEARCH_LLM_TTL_SEC", str(DEFAULT_LLM_TTL_SEC))),
         llm_max_tokens=int(os.environ.get("VINU_LLM_MAX_TOKENS", str(DEFAULT_LLM_MAX_TOKENS))),
         llm_timeout_sec=float(os.environ.get("VINU_LLM_TIMEOUT_SEC", "120.0")),
@@ -208,6 +212,8 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         walk_forward_gap_days=int(os.environ.get("VINU_RESEARCH_WF_GAP_DAYS", "5")),
         walk_forward_min_train_days=int(os.environ.get("VINU_RESEARCH_WF_MIN_TRAIN_DAYS", "252")),
         walk_forward_step_size_days=int(os.environ.get("VINU_RESEARCH_WF_STEP_DAYS", "63")),
+        walk_forward_stability_threshold=float(os.environ.get("VINU_RESEARCH_WF_STABILITY_THRESHOLD", "0.5")),
+        walk_forward_min_completed_windows=int(os.environ.get("VINU_RESEARCH_WF_MIN_COMPLETED_WINDOWS", "2")),
         stock_price_api_url=os.environ.get("VINU_STOCK_PRICE_API_URL", DEFAULT_STOCK_PRICE_API_URL),
         benchmark_symbol=os.environ.get("VINU_RESEARCH_BENCHMARK_SYMBOL", DEFAULT_BENCHMARK_SYMBOL),
         generator_mode=os.environ.get("VINU_RESEARCH_GENERATOR_MODE", "hybrid"),

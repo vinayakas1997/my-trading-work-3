@@ -7,19 +7,19 @@ Uses direct HTTP to api.tushare.pro (avoids fragile package dependency).
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timezone
 
 import requests
 
 from vinu_stock.providers.base import EarliestResult, FetchBarsResult
 from vinu_infra.retry import http_post_with_retry
+from vinu_infra.secrets_loader import load_secret
 from vinu_stock.storage.models import BarRecord
 
 LOG = logging.getLogger(__name__)
 
 TUSHARE_API_URL = "https://api.tushare.pro"
-TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "")
+TUSHARE_TOKEN = load_secret("tushare_token", "TUSHARE_TOKEN") or ""
 
 
 class TushareProvider:

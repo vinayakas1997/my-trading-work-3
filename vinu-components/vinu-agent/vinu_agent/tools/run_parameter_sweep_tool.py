@@ -14,6 +14,7 @@ def _serialize_sweep_grid(result) -> dict:
         "succeeded": result.succeeded,
         "completeness": result.completeness,
         "pbo": result.pbo,
+        "walk_forward": result.walk_forward,
         "ranked": [
             {
                 "params": r.params,

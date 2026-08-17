@@ -455,6 +455,11 @@ class LoggingChatLLM(ChatLLM):
 
             from ..storage.llm_calls import LlmCallRecord
 
+            serving_provider = (
+                response.get("provider")
+                if isinstance(response, dict) and response.get("provider")
+                else type(self._inner).__name__
+            )
             self._store.record(LlmCallRecord(
                 service=self._service,
                 tier=self._tier,
@@ -462,7 +467,7 @@ class LoggingChatLLM(ChatLLM):
                 agent=self._agent,
                 role=self._role,
                 session_id=self._session_id,
-                provider=type(self._inner).__name__,
+                provider=serving_provider,
                 model=getattr(self._inner, "model", ""),
                 base_url=getattr(self._inner, "base_url", ""),
                 prompt=list(messages),
@@ -502,12 +507,65 @@ def wrap_with_logging(
     )
 
 
+class FallbackChatLLM(ChatLLM):
+    """Provider waterfall (implementation-plan task 07, ported from Jarvis's
+    `_call_llm()`): tries `providers` in order and moves to the next one
+    only when the current provider's call genuinely raises (after that
+    provider's own explicit retry/backoff has been exhausted). A slow-but-
+    successful primary response is returned as-is -- fallback never fires on
+    latency, only on failure.
+
+    Every successful result is tagged with the serving provider via the
+    `provider` key so call-logging and tracing show which provider actually
+    served each call (a pattern of frequent fallback = a degraded primary).
+    """
+
+    def __init__(self, providers: list[ChatLLM]) -> None:
+        if not providers:
+            raise ValueError("FallbackChatLLM needs at least one provider")
+        self._providers = providers
+        self.context_window = getattr(providers[0], "context_window", _DEFAULT_CONTEXT_WINDOW)
+
+    @property
+    def model(self) -> str:
+        return getattr(self._providers[0], "model", "")
+
+    @property
+    def base_url(self) -> str:
+        return getattr(self._providers[0], "base_url", "")
+
+    def chat(self, messages: list, tools: Optional[list] = None, **kwargs) -> dict:
+        last_error: Exception | None = None
+        tried: list[str] = []
+        for provider in self._providers:
+            label = f"{type(provider).__name__}/{provider.model}"
+            tried.append(label)
+            try:
+                result = provider.chat(messages, tools=tools, **kwargs)
+                if len(self._providers) > 1:
+                    result.setdefault("provider", label)
+                return result
+            except Exception as e:
+                last_error = e
+                LOG.warning(
+                    "LLM provider %s failed (%s: %s), moving to next provider",
+                    label, type(e).__name__, e,
+                )
+        raise RuntimeError(
+            f"All LLM providers failed ({', '.join(tried)}): {last_error}"
+        ) from last_error
+
+
 def create_llm_from_config(llm_config: LLMConfig) -> ChatLLM:
     """Builds a ChatLLM from a standalone LLMConfig -- not tied to
     AgentConfig.llm specifically, so different tiers (orchestrator vs.
     teams/specialists) can each have their own independently-configured
     provider/model/base_url. create_llm() below is just this applied to
-    the process's default config.llm, kept for existing call sites."""
+    the process's default config.llm, kept for existing call sites.
+
+    When `llm_config.fallbacks` is non-empty the result is a
+    `FallbackChatLLM` waterfall: primary provider first, each fallback in
+    order, raising only once every provider has genuinely failed."""
     provider = llm_config.provider.lower()
     if provider == "openai":
         llm: ChatLLM = OpenAIChatLLM(
@@ -543,6 +601,12 @@ def create_llm_from_config(llm_config: LLMConfig) -> ChatLLM:
         if llm_config.context_window > 0
         else resolve_context_window(llm.base_url, llm.model)
     )
+
+    if llm_config.fallbacks:
+        built: list[ChatLLM] = [llm]
+        for fb in llm_config.fallbacks:
+            built.append(create_llm_from_config(fb))
+        return FallbackChatLLM(built)
     return llm
 
 

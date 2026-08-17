@@ -12,11 +12,14 @@ of points in one round-trip instead of one LLM turn per point.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+
+LOG = logging.getLogger(__name__)
 
 from vinu_research.comparison import RankedCandidate, rank_candidates
 from vinu_research.config import ResearchConfig
@@ -77,6 +80,7 @@ class SweepGridResult:
     ranked: list[RankedSweepCandidate]
     pbo: dict[str, float] | None
     outcomes: list[GridPointOutcome] = field(default_factory=list)
+    walk_forward: dict[str, Any] | None = None
 
 
 async def run_sweep_grid(
@@ -204,6 +208,23 @@ async def run_sweep_grid(
             matrix = np.column_stack([c[:min_len] for c in returns_columns])
             pbo_result = probability_of_backtest_overfitting(matrix)
 
+    walk_forward_result: dict[str, Any] | None = None
+    if config is not None and config.walk_forward_enabled and ranked:
+        from vinu_research.walk_forward import run_walk_forward
+
+        try:
+            wf = await run_walk_forward(
+                symbol=symbol, from_date=from_date, to_date=to_date,
+                param_grid=param_grid, recipe=recipe, base_code=base_code,
+                param_name=param_name, indicators=indicators,
+                initial_capital=initial_capital, config=config,
+                tools=resolved_tools,
+            )
+            if wf is not None:
+                walk_forward_result = wf.to_dict()
+        except Exception:
+            LOG.exception("Walk-forward pass failed, sweep result carries no walk-forward evidence")
+
     return SweepGridResult(
         requested=requested,
         succeeded=succeeded,
@@ -211,4 +232,45 @@ async def run_sweep_grid(
         ranked=ranked,
         pbo=pbo_result,
         outcomes=outcomes,
+        walk_forward=walk_forward_result,
     )
+
+
+def sweep_evidence_verdict(
+    completeness: float,
+    pbo: dict[str, float] | None,
+    walk_forward: dict[str, Any] | None,
+    *,
+    completeness_tolerance: float = 0.95,
+    pbo_severe: float = 0.7,
+) -> dict[str, Any]:
+    """Deterministic PASS/FAIL gate that folds all three evidence signals a
+    recipe-path run can produce -- completeness, PBO, and the walk-forward
+    stability verdict -- into a single call. Fail-closed: any missing or
+    failing signal pushes toward FAIL, and a walk-forward verdict of FAIL is
+    an automatic overall FAIL even if PBO looked fine (a parameter set can
+    be PBO-clean yet still unstable window to window -- that is exactly the
+    failure mode implementation-plan task 06 / shortcoming #8 targets).
+
+    The backtest_runner prompt instructs the LLM to treat this as an
+    automatic override on top of its own written reasoning."""
+    reasons: list[str] = []
+    if completeness < completeness_tolerance:
+        reasons.append(
+            f"incomplete grid: completeness {completeness:.2f} below {completeness_tolerance:.2f}"
+        )
+    if pbo is None:
+        reasons.append("no PBO estimate available")
+    elif pbo.get("pbo") is not None and pbo["pbo"] > pbo_severe:
+        reasons.append(f"PBO {pbo['pbo']:.2f} above severe threshold {pbo_severe:.2f}")
+    if walk_forward is None:
+        reasons.append("no walk-forward stability evidence available")
+    elif not walk_forward.get("stability_verdict", {}).get("passed", False):
+        reasons.append("walk-forward stability verdict FAIL")
+    return {
+        "passed": not reasons,
+        "reasons": reasons or ["completeness, PBO and walk-forward stability all within tolerance"],
+        "completeness": round(completeness, 4),
+        "pbo": pbo,
+        "walk_forward": walk_forward,
+    }

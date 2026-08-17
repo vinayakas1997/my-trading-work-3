@@ -3,8 +3,10 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
+from vinu_live.book.quantize import floor_qty, quantize_qty
 from vinu_live.signal_translator import OrderInstruction
 
 LOG = logging.getLogger(__name__)
@@ -39,12 +41,23 @@ def plan_twap(
     """
     plan = ExecutionPlan()
     for instr in instructions:
-        slice_qty = instr.qty / n_slices
+        total = quantize_qty(instr.qty)
+        if n_slices <= 1 or total <= 0:
+            plan.slices.append(ExecutionSlice(
+                symbol=instr.symbol, side=instr.side, qty=float(total),
+                slice_number=1, total_slices=max(n_slices, 1),
+            ))
+            continue
+        per_slice = total / n_slices
+        allocated = Decimal("0")
         for i in range(n_slices):
+            is_last = i == n_slices - 1
+            slice_qty = total - allocated if is_last else floor_qty(per_slice)
+            allocated += slice_qty
             plan.slices.append(ExecutionSlice(
                 symbol=instr.symbol,
                 side=instr.side,
-                qty=round(slice_qty, 4),
+                qty=float(slice_qty),
                 slice_number=i + 1,
                 total_slices=n_slices,
             ))
@@ -106,22 +119,28 @@ def plan_vwap(
     plan = ExecutionPlan()
     volume_weights = volume_weights or {}
     for instr in instructions:
+        total = quantize_qty(instr.qty)
+        if total <= 0:
+            continue
         weights = volume_weights.get(instr.symbol)
         if not weights or len(weights) != n_slices or sum(weights) <= 0:
             weights = [1.0 / n_slices] * n_slices
         else:
-            total = sum(weights)
-            weights = [w / total for w in weights]
+            wsum = sum(weights)
+            weights = [w / wsum for w in weights]
 
-        allocated = 0.0
+        allocated = Decimal("0")
         for i, w in enumerate(weights):
             is_last = i == n_slices - 1
-            slice_qty = round(instr.qty - allocated, 4) if is_last else round(instr.qty * w, 4)
+            if is_last:
+                slice_qty = total - allocated
+            else:
+                slice_qty = floor_qty(total * Decimal(str(w)))
             allocated += slice_qty
             plan.slices.append(ExecutionSlice(
                 symbol=instr.symbol,
                 side=instr.side,
-                qty=slice_qty,
+                qty=float(slice_qty),
                 slice_number=i + 1,
                 total_slices=n_slices,
             ))

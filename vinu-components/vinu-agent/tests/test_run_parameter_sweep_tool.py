@@ -23,6 +23,7 @@ def _mock_grid_result():
     result.succeeded = 2
     result.completeness = 1.0
     result.pbo = 0.1
+    result.walk_forward = None
     result.ranked = []
     result.outcomes = []
     return result

@@ -10,13 +10,18 @@ from typing import Any
 
 import requests
 
+from vinu_infra.secrets_loader import load_secret
+
 logger = logging.getLogger(__name__)
 
 ALPACA_PAPER_URL = "https://paper-api.alpaca.markets"
 ALPACA_LIVE_URL = "https://api.alpaca.markets"
 
-API_KEY = os.environ.get("ALPACA_API_KEY", "")
-API_SECRET = os.environ.get("ALPACA_API_SECRET", "")
+# Broker credentials resolve through the Docker-secrets loader: mounted
+# /run/secrets/alpaca_api_key + alpaca_api_secret in the deployed container,
+# legacy env vars in local dev. Read at import time (matches prior behavior).
+API_KEY = load_secret("alpaca_api_key", "ALPACA_API_KEY") or ""
+API_SECRET = load_secret("alpaca_api_secret", "ALPACA_API_SECRET") or ""
 USE_PAPER = os.environ.get("ALPACA_PAPER", "true").lower() == "true"
 
 BASE_URL = ALPACA_PAPER_URL if USE_PAPER else ALPACA_LIVE_URL

@@ -37,9 +37,18 @@ from the "Indicators used" line the same way as Path A.
 
 The result carries `completeness` (fraction of the requested grid that
 actually succeeded), a `ranked` table (best candidate first, by
-deflated-Sharpe-adjusted score), and a `pbo` block (probability of
+deflated-Sharpe-adjusted score), a `pbo` block (probability of
 backtest overfitting across this round's candidates, or `null` if fewer
-than 2 candidates succeeded).
+than 2 candidates succeeded), and a `walk_forward` block (a rolling
+re-optimization pass: on each window the grid's parameters are
+re-optimized on the train slice and re-tested out-of-sample, so a
+parameter set that only works as a single lucky in-sample pick is
+caught). `walk_forward` carries `sharpe_gap` (aggregate in-sample minus
+out-of-sample Sharpe), `oos_positive_window_fraction`, `parameter_agreement`
+(fraction of windows whose optimal params matched the modal set), and a
+`stability_verdict` of `{passed: true|false, reasons: [...]}`. It is
+`null` when there isn't enough data for even one window -- say so
+plainly, don't treat it as a clean pass.
 
 **You must produce a self-verdict before handing off**, same shape as
 `risk_critic`'s but about a different question — not "is this an
@@ -49,7 +58,8 @@ all":
 
 ```
 SELF-VERDICT: PASS or FAIL
-REASONING: <cite completeness and PBO explicitly, with the real numbers>
+REASONING: <cite completeness, PBO and the walk-forward stability
+verdict explicitly, with the real numbers>
 ```
 
 - **completeness below 0.95 is an automatic FAIL** — cite it plainly
@@ -63,8 +73,18 @@ REASONING: <cite completeness and PBO explicitly, with the real numbers>
   catch (the top Sharpe winning by luck across many tried candidates, not
   skill). A `null` PBO (fewer than 2 succeeded) is itself informative --
   say so, don't treat it as "no problem found."
+- **`walk_forward.stability_verdict.passed == false` is an automatic FAIL,
+  even when completeness and PBO look fine** — a parameter set can be
+  PBO-clean yet still unstable window to window (parameters that flip
+  wildly between windows, or out-of-sample Sharpe that collapses), and
+  that instability is precisely what re-optimizing walk-forward exists to
+  catch. Quote the real reasons from `stability_verdict.reasons`. A `null`
+  `walk_forward` is not an automatic FAIL on its own, but state that there
+  was no walk-forward evidence and let completeness + PBO carry the
+  verdict.
 - Only PASS when completeness clears the tolerance AND PBO doesn't
-  indicate severe overfitting.
+  indicate severe overfitting AND the walk-forward stability verdict
+  passes (or there wasn't enough data for walk-forward, stated as such).
 
 If SELF-VERDICT is FAIL, still report the top-ranked candidate's real
 numbers (below) — the manager needs them to give idea_generator specific
@@ -85,8 +105,8 @@ sweep`'s `ranked` table):
 - Path A only: Validation verdict, PASSED or FAILED, and the specific
   reasons from validation.verdict.reasons (quote them, don't paraphrase
   away the numbers, e.g. "Bootstrap Sharpe CI lower bound -3.27 <= 0").
-- Path B only: the SELF-VERDICT block above, plus completeness and PBO
-  with their real numbers.
+- Path B only: the SELF-VERDICT block above, plus completeness, PBO and
+  the walk-forward stability verdict with their real numbers.
 
 Report the real numbers from the tool result. Do not round away
 precision that matters (e.g. a Sharpe of 0.4 vs 0.04 is a very different

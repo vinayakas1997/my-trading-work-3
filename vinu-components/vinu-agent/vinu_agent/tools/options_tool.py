@@ -13,13 +13,15 @@ import os
 
 import requests
 
+from vinu_infra.secrets_loader import load_secret
+
 from ..agent.tools import BaseTool
 
 logger = logging.getLogger(__name__)
 
 ALPACA_DATA_BASE_URL = os.environ.get("ALPACA_DATA_BASE_URL", "https://data.alpaca.markets")
-ALPACA_API_KEY = os.environ.get("ALPACA_API_KEY", "")
-ALPACA_API_SECRET = os.environ.get("ALPACA_API_SECRET", "")
+ALPACA_API_KEY = load_secret("alpaca_api_key", "ALPACA_API_KEY") or ""
+ALPACA_API_SECRET = load_secret("alpaca_api_secret", "ALPACA_API_SECRET") or ""
 
 
 def _auth_headers() -> dict[str, str]:

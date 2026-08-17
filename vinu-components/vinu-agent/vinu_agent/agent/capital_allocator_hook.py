@@ -41,6 +41,21 @@ _JSON_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 _DEFAULT_VINU_LIVE_URL = "http://localhost:8091"
 
 
+def _auth_headers() -> dict[str, str]:
+    """Opt-in bearer token (implementation-plan task 11): vinu-live's
+    routes carry require_auth (vinu_infra/auth.py) and reject the request
+    once VINU_API_KEY is configured, so the unwind request must present
+    the same key. Opt-in both ways -- when the key is unset neither side
+    is protected and no header is sent."""
+    try:
+        from vinu_infra.auth import VINU_API_KEY
+    except Exception:
+        return {}
+    if not VINU_API_KEY:
+        return {}
+    return {"Authorization": f"Bearer {VINU_API_KEY}"}
+
+
 def _is_halted(scope: str) -> bool:
     """Fail-closed: on ANY uncertainty, assume halted. This is the one
     check in the whole design where the wrong default risks real money
@@ -123,6 +138,7 @@ def _request_unwind(
         resp = httpx.post(
             f"{vinu_live_url}/live/trade-plan/rebalance-request",
             json={"symbol": ticker, "reason": reason},
+            headers=_auth_headers(),
             timeout=15,
         )
         resp.raise_for_status()

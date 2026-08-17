@@ -9,6 +9,10 @@ services:
     env_file: .env
     environment:
       VINU_MODELS_DIR: /models
+    secrets:
+      - alpaca_api_key
+      - alpaca_api_secret
+      - fmp_api_key
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
@@ -48,6 +52,11 @@ services:
       context: .
       dockerfile: vinu-stock-price/Dockerfile
     env_file: .env
+    secrets:
+      - alpaca_api_key
+      - alpaca_api_secret
+      - polygon_api_key
+      - tushare_token
     ports:
       - "127.0.0.1:8081:8081"
     volumes:
@@ -227,6 +236,8 @@ services:
       context: .
       dockerfile: vinu-portfolio/Dockerfile
     env_file: .env
+    secrets:
+      - vinu_api_key
     ports:
       - "127.0.0.1:8090:8090"
     volumes:
@@ -267,6 +278,8 @@ services:
       context: .
       dockerfile: vinu-research/Dockerfile
     env_file: .env
+    secrets:
+      - vinu_llm_api_key
     ports:
       - "127.0.0.1:8087:8087"
     volumes:
@@ -313,6 +326,8 @@ services:
       context: .
       dockerfile: vinu-live/Dockerfile
     env_file: .env
+    secrets:
+      - vinu_api_key
     ports:
       - "127.0.0.1:8091:8091"
     volumes:
@@ -359,6 +374,13 @@ services:
     # background loop, same pattern as live-api below. A `command:` here
     # would just be appended as unused args after the entrypoint script.
     env_file: .env
+    secrets:
+      - vinu_api_key
+      - alpaca_api_key
+      - alpaca_api_secret
+      - vinu_llm_api_key
+      - telegram_token
+      - discord_token
     ports:
       - "127.0.0.1:8086:8086"
     volumes:
@@ -401,3 +423,32 @@ services:
         condition: service_healthy
       research-api:
         condition: service_healthy
+
+# =========================================================================
+# Secrets (implementation-plan task 13)
+# -------------------------------------------------------------------------
+# Real credentials are mounted as files under ./secrets/ (gitignored) and
+# read by the services from /run/secrets/<name> via vinu_infra.secrets_loader
+# -- NOT from plain-text .env. An EMPTY secret file falls back to the legacy
+# env var, so `scripts/setup-secrets.sh` (which populates these from your
+# existing .env or by prompting) must be run before `docker compose up`.
+# =========================================================================
+secrets:
+  vinu_api_key:
+    file: ./secrets/vinu_api_key
+  alpaca_api_key:
+    file: ./secrets/alpaca_api_key
+  alpaca_api_secret:
+    file: ./secrets/alpaca_api_secret
+  polygon_api_key:
+    file: ./secrets/polygon_api_key
+  fmp_api_key:
+    file: ./secrets/fmp_api_key
+  tushare_token:
+    file: ./secrets/tushare_token
+  vinu_llm_api_key:
+    file: ./secrets/vinu_llm_api_key
+  telegram_token:
+    file: ./secrets/telegram_token
+  discord_token:
+    file: ./secrets/discord_token

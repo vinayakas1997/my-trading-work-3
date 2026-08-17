@@ -63,13 +63,31 @@ def trade_plan_worker_main(args: argparse.Namespace | None = None) -> None:
     print(f"[trade-plan-worker] Starting (interval={interval}s)")
     print(f"[trade-plan-worker] Press Ctrl+C to stop.\n")
 
+    log = logging.getLogger("vinu.live.trade_plan_worker")
+
     async def _worker_loop() -> None:
         orchestrator = TradePlanOrchestrator(config)
         try:
             while True:
-                result = await orchestrator.cycle()
-                status = result.get("status", "unknown")
-                print(f"[trade-plan-worker] Cycle {result.get('cycle_id', '?')}: {status}")
+                try:
+                    result = await orchestrator.cycle()
+                    status = result.get("status", "unknown")
+                    log.info(
+                        "trade-plan cycle complete",
+                        extra={
+                            "vinu_ctx": {
+                                "worker": "trade-plan-worker",
+                                "cycle_id": result.get("cycle_id"),
+                                "status": status,
+                            }
+                        },
+                    )
+                except Exception:
+                    log.exception(
+                        "trade-plan cycle failed",
+                        extra={"vinu_ctx": {"worker": "trade-plan-worker"}},
+                    )
+                    raise
                 time.sleep(interval)
         except KeyboardInterrupt:
             print("\n[trade-plan-worker] Stopped by user.")
@@ -111,6 +129,8 @@ def shadow_worker_main(args: argparse.Namespace | None = None) -> None:
     print(f"[shadow-worker] Starting (interval={interval}s)")
     print(f"[shadow-worker] Press Ctrl+C to stop.\n")
 
+    log = logging.getLogger("vinu.live.shadow_worker")
+
     async def _worker_loop() -> None:
         evaluator = ShadowEvaluator(
             research_api_url=config.research_api_url,
@@ -118,9 +138,25 @@ def shadow_worker_main(args: argparse.Namespace | None = None) -> None:
         )
         try:
             while True:
-                results = await evaluator.evaluate_all()
-                promoted = sum(1 for r in results if r.get("promoted"))
-                print(f"[shadow-worker] Cycle: {len(results)} checked, {promoted} promoted")
+                try:
+                    results = await evaluator.evaluate_all()
+                    promoted = sum(1 for r in results if r.get("promoted"))
+                    log.info(
+                        "shadow cycle complete",
+                        extra={
+                            "vinu_ctx": {
+                                "worker": "shadow-worker",
+                                "artifacts_checked": len(results),
+                                "promoted": promoted,
+                            }
+                        },
+                    )
+                except Exception:
+                    log.exception(
+                        "shadow cycle failed",
+                        extra={"vinu_ctx": {"worker": "shadow-worker"}},
+                    )
+                    raise
                 time.sleep(interval)
         except KeyboardInterrupt:
             print("\n[shadow-worker] Stopped by user.")
@@ -154,13 +190,32 @@ def feedback_worker_main(args: argparse.Namespace | None = None) -> None:
     print(f"[feedback-worker] Starting (interval={interval}s)")
     print(f"[feedback-worker] Press Ctrl+C to stop.\n")
 
+    log = logging.getLogger("vinu.live.feedback_worker")
+
     async def _worker_loop() -> None:
         worker = FeedbackLoopWorker(config)
         try:
             while True:
-                result = await worker.cycle()
-                status = result.get("status", "unknown")
-                print(f"[feedback-worker] Cycle {result.get('cycle_id', '?')}: {status}")
+                try:
+                    result = await worker.cycle()
+                    status = result.get("status", "unknown")
+                    log.info(
+                        "feedback cycle complete",
+                        extra={
+                            "vinu_ctx": {
+                                "worker": "feedback-worker",
+                                "cycle_id": result.get("cycle_id"),
+                                "status": status,
+                                "positions_processed": len(result.get("processed", [])),
+                            }
+                        },
+                    )
+                except Exception:
+                    log.exception(
+                        "feedback cycle failed",
+                        extra={"vinu_ctx": {"worker": "feedback-worker"}},
+                    )
+                    raise
                 time.sleep(interval)
         except KeyboardInterrupt:
             print("\n[feedback-worker] Stopped by user.")
@@ -194,13 +249,31 @@ def worker_main(args: argparse.Namespace | None = None) -> None:
     print(f"[worker] Starting vinu-live worker (interval={interval}s)")
     print(f"[worker] Press Ctrl+C to stop.\n")
 
+    log = logging.getLogger("vinu.live.worker")
+
     async def _worker_loop() -> None:
         scheduler = LiveScheduler(config)
         try:
             while True:
-                result = await scheduler.cycle()
-                status = result.get("status", "unknown")
-                print(f"[worker] Cycle {result.get('cycle_id', '?')}: {status}")
+                try:
+                    result = await scheduler.cycle()
+                    status = result.get("status", "unknown")
+                    log.info(
+                        "portfolio-rebalance cycle complete",
+                        extra={
+                            "vinu_ctx": {
+                                "worker": "vinu-live-worker",
+                                "cycle_id": result.get("cycle_id"),
+                                "status": status,
+                            }
+                        },
+                    )
+                except Exception:
+                    log.exception(
+                        "portfolio-rebalance cycle failed",
+                        extra={"vinu_ctx": {"worker": "vinu-live-worker"}},
+                    )
+                    raise
                 time.sleep(interval)
         except KeyboardInterrupt:
             print("\n[worker] Stopped by user.")

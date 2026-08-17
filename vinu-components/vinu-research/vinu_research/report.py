@@ -24,6 +24,7 @@ def generate_report(
     holdout: HoldoutResult | None = None,
     portfolio: PortfolioAnalysisResult | None = None,
     stress_test: StressTestResult | None = None,
+    walk_forward_stability_threshold: float = 0.5,
 ) -> str:
     lines: list[str] = []
     lines.append("=== FINAL RESEARCH REPORT ===")
@@ -235,11 +236,15 @@ def generate_report(
         lines.append(f"  {'CAGR':<20} {is_cagr:<14.2%} {oos_cagr:<16.2%} {is_cagr - oos_cagr:<+10.1%}")
 
         gap = walk_forward.sharpe_gap
-        if gap > 0.5:
+        moderate_gap = walk_forward_stability_threshold * 0.6
+        if gap > walk_forward_stability_threshold:
             lines.append("")
-            lines.append(f"Verdict: HIGH OVERFITTING RISK — Sharpe gap {gap:.2f} > 0.5")
+            lines.append(
+                f"Verdict: HIGH OVERFITTING RISK — Sharpe gap {gap:.2f} > "
+                f"{walk_forward_stability_threshold:.2f}"
+            )
             lines.append("Consider simplifying the strategy or adding regularization filters")
-        elif gap > 0.3:
+        elif gap > moderate_gap:
             lines.append("")
             lines.append(f"Verdict: MODERATE OVERFITTING RISK — Sharpe gap {gap:.2f}")
             lines.append("Monitor out-of-sample performance closely")

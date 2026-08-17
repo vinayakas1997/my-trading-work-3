@@ -79,6 +79,40 @@ def apply_risk_gatekeeper_verdict(
     except (TypeError, ValueError):
         approved_size = 0.0
 
+    # Implementation-plan task 05 (shortcoming #7): risk_gatekeeper's
+    # approved_size now comes from a real formula, not an LLM-picked number.
+    # The manager records the sizing_inputs the compute_position_size tool
+    # used (win_rate, payoff_ratio, account_equity, method, ...); when they
+    # are present the hook recomputes the formula deterministically and
+    # stores min(formula size, the concentration-headroom cap the manager
+    # reported) -- the formula is authoritative, the headroom caps it. When
+    # no sizing_inputs are recorded (pre-task-05 verdicts), the manager's
+    # number passes through unchanged, preserving existing behavior.
+    formula_size: float | None = None
+    sizing_inputs = data.get("sizing_inputs")
+    if isinstance(sizing_inputs, dict) and sizing_inputs:
+        try:
+            from .position_sizing import compute_position_size
+
+            result = compute_position_size(
+                account_equity=float(sizing_inputs.get("account_equity", 0.0) or 0.0),
+                method=str(sizing_inputs.get("method", "fractional_kelly")),
+                win_rate=float(sizing_inputs.get("win_rate", 0.0) or 0.0),
+                payoff_ratio=float(sizing_inputs.get("payoff_ratio", 0.0) or 0.0),
+                kelly_fraction=float(sizing_inputs.get("kelly_fraction", 0.25) or 0.25),
+                risk_pct=float(sizing_inputs.get("risk_pct", 0.02) or 0.02),
+                entry_price=float(sizing_inputs.get("entry_price", 0.0) or 0.0),
+                atr=float(sizing_inputs.get("atr", 0.0) or 0.0),
+                atr_stop_multiple=float(sizing_inputs.get("atr_stop_multiple", 2.0) or 2.0),
+            )
+            if result.get("status") == "ok":
+                formula_size = float(result.get("size", 0.0) or 0.0)
+        except Exception:
+            LOG.exception("failed to recompute formula size from sizing_inputs, using manager approved_size")
+            formula_size = None
+    if formula_size is not None:
+        approved_size = min(approved_size, formula_size) if approved_size > 0 else formula_size
+
     try:
         artifact = strategy_store.mark_pend(artifact_id, approved_size=approved_size)
     except Exception:
@@ -96,7 +130,10 @@ def apply_risk_gatekeeper_verdict(
                     ticker=ticker,
                     stage="risk_gatekeeper",
                     event_type="PEND",
-                    text=f"risk_gatekeeper APPROVED, moved to PEND, approved_size={approved_size}",
+                    text=(
+                        f"risk_gatekeeper APPROVED, moved to PEND, approved_size={approved_size}"
+                        + (f", sizing_inputs={json.dumps(sizing_inputs)}" if sizing_inputs else "")
+                    ),
                     ref_id=artifact_id,
                     source="watchlist",
                 )

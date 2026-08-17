@@ -6,7 +6,9 @@ import numpy as np
 import pytest
 
 from vinu_research.models import BacktestMetrics, BacktestResult
-from vinu_research.sweep_grid import GridTooLargeError, MAX_GRID_POINTS, run_sweep_grid
+from vinu_research.config import ResearchConfig
+from vinu_research.server.routes_sweep import _serialize_grid
+from vinu_research.sweep_grid import GridTooLargeError, MAX_GRID_POINTS, SweepGridResult, run_sweep_grid
 
 
 def _bt_result(run_id: str, sharpe: float, *, equity_points: int = 100, daily_returns=None) -> BacktestResult:
@@ -191,3 +193,70 @@ class TestRunSweepGridBaseCodeMode:
 
         assert result.succeeded == 2
         assert mock_tools.run_backtest.await_count == 2
+
+
+class TestRunSweepGridWalkForwardWiring:
+    """Implementation-plan task 06: the recipe path must carry walk-forward
+    stability evidence in the sweep result alongside PBO, gated on
+    config.walk_forward_enabled (and never recursing into itself)."""
+
+    async def _grid_result(self, mock_tools, config, monkeypatch) -> SweepGridResult:
+        calls = []
+
+        async def fake_run_walk_forward(**kwargs):
+            calls.append(kwargs)
+            return type(
+                "WF",
+                (),
+                {
+                    "to_dict": lambda self: {
+                        "n_planned": 2,
+                        "n_completed": 2,
+                        "completeness": 1.0,
+                        "sharpe_gap": 0.1,
+                        "oos_positive_window_fraction": 1.0,
+                        "parameter_agreement": 1.0,
+                        "stability_verdict": {"passed": True, "reasons": []},
+                    }
+                },
+            )()
+
+        monkeypatch.setattr(
+            "vinu_research.walk_forward.run_walk_forward", fake_run_walk_forward
+        )
+        mock_tools.run_backtest.side_effect = [
+            _bt_result("run-a", sharpe=1.1, daily_returns=[0.01] * 40),
+            _bt_result("run-b", sharpe=0.8, daily_returns=[0.005] * 40),
+        ]
+        return await run_sweep_grid(
+            symbol="TEST", from_date="2024-01-01", to_date="2024-12-31",
+            param_grid=[{"fast_period": 5, "slow_period": 40}, {"fast_period": 10, "slow_period": 40}],
+            recipe="crossover", config=config, tools=mock_tools,
+        ), calls
+
+    @pytest.mark.asyncio
+    async def test_walk_forward_attached_when_enabled(self, monkeypatch) -> None:
+        mock_tools = AsyncMock()
+        config = ResearchConfig(walk_forward_enabled=True)
+        result, calls = await self._grid_result(mock_tools, config, monkeypatch)
+        assert result.walk_forward is not None
+        assert result.walk_forward["stability_verdict"]["passed"] is True
+        assert len(calls) == 1
+        assert calls[0]["config"] is config
+
+    @pytest.mark.asyncio
+    async def test_walk_forward_skipped_when_disabled(self, monkeypatch) -> None:
+        mock_tools = AsyncMock()
+        config = ResearchConfig(walk_forward_enabled=False)
+        result, calls = await self._grid_result(mock_tools, config, monkeypatch)
+        assert result.walk_forward is None
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_serialize_grid_includes_walk_forward(self, monkeypatch) -> None:
+        mock_tools = AsyncMock()
+        config = ResearchConfig(walk_forward_enabled=True)
+        result, _ = await self._grid_result(mock_tools, config, monkeypatch)
+        payload = _serialize_grid(result)
+        assert "walk_forward" in payload
+        assert payload["walk_forward"]["stability_verdict"]["passed"] is True

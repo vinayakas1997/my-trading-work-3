@@ -659,6 +659,7 @@ class StrategyResearchLoop:
             holdout=holdout_result,
             portfolio=portfolio_result,
             stress_test=stress_test_result,
+            walk_forward_stability_threshold=self._config.walk_forward_stability_threshold,
         )
 
         return ResearchResult(

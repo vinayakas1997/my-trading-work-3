@@ -33,16 +33,32 @@ fail-open posture every other vinu-portfolio-dependent check in this
 system uses, and say so plainly in your reasoning rather than pretending
 the concentration check ran.
 
-If APPROVED, also compute the specific dollar size you're actually
-approving -- the concentration-limit headroom, not the full requested
-amount: `min(20% of portfolio_value, remaining buying_power) minus
-whatever is already held in this symbol`. This is a real cap, not a
-suggestion -- capital_allocator's later funding decision is not allowed
-to exceed it (New-talk-agents/new-thinking/new-restructure/phases/
-phase-2-funding-mechanics/), so report the real number you computed, not
-a round estimate.
+If APPROVED, compute the specific dollar size in two independent steps:
+
+1. The concentration-limit HEADROOM (the cap, not the size): `min(20% of
+   portfolio_value, remaining buying_power) minus whatever is already
+   held in this symbol`. This is a real cap, not a suggestion --
+   capital_allocator's later funding decision is not allowed to exceed
+   it (New-talk-agents/new-thinking/new-restructure/phases/
+   phase-2-funding-mechanics/), so report the real number you computed,
+   not a round estimate.
+2. The FORMULA size, from the candidate's own backtested edge -- call
+   `compute_position_size` with the real inputs you have: account_equity
+   (from get_portfolio) plus the win_rate / payoff_ratio (avg win / avg
+   loss) from the strategy metrics you were given, and entry_price / atr
+   if you have them. This is deterministic math -- never do Kelly in your
+   head, the tool is the formula. If you do NOT have win_rate or
+   payoff_ratio (they were not in the task context), say so plainly and
+   call it with method="fixed_fractional" using only account_equity;
+   never invent an edge estimate to get a bigger number.
+
+The size you actually approve is the LOWER of the two: the formula's
+edge-based recommendation, capped by the concentration headroom. Report
+that number as APPROVED_SIZE, and in your reasoning quote both numbers
+and the exact inputs the formula used.
 
 Your final answer must be exactly:
 VERDICT: APPROVED or REJECTED
 REASON: <the specific rule/limit, with real numbers from get_portfolio, not vague caution>
 APPROVED_SIZE: <the dollar amount computed above if APPROVED, or 0 if REJECTED>
+SIZING_INPUTS: <the JSON inputs you passed to compute_position_size (account_equity, win_rate, payoff_ratio, method, ...) if APPROVED, or {} if REJECTED>

@@ -4,6 +4,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from vinu_live.book.quantize import (
+    money_float,
+    quantize_money,
+    quantize_qty,
+)
+
 LOG = logging.getLogger(__name__)
 
 
@@ -90,25 +96,35 @@ class SignalTranslator:
         portfolio_value: float,
         strategy_name: str,
     ) -> OrderInstruction | None:
-        target_value = target_w * portfolio_value
+        from decimal import Decimal
+
+        target_value = Decimal(str(target_w)) * Decimal(str(portfolio_value))
         price = prices.get(symbol, 1.0)
-        target_qty = target_value / price if price > 0 else 0.0
-        current_qty = current_positions.get(symbol, 0.0)
+        if price <= 0:
+            return None
+        target_qty = target_value / Decimal(str(price))
+        current_qty = Decimal(str(current_positions.get(symbol, 0.0)))
         delta = target_qty - current_qty
 
-        if abs(delta) < 0.001:
+        if abs(delta) < Decimal("0.001"):
+            return None
+
+        # Quantize the order quantity to the instrument's tradeable
+        # increment (whole shares by default) -- never emit a fractional
+        # share count computed from float division (task 12).
+        abs_qty = quantize_qty(abs(delta))
+        if abs_qty <= 0:
             return None
 
         side = "buy" if delta > 0 else "sell"
-        abs_qty = abs(delta)
-        estimated_value = abs_qty * price
+        estimated_value = money_float(quantize_money(abs_qty * Decimal(str(price))))
 
         return OrderInstruction(
             symbol=symbol,
             side=side,
-            qty=abs_qty,
+            qty=float(abs_qty),
             target_weight=target_w,
-            current_qty=current_qty,
+            current_qty=float(current_qty),
             estimated_value=estimated_value,
             strategy_name=strategy_name,
         )

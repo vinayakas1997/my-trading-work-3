@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import contextvars
+import json
 import logging
 import os
 import time
 from contextlib import asynccontextmanager, contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +19,7 @@ def is_debug(level: int = 1) -> bool:
     return _DEBUG and _DEBUG_LEVEL >= level
 
 
-def setup_logging(service: str, *, verbose: bool = False) -> None:
+def setup_logging(service: str, *, verbose: bool = False, structured_path: str | None = None) -> None:
     """Unified logging setup for all services.
 
     Every service (`vinu-news`, `vinu-live`, `vinu-research`, ...) calls this once at
@@ -30,6 +32,13 @@ def setup_logging(service: str, *, verbose: bool = False) -> None:
     File sink location: `VINU_LOG_FILE` env var if set, else `logs/vinu-trace.log`
     (relative to cwd) whenever VINU_DEBUG=true. Set `VINU_LOG_FILE=` (empty) to force
     console-only. Console output is unaffected either way.
+
+    Structured JSON sink (added 2026-08-17, implementation-plan task 10): when
+    `structured_path` is given -- or `VINU_STRUCTURED_LOG` env var is set -- every
+    record at DEBUG and above is ALSO appended to that file as one JSON object per
+    line (see `JsonFormatter`). This is the queryable layer a log aggregator can
+    tail without any code change; the console/text file stay human-readable on
+    purpose, since entrypoint.sh and manual ops already rely on them.
     """
     level = logging.DEBUG if (_DEBUG or verbose) else logging.INFO
     fmt = f"%(asctime)s [{service}] [%(levelname)s] %(name)s: %(message)s"
@@ -42,10 +51,59 @@ def setup_logging(service: str, *, verbose: bool = False) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         handlers.append(logging.FileHandler(path, mode="a", encoding="utf-8"))
 
+    structured = structured_path if structured_path is not None else os.environ.get("VINU_STRUCTURED_LOG", "")
+    if structured:
+        json_handler = logging.FileHandler(structured, mode="a", encoding="utf-8")
+        json_handler.setLevel(logging.DEBUG)
+        json_handler.setFormatter(JsonFormatter())
+        json_handler.addFilter(_ServiceFilter(service))
+        handlers.append(json_handler)
+
     # force=True: some services boot uvicorn/other libs that call basicConfig first;
     # without it this setup would silently no-op and every service would keep logging
     # to its own console only, defeating the point of a shared file.
     logging.basicConfig(level=level, format=fmt, handlers=handlers, force=True)
+
+
+class _ServiceFilter(logging.Filter):
+    """Stamps the service name onto every record so the structured sink can
+    attribute each event without callers having to pass it per call."""
+
+    def __init__(self, service: str) -> None:
+        super().__init__()
+        self._service = service
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "vinu_service"):
+            record.vinu_service = self._service
+        return True
+
+
+class JsonFormatter(logging.Formatter):
+    """Emit each record as a single JSON line: ts (UTC ISO), service, level,
+    logger, message, any structured extras passed via `extra={"vinu_ctx": {...}}`,
+    and -- when an exception is attached -- exc_type plus the full traceback.
+
+    One object per line, so an aggregator can tail the file without parsing
+    ambiguity. `default=str` keeps the emitter from ever raising on a
+    non-serializable context value (a logging sink must never take down the
+    worker it's observing -- same discipline as `record_llm_call_safe`)."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        data: dict[str, Any] = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "service": getattr(record, "vinu_service", "") or "",
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        ctx = getattr(record, "vinu_ctx", None)
+        if isinstance(ctx, dict):
+            data.update(ctx)
+        if record.exc_info:
+            data["exc_type"] = record.exc_info[0].__name__ if record.exc_info[0] else None
+            data["traceback"] = self.formatException(record.exc_info)
+        return json.dumps(data, default=str, ensure_ascii=False)
 
 
 def debug_log(msg: str, level: int = 1) -> None:

@@ -50,6 +50,7 @@ def run_team_for_ticker(service: Any, team_name: str, task: str, *, session_id: 
         ticker_summary_store=service._ticker_summary_store,
         ticker_ledger_store=service._ticker_ledger_store,
         session_id=session_id,
+        config=service.config,
     )
     team_dir = Path(service.config.teams_dir) / team_name
     manager = TeamManager(
@@ -235,6 +236,56 @@ async def run_significance_cycle(
             flags.append(flag)
 
     return flags
+
+
+def run_capital_allocator_cycle(service: Any, *, budget: float, cycle: int = 0) -> dict[str, Any]:
+    """One capital-allocation pass over the whole PEND batch -- the
+    scheduled caller shortcoming #1 was missing (an approved candidate
+    could sit PEND indefinitely because nothing invoked the
+    capital_allocator team on an interval). Collects every PEND artifact
+    (risk_gatekeeper-approved, awaiting funding) in one shot, hands the
+    full batch + the configured risk budget to the real capital_allocator
+    team -- same `run_team_for_ticker(...)` pattern planner-worker uses
+    for its research hand-off -- and reports what got funded. The team's
+    own hook (agent/capital_allocator_hook.py) applies the PEND->ACTIVE /
+    PENDBLOCK transitions from the manager's parsed final answer; nothing
+    here mutates state. `budget` has no default -- callers pass the
+    configured `capital_allocator_budget`, never a number invented here.
+
+    Returns:
+        {"status": "skipped", "reason": ..., "pend_candidates": 0} when
+        the batch is empty (no LLM call -- nothing to fund), or
+        {"status": "ok", "run_id", "pend_candidates", "funded": [...]}
+        after a completed team run.
+    """
+    from vinu_research.models import ArtifactStatus
+
+    pend = service._strategy_store.list_artifacts_by_statuses([ArtifactStatus.PEND])
+    if not pend:
+        return {
+            "status": "skipped",
+            "reason": "no PEND artifacts awaiting funding",
+            "pend_candidates": 0,
+        }
+
+    artifact_ids = [a.artifact_id for a in pend]
+    task = (
+        "Run your capital-allocation cycle for the whole current PEND batch.\n"
+        f"PEND artifact ids: {', '.join(artifact_ids)}\n"
+        f"Total risk budget: ${budget:.2f}\n"
+        "Follow your normal process: delegate to allocation_analyst, then "
+        "emit your final JSON funding decision."
+    )
+    result = run_team_for_ticker(
+        service, "capital_allocator", task, session_id=f"capital-allocator-{cycle}",
+    )
+    funded = [f for f in (result.get("artifact_id") or "").split(",") if f]
+    return {
+        "status": "ok",
+        "run_id": result.get("run_id"),
+        "pend_candidates": len(pend),
+        "funded": funded,
+    }
 
 
 def hypothesis_reader_for(service: Any):

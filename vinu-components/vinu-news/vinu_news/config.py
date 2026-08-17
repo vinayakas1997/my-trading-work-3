@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from vinu_infra.config import require_data_root
+from vinu_infra.secrets_loader import load_secret
 
 DEFAULT_MODE = "ticker"
 DEFAULT_POLL_INTERVAL_SEC = 600
@@ -66,9 +67,9 @@ def load_config() -> VinuConfig:
         port=int(os.environ.get("VINU_NEWS_PORT", str(DEFAULT_PORT))),
         shared_watchlist_path=shared_path,
         stock_api_url=os.environ.get("VINU_STOCK_API_URL", DEFAULT_STOCK_API_URL),
-        fmp_api_key=os.environ.get("FMP_API_KEY", ""),
-        alpaca_api_key=os.environ.get("ALPACA_API_KEY", ""),
-        alpaca_api_secret=os.environ.get("ALPACA_API_SECRET", ""),
+        fmp_api_key=load_secret("fmp_api_key", "FMP_API_KEY") or "",
+        alpaca_api_key=load_secret("alpaca_api_key", "ALPACA_API_KEY") or "",
+        alpaca_api_secret=load_secret("alpaca_api_secret", "ALPACA_API_SECRET") or "",
         max_workers=int(
             os.environ.get("VINU_NEWS_MAX_WORKERS", str(DEFAULT_MAX_WORKERS))
         ),

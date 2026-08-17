@@ -5,6 +5,13 @@ import logging
 from typing import Any
 
 from vinu_infra.sqlite import SQLiteBackend
+from vinu_live.book.quantize import (
+    money_float,
+    qty_float,
+    quantize_money,
+    quantize_qty,
+    to_decimal,
+)
 from vinu_live.book.schema import (
     Position,
     OPEN_POSITIONS_TABLE,
@@ -109,13 +116,14 @@ def open_position(
         f"INSERT INTO {OPEN_POSITIONS_TABLE} "
         f"(position_id, symbol, side, qty, avg_entry, realized_pnl, stop_loss, take_profit, opened_at, updated_at, artifact_id) "
         f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [pid, symbol.upper(), side_lit, qty, price, 0.0, stop_loss, take_profit, opened, opened, artifact_id],
+        [pid, symbol.upper(), side_lit, qty_float(qty), money_float(price), 0.0,
+         stop_loss, take_profit, opened, opened, artifact_id],
     )
     fid = _fill_id(symbol, opened, qty, price)
     conn.execute(
         f"INSERT INTO {FILLS_TABLE} (fill_id, symbol, side, qty, price, filled_at, position_id, commission) "
         f"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [fid, symbol.upper(), side, qty, price, opened, pid, commission],
+        [fid, symbol.upper(), side, qty_float(qty), money_float(price), opened, pid, money_float(commission)],
     )
     conn.commit()
 
@@ -145,21 +153,26 @@ def add_to_position(
     if pos is None:
         return None
 
-    total_qty = pos.qty + add_qty
-    total_cost = pos.qty * pos.avg_entry + add_qty * price
-    new_avg = total_cost / total_qty if total_qty > 0 else price
+    pos_qty = quantize_qty(pos.qty)
+    add_q = quantize_qty(add_qty)
+    total_qty = pos_qty + add_q
+    # avg_entry is the exact Decimal cost basis (NOT cents-quantized: a
+    # truncated average would scale into real money error over many shares);
+    # only price/commission/pnl are money-quantized.
+    total_cost = pos_qty * to_decimal(pos.avg_entry) + add_q * quantize_money(price)
+    new_avg = total_cost / total_qty if total_qty > 0 else quantize_money(price)
 
     conn = _conn(backend)
     conn.execute(
         f"UPDATE {OPEN_POSITIONS_TABLE} SET qty = ?, avg_entry = ?, updated_at = ? WHERE position_id = ?",
-        [total_qty, new_avg, now_iso(), position_id],
+        [float(total_qty), float(new_avg), now_iso(), position_id],
     )
     filled_at = now_iso()
     fid = _fill_id(pos.symbol, filled_at, add_qty, price)
     conn.execute(
         f"INSERT INTO {FILLS_TABLE} (fill_id, symbol, side, qty, price, filled_at, position_id, commission) "
         f"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [fid, pos.symbol, "buy" if pos.side == "long" else "sell", add_qty, price, filled_at, position_id, commission],
+        [fid, pos.symbol, "buy" if pos.side == "long" else "sell", qty_float(add_qty), money_float(price), filled_at, position_id, money_float(commission)],
     )
     conn.commit()
     return get_position(backend, position_id)
@@ -182,13 +195,17 @@ def reduce_position(
     if reduce_qty <= 0:
         return None
 
+    r_qty = quantize_qty(reduce_qty)
+    entry = to_decimal(pos.avg_entry)
+    px = quantize_money(price)
+    commission = quantize_money(commission)
     if pos.side == "long":
-        realized = (price - pos.avg_entry) * reduce_qty - commission
+        realized = (px - entry) * r_qty - commission
     else:
-        realized = (pos.avg_entry - price) * reduce_qty - commission
+        realized = (entry - px) * r_qty - commission
 
-    remaining = pos.qty - reduce_qty
-    new_realized = (pos.realized_pnl or 0.0) + realized
+    remaining = quantize_qty(quantize_qty(pos.qty) - r_qty)
+    new_realized = quantize_money(quantize_money(pos.realized_pnl or 0.0) + realized)
 
     conn = _conn(backend)
     if remaining <= 0:
@@ -198,14 +215,14 @@ def reduce_position(
 
     conn.execute(
         f"UPDATE {OPEN_POSITIONS_TABLE} SET qty = ?, realized_pnl = ?, updated_at = ? WHERE position_id = ?",
-        [remaining, new_realized, now_iso(), position_id],
+        [float(remaining), float(new_realized), now_iso(), position_id],
     )
     filled_at = now_iso()
     fid = _fill_id(pos.symbol, filled_at, reduce_qty, price)
     conn.execute(
         f"INSERT INTO {FILLS_TABLE} (fill_id, symbol, side, qty, price, filled_at, position_id, commission) "
         f"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [fid, pos.symbol, "sell" if pos.side == "long" else "buy", reduce_qty, price, filled_at, position_id, commission],
+        [fid, pos.symbol, "sell" if pos.side == "long" else "buy", float(r_qty), money_float(price), filled_at, position_id, float(commission)],
     )
     conn.commit()
     return get_position(backend, position_id)
@@ -222,11 +239,11 @@ def close_position(
         return None
 
     if pos.side == "long":
-        realized = (close_price - pos.avg_entry) * pos.qty - commission
+        realized = (quantize_money(close_price) - to_decimal(pos.avg_entry)) * quantize_qty(pos.qty) - quantize_money(commission)
     else:
-        realized = (pos.avg_entry - close_price) * pos.qty - commission
+        realized = (to_decimal(pos.avg_entry) - quantize_money(close_price)) * quantize_qty(pos.qty) - quantize_money(commission)
 
-    total_realized = (pos.realized_pnl or 0.0) + realized
+    total_realized = quantize_money(quantize_money(pos.realized_pnl or 0.0) + realized)
     conn = _conn(backend)
     _close_position(conn, pos, close_price, total_realized)
     conn.commit()
@@ -239,8 +256,8 @@ def _close_position(conn, pos: Position, close_price: float, total_realized: flo
         f"INSERT INTO {CLOSED_POSITIONS_TABLE} "
         f"(position_id, symbol, side, qty, avg_entry, realized_pnl, stop_loss, take_profit, opened_at, closed_at, close_price, artifact_id) "
         f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [pos.position_id, pos.symbol, pos.side, pos.qty, pos.avg_entry,
-         total_realized, pos.stop_loss, pos.take_profit, pos.opened_at, closed_at, close_price, pos.artifact_id],
+        [pos.position_id, pos.symbol, pos.side, qty_float(pos.qty), money_float(pos.avg_entry),
+         float(quantize_money(total_realized)), pos.stop_loss, pos.take_profit, pos.opened_at, closed_at, money_float(close_price), pos.artifact_id],
     )
     conn.execute(
         f"DELETE FROM {OPEN_POSITIONS_TABLE} WHERE position_id = ?",
@@ -316,7 +333,7 @@ def daily_realized_pnl(backend: BookBackend) -> float:
         f"WHERE closed_at LIKE ?",
         [f"{today}%"],
     ).fetchone()[0]
-    return float(closed_total)
+    return money_float(closed_total)
 
 
 def list_closed_positions(

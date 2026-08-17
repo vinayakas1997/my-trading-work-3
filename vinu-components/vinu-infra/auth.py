@@ -16,7 +16,14 @@ import os
 
 from fastapi import HTTPException, Request, status
 
-VINU_API_KEY: str = os.getenv("VINU_API_KEY", "")
+from vinu_infra.secrets_loader import load_secret
+
+# The internal service-to-service auth key (implementation-plan task 11).
+# Resolved through the Docker-secrets loader so the deployed value comes from
+# /run/secrets/vinu_api_key (never a plain-text .env); local dev falls back
+# to the VINU_API_KEY env var. Read at import time -- rotation restarts the
+# container -- but keep the loader call so the mounted-file path is honored.
+VINU_API_KEY: str = load_secret("vinu_api_key", "VINU_API_KEY") or os.getenv("VINU_API_KEY", "") or ""
 
 
 async def require_auth(request: Request) -> None:

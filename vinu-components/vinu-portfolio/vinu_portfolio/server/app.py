@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from pydantic import BaseModel, Field
 
+from vinu_infra.auth import require_auth
 from vinu_portfolio.service import PortfolioService
 
 
@@ -87,5 +88,5 @@ def create_app() -> FastAPI:
             return await _service.compute_daily_allocation(extra_candidates=extra_candidates)
         return await _service.build_portfolio(extra_candidates=extra_candidates)
 
-    app.include_router(router)
+    app.include_router(router, dependencies=[Depends(require_auth)])
     return app

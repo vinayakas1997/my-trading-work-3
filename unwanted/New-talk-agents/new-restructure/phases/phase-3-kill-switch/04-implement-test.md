@@ -65,18 +65,21 @@ Built 2026-08-11, directly following Phase 2 in the same session.
   actually calls `mark_active`, so that's where the check belongs, not
   duplicated into the (read-only, `is_readonly=True`) compute tool a
   cadence run earlier.
-- **The rebalance-request gate (`rebalance_guard.py`) is a standalone
-  function with no real caller yet**, not integrated into a live
-  rebalancer -- because no rebalancer/Monitor exists in code yet (Phase
+- **The rebalance-request gate (`rebalance_guard.py`) was a standalone
+  function when this was written** -- not yet integrated into a live
+  rebalancer, because no rebalancer/Monitor existed in code yet (Phase
   5's own plan says so explicitly: "capital_allocator's rebalancer needs
   an actual target to call -- confirmed nowhere yet that one exists").
-  Built and fully tested now so Phase 5 has an already-correct,
-  already-tested gate to import rather than needing to re-derive the
-  fail-closed direction under time pressure later. `test_rebalance_
+  **That changed when the capital_allocator unwind path landed
+  (implementation-plan task 04): `capital_allocator_hook.py` now calls
+  `check_rebalance_allowed(ticker)` -- fail-closed to the kill switch,
+  same direction as funding -- before POSTing each unwind entry to
+  vinu-live's rebalance-request intake.** The gate has a real caller
+  today, exactly as `rebalance_guard.py`'s own docstring requires ("the
+  rebalancer never closes a position itself"). `test_rebalance_
   request_blocked_during_halt` and `test_monitor_hold_decay_continues_
-  during_halt` from `03-test.md` are not yet meaningfully testable
-  against real code for the same reason -- deferred to Phase 5, not
-  skipped silently (recorded here, not just omitted).
+  during_halt` from `03-test.md` remain meaningful to re-check against
+  that live path.
 
 ## Test results
 
@@ -106,10 +109,12 @@ No regressions in either package's full suite.
   `guard.check()`. Full record: `New-talk-agents/new-thinking/
   new-restructure/kill-switch-race-fix-implement-test.md`. vinu-agent:
   650 -> 659 passed, no regressions.
-- **Phase 5 must actually wire `check_rebalance_allowed()` into the real
-  rebalancer once it exists**, and confirm Monitor's read-only hold/decay
-  path never calls it (by construction today it can't -- nothing calls
-  this function yet at all).
+- **`check_rebalance_allowed()` already has a real caller** -- the
+  capital_allocator unwind path in `capital_allocator_hook.py` (wired by
+  implementation-plan task 04). Confirm Monitor's read-only hold/decay
+  path still never calls it, and that any future rebalancer built in
+  Phase 5 reuses this same gate rather than re-deriving the fail-closed
+  direction.
 - **`/agent/broker/performance/{artifact_id}` being already-implemented**
   (found above) should be re-confirmed, not re-assumed, when Phase 4
   actually starts -- read the real `broker/performance_store.py` schema

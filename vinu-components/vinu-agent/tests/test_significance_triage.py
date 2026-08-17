@@ -399,3 +399,39 @@ class TestRecordHumanOverrideHttpFallback:
                 source="human_override", conclusion="contradicts", reasoning="x",
             )
         assert ok is False
+
+
+class TestMissingChannelFailureMode:
+    """Task 03 acceptance (step 5): missing/invalid notification credentials
+    must produce a clear log, not a silent drop of the detection and not a
+    worker crash. The no-channel-configured branch of _run_detector_for_ticker
+    is exactly that path."""
+
+    def test_flag_created_and_logged_warning_when_no_channel_configured(
+        self, ticker_ledger_store, flag_store, caplog
+    ) -> None:
+        from vinu_agent.agent.scheduler_workers import _run_detector_for_ticker
+
+        ticker_ledger_store.add_event(
+            "AAPL", "risk_gatekeeper", "REJECTED", "max_position_pct",
+        )
+        ticker_ledger_store.add_event(
+            "AAPL", "risk_gatekeeper", "REJECTED", "max_position_pct",
+        )
+        ticker_ledger_store.add_event(
+            "AAPL", "risk_gatekeeper", "REJECTED", "max_position_pct",
+        )
+
+        with caplog.at_level("WARNING"):
+            flag = asyncio.run(_run_detector_for_ticker(
+                "AAPL", "repeated_risk_gatekeeper_rejection",
+                lambda hit: f"{hit['count']} REJECTED verdicts",
+                lambda t: detect_repeated_rejection_pattern(t, ticker_ledger_store),
+                flag_store=flag_store, targets=[],
+            ))
+
+        # Detection and flagging still happen with no channel configured...
+        assert flag is not None
+        assert flag_store.get_flag(flag.flag_id) is not None
+        # ...and the missing delivery target is loud, never silent.
+        assert any("no channel is configured to deliver it" in rec.message for rec in caplog.records)

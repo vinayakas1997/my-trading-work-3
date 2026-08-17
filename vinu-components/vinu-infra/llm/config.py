@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from vinu_infra.secrets_loader import load_secret
+
 
 LLM_ENV_PREFIX = "VINU_LLM"
 
@@ -22,6 +24,13 @@ _DEFAULT_RATE_PERIOD_SEC = 60.0
 
 def _env(key: str, default: Any = None) -> str:
     return os.environ.get(f"{LLM_ENV_PREFIX}_{key}", str(default) if default is not None else "")
+
+
+def _api_key() -> str | None:
+    """LLM provider credential: mounted Docker secret file first (deploy),
+    legacy VINU_LLM_API_KEY env fallback (local dev). The secret file name
+    matches the docker-compose `secrets:` entry /run/secrets/vinu_llm_api_key."""
+    return load_secret("vinu_llm_api_key", "VINU_LLM_API_KEY")
 
 
 @dataclass
@@ -46,7 +55,7 @@ class LlmConfig:
         return cls(
             base_url=overrides.get("base_url") or _env("BASE_URL", _DEFAULT_BASE_URL),
             model=overrides.get("model") or _env("MODEL", _DEFAULT_MODEL),
-            api_key=overrides.get("api_key") or _env("API_KEY") or None,
+            api_key=overrides.get("api_key") or _api_key() or None,
             max_tokens=int(overrides.get("max_tokens") or _env("MAX_TOKENS", _DEFAULT_MAX_TOKENS)),
             timeout_sec=float(overrides.get("timeout_sec") or _env("TIMEOUT_SEC", _DEFAULT_TIMEOUT_SEC)),
             ttl_sec=int(overrides.get("ttl_sec") or _env("TTL_SEC", _DEFAULT_TTL_SEC)),

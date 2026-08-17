@@ -43,6 +43,10 @@ Thumbs.db
 .env
 !.env.example
 
+# --- Credentials / key material (task 13: keep real secrets out of git) ---
+alpaca-details/
+secrets/
+
 # --- Data (regenerable) ---
 *.db
 *.sqlite

@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from vinu_agent.agent.capital_allocator_hook import apply_capital_allocator_decision
@@ -262,3 +263,146 @@ class TestUnwindRequests:
     def test_missing_artifact_id_in_unwind_entry_is_skipped_not_raised(self, strategy_store) -> None:
         content = _content(unwind=[{"reason": "no artifact_id here"}])
         apply_capital_allocator_decision(content, strategy_store=strategy_store)  # must not raise
+
+
+class TestUnwindCrossProcessWire:
+    """Implementation-plan task 04: the unwind REQUEST must reach
+    vinu-live's TradePlanOrchestrator through a real HTTP route, not just
+    an in-process call -- verified with both services' real code running,
+    the network hop shimmed to the real FastAPI app."""
+
+    @pytest.fixture
+    def live_app_client(self, tmp_path):
+        from fastapi.testclient import TestClient
+        from vinu_live.config import LiveConfig
+        from vinu_live.server.app import create_app
+
+        config = LiveConfig(data_root=tmp_path)
+        with patch("vinu_live.server.app.load_config", return_value=config):
+            yield TestClient(create_app()), config
+
+    def _forward_to_app(self, app_client):
+        def _handler(request):
+            resp = app_client.request(
+                request.method,
+                request.url.path + (f"?{request.url.query}" if request.url.query else ""),
+                headers=dict(request.headers),
+                content=request.content,
+            )
+            return httpx.Response(resp.status_code, headers=dict(resp.headers), content=resp.content)
+
+        return httpx.MockTransport(_handler)
+
+    def test_unwind_request_reaches_real_route_and_durable_queue(
+        self, strategy_store, ticker_ledger_store, live_app_client,
+    ) -> None:
+        """_request_unwind's real httpx POST -> real vinu-live route ->
+        real submit_rebalance_request -> SQLite queue readable by a
+        separate orchestrator instance, exactly as the production
+        cross-process call behaves."""
+        from vinu_live.trade_plan.rebalance_intake import RebalanceRequestQueue
+
+        app_client, config = live_app_client
+        artifact_id = _active_artifact(strategy_store, "AAPL")
+        content = _content(unwind=[{"artifact_id": artifact_id, "reason": "weaker calibration"}])
+
+        def _post(url, **kwargs):
+            with httpx.Client(transport=self._forward_to_app(app_client)) as client:
+                return client.post(url, **kwargs)
+
+        with patch("vinu_agent.agent.rebalance_guard.check_rebalance_allowed", return_value=True), \
+             patch("httpx.post", side_effect=_post):
+            apply_capital_allocator_decision(
+                content, strategy_store=strategy_store, ticker_ledger_store=ticker_ledger_store,
+                services_config={"vinu_live": "http://vinu-live:8091"},
+            )
+
+        queue = RebalanceRequestQueue(str(config.data_root / "rebalance_requests.db"))
+        try:
+            request = queue.pending_for("AAPL")
+            assert request is not None
+            assert request.reason == "weaker calibration"
+        finally:
+            queue.close()
+
+    def test_retried_duplicate_request_does_not_double_submit(
+        self, strategy_store, ticker_ledger_store, live_app_client,
+    ) -> None:
+        """The queue upserts one pending request per symbol -- a retried
+        POST (network blip, timeout) for the same unwind overwrites the
+        row instead of stacking a duplicate."""
+        import httpx
+        from vinu_live.trade_plan.rebalance_intake import RebalanceRequestQueue
+
+        app_client, config = live_app_client
+        artifact_id = _active_artifact(strategy_store, "AAPL")
+        content = _content(unwind=[{"artifact_id": artifact_id, "reason": "weaker calibration"}])
+
+        def _post(url, **kwargs):
+            with httpx.Client(transport=self._forward_to_app(app_client)) as client:
+                return client.post(url, **kwargs)
+
+        with patch("vinu_agent.agent.rebalance_guard.check_rebalance_allowed", return_value=True), \
+             patch("httpx.post", side_effect=_post):
+            apply_capital_allocator_decision(
+                content, strategy_store=strategy_store, ticker_ledger_store=ticker_ledger_store,
+                services_config={"vinu_live": "http://vinu-live:8091"},
+            )
+            # Retry the exact same unwind decision (the manager naturally
+            # re-emits it until the request is honored).
+            apply_capital_allocator_decision(
+                content, strategy_store=strategy_store, ticker_ledger_store=ticker_ledger_store,
+                services_config={"vinu_live": "http://vinu-live:8091"},
+            )
+
+        queue = RebalanceRequestQueue(str(config.data_root / "rebalance_requests.db"))
+        try:
+            assert queue.pending_for("AAPL") is not None
+        finally:
+            queue.close()
+
+        # One row, not two -- the SQLite table is keyed on symbol.
+        import sqlite3
+
+        conn = sqlite3.connect(str(config.data_root / "rebalance_requests.db"))
+        try:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM rebalance_requests WHERE symbol = 'AAPL'",
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        assert count == 1
+
+    def test_post_carries_bearer_header_when_key_configured(self, strategy_store, ticker_ledger_store) -> None:
+        artifact_id = _active_artifact(strategy_store, "AAPL")
+        content = _content(unwind=[{"artifact_id": artifact_id, "reason": "weaker calibration"}])
+
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.raise_for_status = MagicMock()
+        with patch("vinu_infra.auth.VINU_API_KEY", "test-secret"), \
+             patch("vinu_agent.agent.rebalance_guard.check_rebalance_allowed", return_value=True), \
+             patch("httpx.post", return_value=mock_resp) as mock_post:
+            apply_capital_allocator_decision(
+                content, strategy_store=strategy_store, ticker_ledger_store=ticker_ledger_store,
+                services_config={"vinu_live": "http://vinu-live:8091"},
+            )
+
+        kwargs = mock_post.call_args[1]
+        assert kwargs["headers"] == {"Authorization": "Bearer test-secret"}
+
+    def test_no_header_when_no_key_configured(self, strategy_store, ticker_ledger_store) -> None:
+        artifact_id = _active_artifact(strategy_store, "AAPL")
+        content = _content(unwind=[{"artifact_id": artifact_id, "reason": "weaker calibration"}])
+
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.raise_for_status = MagicMock()
+        with patch("vinu_infra.auth.VINU_API_KEY", ""), \
+             patch("vinu_agent.agent.rebalance_guard.check_rebalance_allowed", return_value=True), \
+             patch("httpx.post", return_value=mock_resp) as mock_post:
+            apply_capital_allocator_decision(
+                content, strategy_store=strategy_store, ticker_ledger_store=ticker_ledger_store,
+                services_config={"vinu_live": "http://vinu-live:8091"},
+            )
+
+        kwargs = mock_post.call_args[1]
+        assert kwargs["headers"] == {}

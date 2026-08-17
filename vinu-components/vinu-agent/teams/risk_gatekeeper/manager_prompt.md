@@ -35,9 +35,19 @@ the task (never invent one):
   "verdict": "APPROVED",
   "artifact_id": "art_abc123",
   "reason": "the specific rule/limit that drove it",
-  "approved_size": 15000.0
+  "approved_size": 15000.0,
+  "sizing_inputs": {
+    "account_equity": 100000.0,
+    "win_rate": 0.55,
+    "payoff_ratio": 1.5,
+    "method": "fractional_kelly"
+  }
 }
 ```
 
-If the verdict is REJECTED, still include this block with "verdict" set
-accordingly and "approved_size": 0.
+`sizing_inputs` must be the real inputs exposure_reviewer's
+compute_position_size call used (the formula output is authoritative,
+the approved_size is the formula size capped by the concentration
+headroom) -- forward it exactly, never round or drop it. If the verdict
+is REJECTED, still include this block with "verdict" set accordingly,
+"approved_size": 0, and "sizing_inputs": {}.

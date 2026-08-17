@@ -133,6 +133,7 @@ def _serialize_grid(result: SweepGridResult) -> dict[str, Any]:
         "succeeded": result.succeeded,
         "completeness": result.completeness,
         "pbo": result.pbo,
+        "walk_forward": result.walk_forward,
         "ranked": [
             {
                 "params": r.params,

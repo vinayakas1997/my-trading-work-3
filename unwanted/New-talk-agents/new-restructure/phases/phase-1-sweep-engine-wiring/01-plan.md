@@ -1,8 +1,19 @@
 ---
 name: phase-1-plan
-status: proposed-not-built
+status: built -- the wiring this plan describes has landed; see the correction note on registration below
 purpose: deep-dive plan for Phase 1 -- wiring the already-built, already-tested sweep engine into the real research team, replacing raw LLM code generation as the default. This is the fix for the two real bugs that started this whole redesign.
 ---
+
+> **Correction note (implementation-plan task 09, verified against code):** the
+> registration mechanism described below as "add to `build_registry`" is wrong.
+> There is no explicit registration list. `tools/__init__.py`'s `build_registry`
+> **auto-discovers** every `BaseTool` subclass defined inside the `tools/`
+> package (`_discover_subclasses()` → `BaseTool.__subclasses__()` filtered to
+> `tools.` modules, then `check_available()`), so a tool is visible to agents
+> the instant its module exists in `tools/`. The only explicit wiring is which
+> team's tool list names it. The plan's outcome is correct and is now built
+> (`run_parameter_sweep` exists and is on the research team's `backtest_runner`
+> toolset); only the "add it to the registry" framing was inaccurate.
 
 # Phase 1 -- Fix the actual bug
 
@@ -39,10 +50,11 @@ need to wait for that.
 - `vinu-research/generator.py`'s `BUILTIN_RECIPES` -- a real set of
   pre-defined strategy shapes with parameter spaces.
 - `vinu_agent/tools/run_sweep_candidate_tool.py` -- `RunSweepCandidateTool`
-  and `ListSweepRecipesTool`, both real, tested, **not registered in
-  `build_registry`** and not assigned to any team's tool list. This is
-  the concrete gap: the tools exist, they're just invisible to every
-  agent today.
+  and `ListSweepRecipesTool`, both real and tested. On registration: there is
+  **no explicit tool list to add to** -- `tools/__init__.py` auto-discovers
+  every `BaseTool` subclass defined in the `tools/` package. The real gap at
+  this phase's start was assignment: these tools were on no team's tool list,
+  so no agent could see them.
 
 **Before writing any code in this phase:** re-read the exact signatures of
 `run_sweep_candidate`, `rank_candidates`, `pbo.py`'s entry point, and
@@ -52,10 +64,12 @@ does, not its exact call signature.
 
 ## What this phase changes
 
-**1. Register the existing tools.** Add `RunSweepCandidateTool` and
-`ListSweepRecipesTool` to `build_registry` and to the `research` team's
-tool list (`teams/research/TEAM.md`). This alone makes the built-but-
-invisible infrastructure usable -- do this first, before writing any new
+**1. Make the existing tools visible to the research team.** Registration is
+automatic (`tools/__init__.py` auto-discovers `BaseTool` subclasses defined in
+the `tools/` package), so nothing gets added to a hardcoded registry -- the step
+that actually matters is naming the tools in the `research` team's tool list
+(`teams/research/TEAM.md`) so agents can call them. This alone makes the built-
+but-invisible infrastructure usable -- do this first, before writing any new
 wrapper.
 
 **2. `idea_generator` tries a recipe before writing raw code.** Update

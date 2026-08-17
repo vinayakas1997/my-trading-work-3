@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from vinu_infra.config import require_data_root
+from vinu_infra.secrets_loader import load_secret
 
 DEFAULT_POLL_INTERVAL_SEC = 60
 DEFAULT_HOST = "127.0.0.1"
@@ -58,9 +59,9 @@ def load_config() -> VinuStockConfig:
         host=os.environ.get("VINU_STOCK_HOST", DEFAULT_HOST),
         port=int(os.environ.get("VINU_STOCK_PORT", str(DEFAULT_PORT))),
         default_provider=os.environ.get("VINU_STOCK_DEFAULT_PROVIDER", DEFAULT_PROVIDER),
-        polygon_api_key=os.environ.get("POLYGON_API_KEY", ""),
-        alpaca_api_key=os.environ.get("ALPACA_API_KEY", ""),
-        alpaca_api_secret=os.environ.get("ALPACA_API_SECRET", ""),
+        polygon_api_key=load_secret("polygon_api_key", "POLYGON_API_KEY") or "",
+        alpaca_api_key=load_secret("alpaca_api_key", "ALPACA_API_KEY") or "",
+        alpaca_api_secret=load_secret("alpaca_api_secret", "ALPACA_API_SECRET") or "",
         alpaca_data_base_url=os.environ.get(
             "ALPACA_DATA_BASE_URL", "https://data.alpaca.markets"
         ),

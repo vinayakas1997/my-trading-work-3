@@ -3,7 +3,7 @@ name: exposure_reviewer
 role: exposure-reviewer
 prompt_file: prompt.md
 depends_on: []
-tools: [get_portfolio, get_portfolio_concentration]
+tools: [get_portfolio, get_portfolio_concentration, compute_position_size]
 skills: []
 ---
 

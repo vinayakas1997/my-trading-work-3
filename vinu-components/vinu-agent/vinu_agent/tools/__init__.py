@@ -51,6 +51,7 @@ def build_registry(
     strategy_store: Any = None,
     ticker_summary_store: Any = None,
     ticker_ledger_store: Any = None,
+    config: Any = None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
     subclasses = _discover_subclasses()
@@ -69,6 +70,8 @@ def build_registry(
             tool._event_callback = event_callback
         if services_config and hasattr(tool, "_services_config"):
             tool._services_config = services_config
+        if config is not None and hasattr(tool, "_config"):
+            tool._config = config
         if skills_loader and hasattr(tool, "_skills_loader"):
             tool._skills_loader = skills_loader
         if session_service and hasattr(tool, "_session_service"):

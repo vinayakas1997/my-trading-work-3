@@ -15,6 +15,7 @@ from .agent.scheduler_workers import (
     hypothesis_reader_for,
     make_planner_on_yes,
     make_summary_agent_fn,
+    run_capital_allocator_cycle,
     run_significance_cycle,
 )
 from .agent.significance_triage import SignificanceFlagStore
@@ -75,6 +76,17 @@ def _parse_args(argv=None) -> argparse.Namespace:
     # with zero channels configured, just not delivered anywhere yet.
     sw2_p = sub.add_parser("significance-worker", help="Run continuous Significance Triage detection + delivery worker loop")
     sw2_p.add_argument("--interval", type=int, dest="interval_sec", default=None)
+
+    # ── capital-allocator-worker ──
+    # Shortcoming #1 (implementation-plan task 01): capital_allocator was
+    # fully wired and correct when invoked but had no scheduled caller --
+    # approved PEND candidates could sit unfunded indefinitely. Same shape
+    # as the other workers above: background loop on a fixed cadence,
+    # collecting the whole PEND batch and handing it to the real
+    # capital_allocator team (agent/scheduler_workers.py's
+    # run_capital_allocator_cycle).
+    caw_p = sub.add_parser("capital-allocator-worker", help="Run continuous capital-allocator (PEND batch funding) worker loop")
+    caw_p.add_argument("--interval", type=int, dest="interval_sec", default=None)
 
     # ── broker ──
     broker_p = sub.add_parser("broker", help="Broker operations")
@@ -198,11 +210,13 @@ async def _cmd_broker(args) -> None:
 
 
 def _cmd_channel(args) -> None:
+    from vinu_infra.secrets_loader import load_secret
+
     if args.channel_cmd == "list":
         print(json.dumps({
             "channels": [
-                {"name": "telegram", "configured": bool(__import__("os").environ.get("TELEGRAM_TOKEN", ""))},
-                {"name": "discord", "configured": bool(__import__("os").environ.get("DISCORD_TOKEN", ""))},
+                {"name": "telegram", "configured": bool(load_secret("telegram_token", "TELEGRAM_TOKEN"))},
+                {"name": "discord", "configured": bool(load_secret("discord_token", "DISCORD_TOKEN"))},
             ]
         }, indent=2))
     elif args.channel_cmd == "send":
@@ -281,13 +295,33 @@ def skill_audit_worker_main(args: argparse.Namespace) -> None:
     print(f"[skill-audit-worker] Starting (interval={interval}s, skills_root={skills_root})")
     print(f"[skill-audit-worker] Press Ctrl+C to stop.\n")
 
+    log = logging.getLogger("vinu.agent.skill_audit_worker")
     audit_store = SkillAuditStore(data_root / "skill_audit.db")
     try:
         while True:
-            entries = check_skill_edits(skills_root, audit_store)
-            print(f"[skill-audit-worker] Cycle: {len(entries)} new entr{'y' if len(entries) == 1 else 'ies'}")
+            try:
+                entries = check_skill_edits(skills_root, audit_store)
+            except Exception:
+                log.exception(
+                    "skill-audit cycle failed",
+                    extra={"vinu_ctx": {"worker": "skill-audit-worker"}},
+                )
+                raise
+            log.info(
+                "skill-audit cycle complete",
+                extra={"vinu_ctx": {"worker": "skill-audit-worker", "new_entries": len(entries)}},
+            )
             for entry in entries:
-                print(f"  {entry.skill_path}: {entry.diff_summary}")
+                log.info(
+                    "skill edit detected",
+                    extra={
+                        "vinu_ctx": {
+                            "worker": "skill-audit-worker",
+                            "skill_path": str(entry.skill_path),
+                            "diff_summary": entry.diff_summary,
+                        }
+                    },
+                )
             time.sleep(interval)
     except KeyboardInterrupt:
         print("\n[skill-audit-worker] Stopped by user.")
@@ -312,7 +346,7 @@ def planner_worker_main(args: argparse.Namespace) -> None:
     print(f"[planner-worker] Starting (interval={interval}s)")
     print(f"[planner-worker] Press Ctrl+C to stop.\n")
 
-    log = logging.getLogger(__name__)
+    log = logging.getLogger("vinu.agent.planner_worker")
     with AgentService() as service:
         run_log_trigger = RunLogTrigger(
             HttpRunLogReader(config.services.get("vinu_initial_analysis")),
@@ -325,18 +359,34 @@ def planner_worker_main(args: argparse.Namespace) -> None:
 
         try:
             while True:
-                if config.watchlist_seed_tickers:
-                    bootstrapped = bootstrap_new_tickers(service, config.watchlist_seed_tickers)
-                    if bootstrapped:
-                        print(f"[planner-worker] Bootstrapped {len(bootstrapped)} new ticker(s): {', '.join(bootstrapped)}")
-                tickers = [s.ticker for s in service.ticker_summary_store.list_summaries()]
-                for ticker in tickers:
-                    try:
-                        run_log_trigger.refresh_if_stale(ticker, summary_agent_fn)
-                    except Exception:
-                        log.exception("summary refresh failed for %s, continuing", ticker)
-                run_gate_cycle(tickers, change_gate, on_yes)
-                print(f"[planner-worker] Cycle: {len(tickers)} ticker(s) on watchlist")
+                try:
+                    if config.watchlist_seed_tickers:
+                        bootstrapped = bootstrap_new_tickers(service, config.watchlist_seed_tickers)
+                        if bootstrapped:
+                            log.info(
+                                "bootstrapped new tickers",
+                                extra={"vinu_ctx": {"worker": "planner-worker", "tickers": bootstrapped}},
+                            )
+                    tickers = [s.ticker for s in service.ticker_summary_store.list_summaries()]
+                    for ticker in tickers:
+                        try:
+                            run_log_trigger.refresh_if_stale(ticker, summary_agent_fn)
+                        except Exception:
+                            log.exception(
+                                "summary refresh failed for %s, continuing", ticker,
+                                extra={"vinu_ctx": {"worker": "planner-worker", "ticker": ticker}},
+                            )
+                    run_gate_cycle(tickers, change_gate, on_yes)
+                except Exception:
+                    log.exception(
+                        "planner cycle failed",
+                        extra={"vinu_ctx": {"worker": "planner-worker"}},
+                    )
+                    raise
+                log.info(
+                    "planner cycle complete",
+                    extra={"vinu_ctx": {"worker": "planner-worker", "watchlist_size": len(tickers)}},
+                )
                 time.sleep(interval)
         except KeyboardInterrupt:
             print("\n[planner-worker] Stopped by user.")
@@ -359,6 +409,7 @@ def significance_worker_main(args: argparse.Namespace) -> None:
     targets = build_channel_targets(config)
     print(f"[significance-worker] {len(targets)} delivery channel(s) configured")
 
+    log = logging.getLogger("vinu.agent.significance_worker")
     funding_threshold = TradingMandate.load().max_order_value
 
     data_root = Path(config.memory_dir).parent
@@ -368,18 +419,74 @@ def significance_worker_main(args: argparse.Namespace) -> None:
             try:
                 while True:
                     tickers = [s.ticker for s in service.ticker_summary_store.list_summaries()]
-                    flags = asyncio.run(
-                        run_significance_cycle(
-                            tickers, service.ticker_ledger, flag_store, targets,
-                            funding_threshold=funding_threshold,
-                        ),
+                    try:
+                        flags = asyncio.run(
+                            run_significance_cycle(
+                                tickers, service.ticker_ledger, flag_store, targets,
+                                funding_threshold=funding_threshold,
+                            ),
+                        )
+                    except Exception:
+                        log.exception(
+                            "significance cycle failed",
+                            extra={"vinu_ctx": {"worker": "significance-worker"}},
+                        )
+                        raise
+                    log.info(
+                        "significance cycle complete",
+                        extra={
+                            "vinu_ctx": {
+                                "worker": "significance-worker",
+                                "tickers_checked": len(tickers),
+                                "flags_raised": len(flags),
+                            }
+                        },
                     )
-                    print(f"[significance-worker] Cycle: {len(tickers)} ticker(s) checked, {len(flags)} flag(s) raised")
                     time.sleep(interval)
             except KeyboardInterrupt:
                 print("\n[significance-worker] Stopped by user.")
     finally:
         flag_store.close()
+
+
+def capital_allocator_worker_main(args: argparse.Namespace) -> None:
+    """Scheduled caller for capital_allocator (shortcoming #1): on a fixed
+    cadence, collect the whole PEND batch and hand it, with the configured
+    risk budget, to the real capital_allocator team -- the same
+    `while True: cycle(); sleep()` shape and the same
+    `run_team_for_ticker(...)` team invocation planner-worker already uses
+    for its research hand-off. A cycle with zero PEND artifacts skips the
+    LLM team run entirely (nothing to fund), and a failed cycle is logged
+    then re-raised (crash-loud with a structured record, never silently
+    swallowed)."""
+    config = load_config()
+    interval = resolve_worker_interval(args, config, "capital_allocator_worker_interval_sec")
+    print(f"[capital-allocator-worker] Starting (interval={interval}s, budget=${config.capital_allocator_budget:.2f})")
+    print(f"[capital-allocator-worker] Press Ctrl+C to stop.\n")
+
+    log = logging.getLogger("vinu.agent.capital_allocator_worker")
+    with AgentService() as service:
+        cycle = 0
+        try:
+            while True:
+                cycle += 1
+                try:
+                    result = run_capital_allocator_cycle(
+                        service, budget=config.capital_allocator_budget, cycle=cycle,
+                    )
+                    log.info(
+                        "capital-allocator cycle complete",
+                        extra={"vinu_ctx": {"worker": "capital-allocator-worker", "cycle": cycle, **result}},
+                    )
+                except Exception:
+                    log.exception(
+                        "capital-allocator cycle failed",
+                        extra={"vinu_ctx": {"worker": "capital-allocator-worker", "cycle": cycle}},
+                    )
+                    raise
+                time.sleep(interval)
+        except KeyboardInterrupt:
+            print("\n[capital-allocator-worker] Stopped by user.")
 
 
 def main() -> None:
@@ -408,6 +515,8 @@ def main() -> None:
         planner_worker_main(args)
     elif args.command == "significance-worker":
         significance_worker_main(args)
+    elif args.command == "capital-allocator-worker":
+        capital_allocator_worker_main(args)
     elif args.command == "swarm":
         asyncio.run(_cmd_swarm(args))
     elif args.command == "mandate":

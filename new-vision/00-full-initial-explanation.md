@@ -1,6 +1,6 @@
 ---
 name: agentic-workflow-mermaid-explanation
-status: proposed-not-built (except where marked built)
+status: partially-built — corrected against actual code via implementation-plan tasks 01-09: the sweep engine (incl. run_parameter_sweep + pbo/rank_candidates wiring), the Kill Switch (scope-corrected, always-on, rebalance path gated), TickerLedger, Thesis Intake, Significance Triage (with Telegram/Discord delivery), cross-angle consensus, capital-allocator scheduling, shadow-evaluator scheduling, risk gatekeeper, walk-forward validation, and LLM provider fallback are all real, wired, and tested; remaining "proposed/new/deferred" language marks only what is genuinely not built yet
 purpose: single-page picture of the full agentic pipeline as designed through direct discussion -- one mermaid diagram showing every stage and every loop-back, followed by one section per agent covering what's real/built today, what's upgradable, and the characteristics that define its role.
 ---
 
@@ -10,9 +10,11 @@ This is the pipeline as designed, stage by stage, with every loop-back
 explicit. Built from what's real in the codebase today (`screener`,
 `research`, `risk_gatekeeper`, `capital_allocator` — all shipped) plus the
 gaps found by tracing real bugs this pass: raw LLM code generation for
-strategy tuning, two disconnected indicator catalogs, a fully-built but
-unwired parameter-sweep engine, and several agentic roles nothing today
-actually plays.
+strategy tuning, two disconnected indicator catalogs, and several agentic
+roles nothing today actually plays. Where this explanation's status
+markers have since been made stale by follow-up work, they are corrected
+in place (see the `status:` frontmatter and the implementation-plan
+tasks it references).
 
 ## The diagram
 
@@ -45,7 +47,7 @@ flowchart TB
     P["<b>2. Planner</b><br/>(ticker/strategy fit triage<br/>+ idea_generator)<br/><i>partially built —<br/>cheap-model tier for routine passes;<br/>checks ALL non-terminal statuses;<br/>at most K distinct candidates per<br/>ticker per cycle -- ONE shared<br/>counter across BOTH entry points,<br/>watchlist and Thesis Intake alike</i>"]
     P --> RE
 
-    RE["<b>3. Researcher / Executor</b><br/>sweep + self-verdict + paper-trade<br/><i>sweep engine built, unwired —<br/>internal sweep-refine loop capped<br/>at N rounds; fail-closed below a<br/>completeness threshold</i>"]
+    RE["<b>3. Researcher / Executor</b><br/>sweep + self-verdict + paper-trade<br/><i>sweep engine built, wired —<br/>internal sweep-refine loop capped<br/>at N rounds; fail-closed below a<br/>completeness threshold</i>"]
     RE -->|"self-verdict: FAIL<br/>reasoning recorded"| P
     RE -->|"self-verdict: PASS"| RG
 
@@ -81,18 +83,18 @@ flowchart TB
     SHOCK(["shock_clustering /<br/>shock_personality angles"])
     SHOCK -.->|"event-driven trigger,<br/>not just periodic poll"| MON
 
-    KS{{"Kill Switch<br/>(hard, non-LLM, deferred stub exists)"}}
+    KS{{"Kill Switch<br/>(hard, non-LLM, real always-on gate)"}}
     KS -.->|"blocks regardless<br/>of any verdict above"| LS
     KS -.->|"also blocks mark_active —<br/>funding and execution checked<br/>against the same gate"| CA
     KS -.->|"also blocks the rebalance<br/>REQUEST path, by default —<br/>halts all order-flow-adjacent<br/>actions, not just new funding"| CA
 
-    SIG["Significance Triage<br/>(new — distinct from the<br/>existing passive digest reader)"]
+    SIG["Significance Triage<br/>(built — distinct from the<br/>existing passive digest reader)"]
     CA -.-> SIG
     MON -.-> SIG
     SIG -.->|"flags only what's<br/>unusual, not routine"| HUMAN(["Human"])
     HUMAN -.->|"override decision<br/>recorded as evidence,<br/>same path as Monitor's"| HR
 
-    TL[("<b>Ticker Ledger</b><br/>(new — plain SQLite,<br/>append-only, one row per<br/>ticker-relevant event)")]
+    TL[("<b>Ticker Ledger</b><br/>(built — plain SQLite,<br/>append-only, one row per<br/>ticker-relevant event)")]
     TI -.->|"theory matched,<br/>verdict recorded"| TL
     SA -.->|"summary refreshed"| TL
     P -.->|"triage + proposal"| TL
@@ -147,7 +149,7 @@ A real gap found on review: nothing in the design so far is ticker-keyed
   strategies tried over six months has five scattered rows across three
   different stores, no aggregate view.
 
-**Fix: `TickerLedger`** — a new store, plain SQLite (append-only), one
+**Fix: `TickerLedger`** — built, plain SQLite (append-only), one
 row per ticker-relevant event: `ticker, timestamp, stage, event_type,
 text, ref_id, source`. Every stage above writes exactly one entry when
 something happens — `ref_id` points back to the real record in whichever
@@ -197,8 +199,9 @@ build.
 
 ### 1. Summary Agent (`screener` / `angle_synthesizer`)
 
-**Status:** built and tested against a real LLM. **Upgrade pending:**
-cross-angle consensus check.
+**Status:** built and tested against a real LLM, including the
+cross-angle consensus check (agree/diverge/insufficient), verified live
+against a real model (implementation-plan task 08).
 
 **What it does today:** calls `get_all_angles(ticker)` once, reports how
 many of the ~31 angles have real data, cites specific numbers from the
@@ -243,8 +246,9 @@ the ticker/strategy fit triage in front of it is new.
   every non-terminal state (CREATED, BENCHING, ACTIVE, MONITORING), not
   ACTIVE alone — otherwise a candidate mid-pipeline from a recent prior
   pass on the same ticker is invisible and can get proposed again.
-- **Idea shaping:** picks a recipe (`list_sweep_recipes`, built, unwired)
-  and a coarse parameter search space, tied explicitly to the angle
+- **Idea shaping:** picks a recipe (`list_sweep_recipes`, built, wired
+  into `idea_generator`'s recipe-first path) and a coarse parameter
+  search space, tied explicitly to the angle
   characteristics that motivated it. Raw code generation becomes the
   exception path — only for ideas no recipe covers — not the default it
   is today.
@@ -335,8 +339,9 @@ risk-relevant action in this design.
 
 ### 3. Researcher / Executor (one team, three roles, loops internally)
 
-**Status:** the core sweep mechanism is built and tested but wired to
-nothing; the paper-trade role doesn't exist yet.
+**Status:** the core sweep mechanism is built, tested, and wired into the
+research team's `backtest_runner` (`run_parameter_sweep`); the paper-trade
+rehearsal role (d) doesn't exist yet.
 
 **Role a — receive the plan.** Takes the Planner's recipe + search space
 and its reasoning.
@@ -344,16 +349,18 @@ and its reasoning.
 **Role b — execute + back-propagate.** Runs the grid via
 `run_sweep_candidate` (`vinu-research/sweep.py`, real, AST-based
 parameter substitution — not string hacking, can't corrupt code) —
-deterministic Python, never LLM-authored code per attempt. Needs one new
-thin wrapper, `run_parameter_sweep(recipe, param_grid, ...)`, to loop
-this internally and return a ranked table via `comparison.py`'s
-`rank_candidates` (built, unused) in one call instead of N LLM
-round-trips.
+deterministic Python, never LLM-authored code per attempt. The thin
+wrapper this design called for now exists: `run_parameter_sweep`
+(`vinu-agent/tools/run_parameter_sweep_tool.py`) loops the grid
+internally and returns a ranked table via `comparison.py`'s
+`rank_candidates` (wired into `run_sweep_grid`) in one call instead of
+N LLM round-trips.
 
 **Role c — self-verdict.** Reads the ranked table plus `pbo.py`'s
-overfitting probability (built, unused) and decides PASS/FAIL — same
-verdict shape `risk_critic` already uses today, reused rather than
-reinvented.
+overfitting probability (wired into `run_sweep_grid`'s
+`sweep_evidence_verdict`, which also folds in the walk-forward stability
+verdict) and decides PASS/FAIL — same verdict shape `risk_critic` already
+uses today, reused rather than reinvented.
 
 **Role d — paper-trade rehearsal.** New. Runs the winning candidate
 through a real historical week bar-by-bar (reuses `run_backtest`/
@@ -379,7 +386,7 @@ already enforces. Left uncapped, this is the single stage most likely to
 quietly dominate the whole pipeline's cost and latency, since it's the
 only genuinely open-ended loop in the flow.
 
-**Fail-closed addition:** `run_parameter_sweep` must report a
+**Fail-closed addition (built):** `run_parameter_sweep` reports a
 `completeness` field (N of M grid points actually succeeded). Role c's
 self-verdict treats below-threshold completeness as automatic FAIL, never
 a ranked PASS off partial data — closes a real gap, since the underlying
@@ -406,15 +413,18 @@ strategy itself is sound. That's Researcher/Executor's job, one stage
 back. Keeping the boundary sharp is what stops the two teams' concerns
 from blurring together.
 
-**Coverage fix:** REJECTED verdicts now also feed Significance Triage,
-not just `capital_allocator`'s and Monitor's outputs — a pattern of
-repeated exposure-driven rejections is real signal a human should see,
+**Coverage fix (landed):** REJECTED verdicts now also feed Significance
+Triage, not just `capital_allocator`'s and Monitor's outputs — a pattern
+of repeated exposure-driven rejections is real signal a human should see,
 not just a private loop-back to the Planner.
 
 ### 5. `capital_allocator` (+ new rebalancer/negotiator role)
 
 **Status:** built, explicitly provisional allocation method.
-**Rebalancer role:** new, not built anywhere.
+**Rebalancer role:** unwind-request path built and gated
+(`capital_allocator_hook` → `rebalance_guard.check_rebalance_allowed` →
+vinu-live's rebalance-request intake); the "replace, not just fund"
+decision math itself is not built.
 
 **What it does today:** ranks currently-ACTIVE artifacts by
 `deflated_sharpe` (already computed, no new math), funds highest-ranked
@@ -479,10 +489,10 @@ pass deliberately carves out an exception for risk-reducing closes.
 `ShadowEvaluator` already compares a BENCHING artifact's paper-trading
 Sharpe against its backtest Sharpe and auto-promotes to ACTIVE within
 tolerance — its own docstring calls this "the paper-trading phase becomes
-an automated gate." It's broken for one specific, small reason: it calls
-`/agent/broker/performance/{artifact_id}` on vinu-agent, a route that was
-never implemented (404s today). The fix is that one missing endpoint, not
-a new agent role — see `phases/phase-4-live-shadow-fix/`.
+an automated gate." It now runs on a real schedule (implementation-plan
+task 02 wired `evaluate_all()` into a vinu-live worker), and the
+`/agent/broker/performance/{artifact_id}` endpoint it reads is
+implemented (`routes_broker.py`, backed by `broker/performance_store.py`).
 
 **What it does:** once funded, the live position runs for real while an
 untouched paper twin of the *original* plan runs in parallel,
@@ -547,14 +557,16 @@ turn — drawn dotted in the diagram on purpose.
   human-submitted theories (tagged `source="human"`, no separate store),
   so the cycle in the diagram is a real memory loop shared by both
   system- and human-originated ideas, not just an arrow.
-- **Kill Switch, scope corrected** — checked before every real order at
-  `Live + Shadow`, before `capital_allocator` calls `mark_active`, **and
-  now also before the rebalancer's request path** — halting all
-  order-flow-adjacent actions by default, not just new funding, even if
-  an LLM is wedged or looping. A deferred stub already exists
-  (`broker/kill_switch.py`) — this design treats it as a first-class,
-  always-on gate rather than a footnote.
-- **Significance Triage** — new. Distinct from the existing
+- **Kill Switch, scope corrected — real and always-on.** Checked before
+  every real order at `Live + Shadow` (`OrderGuard`, scope passed
+  through), before `capital_allocator` calls `mark_active` (a halt
+  blocks funding into `PENDBLOCK`), **and before the rebalancer's unwind
+  request path** (`rebalance_guard.check_rebalance_allowed`, called by
+  `capital_allocator_hook`) — halting all order-flow-adjacent actions by
+  default, not just new funding, even if an LLM is wedged or looping.
+  `broker/kill_switch.py` is a real, tested gate (with a cross-process
+  file lock closing the check-then-act race), not a deferred stub.
+- **Significance Triage** — built. Distinct from the existing
   `audit/research_digest.py`, which is real but purely passive (replays
   a summary the next time a symbol happens to come up in conversation).
   This role actively judges which autonomous decisions are routine

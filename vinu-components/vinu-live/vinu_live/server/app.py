@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from pydantic import BaseModel
 
+from vinu_infra.auth import require_auth
 from vinu_live.config import load_config
 from vinu_live.feedback_loop import FeedbackLoopWorker
 from vinu_live.scheduler import LiveScheduler
@@ -94,5 +95,5 @@ def create_app() -> FastAPI:
     async def status() -> dict[str, str]:
         return {"status": "idle", "service": "vinu-live"}
 
-    app.include_router(router)
+    app.include_router(router, dependencies=[Depends(require_auth)])
     return app

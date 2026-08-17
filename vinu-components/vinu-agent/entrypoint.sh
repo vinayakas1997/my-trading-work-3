@@ -22,4 +22,10 @@ vinu-agent planner-worker &
 # being set in .env; flags are still recorded (just not delivered
 # anywhere) if neither is configured.
 vinu-agent significance-worker &
+# Shortcoming #1 (implementation-plan task 01): capital_allocator was
+# fully wired and correct when invoked but had no scheduled caller --
+# approved PEND candidates could sit unfunded indefinitely. Same shape as
+# the workers above: background loop, cadence/budget configurable via
+# VINU_AGENT_CAPITAL_ALLOCATOR_INTERVAL / VINU_AGENT_CAPITAL_ALLOCATOR_BUDGET.
+vinu-agent capital-allocator-worker &
 exec vinu-agent serve --host 0.0.0.0 --port 8086
