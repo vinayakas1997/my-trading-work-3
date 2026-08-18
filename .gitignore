@@ -49,9 +49,21 @@ secrets/
 
 # --- Data (regenerable) ---
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 *.parquet
+*.jsonl
+*.lock
+*.csv
+data/simulator/simulations/
+data/models/
+
+# --- Logs / generated output ---
+logs/
+output/
+catboost_info/
 
 # --- Kilo ---
 .kilo
