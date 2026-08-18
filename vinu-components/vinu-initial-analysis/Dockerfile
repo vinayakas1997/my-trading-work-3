@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM python:3.12-slim
 
 # Slow/irregular CDN downloads (e.g. the 216MB nvidia-nccl_cu13 wheel pulled in
@@ -18,16 +19,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 build-
     && rm -rf /var/lib/apt/lists/*
 
 COPY vinu-infra /app/vinu-infra
-RUN pip install --no-cache-dir -e "/app/vinu-infra[models]"
+RUN --mount=type=cache,target=/root/.cache/pip pip install -e "/app/vinu-infra[models]"
 
 COPY vinu-tools /app/vinu-tools
-RUN pip install --no-cache-dir -e "/app/vinu-tools[ml]"
+RUN --mount=type=cache,target=/root/.cache/pip pip install -e "/app/vinu-tools[ml]"
 
 COPY vinu-initial-analysis /app/vinu-initial-analysis
 
 WORKDIR /app/vinu-initial-analysis
 
-RUN pip install --no-cache-dir -e ".[dev]"
+# --mount=type=cache persists pip's download cache across builds (keyed by
+# this path, independent of layer-cache invalidation) -- without it, editing
+# any single file upstream (e.g. vinu-infra/auth.py) forces a full re-download
+# of this image's ~2GB CUDA/torch/chronos stack, confirmed 2026-08-18.
+RUN --mount=type=cache,target=/root/.cache/pip pip install -e ".[dev]"
 
 COPY vinu-initial-analysis/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

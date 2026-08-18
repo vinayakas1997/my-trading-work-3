@@ -29,6 +29,15 @@ VINU_API_KEY: str = load_secret("vinu_api_key", "VINU_API_KEY") or os.getenv("VI
 async def require_auth(request: Request) -> None:
     if not VINU_API_KEY:
         return
+    # Health/liveness endpoints must stay reachable without credentials --
+    # Docker Compose's own healthcheck (and any orchestrator's probe) calls
+    # these with no Authorization header. Without this, enabling
+    # VINU_API_KEY makes every service whose /health route lives inside the
+    # auth-wrapped router (expose_health_on_root=False) fail its own
+    # healthcheck forever, which cascades into every depends_on: sub failing
+    # to start (confirmed 2026-08-18 against the real Docker Compose stack).
+    if request.url.path.endswith("/health"):
+        return
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(
