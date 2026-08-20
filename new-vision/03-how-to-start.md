@@ -84,15 +84,51 @@ In the `vinu-agent` logs you should see each background worker start:
 `capital-allocator-worker`. In `vinu-live` logs: `trade-plan-worker`,
 `feedback-worker`, `shadow-worker`.
 
-Confirm auth is actually enforced, not silently open:
+### How the API key actually works
+
+Every service reads the same `VINU_API_KEY` (via `vinu-infra/auth.py`) and
+requires it on every route **except** `/health` endpoints, which are
+deliberately left open so Docker's own healthcheck (and any orchestrator's
+liveness probe) can reach them without credentials — that's not a gap,
+it's intentional.
+
+The key goes in a real `Authorization: Bearer` header — **not** a custom
+header name, and there's no other accepted form:
 
 ```bash
-curl -i http://localhost:<agent-port>/broker/performance/test    # expect 401/403
-curl -i -H "X-Internal-Api-Key: <your VINU_API_KEY>" http://localhost:<agent-port>/broker/performance/test   # expect a real response, not 401
+Authorization: Bearer <the value in ./secrets/vinu_api_key>
 ```
 
-If the unauthenticated call succeeds, `VINU_API_KEY` didn't make it into
-`./secrets/vinu_api_key` — go back to step 4.
+Get the actual value with:
+
+```bash
+cat ./secrets/vinu_api_key
+```
+
+Confirm auth is actually enforced, not silently open, against a real
+protected route (health routes will always return 200 with or without a
+key, so don't use one to test this — e.g. vinu-agent's
+`/agent/broker/performance/{artifact_id}`, port 8086 by default):
+
+```bash
+KEY=$(cat ./secrets/vinu_api_key)
+
+curl -i http://localhost:8086/agent/broker/performance/test
+# expect 401 Unauthorized (no header sent)
+
+curl -i -H "Authorization: Bearer wrong-key" http://localhost:8086/agent/broker/performance/test
+# expect 403 Forbidden (header sent, value doesn't match)
+
+curl -i -H "Authorization: Bearer $KEY" http://localhost:8086/agent/broker/performance/test
+# expect a real response (404/200/etc, not 401/403) -- proves the key is accepted
+```
+
+If the unauthenticated call succeeds (anything other than 401), `VINU_API_KEY`
+didn't make it into `./secrets/vinu_api_key` — go back to step 4. Every other
+service follows the identical pattern: swap the port and path prefix
+(`/news/...` on 8080, `/stock/...` on 8081, `/portfolio/...` on 8090, etc. --
+each service's prefix matches its `route_prefix` in that service's
+`server/app.py`).
 
 ## After it's running — what to actually do
 

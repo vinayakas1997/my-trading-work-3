@@ -1,0 +1,67 @@
+# Local-dev only: Compose auto-merges this on top of docker-compose.yml
+# whenever it sits in the same directory (no extra flag needed) -- `docker
+# compose up -d` and `down` both pick it up automatically.
+#
+# What this does: bind-mounts each service's own Python source (and the
+# shared vinu-infra package) from the host straight into the already-built
+# image, over the COPY'd copy from build time. Every service does an
+# editable install (`pip install -e`), so the running process reads
+# whatever's on disk at import time -- meaning an edit here doesn't need a
+# rebuild, just a restart of that one container:
+#
+#   docker compose restart <service-name>
+#
+# What this does NOT help with: adding/changing a dependency in any
+# pyproject.toml. Installed packages live in the image's site-packages, not
+# in the bind-mounted source tree -- a real dependency change still needs
+# `docker compose build <service-name>`.
+#
+# Do not deploy with this file present -- it's dev convenience only. The
+# base docker-compose.yml alone is the production-shaped config.
+
+services:
+  news-api:
+    volumes:
+      - ./vinu-infra:/app/vinu-infra
+      - ./vinu-news:/app/vinu-news
+
+  stock-api:
+    volumes:
+      - ./vinu-infra:/app/vinu-infra
+      - ./vinu-stock-price:/app/vinu-stock-price
+
+  features-api:
+    volumes:
+      - ./vinu-infra:/app/vinu-infra
+      - ./vinu-tools:/app/vinu-tools
+
+  initial-analysis-api:
+    volumes:
+      - ./vinu-infra:/app/vinu-infra
+      - ./vinu-initial-analysis:/app/vinu-initial-analysis
+
+  quant-core-api:
+    volumes:
+      - ./vinu-infra:/app/vinu-infra
+      - ./vinu-strategy:/app/vinu-strategy
+      - ./vinu-simulator:/app/vinu-simulator
+
+  research-api:
+    volumes:
+      - ./vinu-infra:/app/vinu-infra
+      - ./vinu-research:/app/vinu-research
+
+  portfolio-api:
+    volumes:
+      - ./vinu-infra:/app/vinu-infra
+      - ./vinu-portfolio:/app/vinu-portfolio
+
+  live-api:
+    volumes:
+      - ./vinu-infra:/app/vinu-infra
+      - ./vinu-live:/app/vinu-live
+
+  agent-api:
+    volumes:
+      - ./vinu-infra:/app/vinu-infra
+      - ./vinu-agent:/app/vinu-agent
