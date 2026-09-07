@@ -28,6 +28,7 @@ from vinu_research.models import (
     Hypothesis,
     HypothesisStatus,
     IterationRecord,
+    PaperRehearsalResult,
     ResearchResult,
     StressTestResult,
     StressWindowResult,
@@ -652,6 +653,26 @@ class StrategyResearchLoop:
             LOG.warning("PBO computation failed: %s", e)
             pbo_result = None
 
+        # Researcher Role d — Paper-trade rehearsal (04:245). Trailing
+        # 7-day bar-by-bar check of the winning candidate with the same
+        # simulator + T+1 + cost model, before risk_gatekeeper sees it.
+        paper_rehearsal_result = None
+        if self._config.paper_rehearsal_enabled and best_result and best_rec:
+            try:
+                async with debug_timer("loop.paper-rehearsal"):
+                    paper_rehearsal_result = await self._run_paper_rehearsal(
+                        strategy_code=best_rec.strategy_code,
+                        symbol=symbol,
+                        to_date=to_date,
+                        in_sample_result=best_result,
+                        indicators=indicators,
+                        initial_capital=initial_capital,
+                        symbols=backtest_symbols,
+                    )
+            except Exception as e:
+                LOG.warning("Paper rehearsal failed: %s", e)
+                paper_rehearsal_result = None
+
         report_md = generate_report(
             symbol, from_date, to_date, user_idea,
             history, best_result, best_iteration,
@@ -677,6 +698,7 @@ class StrategyResearchLoop:
             portfolio=portfolio_result,
             stress_test=stress_test_result,
             pbo=pbo_result,
+            paper_rehearsal=paper_rehearsal_result,
         )
 
     async def _run_backtest(
@@ -761,6 +783,93 @@ class StrategyResearchLoop:
             holdout_trade_count=holdout_bt.trade_count,
             passed=passed,
             note=note,
+        )
+
+    async def _run_paper_rehearsal(
+        self,
+        strategy_code: str,
+        symbol: str,
+        to_date: str,
+        in_sample_result: BacktestResult,
+        indicators: list[str] | None,
+        initial_capital: float | None,
+        symbols: list[str] | None = None,
+    ) -> PaperRehearsalResult | None:
+        """
+        Bar-by-bar paper-trade rehearsal over a trailing window (default
+        7 calendar days) ending at `to_date`. Uses the same simulator
+        + T+1 + Almgren-Chriss cost model as every other backtest, so
+        degradation vs in-sample is directly comparable. Never blocks the
+        run on infrastructure failure — returns None if simulator unreachable.
+        """
+        from datetime import datetime, timedelta
+
+        try:
+            to_dt = datetime.strptime(to_date, "%Y-%m-%d")
+        except ValueError:
+            LOG.warning("Paper rehearsal: invalid to_date %s", to_date)
+            return None
+        lookback = int(self._config.paper_rehearsal_lookback_days)
+        if lookback < 1:
+            return None
+        rehearsal_from_dt = to_dt - timedelta(days=lookback)
+        rehearsal_from = rehearsal_from_dt.strftime("%Y-%m-%d")
+        rehearsal_to = to_date
+
+        try:
+            rehearsal_bt = await self._run_backtest(
+                strategy_code, symbol, rehearsal_from, rehearsal_to,
+                indicators=indicators, initial_capital=initial_capital,
+                symbols=symbols,
+            )
+        except Exception as e:
+            LOG.warning("Paper rehearsal backtest failed: %s, skipping rehearsal gating", e)
+            return None
+        if rehearsal_bt is None:
+            return None
+        # Too few bars to judge: window may be before IPO or have holidays
+        if rehearsal_bt.trade_count == 0 and rehearsal_bt.equity_points < 3:
+            return PaperRehearsalResult(
+                rehearsal_from=rehearsal_from,
+                rehearsal_to=rehearsal_to,
+                in_sample_sharpe=in_sample_result.metrics.sharpe_ratio,
+                rehearsal_sharpe=rehearsal_bt.metrics.sharpe_ratio,
+                rehearsal_max_drawdown=rehearsal_bt.metrics.max_drawdown,
+                rehearsal_total_return=rehearsal_bt.metrics.total_return,
+                rehearsal_trade_count=rehearsal_bt.trade_count,
+                passed=True,
+                note="no data or no trades in rehearsal window — not evaluable, treated as pass",
+                raw_metrics=rehearsal_bt.metrics.__dict__,
+            )
+
+        is_sharpe = in_sample_result.metrics.sharpe_ratio
+        reh_sharpe = rehearsal_bt.metrics.sharpe_ratio
+
+        if reh_sharpe < 0:
+            passed, note = False, f"rehearsal Sharpe {reh_sharpe:.2f} negative over {rehearsal_from}→{rehearsal_to} (bar-by-bar, cost-aware)"
+        else:
+            degradation = (is_sharpe - reh_sharpe) / max(abs(is_sharpe), 1e-6)
+            if degradation > self._config.paper_rehearsal_max_sharpe_degradation:
+                passed = False
+                note = (
+                    f"rehearsal Sharpe ({reh_sharpe:.2f} over {rehearsal_from}→{rehearsal_to}) "
+                    f"degraded {degradation:.0%} vs in-sample ({is_sharpe:.2f}), exceeding "
+                    f"{self._config.paper_rehearsal_max_sharpe_degradation:.0%} threshold"
+                )
+            else:
+                passed, note = True, ""
+
+        return PaperRehearsalResult(
+            rehearsal_from=rehearsal_from,
+            rehearsal_to=rehearsal_to,
+            in_sample_sharpe=is_sharpe,
+            rehearsal_sharpe=reh_sharpe,
+            rehearsal_max_drawdown=rehearsal_bt.metrics.max_drawdown,
+            rehearsal_total_return=rehearsal_bt.metrics.total_return,
+            rehearsal_trade_count=rehearsal_bt.trade_count,
+            passed=passed,
+            note=note,
+            raw_metrics=rehearsal_bt.metrics.__dict__,
         )
 
     async def _run_walk_forward(

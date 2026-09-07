@@ -622,6 +622,30 @@ class LlmCandidate:
 
 
 @dataclass
+class PaperRehearsalResult:
+    """
+    Bar-by-bar paper-trade rehearsal of the winning strategy over a trailing
+    historical window (default 7 calendar days / ~5 trading days) before it
+    reaches risk_gatekeeper. Distinct from holdout (trailing slice the loop
+    never tuned against) and from walk-forward — this is the live-like
+    rehearsal 04:245 describes.
+
+    Uses the same simulator + T+1 + cost model as every other backtest, so
+    the evidence is directly comparable to the in-sample metrics.
+    """
+    rehearsal_from: str
+    rehearsal_to: str
+    in_sample_sharpe: float
+    rehearsal_sharpe: float
+    rehearsal_max_drawdown: float
+    rehearsal_total_return: float
+    rehearsal_trade_count: int
+    passed: bool
+    note: str = ""
+    raw_metrics: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
 class ResearchResult:
     symbol: str
     from_date: str
@@ -637,3 +661,4 @@ class ResearchResult:
     portfolio: PortfolioAnalysisResult | None = None
     stress_test: StressTestResult | None = None
     pbo: dict[str, float] | None = None
+    paper_rehearsal: PaperRehearsalResult | None = None

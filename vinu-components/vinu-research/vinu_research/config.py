@@ -147,6 +147,15 @@ class ResearchConfig:
     # meant to catch catastrophic/leveraged blowups, not ordinary drawdown.
     stress_test_max_drawdown_threshold: float = -0.50
 
+    # Researcher Role d — paper-trade rehearsal (04:245). Runs the winning
+    # sweep candidate through a trailing historical window bar-by-bar (same
+    # simulator + T+1 + cost model) before it reaches risk_gatekeeper.
+    # Default 7 calendar days ≈ 5 trading days: short enough to be a
+    # live-like check, long enough to require a real fill.
+    paper_rehearsal_enabled: bool = True
+    paper_rehearsal_lookback_days: int = 7
+    paper_rehearsal_max_sharpe_degradation: float = 0.5
+
     # Re-validation: how often an ACTIVE artifact should be re-backtested against
     # fresh data to check for decay (in days). Also controls the lookback window
     # used for the re-validation backtest. Set to 0 to disable.
@@ -251,6 +260,15 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         in ("1", "true", "yes"),
         stress_test_max_drawdown_threshold=float(
             os.environ.get("VINU_RESEARCH_STRESS_TEST_MAX_DD", "-0.50")
+        ),
+        paper_rehearsal_enabled=os.environ.get(
+            "VINU_RESEARCH_PAPER_REHEARSAL_ENABLED", "true"
+        ).lower() in ("1", "true", "yes"),
+        paper_rehearsal_lookback_days=int(
+            os.environ.get("VINU_RESEARCH_PAPER_REHEARSAL_LOOKBACK_DAYS", "7")
+        ),
+        paper_rehearsal_max_sharpe_degradation=float(
+            os.environ.get("VINU_RESEARCH_PAPER_REHEARSAL_MAX_DEGRADATION", "0.5")
         ),
         revalidation_interval_days=int(
             os.environ.get("VINU_RESEARCH_REVALIDATION_INTERVAL_DAYS", "30")
