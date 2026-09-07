@@ -309,6 +309,8 @@ class PortfolioService:
 
         shock = dcc_shock_correlation(returns_df) if returns_df is not None else None
 
+        composition = self._check_composition_gaps(weights, returns_df, corr_matrix)
+
         return {
             "status": "ok",
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -317,7 +319,45 @@ class PortfolioService:
             "weights": weights,
             "correlation_matrix": matrix_dict,
             "shock_correlation": shock,
+            "composition_view": composition,
         }
+
+    def _check_composition_gaps(
+        self,
+        weights: list[dict[str, Any]],
+        returns_df: pd.DataFrame | None,
+        corr_matrix: pd.DataFrame | None,
+    ) -> dict[str, Any]:
+        """Cross-ticker composition view (pending Row 4 / 04:385).
+
+        Detects concentration, high correlation clusters, and suggests
+        missing exposure type. Fail-open: returns status dict, never raises.
+        """
+        if not weights:
+            return {"status": "empty", "gaps": [], "suggestions": []}
+        gaps: list[str] = []
+        suggestions: list[str] = []
+        # Concentration: single weight >40%
+        max_w = max((w.get("target_weight", 0) for w in weights), default=0)
+        if max_w > 0.4:
+            gaps.append(f"concentration {max_w:.0%} in one strategy — single-name risk")
+            suggestions.append("consider uncorrelated factor or asset class (mean_reverting / hedged)")
+        # Correlation cluster
+        if corr_matrix is not None and len(corr_matrix) >= 2:
+            # off-diagonal max
+            mask = corr_matrix.where(~corr_matrix.isin([1.0])).stack()
+            max_corr = float(mask.max()) if not mask.empty else 0.0
+            if max_corr > 0.8:
+                gaps.append(f"high correlation cluster max {max_corr:.2f} — book moves as one")
+                suggestions.append("add low-correlation sleeve (e.g. ranging/mean_reverting when book is trending)")
+            elif max_corr > 0.6:
+                gaps.append(f"moderate correlation {max_corr:.2f}")
+        # Low diversification count
+        if len(weights) < 3:
+            gaps.append(f"only {len(weights)} active sleeve(s) — under-diversified")
+            suggestions.append("add sleeve with complementary regime tag")
+        status = "ok" if not gaps else "gaps_detected"
+        return {"status": status, "gaps": gaps, "suggestions": suggestions}
 
     # ------------------------------------------------------------------
     # Daily allocation — regime-aware, outcome-confidence-weighted tilt
