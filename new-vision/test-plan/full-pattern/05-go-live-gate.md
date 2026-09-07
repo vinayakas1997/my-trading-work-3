@@ -13,6 +13,10 @@
 - [ ] **Shock batch** `cycle_shock_batch(5)` prioritized by `shock_clustering`+`shock_personality` `d4c338ea` (top batch executed, debounce 60s)
 - [ ] **Kill** `POST /agent/broker/halt` → `GET /broker/status halted` → `PENDBLOCK` → `POST /agent/broker/resume` → `ACTIVE` observed, `rebalance REQUEST` also `blocked` `decisions/12`
 - [ ] **Auth** `401/403/200` lines `ats-pattern/03-api-lines.md` proven on real `8090/portfolio/state` vs `8086/agent/broker/performance/test` (`vinu_infra/auth.py:29`)
+- [ ] **Throttle** `OrderGuard` `10/sec` deque proven (burst 11th → `Throttle`) `88039de3` + **Dedupe** `screener` `300s` cached `scheduler_workers.py:72` (second within 5 min no second LLM) `f7e25081`
+- [ ] **Cache** `loop.py` `feature/angle` LRU hit `D` + `service.py` `_returns_cache 60s` `J` (second same `equity` within 60s served from cache, no second `simulator/results/{id}/equity` GET)
+- [ ] **Ledger `ref_id` verify** `ticker_ledger.verify_ref_id` `0fc90e11` — every `ref_id` `art_*/hyp_*` resolves via `get_artifact` fail-open logs stale drift, spot-check `BENCHING→PEND→ACTIVE`
+- [ ] **Env leak** `secrets_loader.py` no `also present as plain env` warning in logs + `docker inspect` shows no plain `VINU_API_KEY` `decisions/13` (`env_file: .env` gap `block-all`)
 - [ ] **Triage** delivery observed arriving in Telegram/Discord if creds set, else `FlagStore` records flags (`decisions/09` manual gate)
 - [ ] **Secrets** `scripts/setup-secrets.sh --check` prints `secret files ready` on deploy target, `secrets/*` 600 exist, `.env` secret values blank (`decisions/13`)
 - [ ] **Sizing** `fractional_kelly 0.25` + risk-parity+tilts decided `decisions/05` not placeholder

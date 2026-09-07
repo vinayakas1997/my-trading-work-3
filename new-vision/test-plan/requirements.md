@@ -30,6 +30,8 @@ Validate before compose:
 ```bash
 scripts/setup-secrets.sh --check   # must print "secret files ready", not FAILED for 4 required
 scripts/setup-secrets.sh           # writes ./secrets/* mode 600, what compose mounts
+# I: env leak warning — if .env still has secret values, vinu-infra/secrets_loader.py 0fc90e11 will log "also present as plain env" on load_secret; docker inspect <container> | grep VINU_API_KEY should show no plain value
+# H: ref_id verification — ticker_ledger.verify_ref_id(ref_id, strategy_store) fail-open logs stale BENCHING→PEND drift
 ```
 
 ## Env (`VINU_*_DATA_ROOT` etc., `env_file: .env` gitignored)
