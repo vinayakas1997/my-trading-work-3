@@ -215,6 +215,27 @@ class TradePlanOrchestrator:
             prices = await self._fetch_prices(symbols)
             portfolio_value = await self._fetch_portfolio_value()
 
+            # G: auto-wire prioritized shock batch — sort plans by shock score descending
+            # so highest-risk open position evaluated first in same cycle (not just via
+            # explicit cycle_shock_batch caller). Threshold 0.5 filters low scores.
+            try:
+                shock_scores: dict[str, float] = {}
+                for sym in symbols:
+                    corr = await self._fetch_shock_cluster_correlation(sym)
+                    pers = await self._fetch_shock_personality_score(sym)
+                    score = 0.0
+                    if corr is not None:
+                        score = max(score, float(corr))
+                    if pers is not None:
+                        score = max(score, float(pers))
+                    shock_scores[sym] = score
+                # Only re-sort if any score >0.5 (genuine shock), else keep sorted() order
+                if any(s > 0.5 for s in shock_scores.values()):
+                    plans = sorted(plans, key=lambda p: shock_scores.get(p.get("symbol", ""), 0.0), reverse=True)
+                    LOG.info("Shock batch prioritized order: %s", [f"{p.get('symbol')}={shock_scores.get(p.get('symbol'),0):.2f}" for p in plans])
+            except Exception as e:
+                LOG.debug("Shock prioritization failed, using sorted order: %s", e)
+
             actions: list[dict[str, Any]] = []
             for plan in plans:
                 symbol = plan.get("symbol", "")

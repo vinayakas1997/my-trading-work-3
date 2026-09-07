@@ -114,23 +114,40 @@ class ComputeAllocationCandidatesTool(BaseTool):
         import httpx
 
         url = self._services_config.get("vinu_portfolio", "http://localhost:8090")
-        try:
-            resp = httpx.post(
-                f"{url}/portfolio/evaluate-batch", json={"candidates": batch_payload}, timeout=30
-            )
-            resp.raise_for_status()
-            portfolio_result = resp.json()
-        except Exception as exc:
-            # Fail-closed, never fall back to the old fixed-fraction math --
-            # see 02-guard-rail.md: a silent fallback would defeat the
-            # entire point of this phase. The whole PEND batch simply waits
-            # for the next cadence attempt (nothing here mutates anything).
-            LOG.warning("vinu-portfolio unreachable, funding skipped this cycle: %s", exc)
+        portfolio_result = None
+        last_exc: Exception | None = None
+        import time as _time
+        for attempt in range(2):
+            try:
+                resp = httpx.post(
+                    f"{url}/portfolio/evaluate-batch", json={"candidates": batch_payload}, timeout=30 if attempt == 0 else 10
+                )
+                resp.raise_for_status()
+                portfolio_result = resp.json()
+                break
+            except Exception as exc:
+                last_exc = exc
+                if attempt == 0:
+                    LOG.warning("vinu-portfolio unreachable attempt 1, retrying after 1s: %s", exc)
+                    _time.sleep(1.0)
+                    continue
+                # Fail-closed, never fall back to the old fixed-fraction math --
+                # see 02-guard-rail.md: a silent fallback would defeat the
+                # entire point of this phase. The whole PEND batch simply waits
+                # for the next cadence attempt (nothing here mutates anything).
+                LOG.warning("vinu-portfolio unreachable after retry, funding skipped this cycle: %s", exc)
+                for a in candidates:
+                    self._log_skip(a, "funding_skipped_unreachable", f"vinu-portfolio unreachable this cycle: {exc}")
+                return json.dumps({
+                    "status": "error",
+                    "error": f"vinu-portfolio unreachable, funding skipped this cycle (not a fallback to fixed-fraction math): {exc}",
+                })
+        if portfolio_result is None and last_exc is not None:
             for a in candidates:
-                self._log_skip(a, "funding_skipped_unreachable", f"vinu-portfolio unreachable this cycle: {exc}")
+                self._log_skip(a, "funding_skipped_unreachable", f"vinu-portfolio unreachable this cycle: {last_exc}")
             return json.dumps({
                 "status": "error",
-                "error": f"vinu-portfolio unreachable, funding skipped this cycle (not a fallback to fixed-fraction math): {exc}",
+                "error": f"vinu-portfolio unreachable, funding skipped this cycle (not a fallback to fixed-fraction math): {last_exc}",
             })
 
         if portfolio_result.get("status") not in ("ok", "empty"):
