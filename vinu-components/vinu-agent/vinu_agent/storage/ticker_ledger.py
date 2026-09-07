@@ -121,6 +121,25 @@ class TickerLedgerStore(SQLiteBackend):
         ).fetchall()
         return [TickerLedgerEvent.from_row(dict(r)) for r in rows]
 
+    def verify_ref_id(self, ref_id: str, *, strategy_store: Any | None = None, hypothesis_registry: Any | None = None) -> bool:
+        """H: join verification — checks ref_id points to a real record.
+        Fail-open (returns True, logs) if stores unavailable — never blocks
+        `add_event` path. Covers stale BENCHING→PEND→ACTIVE drift where
+        ledger references a superseded artifact."""
+        import logging as _log
+        if not ref_id:
+            return True  # empty ref_id is allowed (e.g. Gate unchanged)
+        try:
+            if ref_id.startswith("art_") and strategy_store is not None and hasattr(strategy_store, "get_artifact"):
+                return strategy_store.get_artifact(ref_id) is not None
+            if ref_id.startswith("hyp_") and hypothesis_registry is not None and hasattr(hypothesis_registry, "get"):
+                return hypothesis_registry.get(ref_id) is not None
+            # run_id, team run, ledger itself — treat as opaquely valid if non-empty
+            return True
+        except Exception as e:
+            _log.getLogger(__name__).warning("verify_ref_id(%s) failed, fail-open: %s", ref_id, e)
+            return True
+
     def count_events(
         self,
         ticker: str,

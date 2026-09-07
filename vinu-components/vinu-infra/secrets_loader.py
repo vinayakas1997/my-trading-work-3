@@ -38,6 +38,13 @@ def load_secret(secret_name: str, env_var: str | None = None) -> str | None:
         if path.is_file():
             value = path.read_text().strip()
             if value:
+                # I: warn if same secret also lives as plain env (docker inspect leak)
+                if env_var and os.environ.get(env_var):
+                    import logging as _log
+                    _log.getLogger(__name__).warning(
+                        "secret %r also present as plain env %r (docker inspect leak) — prefer /run/secrets only; see decisions/13-env-gap-decision.md",
+                        secret_name, env_var,
+                    )
                 return value
     except OSError:
         pass
