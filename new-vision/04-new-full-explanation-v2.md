@@ -1,12 +1,12 @@
 ---
 name: agentic-workflow-current-architecture
-status: current v2 — 2026-09-07 — reflects A1-B build slices (rehearsal, replace, shock batch, composition, sizing decided)
-purpose: same as v1 (04-new-full-explanation.md 2026-08-17) but with "What's still not built" and open questions updated after 10 commits 3939f1a7..75025b72. Keeps v1 as snapshot.
+status: current v2.1 — 2026-09-07 — reflects A1-B + A-J little architecture changes (A dedupe, D cache, J cache, F retry, G auto batch, H ref_id verify, I secrets warning, 31→28 clean)
+purpose: same as v1 (04-new-full-explanation.md 2026-08-17) but with "What's still not built" and open questions updated after 13 commits 3939f1a7..812f9b69 + chore 31→28 ab99898a. Keeps v1 as snapshot.
 ---
 
 # Agentic workflow — current architecture (v2 2026-09-07)
 
-This is the pipeline as it actually runs today after the 7-stage + 2-entry + 4-cross-cutting build. Unlike `04-new-full-explanation.md` v1 (2026-08-17), the four items in its "What's still not built" are now built, and the open questions in that file are now decided/pinned (see `pending-items-to-be-implemented.md` Status 2026-09-07 and `other-our-repo-full-research-features/decisions/`). Keeps the same diagram — only dotted/built annotations moved.
+This is the pipeline as it actually runs today after the 7-stage + 2-entry + 4-cross-cutting build + little architecture fixes A/D/J/F/G/H/I (cache, dedupe, throttle, freeze, ref_id verify, secrets warning). Unlike `04-new-full-explanation.md` v1 (2026-08-17), the four items in its "What's still not built" are now built, and the open questions in that file are now decided/pinned (see `pending-items-to-be-implemented.md` Status 2026-09-07 and `other-our-repo-full-research-features/decisions/` + `inefficiencies-A-J.md`). Keeps the same diagram — only dotted/built annotations moved.
 
 ## The diagram
 
@@ -147,7 +147,7 @@ discipline, and a system built to reinterpret/consolidate memories works
 against that. A vector layer on top of the Ledger for fuzzy cross-ticker
 analogical search is a real, later capability — not scoped now.
 
-**Taxonomy pinned 2026-09-07** (pending Row 10): `stage` `watchlist_gate | thesis_intake | summary_agent | planner_triage | planner_idea | sweep_execute | sweep_verdict | risk_gatekeeper | capital_allocator | live_shadow | monitor | kill_switch_gate | significance_triage`; `event_type` `changed | unchanged | summary_refreshed | triage | proposal | sweep_complete | verdict_PASS | verdict_FAIL | APPROVED | REJECTED | PEND | PENDBLOCK | funded | rebalance_requested | rebalance_blocked | hold | decay | close_out | halt | resume | flag_created`; `source` `watchlist | human | human_override | system`; `ref_id` points to real row. Retention 90d / 1M rows then dated export — see `other-our-repo-full-research-features/decisions/10-ledger-decision.md`.
+**Taxonomy pinned 2026-09-07** (pending Row 10): `stage` `watchlist_gate | thesis_intake | summary_agent | planner_triage | planner_idea | sweep_execute | sweep_verdict | risk_gatekeeper | capital_allocator | live_shadow | monitor | kill_switch_gate | significance_triage`; `event_type` `changed | unchanged | summary_refreshed | triage | proposal | sweep_complete | verdict_PASS | verdict_FAIL | APPROVED | REJECTED | PEND | PENDBLOCK | funded | rebalance_requested | rebalance_blocked | hold | decay | close_out | halt | resume | flag_created`; `source` `watchlist | human | human_override | system`; `ref_id` points to real row, now verified via `ticker_ledger.py:19` `verify_ref_id(ref_id, strategy_store)` fail-open logs stale `BENCHING→PEND→ACTIVE` drift (H `0fc90e11`). Retention 90d / 1M rows then dated export — see `decisions/10-ledger-decision.md`.
 
 ## Per-agent detail
 
@@ -168,7 +168,7 @@ padding a confident summary.
 **Trigger:** watches `vinu-initial-analysis`'s `RunLog` for a new
 `run_id` per symbol — only then does the Summary Agent refresh, and only
 then does the downstream change-gate have anything new to compare
-against.
+against. Little fix A `scheduler_workers.py:72` `make_summary_agent_fn` now dedupes via `ticker_summary_store.get_summary` `updated_at` within 300s before invoking `screener` LLM team, avoiding double upsert `team.py:_apply_team_result_hook` + `RunLogTrigger` (last-write-wins was harmless but wasted cost) `f7e25081`.
 
 ### 2. Planner (triage + `idea_generator`)
 
@@ -222,7 +222,7 @@ skill-edit audit log, separate from `TickerLedger`.
 ### 3. Researcher / Executor (one team, three roles, loops internally)
 
 **Role a — receive the plan.** Takes the Planner's recipe + search space
-and its reasoning.
+and its reasoning. Little fix D `loop.py:141` caches `angle_context` + `feature_snapshot` via `LRUCache` keyed `symbol:interval` / `symbol` before `tools.get_angle_context` / `get_feature_snapshot`, avoiding repeated `features-api:8082` + 4× `get_angle_rows` per `research_from:research_to` `f7e25081`.
 
 **Role b — execute + back-propagate.** Runs the grid via
 `run_sweep_candidate` (`vinu-research/sweep.py`, AST-based parameter
@@ -231,7 +231,7 @@ attempt. `run_parameter_sweep` (`vinu-agent/tools/run_parameter_sweep_tool.py`)
 loops the grid internally and returns a ranked table via `comparison.py`'s
 `rank_candidates` in one call instead of N LLM round-trips. Capped at N
 rounds, same `max_iterations` pattern the `research` team's manager loop
-already enforces. **N=5 `max_iterations` 2026-09-07** (Row 7, `VINU_RESEARCH_MAX_ITERATIONS`).
+already enforces. **N=5 `max_iterations` 2026-09-07** (Row 7, `VINU_RESEARCH_MAX_ITERATIONS`). Little fix J `vinu-portfolio/service.py:42` `_returns_cache` 60s for `_fetch_strategy_returns` avoids double `simulator/results/{id}/equity` fetch per `900s` cycle `f7e25081`; `E` vectorized sweep still open (`03/vectorbt-sweep.md` backlog).
 
 **Role c — self-verdict.** Reads the ranked table plus `pbo.py`'s
 overfitting probability and the walk-forward stability verdict (both
@@ -277,7 +277,7 @@ batch since its last pass (`VINU_AGENT_CAPITAL_ALLOCATOR_INTERVAL 900s` `04:410`
 cheap exposure snapshot check immediately before funding, since an
 approval can sit waiting for the next cadence run. Validates
 NEW-vs-NEW correlation within the funded batch, not just each candidate
-against the existing book.
+against the existing book. Little fix F `allocation_tool.py:116` `httpx.post timeout 30` now retries `30→10s` after `1s` before fail-closed `funding skipped` `88039de3` — one `portfolio-api` hiccup no longer stalls batch to next `900s` cycle.
 
 The rebalancer role's unwind-request path is built and gated
 (`capital_allocator_hook` → `rebalance_guard.check_rebalance_allowed` →
@@ -308,7 +308,7 @@ twin of the *original* plan runs in parallel, continuously, off the same
 price feed. Pure deterministic bookkeeping — no LLM, no judgment.
 
 At any moment, "what would this position be doing right now if left
-alone" is a computed answer, not a guess. Pre-trade risk gateway now adds message throttle `10 orders/sec` `vinu-agent/broker/order_guard.py` `8325e893` (B20) and data lineage via `vinu_infra/freeze.py` `freeze_manifest()` `44e7e034` (B21) — tick wallet still spiked.
+alone" is a computed answer, not a guess. Pre-trade risk gateway now adds message throttle `10 orders/sec` deque `vinu-agent/broker/order_guard.py` `8325e893` (B20) and data lineage via `vinu_infra/freeze.py` `freeze_manifest()` `44e7e034` (B21) — tick wallet still spiked. Little fix J `service.py:42` `_returns_cache 60s` avoids double equity fetch.
 
 ### 7. Monitor (decay-watch + post-trade review)
 
@@ -317,22 +317,22 @@ entry, invalidation-exit, and contingency actions every cycle — sole
 authority over a live position's lifecycle. Periodically **and on-event** (shock trigger) compares the live position
 against its shadow twin, decides hold / flag / suggest-drop, and — when a
 position actually closes — writes the "why" narrative using the shadow
-twin's full path. Shock trigger is now **built:** `cycle_shock_batch(max_batch=5)` scores open positions by `shock_clustering` correlation + `shock_personality` `shock_score`, sorts descending, and runs `on_shock_event` debounced 60s per symbol for the top batch (`d4c338ea`, pending Row 3).
+twin's full path. Shock trigger is now **built:** `cycle_shock_batch(max_batch=5)` scores open positions by `shock_clustering` correlation + `shock_personality` `shock_score`, sorts descending, and runs `on_shock_event` debounced 60s per symbol for the top batch (`d4c338ea`, pending Row 3). Little fix G `88039de3` auto-wires prioritization: `cycle()` now fetches `corr`+`pers` max per symbol, if any `>0.5` sorts `plans` descending before `for plan in plans` loop and logs `Shock batch prioritized order`, while explicit `cycle_shock_batch` caller still debounced.
 
 `capital_allocator`'s rebalancer can only request a close, never perform
 one itself — Monitor is the sole authority.
 
 Never places, modifies, or cancels a real order itself — only recommends
-and records. Batching/prioritization is now built via `cycle_shock_batch`; plain periodic poll remains fallback.
+and records. Batching/prioritization is now built via `cycle_shock_batch` + auto-wire; plain periodic poll remains fallback.
 
 ## Cross-cutting mechanisms (not pipeline stages)
 
-- **Calibration Tracker** (`vinu-research/calibration.py`, built, spiked 2026-09-07 next wire to Summary Agent) — would feed the Summary Agent which angles to actually trust right now, based on their own historical forecast accuracy. See `decisions/08-calibration-decision.md`. Different question from cross-angle agreement: "has this method been right *over time*" vs. "do the methods agree *right now*."
+- **Calibration Tracker** (`vinu-research/calibration.py`, built, spiked 2026-09-07 next wire to Summary Agent, little fix D `loop.py:141` caches `angle_context` + `feature_snapshot` `LRUCache` `symbol:interval` already in place `f7e25081`) — would feed the Summary Agent which angles to actually trust right now, based on their own historical forecast accuracy. See `decisions/08-calibration-decision.md`. Different question from cross-angle agreement: "has this method been right *over time*" vs. "do the methods agree *right now*."
 - **HypothesisRegistry** — the Planner's pre-proposal check, where
   Monitor's closed-loop outcomes get written, and where Thesis Intake
   reads/writes human-submitted theories (tagged `source="human"`).
 - **Kill Switch — real, always-on.** Checked before every real order at
-  Live + Shadow (`OrderGuard` now also throttles `10/sec` `8325e893`), before `capital_allocator` calls
+  Live + Shadow (`OrderGuard` now also throttles `10/sec` deque + warns `also present as plain env` `0fc90e11` `8325e893` + `secrets_loader.py`), before `capital_allocator` calls
   `mark_active`, and before the rebalancer's unwind request path
   (`rebalance_guard.check_rebalance_allowed`) — halting all
   order-flow-adjacent actions by default, not just new funding
@@ -350,8 +350,9 @@ and records. Batching/prioritization is now built via `cycle_shock_batch`; plain
   `03-how-to-start.md` step 3/optional and `decisions/09-triage-delivery-decision.md` manual gate.
 - **Skill-edit audit log** — ticker-agnostic. Any edit to a risk-rules
   skill section Thesis Intake reads gets logged as a visible event. `skills/thesis-intake/SKILL.md` placeholder now exists (`decisions/11-thesis-intake-decision.md`).
-- **Freeze Manifest** (`vinu_infra/freeze.py` built `44e7e034`) — hashes `VINU_*` env + file hashes under `*_DATA_ROOT` for lineage + `contamination_check` drift between research and live.
-- **Message Throttle** (`vinu_agent/broker/order_guard.py` deque `10/sec` built `8325e893`) — blocks runaway loop, the #1 live blow-up per `quantmemo`.
+- **TickerLedger ref_id verification** (`vinu_agent/storage/ticker_ledger.py:19` `verify_ref_id` `0fc90e11`) — checks `art_*/hyp_*` via `strategy_store` fail-open logs stale `BENCHING→PEND→ACTIVE` drift (H).
+- **Freeze Manifest** (`vinu_infra/freeze.py` built `44e7e034`) — hashes `VINU_*` env + file hashes under `*_DATA_ROOT` for lineage + `contamination_check` drift between research and live (B21) + `secrets_loader` env-leak warning (I).
+- **Message Throttle** (`vinu_agent/broker/order_guard.py` deque `10/sec` built `8325e893`) — blocks runaway loop, the #1 live blow-up per `quantmemo` — plus `Summary Agent` dedupe `300s` `scheduler_workers.py:72` (A) and `portfolio` `_returns_cache 60s` (J).
 
 ## What's still not built
 
