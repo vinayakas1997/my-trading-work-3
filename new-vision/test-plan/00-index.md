@@ -16,8 +16,9 @@ Flow: **ATS C1** (short, 3 tickers) → **ATS C2** paper continuous (shadow twin
 - `requirements.md` — minimum things required: API line (9 services), keys/secrets, env (`VINU_*_DATA_ROOT`, `VINU_STAGE1_START_DATE`), watchlist — so other agents don't guess/invent.
 - `ats-pattern/` — minimal pattern (scope, preflight, API lines, runbook with *what wil happen* per stage).
 - `full-pattern/` — full gate (scope, preflight, stage-by-stage `trigger → response → store → TickerLedger ref_id` for one ticker, 9 edges, go-live checklist).
-- `test-status/` — **ephemeral, deletable** run evidence: per `(test_run_id,ticker,stage)` `status → how fixed` for future reference; delete whole folder after gate green or per `run_id`.
+- `test-status/` — **ephemeral, deletable** run evidence: per `(test_run_id,ticker,stage)` `status → how fixed` for future reference; delete whole folder after gate green or per `run_id`. Also holds `timings.jsonl` (per-stage durations, via `scripts/collect-timings.py`), `timing-baselines.json` (p50/p90, `--promote`), and `failures.jsonl` (watchdog incidents, via `scripts/watchdog.py`).
 - `assets/api-endpoints.csv` — 9 services port/prefix/health/protected example (copy, not invent).
+- `ats-status-and-next-steps.md` — **live ATS scoreboard** (2026-09-07): how far stages 0–9 actually got, the per-service strategy-store split bug that was fixed, the LLM free-tier blocker, and exact steps to finish 6→9. Read this first to resume.
 
 ## How to use
 

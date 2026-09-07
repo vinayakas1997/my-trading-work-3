@@ -41,8 +41,13 @@ class ListPortfolioStrategiesTool(BaseTool):
         url = self._services_config.get("vinu_portfolio", "http://localhost:8090")
         try:
             import httpx
+            try:
+                from vinu_infra.auth import internal_auth_headers as _iah
+                _h = _iah() or None
+            except Exception:
+                _h = None
 
-            resp = httpx.get(f"{url}/portfolio/strategies", timeout=10.0)
+            resp = httpx.get(f"{url}/portfolio/strategies", headers=_h, timeout=10.0)
             resp.raise_for_status()
             strategies = resp.json()
         except Exception as exc:

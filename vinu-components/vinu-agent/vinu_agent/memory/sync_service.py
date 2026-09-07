@@ -6,9 +6,18 @@ from typing import Any
 
 import httpx
 
+from vinu_infra.auth import internal_auth_headers as _internal_auth_headers
+
 from .unified_store import MemoryEntry, UnifiedMemoryStore, _now
 
 LOG = logging.getLogger(__name__)
+
+
+def _h() -> dict[str, str] | None:
+    try:
+        return _internal_auth_headers() or None
+    except Exception:
+        return None
 
 
 def _truncate(text: str, max_len: int = 2000) -> str:
@@ -68,7 +77,7 @@ class SyncService:
         if symbol:
             params["symbol"] = symbol
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, headers=_h()) as client:
                 resp = await client.get(f"{url}/runs", params=params)
                 if resp.status_code != 200:
                     LOG.warning("sync_research: %s returned %d", url, resp.status_code)
@@ -94,7 +103,7 @@ class SyncService:
 
         url = self._config.get("vinu_research", "http://localhost:8087")
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, headers=_h()) as client:
                 resp = await client.get(
                     f"{url}/artifacts",
                     params={"status": "ACTIVE,MONITORING"},
@@ -213,12 +222,12 @@ class SyncService:
     # ------------------------------------------------------------------
 
     async def sync_simulator(self, symbol: str | None = None) -> int:
-        url = self._config.get("vinu_simulator", "http://localhost:8085")
+        url = self._config.get("vinu_simulator", "http://localhost:8084")
         params: dict[str, Any] = {}
         if symbol:
             params["symbol"] = symbol
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, headers=_h()) as client:
                 resp = await client.get(f"{url}/runs", params=params)
                 if resp.status_code != 200:
                     LOG.warning("sync_simulator: %s returned %d", url, resp.status_code)
@@ -275,7 +284,7 @@ class SyncService:
     async def sync_stock_price(self, symbol: str) -> int:
         url = self._config.get("vinu_stock_price", "http://localhost:8081")
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=15.0, headers=_h()) as client:
                 resp = await client.get(
                     f"{url}/candles/{symbol}",
                     params={"interval": "1d", "days": 30, "adjusted": True},
@@ -343,7 +352,7 @@ class SyncService:
     async def sync_news(self, symbol: str, limit: int = 50) -> int:
         url = self._config.get("vinu_news", "http://localhost:8080")
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=15.0, headers=_h()) as client:
                 resp = await client.get(
                     f"{url}/search",
                     params={"q": symbol, "limit": limit},

@@ -10,6 +10,7 @@ from vinu_infra.debug import setup_logging
 
 from .agent.planner_triage_hook import PlannerTriage
 from .agent.scheduler_workers import (
+    _map_parallel,
     bootstrap_new_tickers,
     build_channel_targets,
     hypothesis_reader_for,
@@ -368,7 +369,8 @@ def planner_worker_main(args: argparse.Namespace) -> None:
                                 extra={"vinu_ctx": {"worker": "planner-worker", "tickers": bootstrapped}},
                             )
                     tickers = [s.ticker for s in service.ticker_summary_store.list_summaries()]
-                    for ticker in tickers:
+
+                    def _refresh_one(ticker: str) -> None:
                         try:
                             run_log_trigger.refresh_if_stale(ticker, summary_agent_fn)
                         except Exception:
@@ -376,6 +378,17 @@ def planner_worker_main(args: argparse.Namespace) -> None:
                                 "summary refresh failed for %s, continuing", ticker,
                                 extra={"vinu_ctx": {"worker": "planner-worker", "ticker": ticker}},
                             )
+
+                    # Bounded pool: each refresh is an independent ~30s LLM
+                    # team call, tickers fully isolated (thread-local SQLite/
+                    # WAL, thread-safe openai client). Serial when only one
+                    # is stale (the common case) -- refresh_if_stale returns
+                    # fast when nothing changed, so this only costs threads
+                    # it actually uses (inefficiency B).
+                    _map_parallel(
+                        _refresh_one, tickers,
+                        max_workers=config.summary_parallelism,
+                    )
                     run_gate_cycle(tickers, change_gate, on_yes)
                 except Exception:
                     log.exception(

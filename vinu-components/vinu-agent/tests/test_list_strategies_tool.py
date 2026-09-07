@@ -34,7 +34,7 @@ class TestListStrategiesTool:
         with patch("httpx.get", return_value=resp) as mock_get:
             _tool().execute()
 
-        mock_get.assert_called_once_with("http://vinu-strategy:8084/strategy/strategies", timeout=30)
+        mock_get.assert_called_once_with("http://vinu-strategy:8084/strategy/strategies", headers=None, timeout=30)
 
     def test_default_url_used_when_not_configured(self) -> None:
         tool = ListStrategiesTool()  # _services_config left default {}
@@ -44,7 +44,7 @@ class TestListStrategiesTool:
         with patch("httpx.get", return_value=resp) as mock_get:
             tool.execute()
 
-        mock_get.assert_called_once_with("http://localhost:8084/strategy/strategies", timeout=30)
+        mock_get.assert_called_once_with("http://localhost:8084/strategy/strategies", headers=None, timeout=30)
 
     def test_raises_on_http_error(self) -> None:
         resp = MagicMock()

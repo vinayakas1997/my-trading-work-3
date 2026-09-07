@@ -1,0 +1,65 @@
+{
+  "promoted_at": "2026-09-07T16:44:31Z",
+  "stages": {
+    "watchlist_gate": {
+      "n": 0,
+      "p50_s": 0.0,
+      "p90_s": 0.0,
+      "p50_calls": 0
+    },
+    "summary_agent": {
+      "n": 7,
+      "p50_s": 35.1,
+      "p90_s": 68.1,
+      "p50_calls": 2
+    },
+    "planner_triage": {
+      "n": 0,
+      "p50_s": 0.0,
+      "p90_s": 0.0,
+      "p50_calls": 0
+    },
+    "planner_idea": {
+      "n": 0,
+      "p50_s": 0.0,
+      "p90_s": 0.0,
+      "p50_calls": 0
+    },
+    "sweep_execute": {
+      "n": 6,
+      "p50_s": 106.3,
+      "p90_s": 209.4,
+      "p50_calls": 7
+    },
+    "sweep_verdict": {
+      "n": 0,
+      "p50_s": 0.0,
+      "p90_s": 0.0,
+      "p50_calls": 0
+    },
+    "risk_gatekeeper": {
+      "n": 0,
+      "p50_s": 0.0,
+      "p90_s": 0.0,
+      "p50_calls": 0
+    },
+    "capital_allocator": {
+      "n": 0,
+      "p50_s": 0.0,
+      "p90_s": 0.0,
+      "p50_calls": 0
+    },
+    "live_shadow": {
+      "n": 0,
+      "p50_s": 0.0,
+      "p90_s": 0.0,
+      "p50_calls": 0
+    },
+    "monitor": {
+      "n": 0,
+      "p50_s": 0.0,
+      "p90_s": 0.0,
+      "p50_calls": 0
+    }
+  }
+}

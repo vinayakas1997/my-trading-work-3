@@ -38,6 +38,11 @@ class StockPriceTool(BaseTool):
 
     def execute(self, **kwargs) -> str:
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
         url = self._services_config.get("vinu_stock_price", "http://localhost:8081")
         as_of_epoch = _iso_to_epoch(self._as_of) if self._as_of else int(time.time())
         # Defaults keep the tool usable when the model omits a date, and clamp
@@ -57,6 +62,7 @@ class StockPriceTool(BaseTool):
             clamped = True
         resp = httpx.get(
             f"{url}/stock/candles/{kwargs['symbol'].upper()}",
+            headers=_h,
             params={
                 "from": start_epoch,
                 "to": end_epoch,

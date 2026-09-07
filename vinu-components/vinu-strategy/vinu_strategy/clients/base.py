@@ -18,7 +18,12 @@ _BACKOFF = 1.5
 class BaseClient:
     def __init__(self, base_url: str, timeout: float = 30.0):
         self._base_url = base_url.rstrip("/")
-        self._client = httpx.Client(timeout=timeout)
+        try:
+            from vinu_infra.auth import internal_auth_headers
+            headers = internal_auth_headers() or None
+        except Exception:
+            headers = None
+        self._client = httpx.Client(timeout=timeout, headers=headers)
         self._lock = threading.Lock()
 
     def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any] | list[Any]:

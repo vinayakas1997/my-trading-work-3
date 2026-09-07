@@ -58,3 +58,19 @@ async def test_no_api_key_configured_allows_all_requests(monkeypatch):
     req = _make_request({})
     await auth.require_auth(req)  # must not raise -- auth is opt-in
     importlib.reload(auth)
+
+
+def test_internal_auth_headers_empty_when_key_unset(monkeypatch):
+    monkeypatch.delenv("VINU_API_KEY", raising=False)
+    import vinu_infra.auth as auth
+    importlib.reload(auth)
+    try:
+        assert auth.internal_auth_headers() == {}
+    finally:
+        importlib.reload(auth)
+
+
+def test_internal_auth_headers_bearer_when_key_set(auth_module):
+    assert auth_module.internal_auth_headers() == {
+        "Authorization": "Bearer real-secret-key"
+    }

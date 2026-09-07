@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+import logging
+
+from fastapi import APIRouter, HTTPException, Query, Response
 
 from vinu_stock.query.indicators import parse_indicator_names
 from vinu_stock.server.schemas import DataResponse
 from vinu_stock.service import StockService
 
 router = APIRouter(tags=["prices"])
+
+LOG = logging.getLogger(__name__)
 
 
 def get_service() -> StockService:
@@ -37,6 +41,7 @@ def symbol_catalog(symbol: str) -> DataResponse:
 @router.get("/candles/{symbol}", response_model=DataResponse)
 def candles(
     symbol: str,
+    response: Response,
     interval: str = Query(default="1m"),
     from_ts: int | None = Query(default=None, alias="from"),
     to_ts: int | None = Query(default=None, alias="to"),
@@ -62,4 +67,13 @@ def candles(
         indicators=indicator_list or None,
         adjusted=adjusted,
     )
+    if not rows:
+        # A 200 with an empty body is indistinguishable from success --
+        # callers (and operators) mistook it for "working" with zero data.
+        # Keep the 200 shape, but flag it explicitly in a header + log.
+        response.headers["X-Data-Empty"] = "true"
+        LOG.warning(
+            "candles %s %s empty (from=%s to=%s days=%s) — watchlist/backfill gap, not success",
+            symbol.upper(), interval, from_ts, to_ts, days,
+        )
     return DataResponse(count=len(rows), data=rows)

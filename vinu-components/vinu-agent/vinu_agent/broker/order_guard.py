@@ -244,7 +244,12 @@ class OrderGuard:
 
         mandate = self._mandate
         try:
-            resp = requests.get(f"{self._portfolio_api_url}/portfolio/state", timeout=10.0)
+            try:
+                from vinu_infra.auth import internal_auth_headers as _iah
+                _h = _iah() or None
+            except Exception:
+                _h = None
+            resp = requests.get(f"{self._portfolio_api_url}/portfolio/state", headers=_h, timeout=10.0)
             resp.raise_for_status()
             portfolio = resp.json()
         except Exception as e:

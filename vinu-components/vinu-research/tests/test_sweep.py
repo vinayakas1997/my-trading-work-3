@@ -77,6 +77,12 @@ class TestBuildCandidateCode:
         with pytest.raises(ValueError, match="requires both"):
             build_candidate_code(base_code=SIMPLE_CODE)
 
+    def test_unknown_recipe_params_raise(self) -> None:
+        # fast/slow are not crossover params (fast_period/slow_period are);
+        # silently running defaults instead would backtest the wrong thing.
+        with pytest.raises(ValueError, match="Unknown params"):
+            build_candidate_code(recipe="crossover", params={"fast": 10, "slow": 30})
+
 
 class TestRunSweepCandidate:
     @pytest.mark.asyncio

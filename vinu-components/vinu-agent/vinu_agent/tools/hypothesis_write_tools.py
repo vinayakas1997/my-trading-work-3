@@ -66,6 +66,11 @@ class CreateHypothesisTool(BaseTool):
             LOG.debug("create_hypothesis: in-process write failed, falling back to HTTP: %s", exc)
 
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         url = self._services_config.get("vinu_research", "http://localhost:8087")
         payload = {"title": kwargs["title"], "thesis": kwargs["thesis"]}
@@ -74,7 +79,7 @@ class CreateHypothesisTool(BaseTool):
         if kwargs.get("strategy_type"):
             payload["strategy_type"] = kwargs["strategy_type"]
 
-        resp = httpx.post(f"{url}/research/hypotheses", json=payload, timeout=30)
+        resp = httpx.post(f"{url}/research/hypotheses", json=payload, headers=_h, timeout=30)
         resp.raise_for_status()
         return resp.text
 
@@ -128,6 +133,11 @@ class AddHypothesisEvidenceTool(BaseTool):
             LOG.debug("add_hypothesis_evidence: in-process write failed, falling back to HTTP: %s", exc)
 
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         url = self._services_config.get("vinu_research", "http://localhost:8087")
         payload = {
@@ -145,6 +155,7 @@ class AddHypothesisEvidenceTool(BaseTool):
         resp = httpx.post(
             f"{url}/research/hypotheses/{hypothesis_id}/evidence",
             json=payload,
+            headers=_h,
             timeout=30,
         )
         resp.raise_for_status()

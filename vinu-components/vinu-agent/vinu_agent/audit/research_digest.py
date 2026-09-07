@@ -99,10 +99,16 @@ class ResearchDigestReader:
             return None
         try:
             import httpx
+            try:
+                from vinu_infra.auth import internal_auth_headers as _iah
+                _h = _iah() or None
+            except Exception:
+                _h = None
 
             resp = httpx.get(
                 f"{research_url}/research/runs",
                 params={"symbol": symbol, "limit": 1},
+                headers=_h,
                 timeout=5.0,
             )
             if resp.status_code != 200:

@@ -40,7 +40,7 @@ class TestGetPortfolioConcentrationTool:
         assert result["symbol"] == "AAPL"
         assert result["existing_target_weight"] == 0.15
         assert {"symbol": "MSFT", "target_weight": 0.10} in result["all_weights"]
-        mock_get.assert_called_once_with("http://vinu-portfolio:8090/portfolio/state", timeout=10.0)
+        mock_get.assert_called_once_with("http://vinu-portfolio:8090/portfolio/state", headers=None, timeout=10.0)
 
     def test_symbol_not_currently_targeted_is_zero(self) -> None:
         resp = MagicMock()
@@ -83,4 +83,4 @@ class TestGetPortfolioConcentrationTool:
         with patch("httpx.get", return_value=resp) as mock_get:
             tool.execute(symbol="AAPL")
 
-        mock_get.assert_called_once_with("http://localhost:8090/portfolio/state", timeout=10.0)
+        mock_get.assert_called_once_with("http://localhost:8090/portfolio/state", headers=None, timeout=10.0)

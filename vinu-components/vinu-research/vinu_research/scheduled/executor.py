@@ -200,7 +200,12 @@ class ScheduledResearchExecutor:
             import httpx
 
             base_url = self.service.config.correlation_api_url
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            try:
+                from vinu_infra.auth import internal_auth_headers
+                _headers = internal_auth_headers() or None
+            except Exception:
+                _headers = None
+            async with httpx.AsyncClient(timeout=60.0, headers=_headers) as client:
                 for symbol in symbols:
                     try:
                         resp = await client.post(

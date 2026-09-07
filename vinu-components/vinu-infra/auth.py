@@ -26,6 +26,18 @@ from vinu_infra.secrets_loader import load_secret
 VINU_API_KEY: str = load_secret("vinu_api_key", "VINU_API_KEY") or os.getenv("VINU_API_KEY", "") or ""
 
 
+def internal_auth_headers() -> dict[str, str]:
+    """Bearer headers for service-to-service calls (client side of
+    require_auth above). Opt-in both ways -- when VINU_API_KEY is unset
+    every service is open and no header is sent; when set, every internal
+    httpx/requests call must present it or the callee answers 401/403.
+    Internal-only: never attach to external provider calls (Alpaca,
+    Telegram, LLM APIs) or the key leaks to third parties."""
+    if not VINU_API_KEY:
+        return {}
+    return {"Authorization": f"Bearer {VINU_API_KEY}"}
+
+
 async def require_auth(request: Request) -> None:
     if not VINU_API_KEY:
         return

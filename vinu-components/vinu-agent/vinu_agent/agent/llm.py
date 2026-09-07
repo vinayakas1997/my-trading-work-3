@@ -1,5 +1,6 @@
 import json
 import logging
+import random
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Generator, Optional
@@ -153,6 +154,22 @@ class OpenAIChatLLM(ChatLLM):
                 last_error = e
                 if attempt < self._retry_max - 1 and _is_transient_openai_error(e):
                     delay = (2 ** attempt) * 1.0
+                    status = getattr(e, "status_code", None)
+                    if status == 429:
+                        # Free-tier provider rate limit: parallel Stage-1
+                        # workers make fixed-step backoff a thundering herd
+                        # -- honor Retry-After when present, cap it, and add
+                        # jitter so concurrent tickers don't retry in lockstep.
+                        delay = min(delay, 120.0)
+                        resp = getattr(e, "response", None)
+                        try:
+                            retry_after = float(
+                                (resp.headers.get("retry-after") or "").strip() or 0
+                            ) if resp is not None else 0
+                            delay = min(max(delay, retry_after), 120.0)
+                        except (ValueError, AttributeError):
+                            pass
+                        delay += random.uniform(0, 1.0)
                     LOG.warning(
                         "OpenAI LLM call failed (%s), retrying in %.1fs (attempt %d/%d)",
                         type(e).__name__, delay, attempt + 1, self._retry_max,

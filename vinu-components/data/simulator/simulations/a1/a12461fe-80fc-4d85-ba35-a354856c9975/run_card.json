@@ -1,0 +1,158 @@
+{
+  "schema_version": "0.1",
+  "generated_at": "2026-09-07T15:46:03.418295+00:00",
+  "run_id": "a12461fe-80fc-4d85-ba35-a354856c9975",
+  "run_dir": "/data/simulator/simulations/a1/a12461fe-80fc-4d85-ba35-a354856c9975",
+  "backtest": {
+    "codes": [
+      "AAPL"
+    ],
+    "start_date": "2026-03-01",
+    "end_date": "2026-09-07",
+    "interval": "1d",
+    "initial_cash": 1000000.0
+  },
+  "reproducibility": {
+    "config_hash": "",
+    "strategy_hash": ""
+  },
+  "metrics": {
+    "total_return": 0.0,
+    "cagr": 0.0,
+    "annual_volatility": 0.0,
+    "sharpe_ratio": 0.0,
+    "sortino_ratio": 0.0,
+    "max_drawdown": 0.0,
+    "calmar_ratio": 0.0,
+    "win_rate": 0.0,
+    "skewness": 0.0,
+    "kurtosis": 0.0,
+    "var_95": 0.0,
+    "var_99": 0.0,
+    "cvar_95": 0.0,
+    "tail_ratio": 0.0,
+    "max_dd_duration_days": 0,
+    "avg_drawdown": 0.0,
+    "recovery_time_days": 0,
+    "profit_factor": 999.0,
+    "avg_win_pct": 0.0,
+    "avg_loss_pct": 0.0,
+    "win_loss_ratio": 999.0,
+    "hit_rate": 0.0,
+    "sharpe_standard_error": 0.08804509063256238,
+    "sharpe_p_value": 1.0,
+    "sharpe_ci_95_low": -0.17256837763982227,
+    "sharpe_ci_95_high": 0.17256837763982227,
+    "probabilistic_sharpe_ratio": 0.5,
+    "annual_turnover": 0.0
+  },
+  "trade_count": 0,
+  "equity_points": 131,
+  "artifacts": [
+    {
+      "path": "/data/simulator/simulations/a1/a12461fe-80fc-4d85-ba35-a354856c9975/equity.parquet",
+      "size_bytes": 3390,
+      "sha256": "9a6b08620abd87c0e0d1bcf92f54760c4d310fe1b5775823693b911833ebb68c"
+    },
+    {
+      "path": "/data/simulator/simulations/a1/a12461fe-80fc-4d85-ba35-a354856c9975/weights.parquet",
+      "size_bytes": 3122,
+      "sha256": "36b1729fd468683681ebbd0a6e19370bac42a5341279a1ef891e4b27a57f8652"
+    },
+    {
+      "path": "/data/simulator/simulations/a1/a12461fe-80fc-4d85-ba35-a354856c9975/meta.json",
+      "size_bytes": 140,
+      "sha256": "07d29322834ac7a2426c749e2f881e10f0fda6b3d2ee3d64986ffe87d26ad3b3"
+    }
+  ],
+  "validation": {
+    "monte_carlo": {
+      "p_value": 1.0,
+      "sim_mean": 0.0,
+      "sim_std": 0.0,
+      "sim_p5": 0.0,
+      "sim_p95": 0.0,
+      "n_iterations": 0,
+      "n_trades": 0,
+      "minimum_met": false
+    },
+    "block_bootstrap": {
+      "p_value": 1.0,
+      "sim_mean": 0.0,
+      "sim_std": 0.0,
+      "sim_p5": 0.0,
+      "sim_p95": 0.0,
+      "n_iterations": 0,
+      "n_trades": 0,
+      "minimum_met": false
+    },
+    "price_path": {
+      "p_value": 1.0,
+      "sim_mean": 0.0,
+      "sim_std": 0.0,
+      "sim_p5": 0.0,
+      "sim_p95": 0.0,
+      "n_iterations": 1000,
+      "n_observations": 130,
+      "block_size": 20,
+      "minimum_met": true
+    },
+    "bootstrap": {
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "mean": 0.0,
+      "std": 0.0,
+      "n_iterations": 1000,
+      "n_observations": 130,
+      "method": "block",
+      "block_size": 20,
+      "minimum_met": true
+    },
+    "bca": {
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "mean": 0.0,
+      "std": 0.0,
+      "n_iterations": 1000,
+      "n_observations": 130,
+      "method": "bca",
+      "block_size": 20,
+      "minimum_met": true
+    },
+    "placebo": {
+      "p_value": 1.0,
+      "placebo_mean": 0.0,
+      "placebo_std": 0.0,
+      "n_iterations": 0,
+      "n_observations": 130,
+      "minimum_met": false
+    },
+    "walk_forward": {
+      "profitable_windows": 0,
+      "total_windows": 5,
+      "consistency_rate": 0.0,
+      "return_mean": 0.0,
+      "return_std": 0.0,
+      "sharpe_mean": 0.0,
+      "sharpe_std": 0.0,
+      "minimum_met": true
+    },
+    "verdict": {
+      "passed": false,
+      "reasons": [
+        "Trade-permutation p-value: insufficient data (skipped)",
+        "Block-bootstrap p-value: insufficient data (skipped)",
+        "Price-path resample p-value 1.0000 >= 0.1 (FAIL)",
+        "Walk-forward consistency 0.00 < 0.60 (FAIL)",
+        "Bootstrap Sharpe CI lower bound 0.0000 <= 0 (FAIL)",
+        "BCa bootstrap CI lower bound 0.0000 <= 0 (FAIL)",
+        "Placebo test: insufficient data (skipped)"
+      ]
+    }
+  },
+  "attribution": {
+    "by_symbol": {},
+    "by_benchmark": {},
+    "by_regime": {}
+  }
+}

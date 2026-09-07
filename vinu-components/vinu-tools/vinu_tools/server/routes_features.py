@@ -137,7 +137,12 @@ async def get_feature_or_symbol(symbol_or_kind: str, indicators: str | None = No
             for attempt in range(_REATTEMPTS):
                 try:
                     async with httpx.AsyncClient() as client:
-                        resp = await client.get(url, params=params, timeout=60.0)
+                        try:
+                            from vinu_infra.auth import internal_auth_headers
+                            _headers = internal_auth_headers()
+                        except Exception:
+                            _headers = {}
+                        resp = await client.get(url, params=params, headers=_headers or None, timeout=60.0)
                     resp.raise_for_status()
                     data = resp.json()
                     candles = data.get("data", [])
@@ -148,6 +153,15 @@ async def get_feature_or_symbol(symbol_or_kind: str, indicators: str | None = No
                     # by the blanket `except Exception` below and reported
                     # to the caller as a generic 502 -- losing the real
                     # status code entirely. Preserve it instead.
+                    # Exception: upstream 401/403 is an inter-service
+                    # credential problem, NOT a fault of this caller's
+                    # request -- returning it verbatim misleads the caller
+                    # into debugging their own key. Report 502 instead.
+                    if e.response.status_code in (401, 403):
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"Upstream stock-api auth failure for {symbol_or_kind}: {e} (check service-to-service VINU_API_KEY wiring, not your key)",
+                        ) from e
                     if e.response.status_code not in (429, 500, 502, 503, 504):
                         raise HTTPException(
                             status_code=e.response.status_code,

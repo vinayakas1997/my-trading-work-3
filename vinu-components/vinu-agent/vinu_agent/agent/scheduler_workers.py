@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterable
 
 from .notify_channels import HttpDiscordChannel, HttpTelegramChannel
 from .planner_triage_hook import PlannerTriage
@@ -31,6 +32,60 @@ from .significance_triage import (
 from .team import TeamManager
 
 LOG = logging.getLogger(__name__)
+
+
+def _angle_trust(angle_names: list[str]) -> dict[str, Any]:
+    """Per-angle trust overlay from the Calibration Tracker (decision 08).
+
+    Reads `get_angle_calibration` per angle (in-process strategy store).
+    Angles with too few closed attributions are `unrated` -- no data is
+    NOT low trust (everything is unrated on day one). Rated angles below
+    `VINU_AGENT_CALIBRATION_MIN_ACCURACY` (default 0.45) are `low_trust`.
+    Observability signal, never a gate: nothing is filtered, the screener
+    is merely told what to weight. Fail-open: any error -> all unrated.
+    """
+    import os as _os
+    try:
+        min_acc = float(_os.environ.get("VINU_AGENT_CALIBRATION_MIN_ACCURACY", "0.45"))
+    except ValueError:
+        min_acc = 0.45
+    try:
+        min_n = int(_os.environ.get("VINU_AGENT_CALIBRATION_MIN_ENTRIES", "3"))
+    except ValueError:
+        min_n = 3
+    low: list[dict[str, Any]] = []
+    rated = 0
+    try:
+        # No store file -> no closed attributions exist yet -> everything
+        # is unrated by definition. Check before constructing the store:
+        # construction mkdirs the data root, which would litter test
+        # working directories with empty ./data trees on every summary.
+        from pathlib import Path as _Path
+        _raw = _os.environ.get("VINU_RESEARCH_DATA_ROOT", "").strip()
+        if not ((_Path(_raw) if _raw else _Path.cwd() / "data") / "strategy_store.db").exists():
+            return {"low_trust": [], "rated": 0, "unrated": len(angle_names),
+                    "min_accuracy": min_acc, "min_entries": min_n}
+        from ..broker.research_link import get_strategy_store
+        from vinu_research.calibration import get_angle_calibration
+        store = get_strategy_store()
+        for name in angle_names:
+            try:
+                cal = get_angle_calibration(store, name)
+            except Exception:
+                continue
+            if (cal.n_entries or 0) < min_n:
+                continue
+            rated += 1
+            if (cal.accuracy or 0.0) < min_acc:
+                low.append({"angle": name, "accuracy": round(cal.accuracy, 3),
+                            "n_entries": cal.n_entries})
+    except Exception as exc:
+        LOG.debug("angle trust overlay unavailable, treating all unrated: %s", exc)
+        return {"low_trust": [], "rated": 0, "unrated": len(angle_names),
+                "min_accuracy": min_acc, "min_entries": min_n}
+    return {"low_trust": low, "rated": rated,
+            "unrated": len(angle_names) - rated,
+            "min_accuracy": min_acc, "min_entries": min_n}
 
 
 def run_team_for_ticker(service: Any, team_name: str, task: str, *, session_id: str) -> dict[str, Any]:
@@ -111,13 +166,31 @@ def make_summary_agent_fn(service: Any):
         angles_tool._services_config = service.config.services
         angles_data = json.loads(angles_tool.execute(ticker=ticker))
 
+        trust = _angle_trust(list((angles_data.get("angles") or {}).keys()))
+        low_names = [e["angle"] for e in trust["low_trust"]]
+        task = f"Ticker: {ticker}"
+        if low_names:
+            # Prioritize, don't filter: the LLM summary must weight
+            # low-trust angles accordingly, with their track records stated.
+            details = ", ".join(
+                f"{e['angle']} (acc {e['accuracy']}, n={e['n_entries']})"
+                for e in trust["low_trust"]
+            )
+            task += (f". Angle trust overlay: LOW-TRUST (accuracy < "
+                     f"{trust['min_accuracy']}, rated on >={trust['min_entries']} "
+                     f"closed attributions): {details}. Weight these angles "
+                     f"accordingly and state their track records in the summary.")
+
         result = run_team_for_ticker(
-            service, "screener", f"Ticker: {ticker}", session_id=f"summary-refresh-{ticker}",
+            service, "screener", task, session_id=f"summary-refresh-{ticker}",
         )
         summary_text = result.get("content", "") if result.get("status") == "completed" else ""
         return summary_text, {
             "angles_with_data": angles_data.get("angles_with_data", 0),
             "angle_count": angles_data.get("angle_count", 0),
+            "low_trust_angles": low_names,
+            "rated_angles": trust["rated"],
+            "unrated_angles": trust["unrated"],
         }
 
     return _fn
@@ -147,6 +220,23 @@ def discover_new_tickers(seed_tickers: list[str], ticker_summary_store: Any) -> 
     return new
 
 
+def _map_parallel(fn: Callable[[Any], Any], items: list[Any], *, max_workers: int) -> list[Any]:
+    """Apply fn to each item, concurrently when it pays to, returning
+    results in INPUT order (ThreadPoolExecutor.map preserves order even
+    though completion does not). Serial when there is nothing to gain
+    (0/1 item) or when the pool would be size 1. Each fn is expected to
+    do its own per-item error handling -- this only provides concurrency,
+    it changes no caller's failure semantics. Inefficiency B."""
+    try:
+        workers = int(max_workers)
+    except (TypeError, ValueError):
+        workers = 1
+    if len(items) <= 1 or workers <= 1:
+        return [fn(item) for item in items]
+    with ThreadPoolExecutor(max_workers=min(workers, len(items))) as pool:
+        return list(pool.map(fn, items))
+
+
 def bootstrap_new_tickers(service: Any, seed_tickers: list[str]) -> list[str]:
     """Runs the screener team once per not-yet-seen seed ticker -- the
     one-time cold start `write_ticker_summaries` (via `team.py`'s result
@@ -157,17 +247,23 @@ def bootstrap_new_tickers(service: Any, seed_tickers: list[str]) -> list[str]:
     step): one ticker's screener run failing must not stop the others, and
     a ticker that fails here is simply retried on the next cycle (it's
     still "new" until a summary actually lands), not tracked as a
-    permanent failure."""
+    permanent failure. Tickers run through a bounded pool (`summary_parallelism`,
+    default 3) since each is an independent ~30s LLM team call -- this is
+    the cold-start wall-clock win (inefficiency B)."""
     new_tickers = discover_new_tickers(seed_tickers, service.ticker_summary_store)
-    bootstrapped: list[str] = []
-    for ticker in new_tickers:
+    max_workers = getattr(service.config, "summary_parallelism", 3)
+
+    def _one(ticker: str) -> str | None:
         try:
             run_team_for_ticker(
                 service, "screener", f"Ticker: {ticker}", session_id=f"watchlist-bootstrap-{ticker}",
             )
-            bootstrapped.append(ticker)
+            return ticker
         except Exception:
             LOG.exception("watchlist bootstrap failed for %s, continuing", ticker)
+            return None
+
+    bootstrapped = [r for r in _map_parallel(_one, new_tickers, max_workers=max_workers) if r]
     return bootstrapped
 
 

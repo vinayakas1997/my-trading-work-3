@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -213,6 +214,18 @@ class LlmClient:
                     is_transient = status is not None and (status == 429 or status >= 500)
                     if is_transient and attempt < self._config.retry_max - 1:
                         delay = (2 ** attempt) * 1.0
+                        if status == 429:
+                            # Honor Retry-After + jitter (see client_async.py):
+                            # fixed steps herd parallel workers into lockstep.
+                            try:
+                                resp = getattr(e, "response", None)
+                                retry_after = float(
+                                    (resp.headers.get("retry-after") or "").strip() or 0
+                                ) if resp is not None else 0
+                                delay = min(max(delay, retry_after), 120.0)
+                            except (ValueError, AttributeError):
+                                pass
+                            delay += random.uniform(0, 1.0)
                         LOG.warning("LLM HTTP %d on %s, retrying in %.1fs (attempt %d/%d)",
                                     status, candidate_base, delay, attempt + 1, self._config.retry_max)
                         time.sleep(delay)

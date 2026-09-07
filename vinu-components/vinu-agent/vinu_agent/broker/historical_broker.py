@@ -254,9 +254,15 @@ class HistoricalFillBroker:
             y, m, dd = (int(x) for x in d.split("-"))
             from_ts = int(datetime(y, m, dd, tzinfo=timezone.utc).timestamp())
             try:
+                try:
+                    from vinu_infra.auth import internal_auth_headers as _iah
+                    _h = _iah() or None
+                except Exception:
+                    _h = None
                 resp = httpx.get(
                     f"{self._stock_api_url}/stock/candles/{symbol}",
                     params={"interval": "1D", "from": from_ts, "to": from_ts + 86400},
+                    headers=_h,
                     timeout=30,
                 )
                 resp.raise_for_status()

@@ -17,6 +17,14 @@ from vinu_research.models import BacktestMetrics, BacktestResult, HypothesisStat
 LOG = logging.getLogger(__name__)
 
 
+class InfrastructureError(RuntimeError):
+    """The backtest (or its data) is unavailable for environment reasons:
+    simulator unreachable/rejecting, auth failure, or empty market data.
+    NOT a strategy-design failure. Callers (LLM team loops, sweep engine)
+    must STOP and report instead of burning iterations on new recipes —
+    another recipe will hit the same wall."""
+
+
 class ResearchTools:
     def __init__(self, config: ResearchConfig | None = None):
         self._config = config or load_config()
@@ -86,11 +94,40 @@ class ResearchTools:
                 "/simulate/custom",
                 json=body,
             )
+        except httpx.HTTPStatusError as exc:
+            # Surface the simulator's own reason (e.g. its 422 detail
+            # "No weight data generated — all symbols returned empty")
+            # instead of a generic "unreachable or rejected".
+            status = exc.response.status_code if exc.response is not None else "?"
+            detail = ""
+            try:
+                payload = exc.response.json() if exc.response is not None else {}
+                detail = str(payload.get("detail", payload))[:500]
+            except Exception:
+                detail = (exc.response.text[:500] if exc.response is not None else "")
+            if status in (401, 403) or status == 422 or (isinstance(status, int) and status >= 500):
+                raise InfrastructureError(
+                    f"INFRASTRUCTURE FAILURE, not a strategy problem: simulator "
+                    f"returned HTTP {status} ({detail}). Do NOT retry with another "
+                    f"recipe — STOP this run and report the blocker."
+                ) from exc
+            raise RuntimeError(f"Backtest failed: HTTP {status} ({detail})") from exc
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            raise InfrastructureError(
+                f"INFRASTRUCTURE FAILURE, not a strategy problem: simulator "
+                f"unreachable ({exc}). Do NOT retry with another recipe — "
+                f"STOP this run and report the blocker."
+            ) from exc
+        except InfrastructureError:
+            raise
         except Exception as exc:
             raise RuntimeError(f"Backtest failed: {exc}") from exc
         if data is None:
-            LOG.warning("run_backtest returned None (simulator down)")
-            return None
+            raise InfrastructureError(
+                "INFRASTRUCTURE FAILURE, not a strategy problem: simulator "
+                "returned no result (service down or circuit open). Do NOT "
+                "retry with another recipe — STOP this run and report the blocker."
+            )
         required = ["run_id", "strategy_name", "metrics", "trade_count", "equity_points"]
         missing = [k for k in required if k not in data]
         if missing:

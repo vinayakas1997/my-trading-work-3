@@ -63,6 +63,14 @@ class AgentConfig:
     # default, same category as every other un-pinned threshold across
     # this build.
     planner_worker_interval_sec: int = 1800
+    # Stage 1 (Summary Agent) per-ticker parallelism -- bootstrap + the
+    # planner's stale-summary refresh run one screener team per ticker.
+    # The tickers are fully independent (thread-local SQLite/WAL,
+    # thread-safe openai SDK client), so a small pool turns K*~30s into
+    # ~30s. Bounded and default-conservative (3) because free-tier LLM
+    # providers rate-limit (20 req/min) -- too many workers just trades
+    # latency for 429 retries. Inefficiency B.
+    summary_parallelism: int = 3
     # Significance Triage delivery (Phase 7, Phase 9 scheduler-wiring) --
     # reuses TELEGRAM_TOKEN/DISCORD_TOKEN, the same env var names
     # `cli.py`'s existing `channel list` command already reads. Empty by
@@ -119,7 +127,7 @@ class AgentConfig:
     # "skip, don't guess" contract as every other optional gate.
     watchlist_seed_tickers: list = field(default_factory=list)
     services: dict = field(default_factory=lambda: {
-        "vinu_simulator": os.environ.get("VINU_SIMULATOR_API_URL", "http://localhost:8085"),
+        "vinu_simulator": os.environ.get("VINU_SIMULATOR_API_URL", "http://localhost:8084"),
         "vinu_tools": os.environ.get("VINU_TOOLS_API_URL", "http://localhost:8082"),
         "vinu_news": os.environ.get("VINU_NEWS_API_URL", "http://localhost:8080"),
         "vinu_initial_analysis": os.environ.get("VINU_INITIAL_ANALYSIS_API_URL", "http://localhost:8083"),
@@ -218,6 +226,7 @@ def load_config() -> AgentConfig:
         memory_dir=os.environ.get("VINU_AGENT_MEMORY_DIR", str(data_root / "memory")),
         skill_audit_worker_interval_sec=int(os.environ.get("VINU_AGENT_SKILL_AUDIT_INTERVAL", "3600")),
         planner_worker_interval_sec=int(os.environ.get("VINU_AGENT_PLANNER_INTERVAL", "1800")),
+        summary_parallelism=int(os.environ.get("VINU_AGENT_SUMMARY_PARALLELISM", "3")),
         telegram_token=load_secret("telegram_token", "TELEGRAM_TOKEN") or "",
         telegram_admin_chat_id=os.environ.get("VINU_AGENT_TELEGRAM_ADMIN_CHAT_ID", ""),
         discord_token=load_secret("discord_token", "DISCORD_TOKEN") or "",

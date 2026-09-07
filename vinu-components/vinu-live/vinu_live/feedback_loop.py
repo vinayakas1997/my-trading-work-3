@@ -43,7 +43,12 @@ class FeedbackLoopWorker:
     def __init__(self, config: LiveConfig | None = None, book: BookBackend | None = None) -> None:
         self._config = config or load_config()
         self._book = book or init_book(str(self._config.data_root / "trade_plan_book.db"))
-        self._http = httpx.AsyncClient(timeout=30.0)
+        try:
+            from vinu_infra.auth import internal_auth_headers
+            _headers = internal_auth_headers() or None
+        except Exception:
+            _headers = None
+        self._http = httpx.AsyncClient(timeout=30.0, headers=_headers)
 
     async def close(self) -> None:
         await self._http.aclose()

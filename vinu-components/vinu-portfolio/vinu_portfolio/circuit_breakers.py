@@ -62,9 +62,15 @@ class PortfolioDrawdownMonitor:
     def _halt_trading(self, drawdown: float) -> None:
         reason = f"portfolio drawdown {drawdown:.1%} exceeds threshold {self._threshold:.1%}"
         try:
+            try:
+                from vinu_infra.auth import internal_auth_headers
+                _headers = internal_auth_headers() or None
+            except Exception:
+                _headers = None
             resp = httpx.post(
                 f"{self._agent_api_url}/agent/broker/halt",
                 json={"reason": reason},
+                headers=_headers,
                 timeout=10.0,
             )
             resp.raise_for_status()

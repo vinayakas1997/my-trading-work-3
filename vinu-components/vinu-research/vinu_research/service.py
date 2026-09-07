@@ -48,7 +48,12 @@ class ResearchService:
             self._config.data_root / "strategy_store.db"
         )
         self._owns_strategy_store = strategy_store is None
-        self._http = httpx.AsyncClient(timeout=5.0)
+        try:
+            from vinu_infra.auth import internal_auth_headers
+            _headers = internal_auth_headers() or None
+        except Exception:
+            _headers = None
+        self._http = httpx.AsyncClient(timeout=5.0, headers=_headers)
 
     @property
     def strategy_store(self) -> SqliteStrategyStore:

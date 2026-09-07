@@ -42,8 +42,13 @@ class SymbolResearchStateTool(BaseTool):
             LOG.debug("check_symbol_research_state: in-process read failed, falling back to HTTP: %s", exc)
 
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         url = self._services_config.get("vinu_research", "http://localhost:8087")
-        resp = httpx.get(f"{url}/research/symbols/{symbol}/state", timeout=30)
+        resp = httpx.get(f"{url}/research/symbols/{symbol}/state", headers=_h, timeout=30)
         resp.raise_for_status()
         return resp.text

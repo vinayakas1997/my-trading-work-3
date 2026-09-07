@@ -42,7 +42,12 @@ _REGIME_TO_TAGS: dict[str, set[str]] = {
 class PortfolioService:
     def __init__(self, config: PortfolioConfig | None = None) -> None:
         self._config = config or load_config()
-        self._http = httpx.AsyncClient(timeout=10.0)
+        try:
+            from vinu_infra.auth import internal_auth_headers
+            _headers = internal_auth_headers() or None
+        except Exception:
+            _headers = None
+        self._http = httpx.AsyncClient(timeout=10.0, headers=_headers)
         self._tags_cache: dict[str, Any] | None = None
         # J: per-cycle returns cache to avoid double fetch of same equity series
         # (build_portfolio + allocate_risk_parity both called _build_returns_df)

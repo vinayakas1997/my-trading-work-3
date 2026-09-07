@@ -75,8 +75,13 @@ class BacktestTool(BaseTool):
 
     def execute(self, **kwargs) -> str:
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
         simulator_url = self._services_config.get(
-            "vinu_simulator", "http://localhost:8085"
+            "vinu_simulator", "http://quant-core-api:8084"
         )
         payload = {
             "strategy_code": kwargs["strategy_code"],
@@ -97,10 +102,17 @@ class BacktestTool(BaseTool):
             # on one historical path only.
             "run_validation": True,
         }
-        resp = httpx.post(
-            f"{simulator_url}/simulator/simulate/custom",
-            json=payload,
-            timeout=120,
-        )
-        resp.raise_for_status()
+        try:
+            resp = httpx.post(
+                f"{simulator_url}/simulator/simulate/custom",
+                json=payload,
+                headers=_h,
+                timeout=120,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # Surface the simulator's own reason (e.g. its 422 detail
+            # "No weight data generated") instead of a bare status code.
+            body = (exc.response.text[:500] if exc.response is not None else "")
+            raise RuntimeError(f"Backtest failed: HTTP {exc.response.status_code} ({body})") from exc
         return resp.text

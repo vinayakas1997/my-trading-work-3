@@ -18,8 +18,13 @@ class ListStrategiesTool(BaseTool):
 
     def execute(self, **kwargs) -> str:
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
         url = self._services_config.get("vinu_strategy", "http://localhost:8084")
-        resp = httpx.get(f"{url}/strategy/strategies", timeout=30)
+        resp = httpx.get(f"{url}/strategy/strategies", headers=_h, timeout=30)
         resp.raise_for_status()
         strategies = resp.json()
         return json.dumps({"status": "ok", "count": len(strategies), "strategies": strategies})

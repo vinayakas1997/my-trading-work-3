@@ -33,6 +33,11 @@ class CorrelationTool(BaseTool):
 
     def execute(self, **kwargs) -> str:
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
         url = self._services_config.get("vinu_initial_analysis", "http://localhost:8083")
         start_epoch = _date_to_epoch(kwargs["start_date"])
         end_epoch = _date_to_epoch(kwargs["end_date"])
@@ -45,6 +50,7 @@ class CorrelationTool(BaseTool):
         resp = httpx.get(
             f"{url}/analysis/correlation/{kwargs['symbol'].upper()}",
             params={"from_ts": start_epoch, "to_ts": end_epoch},
+            headers=_h,
             timeout=60,
         )
         resp.raise_for_status()

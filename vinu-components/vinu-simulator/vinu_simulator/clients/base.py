@@ -24,7 +24,12 @@ class BaseClient:
 
     def _client(self) -> httpx.Client:
         if not hasattr(self._local, "client"):
-            self._local.client = httpx.Client(timeout=self._timeout)
+            try:
+                from vinu_infra.auth import internal_auth_headers
+                headers = internal_auth_headers() or None
+            except Exception:
+                headers = None
+            self._local.client = httpx.Client(timeout=self._timeout, headers=headers)
         return self._local.client
 
     def _url(self, path: str) -> str:

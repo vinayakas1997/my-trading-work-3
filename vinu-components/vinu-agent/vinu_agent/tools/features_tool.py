@@ -40,6 +40,11 @@ class FeaturesTool(BaseTool):
 
     def execute(self, **kwargs) -> str:
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
         url = self._services_config.get("vinu_tools", "http://localhost:8082")
         symbol = kwargs["symbol"].upper()
         preset = kwargs.get("preset", "").strip()
@@ -65,6 +70,7 @@ class FeaturesTool(BaseTool):
         resp = httpx.post(
             f"{url}/features/requests",
             json=payload,
+            headers=_h,
             timeout=60,
         )
         resp.raise_for_status()
@@ -76,6 +82,7 @@ class FeaturesTool(BaseTool):
             )
         data_resp = httpx.get(
             f"{url}/features/requests/{request_id}/data",
+            headers=_h,
             timeout=60,
         )
         data_resp.raise_for_status()

@@ -34,6 +34,11 @@ class NewsTool(BaseTool):
 
     def execute(self, **kwargs) -> str:
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
         url = self._services_config.get("vinu_news", "http://localhost:8080")
         to_epoch = _date_to_epoch(kwargs.get("end_date", "")) if kwargs.get("end_date") else None
         clamped = False
@@ -56,6 +61,7 @@ class NewsTool(BaseTool):
         resp = httpx.get(
             f"{url}/news/ticker/{kwargs['symbol'].upper()}",
             params=params,
+            headers=_h,
             timeout=30,
         )
         resp.raise_for_status()

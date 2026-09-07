@@ -61,9 +61,14 @@ def get_trade_plan_calibration(
 
     try:
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         resp = httpx.get(
-            f"{research_api_url}/research/trade-plan/{artifact_id}/calibration", timeout=15,
+            f"{research_api_url}/research/trade-plan/{artifact_id}/calibration", headers=_h, timeout=15,
         )
         resp.raise_for_status()
         data = resp.json()

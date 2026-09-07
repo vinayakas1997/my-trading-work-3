@@ -29,6 +29,11 @@ class BacktestValidationTool(BaseTool):
 
     def execute(self, **kwargs) -> str:
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         url = self._services_config.get("vinu_simulator", "http://localhost:8085")
         # The /metrics sub-route strips the validation block, so this hits the
@@ -36,6 +41,7 @@ class BacktestValidationTool(BaseTool):
         # keeps this tool's output small without needing a new simulator route.
         resp = httpx.get(
             f"{url}/simulator/results/{kwargs['run_id']}",
+            headers=_h,
             timeout=30,
         )
         resp.raise_for_status()

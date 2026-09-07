@@ -140,13 +140,27 @@ class AngleRunner:
             t0 = time.perf_counter()
             try:
                 with sync_timer(f"angle.{angle['name']}"):
-                    count = self._run_angle(
+                    count, skipped_tfs = self._run_angle(
                         symbol, angle, from_ts, to_ts, run_id=angle_run_id, tier=tier, time_format=time_format
                     )
-                results[angle["name"]] = {
-                    "status": "completed",
-                    "row_count": count,
-                }
+                if count == 0 and skipped_tfs:
+                    # Nothing computed because every timeframe already has a
+                    # run for this window -- a healthy cache hit, NOT an
+                    # empty result. Reported distinctly so callers (and
+                    # operators) never mistake "already done" for "no data".
+                    results[angle["name"]] = {
+                        "status": "skipped_existing",
+                        "row_count": 0,
+                        "skipped_timeframes": skipped_tfs,
+                    }
+                else:
+                    entry: dict[str, Any] = {
+                        "status": "completed",
+                        "row_count": count,
+                    }
+                    if skipped_tfs:
+                        entry["skipped_timeframes"] = skipped_tfs
+                    results[angle["name"]] = entry
             except Exception as exc:
                 LOG.exception("Angle %s failed for %s", angle["name"], symbol)
                 duration = time.perf_counter() - t0
@@ -182,16 +196,16 @@ class AngleRunner:
         run_id: str | None = None,
         tier: str = "tier2",
         time_format: str | None = None,
-    ) -> int:
+    ) -> tuple[int, list[str]]:
         """Run an angle for each of its time_formats (or just `time_format`,
         if given). Each time_format gets its OWN storage write and its OWN
         RunLog row, under its own real granularity -- previously every
         declared format got combined into one DataFrame and written/recorded
         under a single default "1D" bucket regardless of what was actually
         computed, so a later fetch scoped to (say) "1H" found nothing even
-        though 1H rows existed, mixed in under "1D". Returns total row count
-        across every time_format actually run (skipped/empty ones excluded).
-        """
+        though 1H rows existed, mixed in under "1D". Returns (total row count
+        across every time_format actually run (skipped/empty ones excluded),
+        skipped time_formats that already had a run for this window)."""
         module = self._import_compute(angle["name"])
         if module is None:
             raise ImportError(f"Could not import compute for {angle['name']}")
@@ -210,6 +224,7 @@ class AngleRunner:
         news = self._fetch_news(symbol, from_ts, to_ts)
 
         total_rows = 0
+        skipped: list[str] = []
         for tf in time_formats:
             # Existing-run check is now scoped per (symbol, angle, tf) --
             # previously this only ever checked the default "1D" granularity
@@ -219,6 +234,7 @@ class AngleRunner:
             # is stored under its own real granularity.
             if self._run_log.has_existing_run(symbol, angle["name"], from_ts, to_ts, granularity=tf, tier=tier):
                 LOG.info("Skipping %s for %s at %s — existing run found", angle["name"], symbol, tf)
+                skipped.append(tf)
                 continue
 
             tf_t0 = time.perf_counter()
@@ -277,7 +293,7 @@ class AngleRunner:
             )
             total_rows += len(df)
 
-        return total_rows
+        return total_rows, skipped
 
     def _fetch_bars(
         self,

@@ -74,7 +74,7 @@ services:
     tmpfs:
       - /tmp
       - /home/app/.cache
-    mem_limit: 1g
+    mem_limit: 2g
     cpus: 1
     pids_limit: 256
     restart: unless-stopped
@@ -211,7 +211,7 @@ services:
       - /tmp
       - /home/app/.cache
     mem_limit: 1g
-    cpus: 1
+    cpus: 4
     pids_limit: 256
     restart: unless-stopped
     healthcheck:
@@ -236,12 +236,18 @@ services:
       context: .
       dockerfile: vinu-portfolio/Dockerfile
     env_file: .env
+    environment:
+      # Read the SAME shared strategy store the agent writes (stage-7
+      # risk-parity weights need the real ACTIVE + PEND batch; see research-api
+      # for why this is unified).
+      VINU_RESEARCH_DATA_ROOT: /research-data
     secrets:
       - vinu_api_key
     ports:
       - "127.0.0.1:8090:8090"
     volumes:
       - ./data/portfolio:/data
+      - ./data/research:/research-data
     cap_drop:
       - ALL
     cap_add:
@@ -278,12 +284,21 @@ services:
       context: .
       dockerfile: vinu-research/Dockerfile
     env_file: .env
+    environment:
+      # Single shared strategy store: agent (stages 1->7, in-process writes
+      # BENCHING/PEND/ACTIVE) and portfolio (stage-7 weights) resolve their
+      # VINU_RESEARCH_DATA_ROOT to this same host dir, so live-api's
+      # shadow/monitor workers (stages 8->9, which reach it over research-api
+      # HTTP) see the very same artifacts the agent promoted. /data stays
+      # the research service's own root for everything else.
+      VINU_RESEARCH_DATA_ROOT: /research-data
     secrets:
       - vinu_llm_api_key
     ports:
       - "127.0.0.1:8087:8087"
     volumes:
       - ./data/research:/data
+      - ./data/research:/research-data
     cap_drop:
       - ALL
     cap_add:
@@ -374,6 +389,15 @@ services:
     # background loop, same pattern as live-api below. A `command:` here
     # would just be appended as unused args after the entrypoint script.
     env_file: .env
+    environment:
+      # The agent's strategy lifecycle (writer->BENCHING, risk_gatekeeper->PEND,
+      # capital_allocator->ACTIVE via research_link.get_strategy_store()) MUST
+      # resolve to the same strategy_store.db research-api serves at
+      # /research/artifacts (which live-api's shadow->ACTIVE + monitor read).
+      # Without this, /data gave each service a private store and a stage-7
+      # ACTIVE was invisible to stage 8/9. Agent's own memory/ledger stay on
+      # /data (= data/agent); only the research/strategy root is unified here.
+      VINU_RESEARCH_DATA_ROOT: /research-data
     secrets:
       - vinu_api_key
       - alpaca_api_key
@@ -385,6 +409,7 @@ services:
       - "127.0.0.1:8086:8086"
     volumes:
       - ./data/agent:/data
+      - ./data/research:/research-data
       - ./vinu-agent/skills:/app/vinu-agent/skills:ro
     cap_drop:
       - ALL

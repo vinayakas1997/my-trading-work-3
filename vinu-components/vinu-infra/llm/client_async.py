@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -213,6 +214,19 @@ class AsyncLlmClient:
                     status = e.response.status_code
                     if (status == 429 or status >= 500) and attempt < self._config.retry_max - 1:
                         delay = (2 ** attempt) * 1.0
+                        if status == 429:
+                            # Honor the provider's asked wait + jitter: fixed
+                            # 1/2/4s steps synchronize parallel workers into
+                            # lockstep retries (thundering herd) and ignore
+                            # Retry-After, turning one 429 into a burst.
+                            try:
+                                retry_after = float(
+                                    (e.response.headers.get("retry-after") or "").strip() or 0
+                                )
+                                delay = min(max(delay, retry_after), 120.0)
+                            except (ValueError, AttributeError):
+                                pass
+                            delay += random.uniform(0, 1.0)
                         LOG.warning("LLM HTTP %d on %s, retrying in %.1fs (attempt %d/%d)",
                                     status, candidate_base, delay, attempt + 1, self._config.retry_max)
                         await asyncio.sleep(delay)

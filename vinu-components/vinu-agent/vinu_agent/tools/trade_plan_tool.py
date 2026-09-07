@@ -99,7 +99,7 @@ class TradePlanTool(BaseTool):
         symbol = symbol.upper()
         initial_analysis_url = self._services_config.get("vinu_initial_analysis", "http://localhost:8083")
         tools_url = self._services_config.get("vinu_tools", "http://localhost:8082")
-        simulator_url = self._services_config.get("vinu_simulator", "http://localhost:8085")
+        simulator_url = self._services_config.get("vinu_simulator", "http://localhost:8084")
         stock_price_url = self._services_config.get("vinu_stock_price", "http://localhost:8081")
         news_url = self._services_config.get("vinu_news", "http://localhost:8080")
         research_url = self._services_config.get("vinu_research", "http://localhost:8087")

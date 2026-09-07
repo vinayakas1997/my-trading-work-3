@@ -45,9 +45,15 @@ class HttpRunLogReader:
 
     def latest_run_id(self, ticker: str) -> str | None:
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         resp = httpx.get(
             f"{self._base_url}/v1/stage1/vinu-initial-analysis/latest-run/{ticker.upper()}",
+            headers=_h,
             timeout=self._timeout,
         )
         if resp.status_code == 404:
@@ -123,18 +129,38 @@ class RunLogTrigger:
             return result
 
         summary_text, meta = summary_agent_fn(ticker)
+        angles_with_data = int(meta.get("angles_with_data", 0))
+        angle_count = int(meta.get("angle_count", 0))
+        low_trust = list(meta.get("low_trust_angles") or [])
         self._summaries.upsert_summary(
             ticker,
             summary_text,
-            angles_with_data=int(meta.get("angles_with_data", 0)),
-            angle_count=int(meta.get("angle_count", 0)),
+            angles_with_data=angles_with_data,
+            angle_count=angle_count,
             source_run_id=result.new_run_id or "",
         )
+        coverage_note = ""
+        if angle_count and angles_with_data == 0:
+            # A summary with zero grounded angles reads as success
+            # downstream (planner triages it like any other). Flag it
+            # loudly instead: fail-open for the pipeline, fail-loud in
+            # the audit trail.
+            coverage_note = " WARNING: 0 angles with data — thin/failed upstream fetch, treat downstream verdicts as provisional"
+            LOG.warning(
+                "summary for %s has 0/%d angles with data (run %s)%s",
+                ticker, angle_count, result.new_run_id, coverage_note,
+            )
+        trust_note = ""
+        if low_trust:
+            # Calibration Tracker overlay (decision 08): low-trust angles
+            # named explicitly so future triage/research can see what the
+            # summary was told to down-weight.
+            trust_note = f" low-trust angles: {','.join(low_trust)}"
         self._ledger.add_event(
             ticker=ticker,
             stage="summary_agent",
             event_type="summary_refreshed",
-            text=f"summary refreshed from run {result.new_run_id}",
+            text=f"summary refreshed from run {result.new_run_id} ({angles_with_data}/{angle_count} angles with data){coverage_note}{trust_note}",
             ref_id=result.new_run_id or "",
             source="watchlist",
         )

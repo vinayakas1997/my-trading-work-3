@@ -34,7 +34,7 @@ class TestListPortfolioStrategiesTool:
         with patch("httpx.get", return_value=resp) as mock_get:
             _tool().execute()
 
-        mock_get.assert_called_once_with("http://vinu-portfolio:8090/portfolio/strategies", timeout=10.0)
+        mock_get.assert_called_once_with("http://vinu-portfolio:8090/portfolio/strategies", headers=None, timeout=10.0)
 
     def test_default_url_used_when_not_configured(self) -> None:
         tool = ListPortfolioStrategiesTool()  # _services_config left default {}
@@ -44,7 +44,7 @@ class TestListPortfolioStrategiesTool:
         with patch("httpx.get", return_value=resp) as mock_get:
             tool.execute()
 
-        mock_get.assert_called_once_with("http://localhost:8090/portfolio/strategies", timeout=10.0)
+        mock_get.assert_called_once_with("http://localhost:8090/portfolio/strategies", headers=None, timeout=10.0)
 
     def test_unreachable_portfolio_fails_open_not_error(self) -> None:
         with patch("httpx.get", side_effect=ConnectionError("down")):

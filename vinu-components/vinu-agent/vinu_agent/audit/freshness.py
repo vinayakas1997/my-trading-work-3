@@ -60,11 +60,16 @@ class FreshnessChecker:
         now = datetime.now(timezone.utc)
 
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         for symbol in sorted(set(s for s in symbols if s)):
             try:
                 resp = httpx.get(
-                    f"{base_url}/analysis/angle/{angle}/{symbol}", timeout=5.0,
+                    f"{base_url}/analysis/angle/{angle}/{symbol}", headers=_h, timeout=5.0,
                 )
                 if resp.status_code != 200:
                     continue

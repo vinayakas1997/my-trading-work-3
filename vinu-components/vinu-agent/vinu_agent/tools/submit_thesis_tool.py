@@ -54,9 +54,14 @@ class _InProcessHypothesisReader:
             LOG.debug("THGATE: in-process hypothesis read failed for %s, falling back to HTTP", ticker, exc_info=True)
 
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         resp = httpx.get(
-            f"{self._base_url}/research/hypotheses", params={"symbol": ticker}, timeout=self._timeout,
+            f"{self._base_url}/research/hypotheses", params={"symbol": ticker}, headers=_h, timeout=self._timeout,
         )
         resp.raise_for_status()
         return resp.json().get("hypotheses", [])
@@ -200,10 +205,16 @@ class SubmitThesisTool(BaseTool):
 
         try:
             import httpx
+            try:
+                from vinu_infra.auth import internal_auth_headers as _iah
+                _h = _iah() or None
+            except Exception:
+                _h = None
 
             resp = httpx.post(
                 f"{research_api_url}/research/hypotheses/human",
                 json={"title": title, "thesis": thesis, "universe": [ticker]},
+                headers=_h,
                 timeout=15,
             )
             resp.raise_for_status()

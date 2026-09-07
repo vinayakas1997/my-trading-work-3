@@ -123,6 +123,20 @@ def build_candidate_code(
         if recipe not in BUILTIN_RECIPES:
             known = ", ".join(sorted(BUILTIN_RECIPES))
             raise ValueError(f"Unknown recipe '{recipe}'. Known recipes: {known}")
+        # Fail loud on unknown param names: generate_strategy() silently
+        # drops them (_sanitize_params) and runs template defaults, so a
+        # typo like fast/slow instead of fast_period/slow_period would
+        # backtest something other than what was requested with no error.
+        from vinu_research.generator import list_recipe_details
+        spec_params = next(
+            (d["params"] for d in list_recipe_details() if d["key"] == recipe), {}
+        )
+        unknown = sorted(set(params or {}) - set(spec_params) - {"allocation"})
+        if unknown:
+            raise ValueError(
+                f"Unknown params for recipe '{recipe}': {unknown}. "
+                f"Known params: {sorted(spec_params)}"
+            )
         code = generate_strategy(recipe=recipe, params=params)
         return code, dict(params or {})
 

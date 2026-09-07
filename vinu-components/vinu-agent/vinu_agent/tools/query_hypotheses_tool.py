@@ -57,6 +57,11 @@ class QueryHypothesesTool(BaseTool):
             LOG.debug("query_hypotheses: in-process read failed, falling back to HTTP: %s", exc)
 
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         url = self._services_config.get("vinu_research", "http://localhost:8087")
         params = {}
@@ -65,6 +70,6 @@ class QueryHypothesesTool(BaseTool):
         if status:
             params["status"] = status
 
-        resp = httpx.get(f"{url}/research/hypotheses", params=params, timeout=30)
+        resp = httpx.get(f"{url}/research/hypotheses", params=params, headers=_h, timeout=30)
         resp.raise_for_status()
         return resp.text

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
+import threading
+from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from vinu_initial_analysis.pnl_attribution_ingest import ingest_closed_positions
@@ -13,6 +15,13 @@ from vinu_initial_analysis.service import InitialAnalysisService
 
 router = APIRouter()
 get_service: Any = None
+
+# Background jobs for async /run (same pattern as the v1 trigger route):
+# job_id -> {"status", "ticker", "result"|"error", "finished_at"}.
+# Bounded so ad-hoc triggers can't grow memory without limit.
+_run_jobs: dict[str, dict[str, Any]] = {}
+_run_jobs_lock = threading.Lock()
+_RUN_JOBS_MAX = 50
 
 
 def _get_svc() -> InitialAnalysisService:
@@ -103,15 +112,55 @@ def get_angle(angle_name: str, ticker: str):
 @router.post("/run/{ticker}")
 def run_analysis(
     ticker: str,
+    response: Response,
     from_ts: int | None = Query(None),
     to_ts: int | None = Query(None),
     angle_names: str | None = Query(
         None, description="Comma-separated angle names to run; omit to run all angles",
     ),
+    background: bool = Query(
+        False,
+        description="Return 202 immediately with a job_id and compute in the"
+        " background (poll GET /run/jobs/{job_id}); aborting the client can"
+        " no longer orphan your visibility into the run.",
+    ),
 ):
     svc = _get_svc()
     names = [n.strip() for n in angle_names.split(",") if n.strip()] if angle_names else None
-    return svc.run_analysis(ticker.upper(), from_ts, to_ts, angle_names=names)
+    if not background:
+        return svc.run_analysis(ticker.upper(), from_ts, to_ts, angle_names=names)
+    job_id = uuid4().hex[:12]
+    with _run_jobs_lock:
+        while len(_run_jobs) >= _RUN_JOBS_MAX:
+            _run_jobs.pop(next(iter(_run_jobs)))
+        _run_jobs[job_id] = {"status": "running", "ticker": ticker.upper(),
+                             "result": None, "error": None, "finished_at": None}
+
+    def _run() -> None:
+        try:
+            result = svc.run_analysis(ticker.upper(), from_ts, to_ts, angle_names=names)
+            with _run_jobs_lock:
+                _run_jobs[job_id] = {"status": "done", "ticker": ticker.upper(),
+                                     "result": result, "error": None,
+                                     "finished_at": datetime.now(timezone.utc).isoformat()}
+        except Exception as exc:
+            with _run_jobs_lock:
+                _run_jobs[job_id] = {"status": "failed", "ticker": ticker.upper(),
+                                     "result": None, "error": str(exc),
+                                     "finished_at": datetime.now(timezone.utc).isoformat()}
+
+    threading.Thread(target=_run, daemon=True).start()
+    response.status_code = 202
+    return {"job_id": job_id, "status": "running", "ticker": ticker.upper()}
+
+
+@router.get("/run/jobs/{job_id}")
+def run_job_status(job_id: str):
+    with _run_jobs_lock:
+        job = _run_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Unknown run job '{job_id}'")
+    return {"job_id": job_id, **job}
 
 
 class RecordPnlAttributionRequest(BaseModel):

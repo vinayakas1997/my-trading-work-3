@@ -110,6 +110,11 @@ class RunParameterSweepTool(BaseTool):
             LOG.debug("run_parameter_sweep: in-process run failed, falling back to HTTP: %s", exc)
 
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         url = self._services_config.get("vinu_research", "http://localhost:8087")
         payload = {
@@ -129,7 +134,7 @@ class RunParameterSweepTool(BaseTool):
         if kwargs.get("initial_capital") is not None:
             payload["initial_capital"] = kwargs["initial_capital"]
 
-        resp = httpx.post(f"{url}/research/sweep/grid", json=payload, timeout=600)
+        resp = httpx.post(f"{url}/research/sweep/grid", json=payload, headers=_h, timeout=600)
         resp.raise_for_status()
         return resp.text
 

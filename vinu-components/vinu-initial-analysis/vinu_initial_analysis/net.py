@@ -25,6 +25,15 @@ def _docker_fallback_url(url: str) -> str | None:
 
 def request(method: str, url: str, **kwargs: Any) -> requests.Response:
     kwargs.setdefault("timeout", (5, 30))
+    if "headers" not in kwargs or not kwargs["headers"]:
+        # Internal service-to-service auth: stock-api/news-api require
+        # Bearer <VINU_API_KEY> once set. net.request's only callers are
+        # this package's internal service clients, so default it here.
+        try:
+            from vinu_infra.auth import internal_auth_headers
+            kwargs["headers"] = internal_auth_headers() or None
+        except Exception:
+            pass
     delay = 1.0
     last_exc: Exception | None = None
     for attempt in range(_REATTEMPTS):

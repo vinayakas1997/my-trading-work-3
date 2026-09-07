@@ -26,7 +26,12 @@ class StockPriceClient:
     def __init__(self, base_url: str | None = None, timeout: float = 60.0) -> None:
         self.base_url = (base_url or f"{load_config().stock_api_url}/stock").rstrip("/")
         self.timeout = timeout
-        self._client = httpx.Client(timeout=self.timeout)
+        try:
+            from vinu_infra.auth import internal_auth_headers
+            headers = internal_auth_headers() or None
+        except Exception:
+            headers = None
+        self._client = httpx.Client(timeout=self.timeout, headers=headers)
 
     def __enter__(self) -> "StockPriceClient":
         return self

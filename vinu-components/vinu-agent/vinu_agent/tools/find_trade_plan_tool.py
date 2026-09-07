@@ -51,10 +51,15 @@ class FindTradePlanArtifactTool(BaseTool):
             pass
 
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         url = self._services_config.get("vinu_research", "http://localhost:8087")
         try:
-            resp = httpx.get(f"{url}/research/artifacts", params={"type_": "trade_plan"}, timeout=15)
+            resp = httpx.get(f"{url}/research/artifacts", params={"type_": "trade_plan"}, headers=_h, timeout=15)
             resp.raise_for_status()
             return resp.json()
         except Exception:

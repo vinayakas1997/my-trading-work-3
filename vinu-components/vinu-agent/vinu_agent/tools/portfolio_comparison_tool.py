@@ -9,9 +9,18 @@ from typing import Any
 
 import httpx
 
+from vinu_infra.auth import internal_auth_headers as _internal_auth_headers
+
 from ..agent.tools import BaseTool
 
 logger = logging.getLogger(__name__)
+
+
+def _h() -> dict[str, str] | None:
+    try:
+        return _internal_auth_headers() or None
+    except Exception:
+        return None
 
 
 class PortfolioComparisonTool(BaseTool):
@@ -37,7 +46,7 @@ class PortfolioComparisonTool(BaseTool):
         portfolio_api = self._services_config.get("vinu_portfolio", "http://localhost:8090")
         research_api = self._services_config.get("vinu_research", "http://localhost:8087")
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, headers=_h()) as client:
             portfolio_data = await self._fetch_portfolio(client, portfolio_api)
             artifacts = await self._fetch_artifacts(research_api)
 
@@ -76,7 +85,7 @@ class PortfolioComparisonTool(BaseTool):
             logger.debug("compare_portfolio: in-process artifact read failed, falling back to HTTP: %s", e)
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=15.0, headers=_h()) as client:
                 resp = await client.get(
                     f"{research_api_url}/artifacts",
                     params={"status": "ACTIVE,MONITORING,BENCHING"},

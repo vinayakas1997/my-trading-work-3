@@ -42,7 +42,12 @@ class StockPriceClient:
         if to_ts is not None:
             params["to"] = to_ts
         try:
-            resp = http_request("GET", url, params=params, timeout=self._timeout)
+            try:
+                from vinu_infra.auth import internal_auth_headers
+                _headers = internal_auth_headers()
+            except Exception:
+                _headers = {}
+            resp = http_request("GET", url, params=params, headers=_headers or None, timeout=self._timeout)
             resp.raise_for_status()
             body = resp.json()
             return list(body.get("data") or [])

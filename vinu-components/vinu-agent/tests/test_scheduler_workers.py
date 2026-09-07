@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import tempfile
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -15,6 +16,7 @@ import pytest
 
 from vinu_agent.agent.planner_triage_hook import PlannerTriageResult
 from vinu_agent.agent.scheduler_workers import (
+    _map_parallel,
     bootstrap_new_tickers,
     build_channel_targets,
     discover_new_tickers,
@@ -128,6 +130,51 @@ class TestBootstrapNewTickers:
 
         assert bootstrapped == ["AAPL"]
 
+    def test_parallel_bootstrap_overlaps_ticker_team_runs(self) -> None:
+        # Real int on config.summary_parallelism engages the pool (MagicMock
+        # default coerces to serial, which is what the other tests assert).
+        service = _fake_service()
+        service.config.summary_parallelism = 3
+        service.ticker_summary_store = _fake_summary_store([])
+        gate = threading.Barrier(3, timeout=5)
+
+        def _run(svc, team, task, *, session_id):
+            # Only completes if all three run concurrently -- a serial loop
+            # would hang and trip the barrier timeout.
+            gate.wait()
+            return {"status": "completed", "content": "ok"}
+
+        with patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker", side_effect=_run):
+            bootstrapped = bootstrap_new_tickers(service, ["AAPL", "MSFT", "NVDA"])
+
+        assert bootstrapped == ["AAPL", "MSFT", "NVDA"]
+
+
+class TestMapParallel:
+    def test_input_order_preserved_even_when_completion_is_not(self) -> None:
+        import time as _time
+
+        def slow_first(x):
+            if x == 0:
+                _time.sleep(0.05)
+            return x
+
+        assert _map_parallel(slow_first, [0, 1, 2], max_workers=3) == [0, 1, 2]
+
+    def test_single_item_or_worker_count_one_is_serial(self) -> None:
+        calls: list[int] = []
+
+        def fn(x):
+            calls.append(x)
+            return x * 2
+
+        assert _map_parallel(fn, [5], max_workers=8) == [10]
+        assert _map_parallel(fn, [1, 2], max_workers=1) == [2, 4]
+        assert calls == [5, 1, 2]
+
+    def test_non_numeric_worker_count_falls_back_to_serial(self) -> None:
+        assert _map_parallel(lambda x: x, [1, 2], max_workers=MagicMock()) == [1, 2]
+
 
 class TestMakeSummaryAgentFn:
     def test_returns_llm_text_and_deterministic_angle_meta(self) -> None:
@@ -142,8 +189,11 @@ class TestMakeSummaryAgentFn:
 
         assert summary_text == "AAPL summary text"
         # Deterministic, from the tool's own real counts -- never parsed
-        # out of the LLM's prose.
-        assert meta == {"angles_with_data": 5, "angle_count": 28}
+        # out of the LLM's prose. Trust overlay keys always present (here
+        # all unrated: no calibration store in test env).
+        assert meta == {"angles_with_data": 5, "angle_count": 28,
+                        "low_trust_angles": [], "rated_angles": 0,
+                        "unrated_angles": 0}
         mock_run.assert_called_once_with(service, "screener", "Ticker: AAPL", session_id="summary-refresh-AAPL")
 
     def test_incomplete_run_returns_empty_summary_not_partial_text(self) -> None:
@@ -157,7 +207,8 @@ class TestMakeSummaryAgentFn:
             summary_text, meta = fn("AAPL")
 
         assert summary_text == ""
-        assert meta == {"angles_with_data": 0, "angle_count": 28}
+        assert meta == {"angles_with_data": 0, "angle_count": 28,
+                        "low_trust_angles": [], "rated_angles": 0, "unrated_angles": 0}
 
 
 class TestMakePlannerOnYes:

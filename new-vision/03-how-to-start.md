@@ -58,6 +58,13 @@ New env knobs added 2026-09-07 (defaults already safe, no need to set unless tun
 scripts/setup-secrets.sh --check    # validates only, writes nothing
 ```
 
+Windows (PowerShell) hosts: use the equivalent script instead —
+`setup-secrets.sh` needs bash, which plain PowerShell doesn't run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/setup-secrets.ps1 -Check
+```
+
 Fix anything it reports as `MISSING ... (required)` by filling it into `.env`,
 then actually populate the files:
 
@@ -137,6 +144,17 @@ each service's prefix matches its `route_prefix` in that service's
 `server/app.py`).
 
 ## After it's running — what to actually do (updated 2026-09-07)
+
+**Predict first, then watch.** Before a test run, estimate it:
+`python3 scripts/collect-timings.py predict --tickers AAPL,MSFT,NVDA`
+(uses `test-status/timing-baselines.json` + worker cadences from `.env`;
+today's truth: ~7 min compute + ~112 min cadence waits ≈ 120 min for 3 tickers).
+During the run, track it:
+`python3 scripts/collect-timings.py collect --run-id <id>` then
+`progress --run-id <id>` (actual vs p50 per stage).
+After (or during), scan for failures:
+`python3 scripts/watchdog.py --watch` (appends to
+`test-status/failures.jsonl`; exit 1 if open incidents).
 
 1. **Seed a watchlist.** Nothing proposes candidates until the Planner has
    tickers to look at — check whichever config/table the watchlist lives in

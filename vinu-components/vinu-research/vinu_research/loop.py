@@ -37,7 +37,7 @@ from vinu_research.models import (
 from vinu_research.report import generate_report
 from vinu_research.benchmark import compute_benchmark_comparison, compute_benchmark_returns_metrics
 from vinu_research.portfolio import analyze_portfolio
-from vinu_research.tools import ResearchTools, timestamps_from_dates
+from vinu_research.tools import InfrastructureError, ResearchTools, timestamps_from_dates
 from vinu_research.walk_forward import (
     WalkForwardConfig,
     WalkForwardWindow,
@@ -355,13 +355,44 @@ class StrategyResearchLoop:
                         self._on_iteration(record)
                     continue
 
-                async with debug_timer(f"loop.backtest-iter-{iteration}"):
-                    result = await self._run_backtest(
-                        strategy_code, symbol, research_from, research_to,
-                        indicators=indicators,
-                        initial_capital=initial_capital,
-                        symbols=backtest_symbols,
+                try:
+                    async with debug_timer(f"loop.backtest-iter-{iteration}"):
+                        result = await self._run_backtest(
+                            strategy_code, symbol, research_from, research_to,
+                            indicators=indicators,
+                            initial_capital=initial_capital,
+                            symbols=backtest_symbols,
+                        )
+                except InfrastructureError as infra_exc:
+                    # Environment failure (simulator/auth/data), not a
+                    # strategy failure: stop now instead of spending the
+                    # remaining iteration/LLM budget on recipes that will
+                    # hit the same wall.
+                    LOG.warning("Backtest infra failure, stopping run: %s", infra_exc)
+                    debug_log(f"Iteration {iteration}: infra failure — stopping: {infra_exc}", level=1)
+                    critic_feedback = CriticFeedback(
+                        verdict="STOP",
+                        reasoning=f"INFRASTRUCTURE FAILURE (not a strategy problem): {infra_exc}",
+                        suggestions=[],
                     )
+                    record = IterationRecord(
+                        iteration=iteration,
+                        strategy_code=strategy_code,
+                        result=BacktestResult(
+                            run_id=f"infra_failure_{iteration}",
+                            strategy_name="UserStrategy",
+                            metrics=BacktestMetrics.from_dict({}),
+                            benchmark_metrics={},
+                            trade_count=0,
+                            equity_points=0,
+                            raw={"infra_error": str(infra_exc)},
+                        ),
+                        critique=critic_feedback,
+                    )
+                    history.append(record)
+                    if self._on_iteration:
+                        self._on_iteration(record)
+                    break
                 if result is None:
                     LOG.warning("Backtest returned no result, stopping")
                     debug_log(f"Iteration {iteration}: backtest returned None — stopping", level=1)

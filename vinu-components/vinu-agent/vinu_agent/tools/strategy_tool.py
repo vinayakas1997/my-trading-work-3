@@ -21,10 +21,16 @@ class StrategyTool(BaseTool):
 
     def execute(self, **kwargs) -> str:
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
         url = self._services_config.get("vinu_strategy", "http://localhost:8084")
         resp = httpx.post(
             f"{url}/strategy/strategies/{kwargs['strategy_name']}/evaluate",
             params={"symbols": kwargs["symbol"]},
+            headers=_h,
             timeout=60,
         )
         resp.raise_for_status()

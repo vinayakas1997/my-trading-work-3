@@ -322,6 +322,11 @@ def record_human_override(
 
     try:
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         resp = httpx.post(
             f"{research_api_url}/research/hypotheses/{hypothesis_id}/evidence",
@@ -333,6 +338,7 @@ def record_human_override(
                 "source": source,
                 "ref_id": flag_id,
             },
+            headers=_h,
             timeout=15,
         )
         return resp.status_code == 200

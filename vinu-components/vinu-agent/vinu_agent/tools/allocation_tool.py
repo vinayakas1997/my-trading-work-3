@@ -112,6 +112,11 @@ class ComputeAllocationCandidatesTool(BaseTool):
         ]
 
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         url = self._services_config.get("vinu_portfolio", "http://localhost:8090")
         portfolio_result = None
@@ -120,7 +125,7 @@ class ComputeAllocationCandidatesTool(BaseTool):
         for attempt in range(2):
             try:
                 resp = httpx.post(
-                    f"{url}/portfolio/evaluate-batch", json={"candidates": batch_payload}, timeout=30 if attempt == 0 else 10
+                    f"{url}/portfolio/evaluate-batch", json={"candidates": batch_payload}, headers=_h, timeout=30 if attempt == 0 else 10
                 )
                 resp.raise_for_status()
                 portfolio_result = resp.json()

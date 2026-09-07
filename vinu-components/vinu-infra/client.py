@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from typing import Any, Callable
 
 import httpx
@@ -108,6 +109,18 @@ class ResilientClient:
         self._max_retries = max_retries
         self._retry_backoff = retry_backoff
         self._default_fallback = fallback
+        if headers is None:
+            # Internal service-to-service auth: every vinu-* route except
+            # /health requires Bearer <VINU_API_KEY> once the key is set
+            # (auth.require_auth via server.create_app). Default it here so
+            # callers don't each re-derive it; explicit headers still win.
+            # ResilientClient is internal-only (base URLs are VINU_* service
+            # URLs), so no external-leak risk.
+            try:
+                from vinu_infra.auth import internal_auth_headers
+                headers = internal_auth_headers() or None
+            except Exception:
+                headers = None
         self._http = httpx.AsyncClient(timeout=timeout, headers=headers)
         self._breaker = CircuitBreaker(
             threshold=circuit_breaker_threshold,
@@ -188,6 +201,23 @@ class ResilientClient:
                     e.response.status_code, method, url,
                     attempt + 1, self._max_retries,
                 )
+                if e.response.status_code == 429:
+                    # Rate-limited (free-tier LLM quotas, throttled
+                    # providers): retryable, unlike other 4xx. Honor
+                    # Retry-After when present, capped, plus jitter so
+                    # parallel workers don't retry in lockstep.
+                    wait = self._retry_backoff * (2 ** attempt)
+                    try:
+                        retry_after = float(
+                            (e.response.headers.get("retry-after") or "").strip() or 0
+                        )
+                        wait = min(max(wait, retry_after), 120.0)
+                    except (ValueError, AttributeError):
+                        pass
+                    if attempt < self._max_retries - 1:
+                        await asyncio.sleep(wait + random.uniform(0, 1.0))
+                        continue
+                    raise
                 if e.response.status_code < 500:
                     raise
             except (httpx.TimeoutException, httpx.ConnectError) as e:

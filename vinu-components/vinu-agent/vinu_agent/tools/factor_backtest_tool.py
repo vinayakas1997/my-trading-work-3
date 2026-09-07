@@ -142,6 +142,11 @@ max drawdown, win rate, profit factor)."""
         never silently falls back to synthetic data when the caller
         explicitly asked for real symbols."""
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
         import pandas as pd
 
         symbols = sorted({s.strip().upper() for s in symbols_raw.split(",") if s.strip()})[:50]
@@ -161,7 +166,7 @@ max drawdown, win rate, profit factor)."""
 
         per_symbol_rows: dict[str, list[dict]] = {}
         failed: list[dict] = []
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=30.0, headers=_h) as client:
             for sym in symbols:
                 try:
                     resp = client.get(

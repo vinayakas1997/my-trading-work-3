@@ -1,0 +1,175 @@
+{
+  "schema_version": "0.1",
+  "generated_at": "2026-09-07T14:39:00.906217+00:00",
+  "run_id": "45bad5f9-823f-4e48-b179-9212768e6bae",
+  "run_dir": "/data/simulator/simulations/45/45bad5f9-823f-4e48-b179-9212768e6bae",
+  "backtest": {
+    "codes": [
+      "AAPL"
+    ],
+    "start_date": "2026-03-01",
+    "end_date": "2026-09-07",
+    "interval": "1d",
+    "initial_cash": 1000000.0
+  },
+  "reproducibility": {
+    "config_hash": "",
+    "strategy_hash": ""
+  },
+  "metrics": {
+    "total_return": -0.010320769103443816,
+    "cagr": -0.01990950587592577,
+    "annual_volatility": 0.03230939124874616,
+    "sharpe_ratio": -0.6062768485090297,
+    "sortino_ratio": -0.16543720508268916,
+    "max_drawdown": -0.020829665981331524,
+    "calmar_ratio": -0.9558245386061187,
+    "win_rate": 0.015384615384615385,
+    "skewness": -4.460934300579029,
+    "kurtosis": 66.38331042668221,
+    "var_95": 0.0,
+    "var_99": -0.002014217379001384,
+    "cvar_95": -0.0002072216092026749,
+    "tail_ratio": 0.0,
+    "max_dd_duration_days": 7,
+    "avg_drawdown": -0.013456118898809502,
+    "recovery_time_days": 0,
+    "profit_factor": 0.6190240507842747,
+    "avg_win_pct": 0.008209610236075249,
+    "avg_loss_pct": -0.005304873195588478,
+    "win_loss_ratio": 1.547560126960687,
+    "hit_rate": 0.015384615384615385,
+    "sharpe_standard_error": 0.18841196428432416,
+    "sharpe_p_value": 0.0012916631415621927,
+    "sharpe_ci_95_low": -0.9755642985063051,
+    "sharpe_ci_95_high": -0.23698939851175438,
+    "probabilistic_sharpe_ratio": 0.0006458315707810747,
+    "annual_turnover": 15.303152475090057
+  },
+  "trade_count": 7,
+  "equity_points": 131,
+  "artifacts": [
+    {
+      "path": "/data/simulator/simulations/45/45bad5f9-823f-4e48-b179-9212768e6bae/equity.parquet",
+      "size_bytes": 3531,
+      "sha256": "14aa7bcaaf6aa0a99e471f5da248c698a8c9650979c96e46c8f794b0749e347d"
+    },
+    {
+      "path": "/data/simulator/simulations/45/45bad5f9-823f-4e48-b179-9212768e6bae/weights.parquet",
+      "size_bytes": 3165,
+      "sha256": "55605cbdc2a885fc2ae86b613a20c1f9d3e73721dd27b026b58c3c472b386eb5"
+    },
+    {
+      "path": "/data/simulator/simulations/45/45bad5f9-823f-4e48-b179-9212768e6bae/trades.parquet",
+      "size_bytes": 2657,
+      "sha256": "9e8c9f602125d5bd36f778a89d6c8cba449924e0b38beadf2edfbf3c1640a45e"
+    },
+    {
+      "path": "/data/simulator/simulations/45/45bad5f9-823f-4e48-b179-9212768e6bae/meta.json",
+      "size_bytes": 140,
+      "sha256": "1bcd69066077d1301df9ce7fb52ebd55285fdb4f828a58459969f2d9c77308f4"
+    }
+  ],
+  "validation": {
+    "monte_carlo": {
+      "p_value": 0.266,
+      "sim_mean": -1.1705804037057137,
+      "sim_std": 6.876815896751125,
+      "sim_p5": -8.593893793346428,
+      "sim_p95": 9.704011479378728,
+      "n_iterations": 1000,
+      "n_trades": 4,
+      "minimum_met": true
+    },
+    "block_bootstrap": {
+      "p_value": 0.239,
+      "sim_mean": -1.4599508586765046,
+      "sim_std": 6.613551909366507,
+      "sim_p5": -8.59355836327935,
+      "sim_p95": 9.70172169296483,
+      "n_iterations": 1000,
+      "n_trades": 4,
+      "block_size": 5,
+      "minimum_met": true
+    },
+    "price_path": {
+      "p_value": 0.54,
+      "sim_mean": -0.38509947197306693,
+      "sim_std": 1.2747394414451596,
+      "sim_p5": -2.1779029737697044,
+      "sim_p95": 1.6193231358121691,
+      "n_iterations": 1000,
+      "n_observations": 130,
+      "block_size": 20,
+      "minimum_met": true
+    },
+    "bootstrap": {
+      "ci_low": -2.6170376341136,
+      "ci_high": 1.9797987679996139,
+      "mean": -0.3650928173639312,
+      "std": 1.3033299131674632,
+      "n_iterations": 1000,
+      "n_observations": 130,
+      "method": "block",
+      "block_size": 20,
+      "minimum_met": true
+    },
+    "bca": {
+      "ci_low": -2.764427710222734,
+      "ci_high": 1.609362233536559,
+      "mean": -0.301873046217004,
+      "std": 1.2559307588970803,
+      "n_iterations": 1000,
+      "n_observations": 130,
+      "method": "bca",
+      "block_size": 20,
+      "minimum_met": true
+    },
+    "placebo": {
+      "p_value": 0.837,
+      "placebo_mean": -0.6062768485090296,
+      "placebo_std": 1.6812799362040287e-16,
+      "n_iterations": 1000,
+      "n_observations": 130,
+      "minimum_met": true
+    },
+    "walk_forward": {
+      "profitable_windows": 2,
+      "total_windows": 5,
+      "consistency_rate": 0.4,
+      "return_mean": -0.002020848232182981,
+      "return_std": 0.010143369880680044,
+      "sharpe_mean": -0.08200893156502795,
+      "sharpe_std": 1.933614931419173,
+      "minimum_met": true
+    },
+    "verdict": {
+      "passed": false,
+      "reasons": [
+        "Trade-permutation p-value 0.2660 >= 0.05 (FAIL)",
+        "Block-bootstrap p-value 0.2390 >= 0.05 (FAIL)",
+        "Price-path resample p-value 0.5400 >= 0.1 (FAIL)",
+        "Walk-forward consistency 0.40 < 0.60 (FAIL)",
+        "Bootstrap Sharpe CI lower bound -2.6170 <= 0 (FAIL)",
+        "BCa bootstrap CI lower bound -2.7644 <= 0 (FAIL)",
+        "Placebo test p-value 0.8370 >= 0.05 (FAIL)"
+      ]
+    }
+  },
+  "attribution": {
+    "by_symbol": {
+      "AAPL": {
+        "count": 4,
+        "win_count": 2,
+        "loss_count": 2,
+        "win_rate": 0.5,
+        "total_pnl": -10261.40446120621,
+        "avg_pnl": -2565.3511153015525,
+        "avg_win": 6118.036455369794,
+        "avg_loss": -11248.738685972898
+      }
+    },
+    "by_benchmark": {},
+    "by_regime": {}
+  }
+}

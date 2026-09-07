@@ -23,12 +23,17 @@ class GetAllAnglesTool(BaseTool):
     def execute(self, **kwargs) -> str:
         import json
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         ticker = kwargs["ticker"].strip().upper()
         base = self._services_config.get("vinu_initial_analysis", "http://localhost:8083").rstrip("/")
         url = f"{base}/analysis"
 
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=30.0, headers=_h) as client:
             angles_resp = client.get(f"{url}/angles")
             angles_resp.raise_for_status()
             # /analysis/angles returns a list of metadata objects

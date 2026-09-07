@@ -20,8 +20,13 @@ class ListAvailableFeaturesTool(BaseTool):
 
     def execute(self, **kwargs) -> str:
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
         url = self._services_config.get("vinu_tools", "http://localhost:8082")
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=30.0, headers=_h) as client:
             catalog_resp = client.get(f"{url}/features/catalog")
             catalog_resp.raise_for_status()
             presets_resp = client.get(f"{url}/features/presets")

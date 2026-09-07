@@ -90,6 +90,11 @@ class RunSweepCandidateTool(BaseTool):
             LOG.debug("run_sweep_candidate: in-process run failed, falling back to HTTP: %s", exc)
 
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         url = self._services_config.get("vinu_research", "http://localhost:8087")
         payload = {
@@ -112,7 +117,7 @@ class RunSweepCandidateTool(BaseTool):
         if kwargs.get("initial_capital") is not None:
             payload["initial_capital"] = kwargs["initial_capital"]
 
-        resp = httpx.post(f"{url}/research/sweep/candidate", json=payload, timeout=180)
+        resp = httpx.post(f"{url}/research/sweep/candidate", json=payload, headers=_h, timeout=180)
         resp.raise_for_status()
         return resp.text
 
@@ -150,8 +155,13 @@ class ListSweepRecipesTool(BaseTool):
             LOG.debug("list_sweep_recipes: in-process read failed, falling back to HTTP: %s", exc)
 
         import httpx
+        try:
+            from vinu_infra.auth import internal_auth_headers as _iah
+            _h = _iah() or None
+        except Exception:
+            _h = None
 
         url = self._services_config.get("vinu_research", "http://localhost:8087")
-        resp = httpx.get(f"{url}/research/sweep/recipes", timeout=30)
+        resp = httpx.get(f"{url}/research/sweep/recipes", headers=_h, timeout=30)
         resp.raise_for_status()
         return resp.text

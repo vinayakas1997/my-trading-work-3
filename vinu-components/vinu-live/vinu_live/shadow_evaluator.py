@@ -31,7 +31,12 @@ class ShadowEvaluator:
         self._agent_api = agent_api_url
         self._max_sharpe_degradation = max_sharpe_degradation
         self._min_paper_days = min_paper_days
-        self._http = httpx.AsyncClient(timeout=15.0)
+        try:
+            from vinu_infra.auth import internal_auth_headers
+            _headers = internal_auth_headers() or None
+        except Exception:
+            _headers = None
+        self._http = httpx.AsyncClient(timeout=15.0, headers=_headers)
 
     async def close(self) -> None:
         await self._http.aclose()
