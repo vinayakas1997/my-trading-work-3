@@ -186,6 +186,39 @@ def apply_capital_allocator_decision(
         except Exception:
             LOG.exception("unwind request handling failed for %r, continuing without it", entry.get("artifact_id"))
 
+    # Deterministic replace fallback (pending Row 2): if LLM emitted no
+    # unwind but a PEND is demonstrably better than worst ACTIVE, emit
+    # one unwind REQUEST. Threshold same as allocation_tool.
+    if not unwind_requests:
+        try:
+            from vinu_research.models import ArtifactStatus
+            pend_cands = [c for c in (candidates or []) if isinstance(c, dict) and c.get("funded")]
+            if pend_cands:
+                active = strategy_store.list_artifacts_by_statuses([ArtifactStatus.ACTIVE]) if hasattr(strategy_store, "list_artifacts_by_statuses") else []
+                if active:
+                    worst_active = min(active, key=lambda x: float(getattr(x, "deflated_sharpe", 0.0) or 0.0))
+                    # best funded PEND by artifact fetch
+                    best_pend = None
+                    best_sharpe = -1e9
+                    for c in pend_cands:
+                        aid = str(c.get("artifact_id", "")).strip()
+                        art = strategy_store.get_artifact(aid) if aid else None
+                        sh = float(getattr(art, "deflated_sharpe", 0.0) or 0.0) if art else -1e9
+                        if sh > best_sharpe:
+                            best_sharpe = sh
+                            best_pend = art
+                    worst_sharpe = float(getattr(worst_active, "deflated_sharpe", 0.0) or 0.0)
+                    if best_pend is not None and best_sharpe > 0 and best_sharpe >= worst_sharpe + 0.8:
+                        LOG.info("replace fallback: PEND %s (%.2f) >> worst ACTIVE %s (%.2f) -> unwind REQUEST",
+                                 best_pend.artifact_id, best_sharpe, worst_active.artifact_id, worst_sharpe)
+                        _request_unwind(
+                            {"artifact_id": worst_active.artifact_id, "reason": f"replace: PEND {best_pend.artifact_id} deflated_sharpe {best_sharpe:.2f} >> ACTIVE {worst_active.artifact_id} {worst_sharpe:.2f}"},
+                            strategy_store=strategy_store, ticker_ledger_store=ticker_ledger_store,
+                            services_config=services_config or {},
+                        )
+        except Exception:
+            LOG.exception("deterministic replace fallback failed, continuing")
+
     funded_ids: list[str] = []
     for c in candidates:
         if not isinstance(c, dict) or not c.get("funded"):

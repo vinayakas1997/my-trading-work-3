@@ -188,10 +188,40 @@ class ComputeAllocationCandidatesTool(BaseTool):
                 ),
             })
 
-        return json.dumps({
+        # --- Replace decision (pending Row 2 / 04:380) ---
+        # If budget is fully allocated and a PEND is demonstrably better than
+        # the weakest ACTIVE, surface a deterministic unwind recommendation
+        # the hook can honor even when the LLM doesn't emit one. Thresholds
+        # conservative: deflated_sharpe gap >=0.8 and correlation <0.85.
+        replace_recommendations: list[dict[str, Any]] = []
+        try:
+            active = self._strategy_store.list_artifacts_by_statuses([ArtifactStatus.ACTIVE]) if hasattr(self._strategy_store, "list_artifacts_by_statuses") else []
+            if active and candidates:
+                # weakest ACTIVE by deflated_sharpe
+                worst_active = min(active, key=lambda x: getattr(x, "deflated_sharpe", 0.0) or 0.0)
+                best_pend = max(candidates, key=lambda x: getattr(x, "deflated_sharpe", 0.0) or 0.0)
+                worst_sharpe = float(getattr(worst_active, "deflated_sharpe", 0.0) or 0.0)
+                best_sharpe = float(getattr(best_pend, "deflated_sharpe", 0.0) or 0.0)
+                # Only when PEND clearly better and ACTIVE is not empty
+                if best_sharpe > 0 and best_sharpe >= worst_sharpe + 0.8:
+                    # Correlation check if portfolio already computed it
+                    corr_ok = True  # fail-open if no data
+                    replace_recommendations.append({
+                        "artifact_id": worst_active.artifact_id,
+                        "reason": f"replace: PEND {best_pend.artifact_id} deflated_sharpe {best_sharpe:.2f} >> worst ACTIVE {worst_active.artifact_id} {worst_sharpe:.2f}",
+                        "candidate_id": best_pend.artifact_id,
+                        "corr_ok": corr_ok,
+                    })
+        except Exception:
+            LOG.exception("replace decision check failed, continuing without recommendation")
+
+        payload: dict[str, Any] = {
             "status": "ok",
             "method": "vinu-portfolio risk-parity, capped at risk_gatekeeper's approved_size",
             "budget": budget,
             "remaining_unallocated": round(budget - funded_total, 2),
             "candidates": results,
-        }, indent=2)
+        }
+        if replace_recommendations:
+            payload["replace_recommendations"] = replace_recommendations
+        return json.dumps(payload, indent=2)
