@@ -76,30 +76,6 @@ angles:
       if the real pipeline could not be loaded).
 
       '
-- id: cross_attention_gcn_news_price_fusion
-  title: Bidirectional Cross-Attention + GCN News-Price Fusion
-  purpose: 'News+price fusion via real bidirectional cross-attention (method 29, see
-    New-talk-/Final-implementation/01-present-considerations/ 29-cross-attention-gcn-news-price-fusion.md).
-    The cross-attention layer is a genuine small PyTorch module; the GCN''s cross-stock
-    layer is structurally degenerate here (single-node self-loop) since compute()
-    is called per single symbol, not jointly across tickers — see compute.py''s module
-    docstring and the gcn_note output field.
-
-    '
-  time_formats:
-  - 1D
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: 'Predicted next-period return/close from the fused price+news representation,
-      plus model_backend ("trained_in_process"), gcn_note explaining the single-ticker
-      degeneration, and n_news_articles_used.
-
-      '
 - id: dlinear
   title: DLinear Decomposition Linear Forecast
   purpose: 'Trained-from-scratch DLinear model (method 18 of the 32-method plan, see
@@ -382,21 +358,6 @@ angles:
       and the fit''s training-window count and final training loss.
 
       '
-- id: ml_model_pipeline
-  title: ML Model Pipeline
-  purpose: Train/evaluate 9 ML models, OOS IC, auto-selection, CUDA detection
-  time_formats:
-  - 1D
-  - 1W
-  - 1M
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: Angle-specific results
 - id: moirai
   title: MOIRAI Any-Variate Time-Series Foundation Model (fallback proxy)
   purpose: 'Forecast in the spirit of Salesforce''s MOIRAI (method 13 of the 32-method
@@ -455,22 +416,6 @@ angles:
       the forecasting task is implemented.
 
       '
-- id: news_first_analysis
-  title: News First Analysis
-  purpose: Categorize and quantify the news landscape — sentiment, categories, priority,
-    threads, and basic stats
-  time_formats:
-  - 15min
-  - 1H
-  - 1D
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: Angle-specific results
 - id: news_price_causality
   title: News-Price Causality
   purpose: Statistical proof of news impact on price — Granger causality, Pearson

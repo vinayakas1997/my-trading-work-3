@@ -153,7 +153,7 @@ analogical search is a real, later capability — not scoped now.
 
 ### 1. Summary Agent (`screener` / `angle_synthesizer`)
 
-Calls `get_all_angles(ticker)` once, reports how many of the ~31 angles
+Calls `get_all_angles(ticker)` once, reports how many of the ~28 angles (31→28 clean state 2026-09-07 — 3 deprecated/degenerate pruned)
 have real data, cites specific numbers from the ones that do, states what
 to check next. Includes a cross-angle agreement/divergence check
 (agree/diverge/insufficient) — do independent angles (e.g. `arima` vs
