@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+from collections import deque
 from dataclasses import dataclass
 
 import requests
@@ -48,6 +50,13 @@ class OrderGuard:
         # which is exactly the bug this store closes (see
         # daily_limits.py's module docstring).
         self._daily_limit_store = daily_limit_store or DailyLimitStore(DEFAULT_DAILY_LIMIT_DB_PATH)
+        # In-process throttle window (B20): 10 orders/sec per symbol,
+        # deque of monotonic timestamps. Fresh instance per execute() means
+        # window is per-process burst, not persisted — sufficient to block
+        # runaway loop (the #1 live blow-up per QuantMemo) without DB.
+        self._throttle_window: deque[float] = deque()
+        self._throttle_limit_per_sec = 10
+        self._throttle_window_sec = 1.0
 
     def _count_daily_orders(self, symbol: str) -> int:
         return self._daily_limit_store.count_today(symbol)
@@ -76,6 +85,14 @@ class OrderGuard:
         # first internally, so this one call covers both.
         if is_trading_halted(scope=symbol):
             return GuardResult(False, "Trading is halted by kill switch")
+
+        # B20 — message throttle (10 orders/sec per instance)
+        now = time.monotonic()
+        while self._throttle_window and now - self._throttle_window[0] > self._throttle_window_sec:
+            self._throttle_window.popleft()
+        if len(self._throttle_window) >= self._throttle_limit_per_sec:
+            return GuardResult(False, f"Order throttle: {self._throttle_limit_per_sec} orders/sec limit exceeded")
+        self._throttle_window.append(now)
 
         mandate = self._mandate
 
