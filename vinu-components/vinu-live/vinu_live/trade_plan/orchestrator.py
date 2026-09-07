@@ -132,6 +132,67 @@ class TradePlanOrchestrator:
             return await self._maybe_enter(plan, symbol, price, portfolio_value)
         return await self._evaluate_open_position(plan, position, price, portfolio_value)
 
+    async def cycle_shock_batch(self, max_batch: int = 5) -> dict[str, Any]:
+        """Batch/prioritized shock evaluation (pending Row 3 / 04:383).
+
+        Iterates all open positions, fetches shock clustering score for
+        each, sorts descending by shock correlation (highest risk first),
+        and runs `on_shock_event` for the top `max_batch` symbols.
+        Respects per-symbol debounce inside `on_shock_event`, so burst
+        calls remain idempotent. Returns summary with prioritized order.
+        """
+        positions = list_open_positions(self._book)
+        if not positions:
+            return {"status": "skipped_no_open_positions", "actions": []}
+
+        # Score each open symbol by shock correlation (higher = higher priority)
+        scored: list[tuple[str, float]] = []
+        for pos in positions:
+            corr = await self._fetch_shock_cluster_correlation(pos.symbol)
+            score = float(corr) if corr is not None else 0.0
+            # Also incorporate shock_personality if available
+            pers = await self._fetch_shock_personality_score(pos.symbol)
+            if pers is not None:
+                score = max(score, float(pers))
+            scored.append((pos.symbol, score))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        batch_symbols = [s for s, _ in scored[:max_batch]]
+
+        actions: list[dict[str, Any]] = []
+        for sym in batch_symbols:
+            res = await self.on_shock_event(sym)
+            if res is not None:
+                actions.append(res)
+
+        return {
+            "status": "ok",
+            "prioritized": [s for s, _ in scored],
+            "batch_symbols": batch_symbols,
+            "actions": actions,
+        }
+
+    async def _fetch_shock_personality_score(self, symbol: str) -> float | None:
+        """Fetch shock_personality angle score for symbol (if available)."""
+        try:
+            resp = await self._http.get(
+                f"{self._config.initial_analysis_api_url}/analysis/angle/shock_personality/{symbol}",
+            )
+            if resp.status_code != 200:
+                return None
+            rows = resp.json().get("data", [])
+            if not rows:
+                return None
+            last = rows[-1] or {}
+            # Personality angle may expose shock_score or correlation field
+            for key in ("shock_score", "personality_score", "shock_correlation", "score"):
+                if key in last and last[key] is not None:
+                    return float(last[key])
+            return None
+        except Exception as e:
+            LOG.debug("Could not fetch shock personality for %s: %s", symbol, e)
+            return None
+
     async def cycle(self) -> dict[str, Any]:
         self._cycle_count += 1
         cycle_id = f"tp_cycle_{self._cycle_count}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
