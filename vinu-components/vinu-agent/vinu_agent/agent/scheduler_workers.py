@@ -77,20 +77,36 @@ def make_summary_agent_fn(service: Any):
     rule mermaid-explanation.md states as the Summary Agent's own defining
     characteristic.
 
-    Note: the `screener` team's own result hook (`team.py`'s
-    `_apply_team_result_hook`) already calls `write_ticker_summaries` on
-    a completed run, so this ticker's summary row gets upserted twice per
-    refresh -- once by that hook (multi-ticker, parsed from the response),
-    once by `RunLogTrigger.refresh_if_stale` itself (single-ticker, the
-    trigger's own source_run_id bookkeeping). Deliberately left
-    un-deduplicated, same reasoning as Phase 5's debrief.py/
-    feedback_loop.py overlap: both writes target the same real row with
-    the same real data, last-write-wins is harmless, and de-duplicating
-    across the hook/trigger boundary isn't worth the coupling it would add.
+    A: Deduplicated 2026-09-07 — checks TickerSummaryStore for a recent
+    summary (within 300s) before invoking the `screener` LLM team, avoiding
+    the second upsert that `_apply_team_result_hook` + `RunLogTrigger`
+    previously both performed on same `source_run_id` (last-write-wins
+    harmless but wasted LLM cost and DB write).
     """
     from ..tools.angles_tool import GetAllAnglesTool
+    import time as _time
 
     def _fn(ticker: str) -> tuple[str, dict[str, Any]]:
+        # A: dedupe — if summary refreshed very recently, return cached
+        try:
+            existing = service.ticker_summary_store.get_summary(ticker) if hasattr(service.ticker_summary_store, "get_summary") else None
+            if existing and getattr(existing, "updated_at", ""):
+                # updated_at is ISO8601; parse and check 5-min window
+                from datetime import datetime, timezone
+                try:
+                    ts = datetime.fromisoformat(existing.updated_at.replace("Z", "+00:00"))
+                    if (datetime.now(timezone.utc) - ts).total_seconds() < 300:
+                        # Return cached summary text + deterministic angles counts still fresh
+                        # Avoids second LLM team call + second upsert
+                        return getattr(existing, "summary", "") or "", {
+                            "angles_with_data": getattr(existing, "angles_with_data", 0),
+                            "angle_count": getattr(existing, "angle_count", 0),
+                        }
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         angles_tool = GetAllAnglesTool()
         angles_tool._services_config = service.config.services
         angles_data = json.loads(angles_tool.execute(ticker=ticker))

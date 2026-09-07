@@ -140,6 +140,8 @@ class StrategyResearchLoop:
         self._storage = storage
         self._story_cache = _LRUCache()
         self._drawdown_cache = _LRUCache()
+        self._angle_context_cache = _LRUCache()
+        self._feature_snapshot_cache = _LRUCache()
         self._benchmark_returns: pd.Series | None = None
         self._benchmark_cache_key: str = ""
         self._llm = ResearchLlmClient(self._config) if self._config.llm_enabled else None
@@ -234,15 +236,29 @@ class StrategyResearchLoop:
         # Fetched once up front (depends only on symbol + interval, not on research
         # dates or iteration state) so the strategy generator sees the same
         # deterministic angle signals as the risk critic, from iteration 1 onward.
-        self._angle_context = await self._tools.get_angle_context(
-            symbol, self._config.interval,
-        )
+        # D: cached by symbol+interval (research_from:research_to key) to avoid
+        # repeated features-api + 4× get_angle_rows per run on same symbol.
+        angle_cache_key = f"{symbol}:{self._config.interval}"
+        cached_angle = self._angle_context_cache.get(angle_cache_key)
+        if cached_angle is not None:
+            self._angle_context = cached_angle
+        else:
+            self._angle_context = await self._tools.get_angle_context(
+                symbol, self._config.interval,
+            )
+            self._angle_context_cache.set(angle_cache_key, self._angle_context)
 
         # Feature/factor snapshot from vinu-tools — includes Alpha101/191,
         # ML pipeline outputs, and recipe bundles. Fetched alongside angle
         # context so the LLM generator sees richer signals than just the 3
         # hardcoded indicators (sma_20, sma_50, rsi_14).
-        self._feature_snapshot = await self._tools.get_feature_snapshot(symbol)
+        feature_cache_key = symbol
+        cached_feature = self._feature_snapshot_cache.get(feature_cache_key)
+        if cached_feature is not None:
+            self._feature_snapshot = cached_feature
+        else:
+            self._feature_snapshot = await self._tools.get_feature_snapshot(symbol)
+            self._feature_snapshot_cache.set(feature_cache_key, self._feature_snapshot)
 
         self._stock_profile = await self._characterize_stock(symbol)
 

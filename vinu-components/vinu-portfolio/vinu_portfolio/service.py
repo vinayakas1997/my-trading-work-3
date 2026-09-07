@@ -44,6 +44,10 @@ class PortfolioService:
         self._config = config or load_config()
         self._http = httpx.AsyncClient(timeout=10.0)
         self._tags_cache: dict[str, Any] | None = None
+        # J: per-cycle returns cache to avoid double fetch of same equity series
+        # (build_portfolio + allocate_risk_parity both called _build_returns_df)
+        self._returns_cache: dict[str, tuple[float, pd.Series]] = {}
+        self._returns_cache_ttl = 60.0
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -172,7 +176,13 @@ class PortfolioService:
         return pd.DataFrame(returns_data)
 
     async def _fetch_strategy_returns(self, strategy: dict[str, Any]) -> pd.Series | None:
-        """Fetch daily returns series for a strategy."""
+        """Fetch daily returns series for a strategy. J: cached 60s to avoid double fetch."""
+        import time as _time
+        cache_key = strategy.get("artifact_id") or strategy.get("name", "")
+        if cache_key and cache_key in self._returns_cache:
+            ts, cached = self._returns_cache[cache_key]
+            if _time.time() - ts < self._returns_cache_ttl:
+                return cached
         try:
             if strategy["kind"] == "yaml":
                 resp = await self._http.get(strategy["weights_source"])
@@ -184,7 +194,10 @@ class PortfolioService:
                         [float(w.get("weight", 0)) for w in weights],
                         index=pd.to_datetime([w.get("date") for w in weights]),
                     )
-                    return series.pct_change().dropna()
+                    ret = series.pct_change().dropna()
+                    if cache_key:
+                        self._returns_cache[cache_key] = (_time.time(), ret)
+                    return ret
             elif strategy["kind"] == "llm_python":
                 artifact_id = strategy.get("artifact_id", "")
                 resp = await self._http.get(
@@ -198,7 +211,11 @@ class PortfolioService:
                         [float(r.get("portfolio_value", 0)) for r in data],
                         index=pd.to_datetime([r.get("date") for r in data]),
                     )
-                    return series.pct_change().dropna()
+                    ret2 = series.pct_change().dropna()
+                    if cache_key:
+                        import time as _time2
+                        self._returns_cache[cache_key] = (_time2.time(), ret2)
+                    return ret2
         except Exception as e:
             LOG.warning("Failed to fetch returns for %s: %s", strategy.get("name"), e)
         return None
