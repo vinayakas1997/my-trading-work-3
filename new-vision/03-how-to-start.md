@@ -1,6 +1,6 @@
 ---
 name: how-to-start
-status: operational guide, matches the actual code/scripts as of 2026-08-17
+status: operational guide, matches the actual code/scripts as of 2026-09-07 (v2 — adds rehearsal env, freeze manifest, throttle/ledger taxonomy)
 purpose: step-by-step to bring the vinu-components stack up from a clean machine, plus what to check once it's running.
 ---
 
@@ -45,6 +45,12 @@ At minimum:
 Optional (leave blank if not using yet):
 - `TELEGRAM_TOKEN`, `DISCORD_TOKEN`
 - `POLYGON_API_KEY`, `FMP_API_KEY`, `TUSHARE_TOKEN`
+
+New env knobs added 2026-09-07 (defaults already safe, no need to set unless tuning):
+- `VINU_RESEARCH_PAPER_REHEARSAL_ENABLED=true`, `VINU_RESEARCH_PAPER_REHEARSAL_LOOKBACK_DAYS=7`, `VINU_RESEARCH_PAPER_REHEARSAL_MAX_DEGRADATION=0.5` — trailing 7-day bar-by-bar rehearsal before `risk_gatekeeper` (Row 1 `c3d94756`)
+- `VINU_AGENT_POSITION_SIZING_METHOD=fractional_kelly`, `VINU_AGENT_KELLY_FRACTION=0.25`, `VINU_AGENT_RISK_PER_TRADE_PCT=0.02`, `VINU_AGENT_ATR_STOP_MULTIPLE=2.0` — quarter-Kelly decided (Row 5)
+- `VINU_AGENT_CAPITAL_ALLOCATOR_INTERVAL=900`, `VINU_AGENT_PLANNER_INTERVAL=1800`, `VINU_RESEARCH_MAX_ITERATIONS=5` — caps `N/K` decided provisional (Row 7)
+- `VINU_STAGE1_START_DATE=2022-01-01` must stay — freeze manifest `vinu_infra/freeze.py` hashes `VINU_*` env + `*_DATA_ROOT` for lineage
 
 ## Step 4 — bootstrap the secret files
 
@@ -130,7 +136,7 @@ service follows the identical pattern: swap the port and path prefix
 each service's prefix matches its `route_prefix` in that service's
 `server/app.py`).
 
-## After it's running — what to actually do
+## After it's running — what to actually do (updated 2026-09-07)
 
 1. **Seed a watchlist.** Nothing proposes candidates until the Planner has
    tickers to look at — check whichever config/table the watchlist lives in
@@ -138,18 +144,19 @@ each service's prefix matches its `route_prefix` in that service's
 2. **Confirm the Kill Switch state is what you expect.** It's meant to be a
    deliberate, explicit gate — check `broker/kill_switch.py`'s current state
    before assuming trades will actually execute or that a halt is active
-   when you think it is.
+   when you think it is. Note: `OrderGuard` now throttles `10 orders/sec` (`B20`) and blocks even risk-reducing rebalance `REQUEST` by default (`decisions/12`).
 3. **Watch the first full cycle end to end** in the logs: Summary Agent →
-   Planner triage → Researcher/Executor sweep → risk_gatekeeper verdict →
-   PEND → capital_allocator (now scheduled, runs on its own interval) →
+   Planner triage → Researcher/Executor sweep (+ `PaperRehearsalResult` 7-day) → risk_gatekeeper verdict →
+   PEND → capital_allocator (batched, with `replace` unwind `REQUEST` if `PEND deflated_sharpe >= worst ACTIVE +0.8`, composition `gaps` check) →
    funded or held. This is the single best way to confirm the pipeline is
    actually doing what the design doc says, not just that processes started.
 4. **Check Significance Triage delivery**, if you set Telegram/Discord
    credentials — trigger something notable (or wait for a real one) and
-   confirm a message actually arrives, not just that the code path ran.
+   confirm a message actually arrives, not just that the code path ran. Delivery is manual gate until creds observed (`decisions/09`).
 5. **Sanity-check the TickerLedger** is accumulating real events for tickers
-   you're watching — this is the ticker-keyed audit trail everything else in
-   the design writes to.
+   you're watching — taxonomy now pinned `stage/event_type/source` (`decisions/10`), append-only, `ref_id` points to real row. This is the ticker-keyed audit trail everything else in the design writes to.
+6. **(New) Run freeze manifest** for lineage: `python -c "from vinu_infra.freeze import freeze_manifest; freeze_manifest('freeze.json')"` — hashes `VINU_*` env + `*_DATA_ROOT` file hashes (`B21`, `vinu_infra/freeze.py`). Use `contamination_check(old,new)` between research and live to prove no data drift.
+7. **(New) Check shock batch:** `TradePlanOrchestrator.cycle_shock_batch(max_batch=5)` now scores by `shock_clustering` + `shock_personality` and prioritizes top batch — not just `on_shock_event` debounced 60s per symbol.
 
 ## Ongoing operational checklist
 
@@ -162,10 +169,11 @@ each service's prefix matches its `route_prefix` in that service's
 - **Re-run `scripts/setup-secrets.sh --check`** any time before a redeploy,
   especially after rotating a credential, to confirm nothing required is
   blank.
+- **New since v1:** `PaperRehearsalResult` (Row 1), `replace` REQUEST (Row 2), `cycle_shock_batch` (Row 3), `composition_view` (Row 4), `OrderGuard` throttle `10/sec` (B20), `freeze_manifest` (B21) — see `04-new-full-explanation-v2.md` + `pending-items-to-be-implemented.md` Status 2026-09-07.
 - **Known follow-up, not urgent**: task 01's capital-allocator-worker test
-  doesn't yet exercise the actual scheduling loop (only the cycle function it
-  calls) — the worker itself is confirmed working in practice, this is just a
-  test-coverage gap to close eventually.
+   doesn't yet exercise the actual scheduling loop (only the cycle function it
+   calls) — the worker itself is confirmed working in practice, this is just a
+   test-coverage gap to close eventually. Also `ShadowEvaluator` tick wallet still spiked (B24).
 - **If you ever add a new committed file with real credentials in it by
   mistake**, follow the leaked-credential playbook in
   `docs/secrets-rotation.md` immediately — rotate at the provider first,
