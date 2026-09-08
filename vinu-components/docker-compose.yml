@@ -423,6 +423,7 @@ services:
     tmpfs:
       - /tmp
       - /home/app/.cache
+      - /nonexistent:rw,mode=1777,exec
     mem_limit: 2g
     cpus: 2
     pids_limit: 512

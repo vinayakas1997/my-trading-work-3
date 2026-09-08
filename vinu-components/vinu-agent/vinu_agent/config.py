@@ -85,6 +85,12 @@ class AgentConfig:
     discord_token: str = ""
     discord_admin_channel_id: str = ""
     significance_worker_interval_sec: int = 900
+    # G1 (ats-status-and-next-steps.md:92): risk_gatekeeper had no worker --
+    # a real research PASS parked at BENCHING forever because nothing ever
+    # invoked the risk_gatekeeper team. 900s (15 min) same cadence as
+    # capital_allocator (first-pass, unvalidated, same "un-pinned threshold"
+    # category), env knob VINU_AGENT_RISK_GATEKEEPER_INTERVAL.
+    risk_gatekeeper_worker_interval_sec: int = 900
     # capital_allocator's scheduled caller (shortcoming #1, implementation-
     # plan task 01): fully wired and correct when invoked, but nothing ran
     # it on an interval -- approved PEND candidates could sit unfunded
@@ -232,6 +238,7 @@ def load_config() -> AgentConfig:
         discord_token=load_secret("discord_token", "DISCORD_TOKEN") or "",
         discord_admin_channel_id=os.environ.get("VINU_AGENT_DISCORD_ADMIN_CHANNEL_ID", ""),
         significance_worker_interval_sec=int(os.environ.get("VINU_AGENT_SIGNIFICANCE_INTERVAL", "900")),
+        risk_gatekeeper_worker_interval_sec=int(os.environ.get("VINU_AGENT_RISK_GATEKEEPER_INTERVAL", "900")),
         capital_allocator_worker_interval_sec=int(os.environ.get("VINU_AGENT_CAPITAL_ALLOCATOR_INTERVAL", "900")),
         capital_allocator_budget=float(os.environ.get("VINU_AGENT_CAPITAL_ALLOCATOR_BUDGET", "100000")),
         position_sizing_method=os.environ.get("VINU_AGENT_POSITION_SIZING_METHOD", "fractional_kelly"),

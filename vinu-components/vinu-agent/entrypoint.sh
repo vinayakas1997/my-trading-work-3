@@ -28,4 +28,32 @@ vinu-agent significance-worker &
 # the workers above: background loop, cadence/budget configurable via
 # VINU_AGENT_CAPITAL_ALLOCATOR_INTERVAL / VINU_AGENT_CAPITAL_ALLOCATOR_BUDGET.
 vinu-agent capital-allocator-worker &
+# G1 (ats-status-and-next-steps.md:92): risk_gatekeeper had no worker --
+# a real research PASS parked at BENCHING forever because nothing ever
+# invoked the risk_gatekeeper team. Same 90s cadence shape as
+# capital-allocator: poll BENCHING/MONITORING batch and hand each to the
+# real risk_gatekeeper team.
+vinu-agent risk-gatekeeper-worker &
+# ATS plumbing: ensure paper trading queue works outside market hours and
+# closing longs is not blocked as "short" -- tmpfs /nonexistent is empty
+# on every fresh container, so create the mandate here if none exists.
+if [ ! -f /nonexistent/.vinu/mandate.yaml ]; then
+  mkdir -p /nonexistent/.vinu
+  cat > /nonexistent/.vinu/mandate.yaml <<'YAML'
+allowed_tickers: ["*"]
+blocked_tickers: []
+max_position_pct: 0.25
+max_order_value: 50000.0
+max_daily_orders: 20
+max_daily_trade_volume: 200000.0
+max_capital_utilization_pct: 1.0
+require_active_artifact: true
+require_market_open: false
+max_symbol_concentration_pct: 1.0
+max_pairwise_correlation: 1.0
+require_confirmation: false
+allow_short: true
+allow_margin: false
+YAML
+fi
 exec vinu-agent serve --host 0.0.0.0 --port 8086

@@ -96,6 +96,11 @@ def _fit_and_forecast(close: np.ndarray, seed: int = 42) -> tuple[dict[str, Any]
     from torch import nn
 
     torch.manual_seed(seed)
+    # Force CPU to avoid CUDA OOM on shared GPU hosts (e.g. 2026-09-08 dlinear
+    # CUDA error: out of memory on 1D Full window 1125 bars). Model is tiny
+    # (<1k params) so CPU is fast enough and avoids the read-only + CUDA
+    # fallback seen in kronos.
+    device = torch.device("cpu")
 
     n = len(close)
     mean = float(close.mean())
@@ -108,10 +113,10 @@ def _fit_and_forecast(close: np.ndarray, seed: int = 42) -> tuple[dict[str, Any]
     if len(X) < 20:
         raise ValueError(f"insufficient training windows: {len(X)}")
 
-    X_t = torch.from_numpy(X)
-    y_t = torch.from_numpy(y).unsqueeze(-1)
+    X_t = torch.from_numpy(X).to(device)
+    y_t = torch.from_numpy(y).unsqueeze(-1).to(device)
 
-    model = _build_model(LOOKBACK, KERNEL_SIZE)
+    model = _build_model(LOOKBACK, KERNEL_SIZE).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=0.01)
     loss_fn = nn.MSELoss()
 
@@ -126,7 +131,7 @@ def _fit_and_forecast(close: np.ndarray, seed: int = 42) -> tuple[dict[str, Any]
 
     model.eval()
     with torch.no_grad():
-        last_window = torch.from_numpy(norm[-LOOKBACK:].astype(np.float32)).unsqueeze(0)
+        last_window = torch.from_numpy(norm[-LOOKBACK:].astype(np.float32)).unsqueeze(0).to(device)
         forecast_norm = float(model(last_window).item())
 
     forecast_price = forecast_norm * std + mean

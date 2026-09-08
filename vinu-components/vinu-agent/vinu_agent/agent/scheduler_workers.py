@@ -350,6 +350,87 @@ async def run_significance_cycle(
     return flags
 
 
+def run_risk_gatekeeper_cycle(service: Any, *, cycle: int = 0) -> dict[str, Any]:
+    """G1 — Scheduled caller for risk_gatekeeper (was missing: a real
+    research PASS parked at BENCHING forever because nothing ever invoked
+    the risk_gatekeeper team). Polls every BENCHING artifact (approved,
+    pending portfolio-fit check), hands each to the real risk_gatekeeper
+    team -- same `run_team_for_ticker(...)` pattern capital_allocator and
+    planner use -- and reports APPROVED/PEND vs REJECTED. The team's own
+    hook (agent/risk_gatekeeper_hook.py) applies the BENCHING->PEND
+    transition + TickerLedger row; nothing here mutates state directly.
+    Best-effort per artifact (one failure must not stop the batch), and
+    sequential when only one is pending (the common case) to keep the 90s
+    cadence cheap.
+
+    Returns:
+        {"status": "skipped", "reason": ..., "bench_candidates": 0} when
+        empty, or {"status": "ok", "bench_candidates": N, "results": [...]}
+        after the batch.
+    """
+    from vinu_research.models import ArtifactStatus
+
+    bench = service._strategy_store.list_artifacts_by_statuses([ArtifactStatus.BENCHING])
+    # Also include MONITORING which the hook also handles (BENCHING/MONITORING -> PEND)
+    try:
+        monitoring = service._strategy_store.list_artifacts_by_statuses([ArtifactStatus.MONITORING])
+        # Deduplicate by artifact_id
+        seen = {a.artifact_id for a in bench}
+        for m in monitoring:
+            if m.artifact_id not in seen:
+                bench.append(m)
+    except Exception:
+        pass
+
+    if not bench:
+        return {
+            "status": "skipped",
+            "reason": "no BENCHING/MONITORING artifacts awaiting gatekeeper review",
+            "bench_candidates": 0,
+        }
+
+    def _one(artifact) -> dict[str, Any]:
+        artifact_id = artifact.artifact_id
+        symbol = artifact.universe[0] if artifact.universe else "UNKNOWN"
+        task = (
+            f"Run risk_gatekeeper review for artifact {artifact_id} "
+            f"(symbol {symbol}, status {artifact.status.value}).\n"
+            f"Artifact deflated_sharpe={getattr(artifact, 'deflated_sharpe', 0.0)}, "
+            f"holdout_passed={getattr(artifact, 'holdout_passed', None)}, "
+            f"stress_passed={getattr(artifact, 'stress_test_passed', None)}.\n"
+            "Follow your normal process: call GetPortfolioTool to check "
+            "exposure, ComputePositionSizeTool for sizing, then emit your "
+            "final JSON verdict (APPROVED with approved_size + sizing_inputs, "
+            "or REJECTED with reason) in a ```json block."
+        )
+        try:
+            result = run_team_for_ticker(
+                service, "risk_gatekeeper", task, session_id=f"risk-gatekeeper-{artifact_id}-{cycle}",
+            )
+            return {
+                "artifact_id": artifact_id,
+                "symbol": symbol,
+                "status": result.get("status"),
+                "run_id": result.get("run_id"),
+                "artifact_id_out": result.get("artifact_id"),
+            }
+        except Exception as exc:
+            LOG.exception("risk_gatekeeper cycle failed for %s", artifact_id)
+            return {"artifact_id": artifact_id, "symbol": symbol, "status": "failed", "error": str(exc)}
+
+    # Sequential for 1, bounded parallel for batch (same pattern as bootstrap)
+    if len(bench) == 1:
+        results = [_one(bench[0])]
+    else:
+        results = _map_parallel(_one, bench, max_workers=2)
+
+    return {
+        "status": "ok",
+        "bench_candidates": len(bench),
+        "results": results,
+    }
+
+
 def run_capital_allocator_cycle(service: Any, *, budget: float, cycle: int = 0) -> dict[str, Any]:
     """One capital-allocation pass over the whole PEND batch -- the
     scheduled caller shortcoming #1 was missing (an approved candidate

@@ -1,0 +1,44 @@
+{
+  "schema_version": "0.1",
+  "hypotheses": {
+    "hyp_2f55e40cfae4": {
+      "hypothesis_id": "hyp_2f55e40cfae4",
+      "title": "Given the absence of a defined trend lifecycle or dominant signal in the deterministic angle analysis, the strategy should adopt a mean-reversion approach within a low-volatility, range-bound regime; specifically, utilize the 20-period and 50-period Exponential Moving Averages to define the dynamic boundaries of the trading channel, entering long positions when price touches the lower channel boundary with a RSI(14) reading below 30, and exiting when price reverts to the 20-period EMA, while employing a tight stop-loss at the recent swing low to mitigate risk during potential regime shifts.",
+      "thesis": "Given the absence of a defined trend lifecycle or dominant signal in the deterministic angle analysis, the strategy should adopt a mean-reversion approach within a low-volatility, range-bound regime; specifically, utilize the 20-period and 50-period Exponential Moving Averages to define the dynamic boundaries of the trading channel, entering long positions when price touches the lower channel boundary with a RSI(14) reading below 30, and exiting when price reverts to the 20-period EMA, while employing a tight stop-loss at the recent swing low to mitigate risk during potential regime shifts.",
+      "status": "exploring",
+      "universe": [
+        "NVDA"
+      ],
+      "signal_definition": "",
+      "run_cards": [],
+      "strategy_type": "Given the absence of a defined trend lifecycle or dominant signal in the deterministic angle analysis, the strategy should adopt a mean-reversion approach within a low-volatility, range-bound regime; specifically, utilize the 20-period and 50-period Exponential Moving Averages to define the dynamic boundaries of the trading channel, entering long positions when price touches the lower channel boundary with a RSI(14) reading below 30, and exiting when price reverts to the 20-period EMA, while employing a tight stop-loss at the recent swing low to mitigate risk during potential regime shifts.",
+      "indicators_used": [],
+      "params_tested": {},
+      "evidence": [
+        {
+          "run_id": 1,
+          "iteration": 1,
+          "metric": "sharpe",
+          "value": 0.0,
+          "conclusion": "contradicts",
+          "reasoning": "INFRASTRUCTURE FAILURE (not a strategy problem): INFRASTRUCTURE FAILURE, not a strategy problem: simulator returned no result (service down or circuit open). Do NOT retry with another recipe \u2014 STOP this run and report the blocker.",
+          "timestamp": "",
+          "metrics_snapshot": {
+            "sharpe": 0.0,
+            "max_dd": 0.0,
+            "trade_count": 0,
+            "win_rate": 0.0
+          },
+          "report_path": null,
+          "source": "system",
+          "ref_id": ""
+        }
+      ],
+      "invalidation_reason": null,
+      "best_sharpe": 0.0,
+      "created_at": "2026-09-08T06:28:00.925265+00:00",
+      "updated_at": "2026-09-08T06:34:04.058793+00:00",
+      "source": "system"
+    }
+  }
+}

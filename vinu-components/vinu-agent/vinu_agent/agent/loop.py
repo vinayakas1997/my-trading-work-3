@@ -362,6 +362,13 @@ class AgentLoop:
 
     def _call_llm(self, messages: List[Dict]) -> Dict:
         tools_def = self.registry.get_definitions()
+        # qwen36-35B Jinja (chat:79) requires at least one user role; ensure it.
+        if not any(m.get("role") == "user" for m in messages):
+            messages = list(messages) + [{"role": "user", "content": "Continue analysis."}]
+        elif messages[-1].get("role") == "tool" and not any(m.get("role") == "user" for m in messages[-3:]):
+            # History ending on tool with no recent user confuses qwen template;
+            # append a lightweight user nudge to keep the Jinja renderer happy.
+            messages = list(messages) + [{"role": "user", "content": "Continue with the tool results above."}]
         return self.llm.chat(messages, tools=tools_def)
 
     def _apply_context_layers(self, messages: List[Dict]) -> List[Dict]:
@@ -447,7 +454,21 @@ class AgentLoop:
             result.append(
                 {"role": "system", "content": f"<compacted-summary>\n{summary}\n</compacted-summary>"}
             )
-            result.append(messages[-1])
+            # Ensure at least one user message survives compaction;
+            # qwen36-35B Jinja template fails with "No user query found" if the
+            # trailing history contains only system/tool after compaction at
+            # high iteration counts (e.g. iteration 15 NVDA).
+            user_msg = next((m for m in messages if m.get("role") == "user"), None)
+            if user_msg:
+                result.append(user_msg)
+            # Preserve the most recent non-system context (tool or user) for
+            # tool-call continuity, but never leave the trail ending on tool
+            # alone without a user.
+            last = messages[-1]
+            if last.get("role") != "system":
+                result.append(last)
+            if not any(m.get("role") == "user" for m in result):
+                result.append({"role": "user", "content": "Continue the analysis with the available data."})
             return result
         except Exception:
             result = list(messages[-6:])

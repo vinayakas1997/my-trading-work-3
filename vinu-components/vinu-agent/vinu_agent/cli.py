@@ -17,6 +17,7 @@ from .agent.scheduler_workers import (
     make_planner_on_yes,
     make_summary_agent_fn,
     run_capital_allocator_cycle,
+    run_risk_gatekeeper_cycle,
     run_significance_cycle,
 )
 from .agent.significance_triage import SignificanceFlagStore
@@ -88,6 +89,15 @@ def _parse_args(argv=None) -> argparse.Namespace:
     # run_capital_allocator_cycle).
     caw_p = sub.add_parser("capital-allocator-worker", help="Run continuous capital-allocator (PEND batch funding) worker loop")
     caw_p.add_argument("--interval", type=int, dest="interval_sec", default=None)
+
+    # ── risk-gatekeeper-worker ──
+    # G1 (ats-status-and-next-steps.md:92): risk_gatekeeper had no worker --
+    # a real research PASS parked at BENCHING forever because nothing ever
+    # invoked the risk_gatekeeper team. Same 90s cadence shape as the other
+    # workers: poll BENCHING/MONITORING batch and hand each to the real
+    # risk_gatekeeper team (run_risk_gatekeeper_cycle).
+    rgw_p = sub.add_parser("risk-gatekeeper-worker", help="Run continuous risk_gatekeeper (BENCHING→PEND) worker loop")
+    rgw_p.add_argument("--interval", type=int, dest="interval_sec", default=None)
 
     # ── broker ──
     broker_p = sub.add_parser("broker", help="Broker operations")
@@ -502,6 +512,41 @@ def capital_allocator_worker_main(args: argparse.Namespace) -> None:
             print("\n[capital-allocator-worker] Stopped by user.")
 
 
+def risk_gatekeeper_worker_main(args: argparse.Namespace) -> None:
+    """G1 — Scheduled caller for risk_gatekeeper: on a fixed cadence,
+    collect the whole BENCHING/MONITORING batch and hand each to the real
+    risk_gatekeeper team -- same `while True: cycle(); sleep()` shape as
+    capital_allocator and planner. A cycle with zero BENCHING artifacts
+    skips the LLM team run entirely, and a failed cycle is logged then
+    re-raised (crash-loud, never silently swallowed)."""
+    config = load_config()
+    interval = resolve_worker_interval(args, config, "risk_gatekeeper_worker_interval_sec")
+    print(f"[risk-gatekeeper-worker] Starting (interval={interval}s)")
+    print(f"[risk-gatekeeper-worker] Press Ctrl+C to stop.\n")
+
+    log = logging.getLogger("vinu.agent.risk_gatekeeper_worker")
+    with AgentService() as service:
+        cycle = 0
+        try:
+            while True:
+                cycle += 1
+                try:
+                    result = run_risk_gatekeeper_cycle(service, cycle=cycle)
+                    log.info(
+                        "risk-gatekeeper cycle complete",
+                        extra={"vinu_ctx": {"worker": "risk-gatekeeper-worker", "cycle": cycle, **result}},
+                    )
+                except Exception:
+                    log.exception(
+                        "risk-gatekeeper cycle failed",
+                        extra={"vinu_ctx": {"worker": "risk-gatekeeper-worker", "cycle": cycle}},
+                    )
+                    raise
+                time.sleep(interval)
+        except KeyboardInterrupt:
+            print("\n[risk-gatekeeper-worker] Stopped by user.")
+
+
 def main() -> None:
     setup_logging("agent")
     args = _parse_args()
@@ -530,6 +575,8 @@ def main() -> None:
         significance_worker_main(args)
     elif args.command == "capital-allocator-worker":
         capital_allocator_worker_main(args)
+    elif args.command == "risk-gatekeeper-worker":
+        risk_gatekeeper_worker_main(args)
     elif args.command == "swarm":
         asyncio.run(_cmd_swarm(args))
     elif args.command == "mandate":
