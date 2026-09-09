@@ -72,11 +72,21 @@ def cycle(data_root: Path | str = "", db_path: Path | str = "") -> dict:
             avg_commission = round(row[1] or 0.0, 4)
         except Exception:
             pass
+        # Regime context (20): last-5 W/L streak + HALT state at lesson time,
+        # so review can split lessons by market context. Fail-open empty.
+        last5 = ""
+        try:
+            cur.execute("SELECT realized_pnl FROM closed_positions ORDER BY closed_at DESC LIMIT 5")
+            last5 = "".join("W" if (r[0] or 0) >= 0 else "L" for r in cur.fetchall())
+        except Exception:
+            pass
     except Exception as e:
         return {"status": "failed", "error": str(e)}
     finally:
         con.close()
+    halted = (Path.home() / ".vinu-live" / "HALT").exists()
+    summary = {"closed": closed, "fills": fills, "avg_commission": avg_commission, "last5": last5, "halted": halted, "at": datetime.now(timezone.utc).isoformat()}
     if not should_write_lesson(closed):
-        return {"status": "skipped_not_enough", "closed": closed, "fills": fills, "avg_commission": avg_commission}
-    p = write_lesson({"closed": closed, "fills": fills, "avg_commission": avg_commission, "at": datetime.now(timezone.utc).isoformat()}, root)
-    return {"status": "ok", "closed": closed, "fills": fills, "avg_commission": avg_commission, "lesson": str(p)}
+        return {"status": "skipped_not_enough", **summary}
+    p = write_lesson(summary, root)
+    return {"status": "ok", **summary, "lesson": str(p)}
