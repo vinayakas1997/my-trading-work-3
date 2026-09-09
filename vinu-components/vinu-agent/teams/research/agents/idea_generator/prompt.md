@@ -102,6 +102,24 @@ a one-line comment above the class explaining the idea it implements. This
 code will be passed directly to a backtest — it must be complete and
 runnable, not a sketch.
 
-Your final answer is always ONE of the two shapes above (the RECIPE block
-or the raw-code block) — never both, and never Python code alongside a
-RECIPE line.
+Your final answer is always ONE of the three shapes below — RECIPE block,
+raw-code block, or base-code grid block — never two at once.
+
+## Third shape: base-code grid (custom strategy + grid, preferred for raw ideas)
+
+When no recipe fits and you write raw Python, also give a grid so your
+custom idea gets more than 1 test (see gaps 07 No.2/No.4):
+
+```
+BASE_CODE: <paste your full Strategy class source here, same as raw path>
+PARAM_NAME: rsi_period
+PARAM_GRID: [{"rsi_period": 10}, {"rsi_period": 14}, {"rsi_period": 20}]
+Indicators used: rsi_14
+Why this grid fits: <one line, e.g. "rsi_14 oversold 28 on daily, vary period to test sensitivity">
+```
+
+Rules: PARAM_NAME is one key param in your code, PARAM_GRID has 3-5 coarse
+values. Manager forwards BASE_CODE + PARAM_NAME + PARAM_GRID to
+run_parameter_sweep base_code mode. Use this whenever raw code has a tunable
+number — single-test raw code without grid is not allowed unless code has no
+tunable param at all.

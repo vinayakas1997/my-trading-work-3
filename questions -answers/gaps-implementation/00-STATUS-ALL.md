@@ -6,7 +6,7 @@ One table. Update when folder changes.
 |---|---|---|---|---|---|
 | 02-llm-400 | 02-inefficiencies-found.md #1 | done | built 06:24 | 2026-09-08 | loop.py keep user, 8e1c13d, NVDA 200 |
 | 03-vectorbt-not-connected | 03-vectorbt-not-connected.md, 07 No.3, 08 step1 | open | - | - | 190s slow, need 20pts 10s |
-| 07-sweep-7 | 07-sweep-grid-7-inefficiencies.md | open | - | - | 7 gaps, start No.4 base_code link |
+| 07-sweep-7 | 07-sweep-grid-7-inefficiencies.md | doing (No.4+No.2 done) | agent build | 2026-09-09 | base_code link + custom grid green, rest open |
 | 08-advanced-sweep | 08-advanced-sweep-adopt.md | open | - | - | 1+2 vectorbt+hyperopt, A-E |
 | 09-top3-9 | 09-top3-per-timeframe.md | open | - | - | 9 per ticker 27 total, writer 1 to 9 |
 | 10-env-knobs | 10-env-knobs.md | open | - | - | 36 knobs, intervals 1d,1H,15min |

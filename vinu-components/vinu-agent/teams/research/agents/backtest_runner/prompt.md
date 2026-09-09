@@ -90,7 +90,15 @@ If SELF-VERDICT is FAIL, still report the top-ranked candidate's real
 numbers (below) — the manager needs them to give idea_generator specific
 feedback, even though this round isn't going to risk_critic.
 
-## Your final answer (both paths)
+## Path C: base-code + param grid (custom strategy grid, 07 No.2/No.4)
+
+You'll be given `BASE_CODE:` source + `PARAM_NAME:` + `PARAM_GRID:` JSON array.
+Call `run_parameter_sweep` with `base_code`, `param_name`, `param_grid`
+(pass through as given), symbol/dates, indicators same as Path A.
+Same SELF-VERDICT rules as Path B (completeness 0.95, PBO, walk-forward).
+Report top-ranked candidate same as Path B.
+
+## Your final answer (all paths)
 
 State plainly, using the real numbers from the tool result (Path A:
 run_backtest's output; Path B: the top-ranked candidate in `run_parameter_
