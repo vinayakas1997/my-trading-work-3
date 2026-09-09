@@ -53,6 +53,8 @@ class PortfolioService:
         # (build_portfolio + allocate_risk_parity both called _build_returns_df)
         self._returns_cache: dict[str, tuple[float, pd.Series]] = {}
         self._returns_cache_ttl = 60.0
+        # Hysteresis (19 step3): last tilted weights, no flip-flop on noise.
+        self._last_weights: dict[str, float] = {}
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -565,6 +567,24 @@ class PortfolioService:
         if total > 0:
             for t in tilted:
                 t["target_weight"] = round(t["target_weight"] / total, 4)
+
+        # Hysteresis 2d no flip-flop (19 step3): changes smaller than
+        # VINU_PORTFOLIO_MIN_WEIGHT_CHANGE (default 0.02) hold old weight.
+        # Renormalize after. First run (no memory) passes through.
+        try:
+            _min_chg = float(_os.environ.get("VINU_PORTFOLIO_MIN_WEIGHT_CHANGE", "0.02"))
+        except ValueError:
+            _min_chg = 0.02
+        if self._last_weights and _min_chg > 0:
+            for t in tilted:
+                _old_w = self._last_weights.get(t["name"])
+                if _old_w is not None and abs(t["target_weight"] - _old_w) < _min_chg:
+                    t["target_weight"] = _old_w
+            _tot2 = sum(t["target_weight"] for t in tilted)
+            if _tot2 > 0:
+                for t in tilted:
+                    t["target_weight"] = round(t["target_weight"] / _tot2, 4)
+        self._last_weights = {t["name"]: t["target_weight"] for t in tilted}
 
         equity = await self._fetch_account_equity()
         if equity is not None:
