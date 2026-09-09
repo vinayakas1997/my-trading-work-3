@@ -331,6 +331,26 @@ BROKER_STALE_SEC = float(_os.environ.get("VINU_LIVE_BROKER_STALE_SEC", "180"))
 EVENT_BLACKOUT_HOURS = float(_os.environ.get("VINU_LIVE_EVENT_BLACKOUT_HOURS", "24"))
 
 
+# how-to-make-it-live.md #33 part 2 (Stage 4): out-of-distribution detector --
+# the AUTOMATIC trigger for the emergency flatten. Ships DORMANT. Once per cycle
+# it scores three fail-open signals over the open book and fires only when
+# >= OOD_MIN_SIGNALS of them trip together (so no single noisy input can nuke
+# the book). Graduated activation via VINU_LIVE_OOD_DETECTOR:
+#   off     (default) -- not even run
+#   alert             -- detect + log + report in the cycle result, NO action
+#                        (run this for weeks in paper and see how often it fires)
+#   halt              -- trip the global kill switch (block new entries)
+#   flatten           -- full emergency_flatten()
+# Latched: after it acts once (this process lifetime) it will not act again
+# until emergency_resume() or a restart -- an auto-flatten is a one-shot, not a
+# loop.
+OOD_DETECTOR_MODE = _os.environ.get("VINU_LIVE_OOD_DETECTOR", "off").lower()
+OOD_CORR_THRESHOLD = float(_os.environ.get("VINU_LIVE_OOD_CORR", "0.95"))
+OOD_VOL_THRESHOLD = float(_os.environ.get("VINU_LIVE_OOD_VOL", "0.08"))
+OOD_MOVE_THRESHOLD = float(_os.environ.get("VINU_LIVE_OOD_MOVE", "0.10"))
+OOD_MIN_SIGNALS = int(_os.environ.get("VINU_LIVE_OOD_MIN_SIGNALS", "2"))
+
+
 def _signal_age_hours(created_at: Any) -> float | None:
     """Stage 2 (how-to-make-it-live.md #9/#36): a TradePlan was "valid until
     invalidated," never "valid for a window" -- a 3-day-old setup with no
@@ -461,6 +481,10 @@ class TradePlanOrchestrator:
         # side; this is the fast, explicit local shortcut. Set by
         # emergency_flatten(), cleared by emergency_resume().
         self._trading_halted: bool = False
+        # how-to-make-it-live.md #33 part 2: latch so the auto-OOD detector
+        # acts at most once per process lifetime (until emergency_resume /
+        # restart).
+        self._ood_acted: bool = False
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -658,6 +682,11 @@ class TradePlanOrchestrator:
 
             corr_check = await self._check_runtime_correlation(prices)
             result["correlation_monitor"] = corr_check
+
+            # how-to-make-it-live.md #33 part 2: auto-OOD detector. Dormant
+            # unless VINU_LIVE_OOD_DETECTOR is alert/halt/flatten. Runs last
+            # so it sees the book after the correlation monitor's trims.
+            result["ood_detector"] = await self._check_ood(prices)
 
         except Exception as e:
             LOG.error("[%s] Cycle failed: %s", cycle_id, e)
@@ -1319,6 +1348,118 @@ class TradePlanOrchestrator:
                     target, order_result.get("status"),
                 )
         return {"checked": True, "n_flagged_pairs": len(flagged), "flagged": flagged, "reductions": reductions}
+
+    async def _check_ood(self, prices: dict[str, float]) -> dict[str, Any]:
+        """how-to-make-it-live.md #33 part 2: out-of-distribution detector.
+        Scores the open book against three fail-open signals; fires only when
+        >= OOD_MIN_SIGNALS trip together. Action is set by VINU_LIVE_OOD_DETECTOR
+        (off | alert | halt | flatten). Latched via self._ood_acted so an
+        auto-action happens at most once per process."""
+        if OOD_DETECTOR_MODE not in ("alert", "halt", "flatten"):
+            return {"checked": False, "reason": "disabled"}
+
+        positions = list_open_positions(self._book)
+        symbols = sorted({p.symbol for p in positions})
+        if not symbols:
+            return {"checked": False, "reason": "no open positions"}
+
+        import statistics as _st
+
+        signals: list[str] = []
+        detail: dict[str, Any] = {}
+
+        # 1. crisis correlation -- mean |pairwise corr| across the open book
+        if len(symbols) >= 2:
+            cov = await self._compute_covariance(symbols)
+            if cov is not None:
+                from vinu_tools.compute.risk.covariance import correlation_from_covariance
+
+                corr = correlation_from_covariance(cov)
+                offdiag = [
+                    abs(float(corr[i, j]))
+                    for i in range(len(symbols))
+                    for j in range(i + 1, len(symbols))
+                ]
+                if offdiag:
+                    mean_abs_corr = sum(offdiag) / len(offdiag)
+                    detail["mean_abs_corr"] = round(mean_abs_corr, 3)
+                    if mean_abs_corr >= OOD_CORR_THRESHOLD:
+                        signals.append(
+                            f"crisis_correlation {mean_abs_corr:.2f}>={OOD_CORR_THRESHOLD:.2f}"
+                        )
+
+        # 2 + 3. recent per-symbol returns -> vol explosion + single-day gap
+        series = await asyncio.gather(*(self._fetch_recent_prices(s) for s in symbols))
+        vols: list[float] = []
+        max_move = 0.0
+        for closes in series:
+            rets = _simple_returns(closes)
+            if len(rets) >= 5:
+                window = rets[-14:] if len(rets) >= 14 else rets
+                vols.append(_st.pstdev(window))
+            if rets:
+                max_move = max(max_move, abs(rets[-1]))
+        if vols:
+            mean_vol = sum(vols) / len(vols)
+            detail["mean_realized_vol"] = round(mean_vol, 4)
+            if mean_vol >= OOD_VOL_THRESHOLD:
+                signals.append(f"vol_explosion {mean_vol:.3f}>={OOD_VOL_THRESHOLD:.3f}")
+        detail["max_1d_move"] = round(max_move, 4)
+        if max_move >= OOD_MOVE_THRESHOLD:
+            signals.append(f"gap_move {max_move:.2f}>={OOD_MOVE_THRESHOLD:.2f}")
+
+        triggered = len(signals) >= OOD_MIN_SIGNALS
+        result: dict[str, Any] = {
+            "checked": True,
+            "mode": OOD_DETECTOR_MODE,
+            "signals": signals,
+            "signal_count": len(signals),
+            "min_signals": OOD_MIN_SIGNALS,
+            "triggered": triggered,
+            "detail": detail,
+            "acted": False,
+        }
+        if not triggered:
+            return result
+
+        LOG.warning(
+            "OOD detector TRIGGERED (%d/%d signals): %s",
+            len(signals), OOD_MIN_SIGNALS, "; ".join(signals),
+        )
+
+        if OOD_DETECTOR_MODE == "alert":
+            result["note"] = "alert-only -- no action taken"
+            return result
+        if self._ood_acted:
+            result["note"] = "already acted this process lifetime -- no repeat action"
+            return result
+
+        reason = f"auto-OOD [{'; '.join(signals)}]"
+        if OOD_DETECTOR_MODE == "flatten":
+            flat = await self.emergency_flatten(reason=reason)
+            result["action"] = "emergency_flatten"
+            result["flatten_result"] = flat
+            result["acted"] = True
+        else:  # halt
+            ok = False
+            try:
+                resp = await self._http.post(
+                    f"{self._config.agent_api_url}/agent/broker/halt",
+                    json={"reason": reason},
+                )
+                ok = getattr(resp, "status_code", None) == 200
+            except Exception as e:  # noqa: BLE001
+                LOG.error("OOD halt call failed: %s", e)
+            if ok:
+                self._trading_halted = True
+                self._breaker_state.halted = True
+                self._breaker_state.halted_at = datetime.now(timezone.utc).isoformat()
+                self._breaker_state.halted_reason = reason
+            result["action"] = "halt"
+            result["acted"] = ok
+
+        self._ood_acted = self._ood_acted or bool(result["acted"])
+        return result
 
     # ------------------------------------------------------------------
     # Broker / market data

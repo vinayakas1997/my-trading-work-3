@@ -1268,6 +1268,125 @@ class TestEmergencyFlatten:
         assert list_open_positions(book) == []
 
 
+class TestOODDetector:
+    """how-to-make-it-live.md #33 part 2: the automatic OOD trigger for the
+    emergency flatten. Ships dormant (VINU_LIVE_OOD_DETECTOR=off). Scores 3
+    fail-open signals over the open book, fires only when >= OOD_MIN_SIGNALS
+    trip together, and acts per the mode (alert / halt / flatten). Latched."""
+
+    @staticmethod
+    def _cov(rho: float):
+        import numpy as np
+        return np.array([[1.0, rho], [rho, 1.0]])
+
+    @staticmethod
+    def _wild_series(n: int = 30):
+        # alternating -10% / +11.1% -> pstdev(returns) ~0.105, last |move| ~0.111
+        out = [100.0]
+        for i in range(n):
+            out.append(out[-1] * (0.9 if i % 2 == 0 else 1.0 / 0.9))
+        return out
+
+    @staticmethod
+    def _calm_series(n: int = 30):
+        out = [100.0]
+        for i in range(n):
+            out.append(out[-1] * (1.001 if i % 2 == 0 else 0.999))
+        return out
+
+    def _orch_with_book(self, book, *, cov_rho, series):
+        open_position(book, "AAA", "long", 100.0, 10.0)
+        open_position(book, "BBB", "long", 100.0, 10.0)
+        orch = _make_orchestrator(book)
+        orch._compute_covariance = AsyncMock(return_value=self._cov(cov_rho))
+        orch._fetch_recent_prices = AsyncMock(return_value=series)
+        return orch
+
+    def test_disabled_by_default(self, book) -> None:
+        orch = self._orch_with_book(book, cov_rho=0.99, series=self._wild_series())
+        res = asyncio.run(orch._check_ood({"AAA": 10.0, "BBB": 10.0}))
+        assert res["checked"] is False
+        assert res["reason"] == "disabled"
+
+    def test_alert_mode_detects_but_does_not_act(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "OOD_DETECTOR_MODE", "alert")
+        orch = self._orch_with_book(book, cov_rho=0.99, series=self._wild_series())
+        orch.emergency_flatten = AsyncMock()
+
+        res = asyncio.run(orch._check_ood({"AAA": 10.0, "BBB": 10.0}))
+
+        assert res["triggered"] is True
+        assert res["signal_count"] >= 2
+        assert res["acted"] is False
+        assert "alert-only" in res["note"]
+        orch.emergency_flatten.assert_not_called()
+        assert len(list_open_positions(book)) == 2
+
+    def test_flatten_mode_fires_emergency_flatten(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "OOD_DETECTOR_MODE", "flatten")
+        orch = self._orch_with_book(book, cov_rho=0.99, series=self._wild_series())
+        orch.emergency_flatten = AsyncMock(return_value={"status": "ok", "count_closed": 2})
+
+        res = asyncio.run(orch._check_ood({"AAA": 10.0, "BBB": 10.0}))
+
+        assert res["triggered"] is True
+        assert res["acted"] is True
+        assert res["action"] == "emergency_flatten"
+        orch.emergency_flatten.assert_awaited_once()
+        assert orch._ood_acted is True
+
+    def test_halt_mode_trips_kill_switch_only(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "OOD_DETECTOR_MODE", "halt")
+        orch = self._orch_with_book(book, cov_rho=0.99, series=self._wild_series())
+        _, post_mock = _router({}, {"/broker/halt": {"status": "ok", "halted": True}})
+        orch._http.post = post_mock
+
+        res = asyncio.run(orch._check_ood({"AAA": 10.0, "BBB": 10.0}))
+
+        assert res["action"] == "halt"
+        assert res["acted"] is True
+        assert orch._trading_halted is True
+        assert len(list_open_positions(book)) == 2  # positions untouched
+
+    def test_one_signal_does_not_trigger(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "OOD_DETECTOR_MODE", "flatten")
+        # high corr (1 signal) but calm returns (no vol, no gap)
+        orch = self._orch_with_book(book, cov_rho=0.99, series=self._calm_series())
+        orch.emergency_flatten = AsyncMock()
+
+        res = asyncio.run(orch._check_ood({"AAA": 10.0, "BBB": 10.0}))
+
+        assert res["signal_count"] == 1
+        assert res["triggered"] is False
+        orch.emergency_flatten.assert_not_called()
+
+    def test_no_open_positions_is_a_noop(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "OOD_DETECTOR_MODE", "flatten")
+        orch = _make_orchestrator(book)
+        res = asyncio.run(orch._check_ood({}))
+        assert res["checked"] is False
+        assert res["reason"] == "no open positions"
+
+    def test_latched_after_first_action(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "OOD_DETECTOR_MODE", "flatten")
+        orch = self._orch_with_book(book, cov_rho=0.99, series=self._wild_series())
+        orch._ood_acted = True  # as if it already fired earlier this process
+        orch.emergency_flatten = AsyncMock()
+
+        res = asyncio.run(orch._check_ood({"AAA": 10.0, "BBB": 10.0}))
+
+        assert res["triggered"] is True
+        assert res["acted"] is False
+        assert "already acted" in res["note"]
+        orch.emergency_flatten.assert_not_called()
+
+
 class TestEventBlackoutGuard:
     """how-to-make-it-live.md #2 (Stage 4): vinu-stock-price keeps a local
     earnings + US-macro calendar; _maybe_enter asks /stock/events/{symbol}

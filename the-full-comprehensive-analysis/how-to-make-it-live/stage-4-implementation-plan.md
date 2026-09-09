@@ -194,12 +194,13 @@ order is imminent.
 | 3 | **#2 events calendar + blackout guard** ✅ done 2026-09-09 (folded into `vinu-stock-price`, not a new service) | Finnhub free | ~2–3 d | Matters for equities (earnings) |
 | — | ~~#14 Half B — 2nd venue~~ | — | — | **FUTURE CONSIDERATION** — out of scope for v1 (2026-09-09) |
 | — | ~~#26 funding / borrow drag~~ | — | — | **FUTURE CONSIDERATION** — out of scope for v1 (2026-09-09) |
-| 4 | **#33 part 1 — emergency flatten** ✅ done 2026-09-09 | none (reuses the agent kill switch + exit plumbing) | ~0.5 d | The one safety item worth doing pre-capital — now done |
-| — | #25 sleeves, #29 vault, #35 recon, #32 learning, **#33 part 2** (auto OOD trigger) | — (no data) | separate track | Post-launch |
+| 4 | **#33 emergency flatten (part 1) + auto-OOD detector (part 2)** ✅ done 2026-09-09 | none (book price history + agent kill switch) | ~1 d | Safety. Part 2 ships DORMANT (`VINU_LIVE_OOD_DETECTOR=off`), graduated activation. |
+| — | #25 sleeves, #29 vault, #35 recon, #32 learning | — (no data) | separate track | Post-launch |
 
 **The data-dependent half of Stage 4 is COMPLETE for equities v1** (#13, #14A, #2),
-plus the manual **emergency-flatten** panic switch (#33 part 1). #14B and #26 are
-deferred by decision. Nothing left in Stage 4 blocks a paper→live start.
+plus the full **#33** panic switch — manual `emergency-flatten` **and** the
+dormant auto-OOD trigger. #14B and #26 are deferred by decision. Nothing left in
+Stage 4 blocks a paper→live start.
 
 ---
 
