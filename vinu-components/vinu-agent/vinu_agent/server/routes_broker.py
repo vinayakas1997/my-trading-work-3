@@ -111,6 +111,26 @@ async def broker_order(body: OrderRequest) -> dict[str, Any]:
     return json.loads(result_json)
 
 
+@router.get("/broker/asset/{symbol}")
+async def broker_asset(symbol: str) -> dict[str, Any]:
+    """Borrow check (16): shortable/easy_to_borrow for a symbol.
+
+    Fail-open: broker not configured or lookup fails -> shortable None
+    (caller allows, logs loudly). Only an explicit False blocks shorts.
+    """
+    try:
+        broker = get_live_broker()
+        data = await asyncio.to_thread(broker.get_asset, symbol)
+        return {
+            "symbol": symbol.upper(),
+            "shortable": bool(data.get("shortable", False)),
+            "easy_to_borrow": bool(data.get("easy_to_borrow", False)),
+            "status": data.get("status", ""),
+        }
+    except Exception as e:
+        return {"symbol": symbol.upper(), "shortable": None, "error": str(e)}
+
+
 @router.get("/broker/performance/{artifact_id}")
 async def broker_performance(artifact_id: str) -> dict[str, Any]:
     """Paper-trading daily returns for a BENCHING artifact.

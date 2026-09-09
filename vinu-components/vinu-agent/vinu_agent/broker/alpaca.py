@@ -162,6 +162,11 @@ class AlpacaBroker:
         data = self._get("/v2/positions")
         return [Position.from_api(p) for p in data]
 
+    def get_asset(self, symbol: str) -> dict:
+        """Raw /v2/assets/{symbol} for borrow check (16): shortable,
+        easy_to_borrow. Raises on HTTP error -- caller fails open."""
+        return self._get(f"/v2/assets/{symbol.strip().upper()}")
+
     def get_orders(self, status: str = "open", limit: int = 50) -> list[Order]:
         data = self._get(f"/v2/orders?status={status}&limit={limit}")
         return [Order.from_api(o) for o in data]

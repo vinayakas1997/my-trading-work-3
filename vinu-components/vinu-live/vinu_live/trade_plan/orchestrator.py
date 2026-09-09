@@ -457,6 +457,21 @@ class TradePlanOrchestrator:
             LOG.warning("Turbulence -- skipping entry for %s: %s", symbol, turb_reason)
             return {"symbol": symbol, "action": "entry_blocked_by_turbulence", "reason": turb_reason}
 
+        if direction == "short":
+            # Borrow check (16): explicit not-shortable blocks, anything
+            # else fails open (broker unconfigured, lookup error).
+            try:
+                _asset = await self._http.get(
+                    f"{self._config.agent_api_url}/agent/broker/asset/{symbol}",
+                )
+                if _asset.status_code == 200:
+                    _shortable = _asset.json().get("shortable")
+                    if _shortable is False:
+                        LOG.warning("Borrow -- %s not shortable, skipping short entry", symbol)
+                        return {"symbol": symbol, "action": "entry_blocked_by_borrow", "reason": f"{symbol} not shortable"}
+            except Exception as e:
+                LOG.debug("Borrow check failed for %s, failing open: %s", symbol, e)
+
         side = "buy" if direction == "long" else "sell"
         order_result = await self._submit_order(symbol, side, qty)
         if order_result.get("status") == "submitted":
