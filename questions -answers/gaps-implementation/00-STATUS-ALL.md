@@ -16,7 +16,7 @@ One table. Update when folder changes.
 | 14-storage-3x | 14-simulation-storage.md | doing (models+loop done) | agent build | 2026-09-09 | regime tagged 58 green, paper pending |
 | 15-monitor | 15-monitor-shock-exit.md | doing (HALT+time-stop done) | agent build | 2026-09-09 | entries-only allow exits 30 green, rest open |
 | 16-broker | 16-broker-fills.md | doing (fills+idem done) | agent build | 2026-09-09 | spread+queue+idemp 10+30 green, rest open |
-| 17-ui | 17-ui-status.md | doing (checkbox done) | agent build | 2026-09-09 | ui-status.py 27/27 green, page pending |
+| 17-ui | 17-ui-status.md | done (CLI v1) | agent build | 2026-09-09 | checkbox+pipeline+banner+csv, web v2 later |
 | 18-data | 18-data-pipeline.md | done | agent build | 2026-09-09 | order+lineage+refill+PIT closed |
 | 19-portfolio | 19-portfolio-inside.md | doing (ladder done) | agent build | 2026-09-09 | halve/flat/halt 9 green, regime pending |
 | 20-learning | 20-learning-over-time.md | doing (worker done) | agent build | 2026-09-09 | LESSON after 30 16 green, decay pending |
