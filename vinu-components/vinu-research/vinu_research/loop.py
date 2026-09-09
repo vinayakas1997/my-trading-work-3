@@ -730,6 +730,9 @@ class StrategyResearchLoop:
             walk_forward_stability_threshold=self._config.walk_forward_stability_threshold,
         )
 
+        from vinu_research.models import lineage_hash as _lineage_hash
+
+        _best_code = best_rec.strategy_code if best_rec else ""
         return ResearchResult(
             symbol=symbol,
             from_date=from_date,
@@ -746,6 +749,7 @@ class StrategyResearchLoop:
             stress_test=stress_test_result,
             pbo=pbo_result,
             paper_rehearsal=paper_rehearsal_result,
+            data_hash=_lineage_hash(symbol, from_date, to_date, _best_code),
         )
 
     async def _run_backtest(

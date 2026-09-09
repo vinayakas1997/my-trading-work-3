@@ -651,6 +651,17 @@ class PaperRehearsalResult:
     trade_overlap: float | None = None
 
 
+def lineage_hash(symbol: str, from_date: str, to_date: str, strategy_code: str = "") -> str:
+    """Lineage hash (18 step2): sha of window+code, proves which data window
+    and strategy produced a result. Full file freeze via vinu_infra/freeze.py;
+    this is the cheap per-run lineage link, not a substitute."""
+    import hashlib as _hl
+
+    h = _hl.sha256()
+    h.update(f"{symbol}|{from_date}|{to_date}|{strategy_code}".encode())
+    return h.hexdigest()[:12]
+
+
 @dataclass
 class ResearchResult:
     symbol: str
@@ -668,3 +679,4 @@ class ResearchResult:
     stress_test: StressTestResult | None = None
     pbo: dict[str, float] | None = None
     paper_rehearsal: PaperRehearsalResult | None = None
+    data_hash: str = ""
