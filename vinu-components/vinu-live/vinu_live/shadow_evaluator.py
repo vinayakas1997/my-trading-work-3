@@ -26,11 +26,21 @@ class ShadowEvaluator:
         agent_api_url: str = "http://127.0.0.1:8086",
         max_sharpe_degradation: float = 0.5,
         min_paper_days: int = 5,
+        min_paper_days_1d: int | None = None,
+        min_paper_days_1h: int | None = None,
     ) -> None:
+        import os as _os
+
         self._research_api = research_api_url
         self._agent_api = agent_api_url
         self._max_sharpe_degradation = max_sharpe_degradation
-        self._min_paper_days = min_paper_days
+        # Paper-days knob (11): env overrides, per-interval 10 for 1D / 5 for 1H.
+        # Defaults keep 5. Set VINU_SHADOW_MIN_PAPER_DAYS=10 + restart, no rebuild.
+        self._min_paper_days = int(_os.environ.get("VINU_SHADOW_MIN_PAPER_DAYS", str(min_paper_days)))
+        self._min_paper_days_1d = int(_os.environ.get(
+            "VINU_SHADOW_MIN_PAPER_DAYS_1D", str(min_paper_days_1d if min_paper_days_1d is not None else self._min_paper_days)))
+        self._min_paper_days_1h = int(_os.environ.get(
+            "VINU_SHADOW_MIN_PAPER_DAYS_1H", str(min_paper_days_1h if min_paper_days_1h is not None else self._min_paper_days)))
         try:
             from vinu_infra.auth import internal_auth_headers
             _headers = internal_auth_headers() or None
@@ -77,7 +87,7 @@ class ShadowEvaluator:
         name = artifact.get("name", "unknown")
         backtest_sharpe = artifact.get("initial_sharpe", 0.0)
 
-        paper_sharpe = await self._fetch_paper_sharpe(artifact_id)
+        paper_sharpe = await self._fetch_paper_sharpe(artifact_id, name)
 
         if paper_sharpe is None:
             return {
@@ -109,7 +119,15 @@ class ShadowEvaluator:
             "promoted": promoted,
         }
 
-    async def _fetch_paper_sharpe(self, artifact_id: str) -> float | None:
+    def _threshold_for(self, name: str = "") -> int:
+        t = (name or "").lower()
+        if "1h" in t or "1-h" in t or "15min" in t or "15-min" in t:
+            return self._min_paper_days_1h
+        if "1d" in t or "1-d" in t or "daily" in t:
+            return self._min_paper_days_1d
+        return self._min_paper_days
+
+    async def _fetch_paper_sharpe(self, artifact_id: str, name: str = "") -> float | None:
         """Fetch paper-trading P&L for an artifact and compute Sharpe."""
         try:
             resp = await self._http.get(
@@ -119,7 +137,7 @@ class ShadowEvaluator:
                 return None
             data = resp.json()  # synchronous on a real httpx.Response -- see _list_benching_artifacts
             returns = data.get("daily_returns", [])
-            if len(returns) < self._min_paper_days:
+            if len(returns) < self._threshold_for(name):
                 return None
             import numpy as np
             arr = np.array(returns, dtype=float)

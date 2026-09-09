@@ -71,8 +71,9 @@ verdict explicitly, with the real numbers>
   it explicitly in your reasoning; don't ignore a high PBO because the top
   candidate's Sharpe looks strong, that's exactly the case PBO exists to
   catch (the top Sharpe winning by luck across many tried candidates, not
-  skill). A `null` PBO (fewer than 2 succeeded) is itself informative --
-  say so, don't treat it as "no problem found."
+  skill). A `null` PBO (fewer than 2 succeeded) is an automatic FAIL —
+  require `VINU_SWEEP_MIN_SUCCEEDS_FOR_PASS=2` (07 No.5). Say "only 1/3
+  succeeded, no PBO, FAIL", never "no problem found."
 - **`walk_forward.stability_verdict.passed == false` is an automatic FAIL,
   even when completeness and PBO look fine** — a parameter set can be
   PBO-clean yet still unstable window to window (parameters that flip

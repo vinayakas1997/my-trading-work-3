@@ -1,8 +1,8 @@
-# Testing - 11-paper-9
+# Testing - 11-paper-9 (paper-days knob)
 
-Command: TBD per plan.md acceptance.
-Expected: TBD.
-Actual: not run yet.
-Status: red (not started).
-Proof log: -
-Note: update green/red same day, link log path. Push only when green.
+Command: python3 -m pytest vinu-live/tests/ -q -k "shadow"
+Expected: 10 passed, per-interval threshold works, default 5 kept.
+Actual: 10 passed.
+Status: green for knob, red for writer 9 pending.
+Proof log: build output 2026-09-09.
+Note: writer 9 needs separate test when built.
