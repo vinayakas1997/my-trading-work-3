@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS artifacts (
     last_revalidation_verdict INTEGER,
     trade_plan_data TEXT NOT NULL DEFAULT '',
     approved_size REAL NOT NULL DEFAULT 0.0,
-    origin_angles TEXT NOT NULL DEFAULT '[]'
+    origin_angles TEXT NOT NULL DEFAULT '[]',
+    regime_tag TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS bench_history (
@@ -170,6 +171,7 @@ class SqliteStrategyStore:
             ("trade_plan_data", "TEXT NOT NULL DEFAULT ''"),
             ("approved_size", "REAL NOT NULL DEFAULT 0.0"),
             ("origin_angles", "TEXT NOT NULL DEFAULT '[]'"),
+            ("regime_tag", "TEXT NOT NULL DEFAULT ''"),
         ]
         for name, typedef in migrations:
             if name not in cols:
@@ -202,8 +204,8 @@ class SqliteStrategyStore:
                 strategy_code, source_run_id, initial_sharpe, initial_max_dd, deflated_sharpe,
                 holdout_passed, stress_test_passed,
                 last_validated_ts, revalidation_count, last_revalidation_verdict,
-                trade_plan_data, approved_size, origin_angles)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                trade_plan_data, approved_size, origin_angles, regime_tag)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 artifact.artifact_id,
                 artifact.type,
@@ -229,6 +231,7 @@ class SqliteStrategyStore:
                 artifact.trade_plan_data,
                 artifact.approved_size,
                 json.dumps(artifact.origin_angles),
+                artifact.regime_tag or "",
             ),
         )
         conn.commit()
@@ -563,6 +566,7 @@ class SqliteStrategyStore:
                 if "origin_angles" in row.keys() and row["origin_angles"]
                 else []
             ),
+            regime_tag=row["regime_tag"] if "regime_tag" in row.keys() and row["regime_tag"] else "",
         )
 
     @staticmethod

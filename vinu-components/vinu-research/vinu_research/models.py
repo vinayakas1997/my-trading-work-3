@@ -193,6 +193,9 @@ class Artifact:
     # AngleCalibrationEntry -- this is what makes per-angle calibration
     # possible at all, where none existed before.
     origin_angles: list[str] = field(default_factory=list)
+    # Regime tag (09 step2): trend/range/high-vol at write time, for
+    # per-regime review. Never backfilled, same contract as origin_angles.
+    regime_tag: str = ""
 
     @classmethod
     def create(cls, type_: str, name: str, universe: list[str] | None = None) -> Artifact:

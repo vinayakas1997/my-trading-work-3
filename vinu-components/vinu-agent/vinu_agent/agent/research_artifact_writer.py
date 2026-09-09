@@ -156,6 +156,7 @@ def write_artifacts_from_top3(
                 a.strategy_code = code
                 a.initial_sharpe = float(c.get("sharpe", 0.0) or 0.0)
                 a.initial_max_dd = float(c.get("max_drawdown", 0.0) or 0.0)
+                a.regime_tag = str(c.get("regime", "") or "").strip()
                 angles = c.get("angles_used")
                 if isinstance(angles, list):
                     a.origin_angles = [str(x).strip() for x in angles if str(x).strip()]
