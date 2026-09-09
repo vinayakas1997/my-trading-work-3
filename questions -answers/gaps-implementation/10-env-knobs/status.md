@@ -16,3 +16,5 @@ Done2:
 - .env-example: gap knobs section sweep/paper/DD/provider/fills/lesson/mute.
 Done3:
 - writer TOP_N mirror: reads TOP_N_PER_INTERVAL first TOP_N fallback, verified 2 cap. INTERVALS loop via sweep_interval_list 1d first.
+Done4:
+- .env-example gap section: all 37 knobs match code exactly, 2 wrong names fixed (DIVERSITY_REQUIRED, TOP_N_PER_INTERVAL), every name grep-verified.
