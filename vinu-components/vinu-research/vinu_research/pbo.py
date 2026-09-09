@@ -17,6 +17,7 @@ def probability_of_backtest_overfitting(
     n_combinations: int | None = None,
     metric: str = "sharpe",
     rng: np.random.Generator | None = None,
+    embargo_periods: int = 0,
 ) -> dict[str, float]:
     """
     Bailey, Borwein, Lopez de Prado & Zhu (2017) Probability of Backtest
@@ -76,6 +77,12 @@ def probability_of_backtest_overfitting(
             n_combinations: int — number of IS/OOS pairings evaluated.
             n_strategies: int.
             n_periods: int.
+            embargo_periods: int — boundary periods dropped per OOS block.
+
+    Embargo (08 step3): adjacent IS/OOS blocks share a boundary where
+    serial correlation leaks across. embargo_periods drops that many
+    leading periods from each OOS block. Default 0 keeps prior behavior;
+    set VINU_PBO_EMBARGO_PERIODS=1 for honest CSCV.
     """
     T, N = returns_matrix.shape
     if T < n_splits * 2 or N < 2:
@@ -108,11 +115,31 @@ def probability_of_backtest_overfitting(
 
     logits: list[float] = []
 
+    import os as _os
+
+    if embargo_periods <= 0:
+        try:
+            embargo_periods = int(_os.environ.get("VINU_PBO_EMBARGO_PERIODS", "0"))
+        except ValueError:
+            embargo_periods = 0
+
     for is_block_indices in all_splits:
         is_mask = np.zeros(T, dtype=bool)
         for bi in is_block_indices:
             is_mask[blocks[bi]] = True
         oos_mask = ~is_mask
+        if embargo_periods > 0:
+            # Drop leading boundary periods of each OOS block (embargo).
+            _oos_idx = np.flatnonzero(oos_mask)
+            _drop: set[int] = set()
+            for bi in range(n_splits):
+                if bi in is_block_indices:
+                    continue
+                _b = blocks[bi]
+                for k in range(min(embargo_periods, len(_b))):
+                    _drop.add(_b[k])
+            for d in _drop:
+                oos_mask[d] = False
 
         is_perf = np.array([_perf(returns_matrix[is_mask, j]) for j in range(N)])
         oos_perf = np.array([_perf(returns_matrix[oos_mask, j]) for j in range(N)])
@@ -133,4 +160,5 @@ def probability_of_backtest_overfitting(
         "n_combinations": len(logits),
         "n_strategies": N,
         "n_periods": T,
+        "embargo_periods": embargo_periods,
     }
