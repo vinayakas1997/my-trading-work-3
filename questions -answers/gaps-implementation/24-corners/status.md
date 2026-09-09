@@ -9,4 +9,6 @@ Done:
 - Sec2: run_pipeline.py --help works, setup-secrets.sh --check all present.
 Bugs found while implementing: none, verify only.
 Other files touched: none (verify only).
-Next: Sec3 backtest_safe 10 vs catalog 24, Sec4 test map, Sec5 cleanup.
+Next: Sec4 test map, Sec5 cleanup.
+Done2:
+- Sec3 indicators decided: 15 BUILTIN_RECIPES are the backtest-safe set (crossover..momentum_mean_reversion), catalog angles stay 27/28 separate domain. No new code, decision pinned.
