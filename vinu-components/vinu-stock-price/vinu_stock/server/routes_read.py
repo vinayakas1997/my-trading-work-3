@@ -24,6 +24,27 @@ def health() -> dict:
     return get_service().health()
 
 
+@router.get("/quote/{symbol}")
+def quote(symbol: str) -> dict:
+    """Latest NBBO bid/ask/mid/spread_bps for `symbol`. Consumed by vinu-live's
+    liquidity gate (how-to-make-it-live.md #13) only at order time. Always 200:
+    on any upstream problem the body carries `ok: false` + `error` and the
+    caller fails open. 5s TTL-cached in StockService."""
+    return get_service().get_quote(symbol)
+
+
+@router.get("/events/{symbol}")
+def events(
+    symbol: str,
+    within_hours: float = Query(default=48.0, ge=1.0, le=720.0),
+) -> dict:
+    """Upcoming earnings / macro events for `symbol` in the next `within_hours`,
+    from the locally-cached calendar (how-to-make-it-live.md #2). `blackout` is
+    True iff any are found. Consumed by vinu-live's entry guard; always 200,
+    caller fails open on an empty / unreachable calendar."""
+    return get_service().get_events(symbol, within_hours=within_hours)
+
+
 @router.get("/catalog", response_model=DataResponse)
 def list_catalog() -> DataResponse:
     rows = get_service().get_catalog()

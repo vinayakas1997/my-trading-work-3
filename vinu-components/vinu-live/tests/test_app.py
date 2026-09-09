@@ -55,3 +55,39 @@ class TestRebalanceRequestRoute:
         test_client, _config = client
         resp = test_client.post("/live/trade-plan/rebalance-request", json={"symbol": "AAPL"})
         assert resp.status_code == 422
+
+
+class TestEmergencyRoutes:
+    """how-to-make-it-live.md #33: the emergency-flatten / resume / status
+    routes are wired to the orchestrator. No agent is running in this test, so
+    the halt call fails gracefully -- the point here is that the routes exist,
+    return 200, and hand back the orchestrator's result dict."""
+
+    def test_emergency_status_route(self, client) -> None:
+        test_client, _config = client
+        resp = test_client.get("/live/trade-plan/emergency-status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "halted" in body and "open_positions" in body
+
+    def test_emergency_flatten_route(self, client) -> None:
+        test_client, _config = client
+        resp = test_client.post("/live/trade-plan/emergency-flatten", json={"reason": "route test"})
+        assert resp.status_code == 200
+        body = resp.json()
+        # agent unreachable in-test -> halt didn't engage, no positions to close
+        assert body["reason"] == "route test"
+        assert body["count_closed"] == 0
+        assert "positions_failed" in body
+
+    def test_emergency_flatten_route_defaults_reason(self, client) -> None:
+        test_client, _config = client
+        resp = test_client.post("/live/trade-plan/emergency-flatten")
+        assert resp.status_code == 200
+        assert resp.json()["reason"] == "manual"
+
+    def test_emergency_resume_route(self, client) -> None:
+        test_client, _config = client
+        resp = test_client.post("/live/trade-plan/emergency-resume", json={"reason": "clear"})
+        assert resp.status_code == 200
+        assert resp.json()["reason"] == "clear"

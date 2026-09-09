@@ -24,6 +24,7 @@ import numpy as np
 
 from vinu_live.book.positions import (
     BookBackend,
+    add_to_position,
     close_position,
     daily_realized_pnl,
     init_book,
@@ -142,6 +143,194 @@ FORECAST_SCALING_FLOOR = float(_os.environ.get("VINU_RISK_FORECAST_SCALING_FLOOR
 SIGNAL_MAX_AGE_HOURS = float(_os.environ.get("VINU_LIVE_SIGNAL_MAX_AGE_HOURS", "72"))
 
 
+# how-to-make-it-live.md #17: the CVaR tail gate + dynamic vol targeting were
+# built in vinu-agent/agent/position_sizing.py (cvar_exceeds / vol_target_scale)
+# and gated behind VINU_RISK_CVAR_ENABLED / VINU_RISK_VOL_TARGET_ENABLED -- but
+# no caller on the live path ever fed them cvar_95 / current_vol, so flipping
+# the flags did nothing. _maybe_enter() is the one place a live TradePlan's
+# size is actually decided; it now reads the CVaR + daily vol frozen onto
+# RiskBand at authoring time (trade_plan_authoring._build_risk_band) and
+# applies the same two controls here, same env var names as the vinu-agent
+# copy so there is one knob per control, not two that can disagree.
+# CVaR gate defaults OFF (a hard block -- opt in deliberately); vol targeting
+# too, matching the historical default the flags shipped with.
+CVAR_GATE_ENABLED = _os.environ.get(
+    "VINU_RISK_CVAR_ENABLED", "false"
+).lower() in ("1", "true", "yes")
+CVAR_THRESHOLD = float(_os.environ.get("VINU_RISK_CVAR_THRESHOLD", "0.03"))
+VOL_TARGET_ENABLED = _os.environ.get(
+    "VINU_RISK_VOL_TARGET_ENABLED", "false"
+).lower() in ("1", "true", "yes")
+VOL_TARGET = float(_os.environ.get("VINU_RISK_VOL_TARGET", "0.15"))
+
+
+def _vol_target_scale(current_vol: Any, target_vol: float = VOL_TARGET) -> float:
+    """target_vol / current_vol, so size halves when realized vol doubles.
+    current_vol here is the plan's frozen *daily* vol; target_vol is annual
+    (0.15), so it is converted to a daily figure (/ sqrt(252)) before the
+    ratio -- same units on both sides. Non-positive / unparseable current_vol
+    = 1.0 (no scaling, fail-open). Never scales size *up* past 1.0 -- a calm
+    market does not license extra leverage here."""
+    try:
+        cur = float(current_vol)
+    except (TypeError, ValueError):
+        return 1.0
+    if cur <= 0.0 or target_vol <= 0.0:
+        return 1.0
+    target_daily = target_vol / (252.0 ** 0.5)
+    return min(1.0, target_daily / cur)
+
+
+# how-to-make-it-live.md #16 (Stage 3): data-freshness guard. The live cycle
+# fetches interval=1d candles; if the ingest pipeline stalls (provider outage,
+# dead ingest worker) the newest bar just stops advancing and every entry
+# decision is made on a stale mark with nothing noticing. This pauses ENTRIES
+# only (exits/reduces must always proceed -- same shape as HALT entries-only,
+# turbulence, and cooldown). Threshold is wall-clock hours since the newest
+# bar's open (bar_ts, UTC epoch seconds). 96h default tolerates a 3-day
+# weekend + buffer on daily bars while still catching a feed that is genuinely
+# days behind; TIGHTEN THIS if you run intraday intervals. 0 disables.
+PRICE_MAX_AGE_HOURS = float(_os.environ.get("VINU_LIVE_PRICE_MAX_AGE_HOURS", "96"))
+
+
+def _price_ts_age_hours(bar_ts: Any) -> float | None:
+    """Hours since `bar_ts` (UTC epoch seconds). None (never blocks) if bar_ts
+    is missing / non-numeric / non-positive -- fail-open, same posture as every
+    other data-quality guard in this file."""
+    try:
+        ts = float(bar_ts)
+    except (TypeError, ValueError):
+        return None
+    if ts <= 0.0:
+        return None
+    return (datetime.now(timezone.utc).timestamp() - ts) / 3600.0
+
+
+# how-to-make-it-live.md #15 (Stage 3): partial-fill handling. The order path
+# books the INTENDED qty the moment /agent/broker/order returns "submitted" --
+# but a market order can partially fill (thin book), and the fill lands async,
+# so the response carries no filled_qty. Every later risk check / exit sizing /
+# P&L calc then runs off a size the account never actually held. Two backstops:
+#   (1) right after a submit, poll the broker's real position a few times and
+#       book what actually filled (fail open to intended if the broker view is
+#       unavailable -- reconciliation below is the net);
+#   (2) end-of-cycle reconciliation stops only warning and actually pulls the
+#       book back to broker truth when they disagree.
+FILL_CONFIRM_ATTEMPTS = int(_os.environ.get("VINU_LIVE_FILL_CONFIRM_ATTEMPTS", "3"))
+FILL_CONFIRM_DELAY_SEC = float(_os.environ.get("VINU_LIVE_FILL_CONFIRM_DELAY_SEC", "0.7"))
+# A fill within this fraction of intended counts as "full" -- covers share
+# rounding / tiny broker-vs-book quantization noise, not a real partial.
+PARTIAL_FILL_TOLERANCE = float(_os.environ.get("VINU_LIVE_PARTIAL_FILL_TOLERANCE", "0.02"))
+# End-of-cycle reconciliation: pull the book toward broker truth on drift
+# instead of only logging. 0/false = warn-only (the old behavior).
+RECONCILE_AUTOCORRECT = _os.environ.get(
+    "VINU_LIVE_RECONCILE_AUTOCORRECT", "true"
+).lower() in ("1", "true", "yes")
+# A book/broker gap this many times the book size is a bug, not a partial fill
+# -- reconciliation refuses to auto-correct past it and alerts instead.
+RECONCILE_MAX_RATIO = float(_os.environ.get("VINU_LIVE_RECONCILE_MAX_RATIO", "10.0"))
+
+
+# how-to-make-it-live.md #12 (Stage 3): runtime correlation monitor. The
+# DCC/shrinkage covariance (_compute_covariance) was only ever consulted by the
+# breaker's aggregate-VaR check -- nothing looked at pairwise correlation
+# between the positions actually open and de-risked when two of them started
+# moving together. This runs every cycle: covariance -> correlation, flag any
+# pair whose co-movement *in the direction we're exposed* is >= threshold, and
+# reduce_only-shrink the larger position of the pair. reduce_only means it can
+# only ever cut risk, never add it. Per-symbol cooldown so it trims once, not
+# every 90s. Defaults ON -- Scenario 12 is a rated portfolio-blowup gap and the
+# action is bounded and risk-reducing.
+RUNTIME_CORR_ENABLED = _os.environ.get(
+    "VINU_LIVE_RUNTIME_CORR_ENABLED", "true"
+).lower() in ("1", "true", "yes")
+RUNTIME_CORR_THRESHOLD = float(_os.environ.get("VINU_LIVE_RUNTIME_CORR_THRESHOLD", "0.85"))
+RUNTIME_CORR_REDUCE_PCT = float(_os.environ.get("VINU_LIVE_RUNTIME_CORR_REDUCE_PCT", "0.25"))
+RUNTIME_CORR_COOLDOWN_SEC = float(_os.environ.get("VINU_LIVE_RUNTIME_CORR_COOLDOWN_SEC", "3600"))
+
+
+# how-to-make-it-live.md #3/#5 (Stage 3): conflicting-signal detection. More
+# than one ACTIVE trade_plan can name the same symbol (a 1D sweep and a 1H
+# sweep, say). Nothing checked whether they agreed -- whichever plan the cycle
+# happened to evaluate first opened a position and the opposing plan was
+# silently ignored, so the book could hold a long that another live, promoted
+# strategy currently says to be short. "block" (default) refuses to open into a
+# contested symbol; "ignore" restores the old first-plan-wins behavior.
+SIGNAL_CONFLICT_POLICY = _os.environ.get("VINU_LIVE_SIGNAL_CONFLICT_POLICY", "block").lower()
+
+
+def _opposing_active_signal(
+    plan: dict[str, Any], symbol: str, direction: str, all_plans: list[dict[str, Any]],
+) -> str | None:
+    """how-to-make-it-live.md #3/#5: a reason string if another ACTIVE plan for
+    `symbol` currently signals the opposite direction, else None."""
+    opposite = "short" if direction == "long" else "long"
+    my_id = plan.get("_artifact_id")
+    conflicting = [
+        p.get("_artifact_id", "?")
+        for p in all_plans
+        if p.get("symbol") == symbol
+        and p.get("_artifact_id") != my_id
+        and p.get("direction") == opposite
+    ]
+    if not conflicting:
+        return None
+    return f"{len(conflicting)} other ACTIVE plan(s) signal {opposite}: {', '.join(map(str, conflicting))}"
+
+
+# how-to-make-it-live.md #13 (Stage 4): liquidity / spread gate. Every entry so
+# far was priced off the last 1d candle close, with no check on whether the
+# symbol is actually tradable *right now* at a sane cost. A wide bid/ask (thin
+# pre-market, a halt-then-reopen, a small-cap air pocket) means the market order
+# crosses that spread and fills materially worse than the mark the sizing used.
+# This fetches the live NBBO from vinu-stock-price (5s-cached there -> one
+# upstream call per burst) only when an entry is otherwise a go, and blocks the
+# entry when the spread in basis points exceeds the ceiling. ENTRIES ONLY -- an
+# exit/reduce still crosses whatever spread it must (same shape as HALT
+# entries-only / turbulence / cooldown / data-freshness). Fail-open: no quote /
+# quote error / service down => entry proceeds. 0 disables. 25 bps = 0.25%.
+MAX_SPREAD_BPS = float(_os.environ.get("VINU_LIVE_MAX_SPREAD_BPS", "25"))
+
+
+def _spread_bps_from_quote(payload: Any) -> float | None:
+    """Basis-point spread from a vinu-stock-price /stock/quote payload, or None
+    (never blocks) when the payload is missing / not `ok` / unparseable /
+    negative -- fail-open, same posture as every other data-quality guard in
+    this file."""
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        return None
+    try:
+        sb = float(payload.get("spread_bps"))
+    except (TypeError, ValueError):
+        return None
+    if sb < 0.0:
+        return None
+    return sb
+
+
+# how-to-make-it-live.md #14 (Stage 4): broker-outage pause. Half A -- no new
+# data source, uses the existing /agent/broker/account probe. Once per cycle
+# _check_broker_health() pings the broker; a healthy 200 stamps a monotonic
+# clock and clears the flag, a non-200 / transport error that persists past
+# BROKER_STALE_SEC sets self._broker_degraded. _maybe_enter refuses new entries
+# while degraded (entry_blocked_by_broker_outage); exits/reduces are never
+# gated (same entries-only shape as HALT / turbulence / cooldown / spread). The
+# flag auto-clears on the next healthy probe. 0 disables the guard entirely.
+# 180s tolerates a transient blip spanning two 90s cycles without pausing.
+BROKER_STALE_SEC = float(_os.environ.get("VINU_LIVE_BROKER_STALE_SEC", "180"))
+
+
+# how-to-make-it-live.md #2 (Stage 4): event-risk blackout. vinu-stock-price
+# keeps a local earnings + US-macro (FOMC/CPI/NFP/PCE) calendar, refreshed daily
+# from Finnhub. If the symbol has an event inside this many hours, do not open a
+# new position -- an earnings gap or an FOMC whipsaw is exactly the kind of jump
+# a mean-reversion / trend setup was never edged for. ENTRIES ONLY (an open
+# position's own invalidation/contingency rules still run through an event).
+# Fail-open: calendar service down, no Finnhub key, or no rows => entry
+# proceeds. 0 disables. 24h covers "don't open the day before earnings".
+EVENT_BLACKOUT_HOURS = float(_os.environ.get("VINU_LIVE_EVENT_BLACKOUT_HOURS", "24"))
+
+
 def _signal_age_hours(created_at: Any) -> float | None:
     """Stage 2 (how-to-make-it-live.md #9/#36): a TradePlan was "valid until
     invalidated," never "valid for a window" -- a 3-day-old setup with no
@@ -232,6 +421,10 @@ class TradePlanOrchestrator:
         self._reconciler = ReconciliationEngine()
         self._cycle_count = 0
         self._last_prices: dict[str, float] = {}
+        # how-to-make-it-live.md #16: newest bar_ts (UTC epoch seconds) per
+        # symbol from the last _fetch_prices, so _maybe_enter can pause entries
+        # on a stale feed. Populated alongside _last_prices.
+        self._last_price_ts: dict[str, float] = {}
         # Phase 5: advisory intake for capital_allocator's rebalance
         # requests -- never a direct action, folded into the ordinary
         # per-cycle evaluation below, after the plan's own real
@@ -249,19 +442,42 @@ class TradePlanOrchestrator:
         # Phase 5: per-symbol debounce for the shock-angle trigger below --
         # monotonic clock, not wall time (immune to clock adjustments).
         self._last_shock_trigger: dict[str, float] = {}
+        # how-to-make-it-live.md #12: per-symbol monotonic time of the last
+        # correlation-triggered reduce, so the monitor trims a name once and
+        # then leaves it alone for RUNTIME_CORR_COOLDOWN_SEC.
+        self._last_corr_reduce: dict[str, float] = {}
+        # how-to-make-it-live.md #14 (Stage 4): broker-outage pause. Monotonic
+        # time of the last successful /agent/broker/account probe (0.0 = never
+        # confirmed yet, so a cold start with a dead broker pauses on the first
+        # failed probe rather than after the grace window), and the derived
+        # flag _maybe_enter reads to pause ENTRIES while the broker link is
+        # down/stale. Exits and reduces are never gated on it.
+        self._broker_ok_at: float = 0.0
+        self._broker_degraded: bool = False
+        # how-to-make-it-live.md #33 (Stage 4): mirror of the agent's global
+        # kill switch, refreshed once per cycle. True => _maybe_enter refuses
+        # new entries with entry_blocked_by_emergency_halt. The authoritative
+        # gate is still OrderGuard's filesystem kill-switch check on the agent
+        # side; this is the fast, explicit local shortcut. Set by
+        # emergency_flatten(), cleared by emergency_resume().
+        self._trading_halted: bool = False
 
     async def close(self) -> None:
         await self._http.aclose()
         self._book.close()
         self._rebalance_queue.close()
 
-    def submit_rebalance_request(self, symbol: str, reason: str) -> None:
+    def submit_rebalance_request(self, symbol: str, reason: str, critical: bool = False) -> None:
         """Called by whatever eventually implements capital_allocator's
         rebalancer (vinu-agent, a separate container) via this
         orchestrator's HTTP intake route -- see server/app.py. Accepting
         the request here only means it will be CONSIDERED on this
-        symbol's next evaluation, not that it will be honored."""
-        self._rebalance_queue.submit(symbol, reason)
+        symbol's next evaluation, not that it will be honored.
+
+        how-to-make-it-live.md #23: `critical=True` makes the request bypass
+        the 5% unrealized-gain protect in _evaluate_rebalance_request -- for a
+        genuinely urgent reallocation that must not sit declined."""
+        self._rebalance_queue.submit(symbol, reason, critical=critical)
 
     # Provisional, not tuned -- same "flag it, don't pretend it's settled"
     # discipline as _REBALANCE_PROTECT_GAIN_PCT above. Long enough that a
@@ -300,7 +516,7 @@ class TradePlanOrchestrator:
 
         position = self._find_open_position(symbol)
         if position is None:
-            return await self._maybe_enter(plan, symbol, price, portfolio_value)
+            return await self._maybe_enter(plan, symbol, price, portfolio_value, all_plans=plans)
         return await self._evaluate_open_position(plan, position, price, portfolio_value)
 
     async def cycle_shock_batch(self, max_batch: int = 5) -> dict[str, Any]:
@@ -386,6 +602,17 @@ class TradePlanOrchestrator:
             prices = await self._fetch_prices(symbols)
             portfolio_value = await self._fetch_portfolio_value()
 
+            # how-to-make-it-live.md #14: one broker liveness probe, BEFORE the
+            # plan loop, so _maybe_enter this cycle sees fresh broker state
+            # (degraded => entries paused). Exits in the loop are unaffected.
+            result["broker_health"] = await self._check_broker_health()
+
+            # how-to-make-it-live.md #33: refresh the global kill-switch mirror
+            # before the plan loop too, so an emergency flatten from another
+            # process is honoured on the very next cycle.
+            self._trading_halted = await self._is_trading_halted()
+            result["trading_halted"] = self._trading_halted
+
             # G: auto-wire prioritized shock batch — sort plans by shock score descending
             # so highest-risk open position evaluated first in same cycle (not just via
             # explicit cycle_shock_batch caller). Threshold 0.5 filters low scores.
@@ -417,7 +644,7 @@ class TradePlanOrchestrator:
 
                 position = self._find_open_position(symbol)
                 if position is None:
-                    action = await self._maybe_enter(plan, symbol, price, portfolio_value)
+                    action = await self._maybe_enter(plan, symbol, price, portfolio_value, all_plans=plans)
                 else:
                     action = await self._evaluate_open_position(plan, position, price, portfolio_value)
                 if action:
@@ -428,6 +655,9 @@ class TradePlanOrchestrator:
 
             recon = await self._reconcile_book_with_broker(prices)
             result["reconciliation"] = recon
+
+            corr_check = await self._check_runtime_correlation(prices)
+            result["correlation_monitor"] = corr_check
 
         except Exception as e:
             LOG.error("[%s] Cycle failed: %s", cycle_id, e)
@@ -480,10 +710,48 @@ class TradePlanOrchestrator:
 
     async def _maybe_enter(
         self, plan: dict[str, Any], symbol: str, price: float, portfolio_value: float,
+        all_plans: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any] | None:
         direction = plan.get("direction", "neutral")
         if direction not in ("long", "short"):
             return None
+
+        # how-to-make-it-live.md #33: emergency halt. The agent's global kill
+        # switch is set (emergency_flatten, or a manual /agent/broker/halt).
+        # OrderGuard already rejects every order while it's set; this makes the
+        # block explicit and skips the wasted round-trip. Exits are unaffected
+        # -- _apply_invalidation / _apply_contingency submit reduce_only orders,
+        # which the kill switch's reduce_only exemption lets through.
+        if self._trading_halted:
+            LOG.warning("Trading halt active -- skipping entry for %s", symbol)
+            return {
+                "symbol": symbol, "action": "entry_blocked_by_emergency_halt",
+                "reason": "global trading halt active (emergency flatten / manual halt)",
+            }
+
+        # how-to-make-it-live.md #14: broker-outage pause. If this cycle's
+        # health probe (_check_broker_health, run before the plan loop) found
+        # the broker link down or stale, do not open new positions -- an entry
+        # we cannot confirm is worse than a missed one. Exits/reduces are
+        # unaffected (_evaluate_open_position never checks this). Auto-clears
+        # when the broker responds again.
+        if BROKER_STALE_SEC > 0 and self._broker_degraded:
+            LOG.warning("Broker degraded -- skipping entry for %s", symbol)
+            return {
+                "symbol": symbol, "action": "entry_blocked_by_broker_outage",
+                "reason": "broker health probe failing -- entries paused until it recovers",
+            }
+
+        # how-to-make-it-live.md #3/#5: refuse to open into a symbol another
+        # ACTIVE plan currently signals the opposite way on.
+        if all_plans and SIGNAL_CONFLICT_POLICY == "block":
+            conflict = _opposing_active_signal(plan, symbol, direction, all_plans)
+            if conflict:
+                LOG.warning("Signal conflict on %s -- %s -- skipping entry", symbol, conflict)
+                return {
+                    "symbol": symbol, "action": "entry_blocked_by_signal_conflict",
+                    "reason": conflict,
+                }
 
         if SIGNAL_MAX_AGE_HOURS > 0:
             age_hours = _signal_age_hours(plan.get("created_at"))
@@ -497,10 +765,99 @@ class TradePlanOrchestrator:
                     "reason": f"signal age {age_hours:.1f}h exceeds max {SIGNAL_MAX_AGE_HOURS:.1f}h",
                 }
 
-        size_pct = (plan.get("risk_bands") or {}).get("max_position_size_pct", 0.0) or 0.0
+        # how-to-make-it-live.md #16: data-freshness guard. Pause ENTRIES when
+        # the newest price bar for this symbol is older than the threshold --
+        # trading on a mark from a stalled feed. Exits are never gated here
+        # (see _evaluate_open_position: it only logs). Fail-open when we have
+        # no timestamp for the symbol (first cycle, mock, ts-less feed).
+        if PRICE_MAX_AGE_HOURS > 0:
+            data_age = _price_ts_age_hours(self._last_price_ts.get(symbol))
+            if data_age is not None and data_age > PRICE_MAX_AGE_HOURS:
+                LOG.warning(
+                    "Price feed for %s is %.1fh stale (max %.1fh) -- pausing entry",
+                    symbol, data_age, PRICE_MAX_AGE_HOURS,
+                )
+                return {
+                    "symbol": symbol, "action": "entry_blocked_by_stale_data",
+                    "reason": f"price data age {data_age:.1f}h exceeds max {PRICE_MAX_AGE_HOURS:.1f}h",
+                }
+
+        risk_bands = plan.get("risk_bands") or {}
+        size_pct = risk_bands.get("max_position_size_pct", 0.0) or 0.0
         if size_pct <= 0:
             LOG.info("Trade plan for %s has no position size -- skipping entry", symbol)
             return None
+
+        # how-to-make-it-live.md #17: CVaR tail gate. cvar_95_limit is frozen
+        # onto the plan at authoring time; 0.0 means it was never computed, so
+        # the gate is skipped (fail-open, same posture as every other
+        # data-quality guard here). A real value above threshold blocks the
+        # entry outright -- this is a "the tail on this name is too fat to
+        # open here" call, not a sizing tweak.
+        if CVAR_GATE_ENABLED:
+            cvar_95 = risk_bands.get("cvar_95_limit", 0.0) or 0.0
+            if cvar_95 > CVAR_THRESHOLD:
+                LOG.warning(
+                    "Trade plan for %s: CVaR 95%% %.3f exceeds %.3f -- blocking entry",
+                    symbol, cvar_95, CVAR_THRESHOLD,
+                )
+                return {
+                    "symbol": symbol, "action": "entry_blocked_by_cvar",
+                    "reason": f"CVaR 95% {cvar_95:.3f} exceeds max {CVAR_THRESHOLD:.3f}",
+                }
+
+        # how-to-make-it-live.md #2: event-risk blackout. Ask vinu-stock-price's
+        # local calendar whether this symbol has an earnings / macro event
+        # inside the window; if so, do not open. ENTRIES ONLY. Fail-open on any
+        # problem (service down, no key, no rows).
+        if EVENT_BLACKOUT_HOURS > 0:
+            _blackout = False
+            _why = ""
+            try:
+                _ev = await self._http.get(
+                    f"{self._config.stock_price_api_url}/stock/events/{symbol}",
+                    params={"within_hours": EVENT_BLACKOUT_HOURS},
+                )
+                if getattr(_ev, "status_code", None) == 200:
+                    _body = _ev.json()
+                    if isinstance(_body, dict) and _body.get("blackout"):
+                        _blackout = True
+                        _rows = _body.get("events") or []
+                        _why = (_rows[0].get("title") if _rows else "") or "event within blackout window"
+            except Exception as e:  # noqa: BLE001 -- fail-open on any fetch error
+                LOG.debug("Event blackout check failed for %s, failing open: %s", symbol, e)
+            if _blackout:
+                LOG.warning("Event blackout -- skipping entry for %s: %s", symbol, _why)
+                return {
+                    "symbol": symbol, "action": "entry_blocked_by_event_blackout",
+                    "reason": _why,
+                }
+
+        # how-to-make-it-live.md #13: liquidity / spread gate. Placed after the
+        # cheaper guards and the zero-size early-return (mirrors the CVaR gate's
+        # position) so the quote call is one request per *real* entry attempt,
+        # not per symbol per cycle. ENTRIES ONLY -- _evaluate_open_position
+        # never consults it. Fail-open on any quote problem.
+        if MAX_SPREAD_BPS > 0:
+            _qp: Any = None
+            try:
+                _q = await self._http.get(
+                    f"{self._config.stock_price_api_url}/stock/quote/{symbol}",
+                )
+                if getattr(_q, "status_code", None) == 200:
+                    _qp = _q.json()
+            except Exception as e:  # noqa: BLE001 -- fail-open on any fetch error
+                LOG.debug("Spread gate: quote fetch failed for %s, failing open: %s", symbol, e)
+            _spread = _spread_bps_from_quote(_qp)
+            if _spread is not None and _spread > MAX_SPREAD_BPS:
+                LOG.warning(
+                    "Spread gate: %s spread %.1fbps exceeds %.1fbps -- pausing entry",
+                    symbol, _spread, MAX_SPREAD_BPS,
+                )
+                return {
+                    "symbol": symbol, "action": "entry_blocked_by_wide_spread",
+                    "reason": f"spread {_spread:.1f}bps exceeds max {MAX_SPREAD_BPS:.1f}bps",
+                }
 
         if FORECAST_SCALING_ENABLED:
             confidence = (plan.get("forecast") or {}).get("confidence")
@@ -511,6 +868,19 @@ class TradePlanOrchestrator:
                     symbol, confidence, size_pct * 100, size_pct * scale * 100,
                 )
             size_pct *= scale
+
+        # how-to-make-it-live.md #17: dynamic vol targeting. Scales size down
+        # when the plan's frozen daily vol runs above the annual target
+        # (0.15). daily_vol 0.0 = not computed -> no scaling.
+        if VOL_TARGET_ENABLED:
+            daily_vol = risk_bands.get("daily_vol", 0.0) or 0.0
+            vscale = _vol_target_scale(daily_vol)
+            if vscale < 1.0:
+                LOG.info(
+                    "Trade plan for %s: daily vol %.4f vs target -- scaling size %.1f%% -> %.1f%%",
+                    symbol, daily_vol, size_pct * 100, size_pct * vscale * 100,
+                )
+            size_pct *= vscale
 
         qty = (size_pct * portfolio_value) / price
         if qty <= 0:
@@ -547,11 +917,32 @@ class TradePlanOrchestrator:
                 LOG.debug("Borrow check failed for %s, failing open: %s", symbol, e)
 
         side = "buy" if direction == "long" else "sell"
+        pre_signed = (await self._fetch_broker_positions()).get(symbol, 0.0)
         order_result = await self._submit_order(symbol, side, qty)
         if order_result.get("status") == "submitted":
-            open_position(self._book, symbol, direction, qty, price, artifact_id=plan.get("_artifact_id", ""))
-            LOG.info("Entered %s %s %.4f @ %.2f", direction, symbol, qty, price)
-            return {"symbol": symbol, "action": "entered", "direction": direction, "qty": qty, "price": price}
+            # how-to-make-it-live.md #15: book what actually filled, not the
+            # intended qty -- a partial fill otherwise leaves every downstream
+            # risk/exit/P&L calc keyed off shares the account never held.
+            intended_delta = qty if direction == "long" else -qty
+            actual_delta, partial = await self._confirm_fill(symbol, pre_signed, intended_delta)
+            fill_qty = abs(actual_delta) or qty  # never book a zero-share position
+            open_position(
+                self._book, symbol, direction, fill_qty, price,
+                artifact_id=plan.get("_artifact_id", ""),
+            )
+            if partial:
+                LOG.warning(
+                    "Partial fill on %s entry: intended %.4f, filled %.4f -- booked actual",
+                    symbol, qty, fill_qty,
+                )
+            LOG.info("Entered %s %s %.4f @ %.2f", direction, symbol, fill_qty, price)
+            action = {
+                "symbol": symbol, "action": "entered", "direction": direction,
+                "qty": fill_qty, "price": price,
+            }
+            if partial:
+                action.update({"partial_fill": True, "intended_qty": qty})
+            return action
 
         LOG.info(
             "Entry not filled for %s: broker status=%s", symbol, order_result.get("status"),
@@ -582,6 +973,17 @@ class TradePlanOrchestrator:
         self, plan: dict[str, Any], position: Position, price: float, portfolio_value: float,
     ) -> dict[str, Any] | None:
         symbol = position.symbol
+        # how-to-make-it-live.md #16: a stale feed does NOT block managing an
+        # open position -- an exit/reduce on a slightly stale mark still beats
+        # flying blind. Surface it so it is visible in the logs, then proceed.
+        if PRICE_MAX_AGE_HOURS > 0:
+            _age = _price_ts_age_hours(self._last_price_ts.get(symbol))
+            if _age is not None and _age > PRICE_MAX_AGE_HOURS:
+                LOG.warning(
+                    "Price feed for %s is %.1fh stale (max %.1fh) -- evaluating "
+                    "open position anyway (exits are never gated on freshness)",
+                    symbol, _age, PRICE_MAX_AGE_HOURS,
+                )
         previous_close = self._last_prices.get(symbol)
         recent_prices = await self._fetch_recent_prices(symbol)
         recent_returns = _simple_returns(recent_prices)
@@ -711,7 +1113,8 @@ class TradePlanOrchestrator:
             else (position.avg_entry - price) / position.avg_entry
         ) if position.avg_entry > 0 else 0.0
 
-        if favorable_move_pct > self._REBALANCE_PROTECT_GAIN_PCT:
+        is_critical = getattr(request, "critical", False)
+        if favorable_move_pct > self._REBALANCE_PROTECT_GAIN_PCT and not is_critical:
             LOG.info(
                 "Declining rebalance request for %s -- unrealized gain %.2f%% protects the position",
                 symbol, favorable_move_pct * 100,
@@ -720,6 +1123,12 @@ class TradePlanOrchestrator:
                 "symbol": symbol, "action": "rebalance_declined",
                 "reason": request.reason, "unrealized_gain_pct": favorable_move_pct,
             }
+        if is_critical and favorable_move_pct > self._REBALANCE_PROTECT_GAIN_PCT:
+            LOG.warning(
+                "Rebalance request for %s is CRITICAL -- overriding the %.0f%% gain-protect "
+                "(unrealized gain %.2f%%)", symbol, self._REBALANCE_PROTECT_GAIN_PCT * 100,
+                favorable_move_pct * 100,
+            )
 
         verdict, breaker_reason = await self._check_breaker(portfolio_value)
         if verdict == BreakerVerdict.HALT:
@@ -734,7 +1143,7 @@ class TradePlanOrchestrator:
             LOG.info("Honored rebalance request for %s (reason: %s)", symbol, request.reason)
             return {
                 "symbol": symbol, "action": "rebalance_honored",
-                "qty": reduce_qty, "reason": request.reason,
+                "qty": reduce_qty, "reason": request.reason, "critical": is_critical,
             }
 
         LOG.info("Rebalance reduce not filled for %s: broker status=%s", symbol, order_result.get("status"))
@@ -837,6 +1246,80 @@ class TradePlanOrchestrator:
             return None
         return cov
 
+    async def _check_runtime_correlation(self, prices: dict[str, float]) -> dict[str, Any]:
+        """how-to-make-it-live.md #12: once per cycle, look at the DCC/shrinkage
+        correlation between the positions actually open and reduce_only-trim the
+        larger side of any pair moving dangerously together in the direction the
+        book is exposed. reduce_only => can only cut risk. Per-symbol cooldown."""
+        if not RUNTIME_CORR_ENABLED:
+            return {"checked": False, "reason": "disabled"}
+        positions = list_open_positions(self._book)
+        symbols = sorted({p.symbol for p in positions})
+        if len(symbols) < 2:
+            return {"checked": False, "reason": "fewer than 2 symbols open"}
+
+        cov = await self._compute_covariance(symbols)
+        if cov is None:
+            return {"checked": False, "reason": "covariance unavailable"}
+        from vinu_tools.compute.risk.covariance import correlation_from_covariance
+
+        corr = correlation_from_covariance(cov)
+        idx = {sym: i for i, sym in enumerate(symbols)}
+
+        # Net signed exposure + gross market value per symbol.
+        signed: dict[str, float] = {}
+        mv: dict[str, float] = {}
+        for p in positions:
+            s = 1.0 if p.side == "long" else -1.0
+            px = prices.get(p.symbol) or p.avg_entry
+            signed[p.symbol] = signed.get(p.symbol, 0.0) + s
+            mv[p.symbol] = mv.get(p.symbol, 0.0) + abs(p.qty) * px
+
+        now = time.monotonic()
+        flagged: list[dict[str, Any]] = []
+        reductions: list[dict[str, Any]] = []
+        for a, b in ((symbols[i], symbols[j]) for i in range(len(symbols)) for j in range(i + 1, len(symbols))):
+            sa, sb = float(np.sign(signed.get(a, 0.0))), float(np.sign(signed.get(b, 0.0)))
+            if sa == 0.0 or sb == 0.0:
+                continue  # a symbol whose own positions net flat -- nothing to trim
+            c = float(corr[idx[a], idx[b]])
+            comovement = c * sa * sb  # co-movement in the direction we're exposed
+            if comovement < RUNTIME_CORR_THRESHOLD:
+                continue
+            flagged.append({"pair": [a, b], "correlation": round(c, 3), "comovement": round(comovement, 3)})
+
+            target = a if mv.get(a, 0.0) >= mv.get(b, 0.0) else b
+            if now - self._last_corr_reduce.get(target, 0.0) < RUNTIME_CORR_COOLDOWN_SEC:
+                continue
+            pos = self._find_open_position(target)
+            if pos is None:
+                continue
+            reduce_qty = pos.qty * RUNTIME_CORR_REDUCE_PCT
+            if reduce_qty <= 0:
+                continue
+            price = prices.get(target) or pos.avg_entry
+            side = "sell" if pos.side == "long" else "buy"
+            order_result = await self._submit_order(target, side, reduce_qty, reduce_only=True)
+            if order_result.get("status") == "submitted":
+                reduce_position(self._book, pos.position_id, reduce_qty, price)
+                self._last_corr_reduce[target] = now
+                LOG.warning(
+                    "Runtime correlation: %s~%s corr %.2f (comovement %.2f >= %.2f) -- "
+                    "reduced %s by %.0f%% (%.4f)",
+                    a, b, c, comovement, RUNTIME_CORR_THRESHOLD, target,
+                    RUNTIME_CORR_REDUCE_PCT * 100, reduce_qty,
+                )
+                reductions.append({
+                    "symbol": target, "pair": [a, b],
+                    "correlation": round(c, 3), "reduce_qty": reduce_qty,
+                })
+            else:
+                LOG.info(
+                    "Runtime correlation reduce for %s not filled: %s",
+                    target, order_result.get("status"),
+                )
+        return {"checked": True, "n_flagged_pairs": len(flagged), "flagged": flagged, "reductions": reductions}
+
     # ------------------------------------------------------------------
     # Broker / market data
     # ------------------------------------------------------------------
@@ -896,6 +1379,20 @@ class TradePlanOrchestrator:
                     bars = resp.json().get("data", [])
                     if bars:
                         prices[symbol] = float(bars[-1].get("close", 0.0))
+                        _parsed_ts: float | None = None
+                        _bt = bars[-1].get("bar_ts")
+                        if _bt is not None:
+                            try:
+                                _parsed_ts = float(_bt)
+                            except (TypeError, ValueError):
+                                _parsed_ts = None
+                        if _parsed_ts is not None:
+                            self._last_price_ts[symbol] = _parsed_ts
+                        else:
+                            # fresh price but no usable timestamp -- drop any
+                            # prior ts so the freshness guard fails open rather
+                            # than blocking on a lingering old value.
+                            self._last_price_ts.pop(symbol, None)
             except Exception as e:
                 LOG.warning("Could not fetch price for %s: %s", symbol, e)
         return prices
@@ -946,24 +1443,287 @@ class TradePlanOrchestrator:
             return None
 
     # ------------------------------------------------------------------
+    # Emergency flatten — how-to-make-it-live.md #33 (Stage 4), panic switch
+    # ------------------------------------------------------------------
+
+    async def _is_trading_halted(self) -> bool:
+        """Read the agent's global kill switch (filesystem-backed,
+        cross-process). Fail-safe here is False: if the agent is unreachable
+        no order can be placed anyway, the broker-outage guard covers that,
+        and a real halt file is simply re-read next cycle."""
+        try:
+            resp = await self._http.get(
+                f"{self._config.agent_api_url}/agent/broker/status",
+            )
+            if getattr(resp, "status_code", None) == 200:
+                return bool((resp.json() or {}).get("halted"))
+        except Exception as e:  # noqa: BLE001
+            LOG.debug("Halt-status check failed, treating as not-halted: %s", e)
+        return False
+
+    async def emergency_flatten(self, reason: str = "manual") -> dict[str, Any]:
+        """The panic switch (how-to-make-it-live.md #33). Two steps:
+        (1) set the agent's global kill switch so NO service can place a new
+            order (OrderGuard rejects on it; reduce_only exits stay allowed);
+        (2) submit a reduce_only market close for every open book position.
+        A position whose close does not confirm is left in the book -- the
+        next cycle's _reconcile_book_with_broker pulls it straight. Undo is
+        deliberate and separate: emergency_resume()."""
+        LOG.warning("EMERGENCY FLATTEN requested (reason=%s)", reason)
+        halted = False
+        halt_error = ""
+        try:
+            resp = await self._http.post(
+                f"{self._config.agent_api_url}/agent/broker/halt",
+                json={"reason": f"emergency_flatten: {reason}"},
+            )
+            halted = getattr(resp, "status_code", None) == 200
+            if not halted:
+                halt_error = f"halt returned http {getattr(resp, 'status_code', '?')}"
+        except Exception as e:  # noqa: BLE001
+            halt_error = str(e)
+        if halted:
+            self._trading_halted = True
+            self._breaker_state.halted = True
+            self._breaker_state.halted_at = datetime.now(timezone.utc).isoformat()
+            self._breaker_state.halted_reason = f"emergency_flatten: {reason}"
+        else:
+            LOG.error("EMERGENCY FLATTEN: global halt did NOT engage (%s) -- "
+                      "still attempting to close positions", halt_error)
+
+        positions = list_open_positions(self._book)
+        prices: dict[str, float] = {}
+        if positions:
+            prices = await self._fetch_prices(sorted({p.symbol for p in positions}))
+
+        closed: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        for pos in positions:
+            side = "sell" if pos.side == "long" else "buy"
+            px = prices.get(pos.symbol) or float(pos.avg_entry)
+            order_result = await self._submit_order(
+                pos.symbol, side, pos.qty, artifact_id=pos.artifact_id, reduce_only=True,
+            )
+            row = {"symbol": pos.symbol, "side": pos.side, "qty": float(pos.qty)}
+            if order_result.get("status") == "submitted":
+                close_position(self._book, pos.position_id, px)
+                closed.append(row)
+                LOG.warning("Emergency flatten: closed %s %s %.4f", pos.side, pos.symbol, pos.qty)
+            else:
+                row["broker_status"] = order_result.get("status")
+                failed.append(row)
+                LOG.error("Emergency flatten: FAILED to close %s -- %s", pos.symbol, order_result)
+
+        return {
+            "status": "ok" if (halted and not failed) else "partial",
+            "reason": reason,
+            "halted": halted,
+            "halt_error": halt_error,
+            "positions_closed": closed,
+            "positions_failed": failed,
+            "count_closed": len(closed),
+            "count_failed": len(failed),
+        }
+
+    async def emergency_resume(self, reason: str = "manual") -> dict[str, Any]:
+        """Lift the global kill switch set by emergency_flatten() or a manual
+        halt. Does NOT reopen anything -- normal cycles just resume trading.
+        Deliberately a separate, explicit action."""
+        LOG.warning("EMERGENCY RESUME requested (reason=%s)", reason)
+        resumed = False
+        err = ""
+        try:
+            resp = await self._http.post(
+                f"{self._config.agent_api_url}/agent/broker/resume", json={},
+            )
+            resumed = getattr(resp, "status_code", None) == 200
+            if not resumed:
+                err = f"resume returned http {getattr(resp, 'status_code', '?')}"
+        except Exception as e:  # noqa: BLE001
+            err = str(e)
+        if resumed:
+            self._trading_halted = False
+            self._breaker_state.reset()
+        return {
+            "status": "ok" if resumed else "error",
+            "resumed": resumed, "error": err, "reason": reason,
+        }
+
+    async def emergency_status(self) -> dict[str, Any]:
+        """Current halt state + how many positions would a flatten touch."""
+        halted = await self._is_trading_halted()
+        return {
+            "halted": halted,
+            "local_breaker_halted": self._breaker_state.halted,
+            "open_positions": len(list_open_positions(self._book)),
+        }
+
+    # ------------------------------------------------------------------
+    # Broker health — how-to-make-it-live.md #14 (Stage 4), outage pause
+    # ------------------------------------------------------------------
+
+    async def _check_broker_health(self) -> dict[str, Any]:
+        """One /agent/broker/account liveness probe per cycle. A healthy 200
+        stamps a monotonic clock and clears self._broker_degraded; a non-200 /
+        transport error that persists past BROKER_STALE_SEC since the last
+        healthy probe sets it. _maybe_enter pauses ENTRIES while degraded;
+        exits are never gated. Returns a small status dict for the cycle
+        result. Fail-safe direction: when in doubt about the broker, stop
+        opening -- but a single blip inside the grace window does not pause."""
+        if BROKER_STALE_SEC <= 0:
+            self._broker_degraded = False
+            return {"enabled": False, "degraded": False}
+
+        ok = False
+        detail = ""
+        try:
+            resp = await self._http.get(f"{self._config.agent_api_url}/agent/broker/account")
+            if getattr(resp, "status_code", None) == 200:
+                body = resp.json() or {}
+                # Reachable-but-unconfigured is a deployment state, not an
+                # outage (_fetch_portfolio_value already logs it) -- still a
+                # healthy probe here.
+                ok = True
+                detail = "configured" if body.get("configured") else "reachable_unconfigured"
+            else:
+                detail = f"http {getattr(resp, 'status_code', '?')}"
+        except Exception as e:  # noqa: BLE001 -- any transport error = not healthy
+            detail = f"error: {e}"
+
+        now = time.monotonic()
+        if ok:
+            self._broker_ok_at = now
+            if self._broker_degraded:
+                LOG.warning("Broker health recovered (%s) -- entries resume", detail)
+            self._broker_degraded = False
+            return {"enabled": True, "degraded": False, "detail": detail}
+
+        # 0.0 = the broker has never answered since this worker started; a
+        # failed probe on top of that pauses immediately (no meaningful "last
+        # OK" to grant a grace window against, and monotonic() is not a
+        # wall-clock we can compare to an absolute).
+        never_confirmed = self._broker_ok_at == 0.0
+        stale_for = now - self._broker_ok_at
+        if never_confirmed or stale_for > BROKER_STALE_SEC:
+            if not self._broker_degraded:
+                LOG.warning(
+                    "Broker health probe failing (%s); %s -- pausing entries",
+                    detail,
+                    "never confirmed since start" if never_confirmed
+                    else f"last OK {stale_for:.0f}s ago (> {BROKER_STALE_SEC:.0f}s)",
+                )
+            self._broker_degraded = True
+            out = {"enabled": True, "degraded": True, "detail": detail}
+            if not never_confirmed:
+                out["stale_for_sec"] = round(stale_for, 1)
+            return out
+
+        LOG.info(
+            "Broker health probe failed (%s) but last OK only %.0fs ago "
+            "(< %.0fs) -- not pausing yet",
+            detail, stale_for, BROKER_STALE_SEC,
+        )
+        return {
+            "enabled": True, "degraded": False, "detail": detail,
+            "stale_for_sec": round(stale_for, 1), "within_grace": True,
+        }
+
+    # ------------------------------------------------------------------
     # Reconciliation — Phase 3's book is never left reflecting an assumed state
     # ------------------------------------------------------------------
 
     async def _reconcile_book_with_broker(self, prices: dict[str, float]) -> dict[str, Any]:
-        expected = {p.symbol: (p.qty if p.side == "long" else -p.qty) for p in list_open_positions(self._book)}
+        open_positions = list_open_positions(self._book)
+        expected = {p.symbol: (p.qty if p.side == "long" else -p.qty) for p in open_positions}
         actual = await self._fetch_broker_positions()
         portfolio_value = sum(abs(q) * prices.get(sym, 0.0) for sym, q in expected.items()) or 1.0
         report = self._reconciler.reconcile(expected, actual, portfolio_value)
+        corrections: list[dict[str, Any]] = []
         if report.drift_detected:
             LOG.warning(
                 "Book/broker drift detected: %d symbol(s), %.2f%% total",
                 len(report.symbol_drifts), report.total_drift_pct,
             )
+            # how-to-make-it-live.md #15: don't just warn -- pull the book back
+            # to broker truth. The broker is ground truth for what the account
+            # actually holds (a partial fill, or a bracket leg that fired
+            # between cycles). Skipped entirely when the broker snapshot is
+            # empty (can't tell a real flat account from a failed fetch).
+            if RECONCILE_AUTOCORRECT and actual:
+                by_symbol = {p.symbol: p for p in open_positions}
+                for d in report.symbol_drifts:
+                    corr = self._reconcile_symbol(
+                        d["symbol"], by_symbol.get(d["symbol"]),
+                        actual.get(d["symbol"], 0.0),
+                        prices.get(d["symbol"], 0.0),
+                    )
+                    if corr:
+                        corrections.append(corr)
         return {
             "drift_detected": report.drift_detected,
             "n_drifts": len(report.symbol_drifts),
             "total_drift_pct": report.total_drift_pct,
+            "corrections": corrections,
         }
+
+    def _reconcile_symbol(
+        self, symbol: str, book_pos: Position | None, broker_signed: float, price: float,
+    ) -> dict[str, Any] | None:
+        """Pull one symbol's book state toward the broker's real position.
+        Returns a record of what was changed, or None if nothing safe to do."""
+        book_signed = 0.0
+        if book_pos is not None:
+            book_signed = book_pos.qty if book_pos.side == "long" else -book_pos.qty
+
+        # Phantom: broker holds something the book has no position for. Could
+        # be another strategy, a manual trade, or a real bug -- never
+        # auto-open, just alert.
+        if book_pos is None:
+            LOG.error(
+                "RECONCILE: broker holds %.4f %s but the book has no position -- "
+                "NOT auto-correcting (needs review)", broker_signed, symbol,
+            )
+            return {"symbol": symbol, "action": "alert_phantom_broker_position", "broker_qty": broker_signed}
+
+        # Direction conflict: book long vs broker short (or vice versa). Serious
+        # -- never auto-flip.
+        if book_signed * broker_signed < 0:
+            LOG.error(
+                "RECONCILE: %s book is %s %.4f but broker is the opposite side %.4f -- "
+                "NOT auto-correcting (needs review)", symbol, book_pos.side, book_pos.qty, broker_signed,
+            )
+            return {"symbol": symbol, "action": "alert_side_conflict", "book_qty": book_signed, "broker_qty": broker_signed}
+
+        book_abs, broker_abs = abs(book_signed), abs(broker_signed)
+
+        if broker_abs <= 1e-9:  # broker flat -> close the book position
+            close_position(self._book, book_pos.position_id, price or book_pos.avg_entry)
+            LOG.warning("RECONCILE: broker flat on %s -- closed stale book position (%.4f)", symbol, book_abs)
+            return {"symbol": symbol, "action": "closed_to_match_broker", "was_qty": book_abs}
+
+        if broker_abs < book_abs:  # book over-counts (partial entry / over-exit)
+            reduce_position(self._book, book_pos.position_id, book_abs - broker_abs, price or book_pos.avg_entry)
+            LOG.warning(
+                "RECONCILE: %s book %.4f > broker %.4f -- reduced book to broker",
+                symbol, book_abs, broker_abs,
+            )
+            return {"symbol": symbol, "action": "reduced_to_match_broker", "from_qty": book_abs, "to_qty": broker_abs}
+
+        # broker_abs > book_abs: book under-counts (partial exit left residual
+        # exposure, or an add we didn't record). Correct up so risk sees the
+        # real size -- but refuse an absurd gap (that is a bug, not a fill).
+        if broker_abs > book_abs * RECONCILE_MAX_RATIO:
+            LOG.error(
+                "RECONCILE: %s broker %.4f is >%.0fx the book %.4f -- NOT auto-correcting (needs review)",
+                symbol, broker_abs, RECONCILE_MAX_RATIO, book_abs,
+            )
+            return {"symbol": symbol, "action": "alert_implausible_gap", "book_qty": book_abs, "broker_qty": broker_abs}
+        add_to_position(self._book, book_pos.position_id, broker_abs - book_abs, price or book_pos.avg_entry)
+        LOG.warning(
+            "RECONCILE: %s book %.4f < broker %.4f -- added to book to match broker",
+            symbol, book_abs, broker_abs,
+        )
+        return {"symbol": symbol, "action": "increased_to_match_broker", "from_qty": book_abs, "to_qty": broker_abs}
 
     async def _fetch_broker_positions(self) -> dict[str, float]:
         try:
@@ -978,6 +1738,38 @@ class TradePlanOrchestrator:
         except Exception as e:
             LOG.warning("Could not fetch broker positions: %s", e)
         return {}
+
+    async def _confirm_fill(
+        self, symbol: str, pre_signed: float, intended_delta: float,
+    ) -> tuple[float, bool]:
+        """how-to-make-it-live.md #15: after a submit, poll the broker's real
+        position and return (actual signed delta, was_partial).
+
+        `pre_signed` is the broker's signed qty for `symbol` before this order
+        (+ long / - short); `intended_delta` is the signed change the order was
+        meant to produce. Falls back to (intended_delta, False) whenever the
+        broker view is unavailable or shows nothing yet (async fill lag) --
+        this never blocks or shrinks a position on a bad read; end-of-cycle
+        reconciliation is the backstop for anything it misses.
+        """
+        if intended_delta == 0.0 or FILL_CONFIRM_ATTEMPTS <= 0:
+            return intended_delta, False
+        want = abs(intended_delta)
+        for attempt in range(FILL_CONFIRM_ATTEMPTS):
+            positions = await self._fetch_broker_positions()
+            if not positions:
+                return intended_delta, False  # untrusted snapshot -> fail open
+            got = abs(positions.get(symbol, 0.0) - pre_signed)
+            if got >= want * (1.0 - PARTIAL_FILL_TOLERANCE):
+                return intended_delta, False  # full fill (within tolerance)
+            if attempt < FILL_CONFIRM_ATTEMPTS - 1:
+                await asyncio.sleep(FILL_CONFIRM_DELAY_SEC)
+                continue
+            if got <= 1e-9:
+                return intended_delta, False  # nothing visible -> async lag
+            signed = got if intended_delta > 0 else -got
+            return signed, True  # genuine partial fill
+        return intended_delta, False
 
 
 def _simple_returns(prices: list[float]) -> list[float]:

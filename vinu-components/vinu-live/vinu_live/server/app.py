@@ -16,6 +16,16 @@ from vinu_live.trade_plan.orchestrator import TradePlanOrchestrator
 class RebalanceRequestBody(BaseModel):
     symbol: str
     reason: str
+    # how-to-make-it-live.md #23: a critical request bypasses the
+    # orchestrator's 5% unrealized-gain protect for a genuinely urgent
+    # reallocation.
+    critical: bool = False
+
+
+class EmergencyActionBody(BaseModel):
+    # how-to-make-it-live.md #33: free-text note recorded with the halt /
+    # resume for the audit trail.
+    reason: str = "manual"
 
 
 def create_app() -> FastAPI:
@@ -86,8 +96,41 @@ def create_app() -> FastAPI:
         config = load_config()
         orchestrator = TradePlanOrchestrator(config)
         try:
-            orchestrator.submit_rebalance_request(body.symbol, body.reason)
+            orchestrator.submit_rebalance_request(body.symbol, body.reason, critical=body.critical)
             return {"status": "ok", "symbol": body.symbol.upper()}
+        finally:
+            await orchestrator.close()
+
+    @router.post("/trade-plan/emergency-flatten")
+    async def emergency_flatten(body: EmergencyActionBody = EmergencyActionBody()) -> dict[str, Any]:
+        """how-to-make-it-live.md #33: the panic switch. Sets the agent's
+        global kill switch (blocks every new order, service-wide) AND submits a
+        reduce_only market close for every open book position. Undo with
+        /trade-plan/emergency-resume -- it is deliberately not automatic."""
+        config = load_config()
+        orchestrator = TradePlanOrchestrator(config)
+        try:
+            return await orchestrator.emergency_flatten(reason=body.reason)
+        finally:
+            await orchestrator.close()
+
+    @router.post("/trade-plan/emergency-resume")
+    async def emergency_resume(body: EmergencyActionBody = EmergencyActionBody()) -> dict[str, Any]:
+        """Lift the global kill switch. Does not reopen anything; normal cycles
+        simply resume."""
+        config = load_config()
+        orchestrator = TradePlanOrchestrator(config)
+        try:
+            return await orchestrator.emergency_resume(reason=body.reason)
+        finally:
+            await orchestrator.close()
+
+    @router.get("/trade-plan/emergency-status")
+    async def emergency_status() -> dict[str, Any]:
+        config = load_config()
+        orchestrator = TradePlanOrchestrator(config)
+        try:
+            return await orchestrator.emergency_status()
         finally:
             await orchestrator.close()
 

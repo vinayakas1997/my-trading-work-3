@@ -24,10 +24,11 @@ class TradingMandate:
     max_daily_trade_volume: float = 200000.0
     # Stage 2 (how-to-make-it-live.md #8): max_daily_orders/max_daily_trade_volume
     # above are both PER-SYMBOL -- 10/symbol x 20 traded symbols is 200 orders/day
-    # with nothing capping the total. 0 (default) = no portfolio-wide cap, since
-    # the right number depends entirely on how many symbols a given deployment
-    # trades; unlike the per-symbol defaults above, there's no safe non-zero
-    # default that fits every mandate.
+    # with nothing capping the total. 0 here (the dataclass fallback used only
+    # when a mandate.yaml is absent or omits the key) = no portfolio-wide cap;
+    # the actual deployed value is set in vinu-agent/entrypoint.sh's seeded
+    # mandate.yaml (currently 50, sized for a ~3-9 symbol universe). reduce_only
+    # orders are exempt so this never blocks de-risking.
     max_daily_orders_portfolio: int = 0
     # Cap on total capital deployed across ALL open positions combined, as a
     # fraction of account equity — distinct from max_position_pct, which only

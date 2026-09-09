@@ -85,3 +85,42 @@ def test_health_providers(client: TestClient) -> None:
     assert "providers" in body
     assert isinstance(body["providers"], list)
     assert len(body["providers"]) >= 1
+
+
+def test_quote_route_unconfigured_is_200_not_ok(client: TestClient) -> None:
+    # how-to-make-it-live.md #13: the quote route always returns 200 -- on any
+    # upstream problem (here: no Alpaca key in the test env) the body carries
+    # ok:false + error, and vinu-live's spread gate fails open on that.
+    resp = client.get("/stock/quote/AAPL")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["symbol"] == "AAPL"
+    assert body["ok"] is False
+    assert body["error"]
+    assert body["spread_bps"] == 0.0
+
+
+def test_quote_route_serves_provider_payload_and_caches(client, monkeypatch) -> None:
+    from vinu_stock.providers.quote import QuoteResult
+
+    calls = {"n": 0}
+
+    def _fake_get_quote(self, symbol: str) -> QuoteResult:
+        calls["n"] += 1
+        return QuoteResult(
+            True, symbol.upper(), bid=149.98, ask=150.02, mid=150.0,
+            spread_bps=2.6667, ts=1_700_000_000.0,
+        )
+
+    monkeypatch.setattr(
+        "vinu_stock.providers.quote.AlpacaQuoteProvider.get_quote", _fake_get_quote
+    )
+
+    first = client.get("/stock/quote/AAPL").json()
+    assert first["ok"] is True
+    assert first["bid"] == 149.98 and first["ask"] == 150.02
+    assert abs(first["spread_bps"] - 2.6667) < 1e-6
+
+    # second call inside the 5s TTL must not hit the provider again
+    client.get("/stock/quote/AAPL")
+    assert calls["n"] == 1

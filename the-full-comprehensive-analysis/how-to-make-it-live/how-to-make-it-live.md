@@ -50,7 +50,7 @@ in this folder.
 
 | Fix | Status | Where |
 |---|---|---|
-| Flip `VINU_RISK_CVAR_ENABLED=true` and `VINU_RISK_VOL_TARGET_ENABLED=true` | ✅ Done | `.env` |
+| ~~Flip `VINU_RISK_CVAR_ENABLED=true` and `VINU_RISK_VOL_TARGET_ENABLED=true`~~ — turned out the flags were **inert**: no live-path caller ever fed `compute_position_size` the `cvar_95`/`current_vol` it gates on. Real fix: freeze CVaR + daily vol onto `RiskBand` at authoring time and run both controls in `orchestrator._maybe_enter` (the live entry-sizing point), then set the flags. See `CHANGES-2026-09-09.md` §1. | ✅ Done (re-audit 2026-09-09) | `models.py`, `trade_plan_authoring.py`, `orchestrator.py`, `.env` |
 | Give the **global** kill switch a `reduce_only` exemption, same policy vinu-live's local breaker already used | ✅ Done | `order_guard.py`, `trade_tool.py`, `routes_broker.py`, `orchestrator.py` |
 | ~~Schedule ShadowEvaluator~~ | Not needed — already scheduled (moved to Stage 0, was a verification error) | — |
 | **Bonus fix found while wiring #21**: `client_order_id` (the #27 idempotency key) was computed by vinu-live but silently dropped at the HTTP boundary — `OrderRequest` never declared the field, so it never reached Alpaca and the dedup never actually ran | ✅ Done | `base.py`, `alpaca.py`, `routes_broker.py`, `trade_tool.py` |
@@ -110,9 +110,11 @@ effect (the "stale signal stays actionable forever" half) — the other half
 **#8 (portfolio-level daily order cap) is done, partially** — see
 `CHANGES-2026-09-09.md`. `mandate.max_daily_orders_portfolio` +
 `DailyLimitStore.count_today_total()` close the specific "10/symbol × 20 symbols =
-200/day" gap the scenario opened with (ships disabled — the right ceiling depends on
-deployment). Turnover-as-a-percentage and transaction-cost-aware sizing, the
-scenario's other two gaps, are untouched — Scenario 8 stays marked PARTIALLY HANDLED.
+200/day" gap the scenario opened with. Now **seeded at 50** in
+`vinu-agent/entrypoint.sh`'s mandate.yaml (re-audit 2026-09-09 — it had shipped at 0
+/ disabled); tune to your live symbol count. Turnover-as-a-percentage and
+transaction-cost-aware sizing, the scenario's other two gaps, are untouched —
+Scenario 8 stays marked PARTIALLY HANDLED.
 
 **#34 (confidence-gradient sizing) is done, partially** — see
 `CHANGES-2026-09-09.md`. `vinu-portfolio`'s `compute_daily_allocation()` gained a
@@ -136,18 +138,22 @@ isn't fundamentally a missing-data problem has now been addressed at least in pa
 
 ---
 
-## Stage 3 — 2–4 weeks, real new logic inside existing components
+## Stage 3 — real new logic inside existing components — ALL 5 DONE (2026-09-09)
 
 Genuinely new logic, but still contained within components that already exist —
-no new services, no new data feeds.
+no new services, no new data feeds. All five landed in `vinu-live` (one also
+touched `vinu-live/server/app.py` for the rebalance flag); every item has tests and
+a `CHANGES-2026-09-09.md` §S3-* section. Each closes its scenario **partially** —
+the residual gaps (residue cancellation, portfolio-level correlated-DD stop, netting
+vs blocking, sleeves) are called out per-row and in `seceniors.md`.
 
-| # | Fix | What it takes |
-|---|---|---|
-| 12 | Runtime correlation monitor | Monitor cycle calls the existing `shock_correlation.py` DCC-GARCH against *open* positions (today it only runs at order time / daily allocation), triggers a reduce action past a threshold |
-| 3 / 5 | Conflicting-signal detection | Before funding/entering, check other ACTIVE artifacts' current signal on the same symbol; net or block on direct opposition |
-| 15 | Partial fill handling | `filled_qty` vs intended qty is already flowing through `debrief.py` — add residue cancellation after a timeout and adjust the book to the actual filled size |
-| 16 | Data freshness guard | Timestamp check on the latest price before Monitor/OrderGuard act; pause entries (not exits) on stale data, same policy shape as HALT entries-only |
-| 23 | Rebalance force override | A "critical" flag on `rebalance_request` that bypasses the hardcoded 5% gain-protect for genuinely urgent reallocations |
+| # | Fix | Status | What it takes |
+|---|---|---|---|
+| 12 | Runtime correlation monitor | ✅ **done 2026-09-09** | `orchestrator._check_runtime_correlation` runs every cycle: DCC/shrinkage covariance → correlation, flags any open-position pair co-moving ≥ `VINU_LIVE_RUNTIME_CORR_THRESHOLD` (0.85) *in the exposed direction*, `reduce_only`-trims the larger by 25%, per-symbol 1h cooldown. See `CHANGES-2026-09-09.md` §S3-12 |
+| 3 / 5 | Conflicting-signal detection | ✅ **done 2026-09-09** | `orchestrator._maybe_enter` now checks every other ACTIVE plan for the symbol; if one signals the opposite direction it returns `entry_blocked_by_signal_conflict` (policy `block` default; `VINU_LIVE_SIGNAL_CONFLICT_POLICY=ignore` restores first-plan-wins). See `CHANGES-2026-09-09.md` §S3-3-5 |
+| 15 | Partial fill handling | ✅ **done 2026-09-09** | `_maybe_enter` polls the broker's real position after a submit and books the actual filled qty (`partial_fill` in the action dict on a shortfall); `_reconcile_book_with_broker` now *corrects* the book toward broker truth on drift (`VINU_LIVE_RECONCILE_AUTOCORRECT`) instead of only logging. Residue **cancellation** still needs a `GET/DELETE /broker/order/{id}` route — deferred. See `CHANGES-2026-09-09.md` §S3-15 |
+| 16 | Data freshness guard | ✅ **done 2026-09-09** | `orchestrator._maybe_enter` now pauses entries (`entry_blocked_by_stale_data`) when the newest `bar_ts` is older than `VINU_LIVE_PRICE_MAX_AGE_HOURS` (default 96h); exits only log. See `CHANGES-2026-09-09.md` §S3-16 |
+| 23 | Rebalance force override | ✅ **done 2026-09-09** | `critical: true` on the rebalance request (dataclass + SQLite column + `POST /trade-plan/rebalance-request` body) bypasses `_evaluate_rebalance_request`'s 5% unrealized-gain protect. See `CHANGES-2026-09-09.md` §S3-23 |
 
 ---
 
@@ -157,17 +163,21 @@ These are real gaps, but they need a new data feed, a new service, or an
 architecture change — they are not what's standing between the system and live
 capital in the next month.
 
-| # | Gap | Why it's Stage 4 |
-|---|-----|-------------------|
-| 2 | Event risk (earnings, FDA, corporate actions, borrow rate) | Needs a calendar/events data source that doesn't exist yet |
-| 13 | Liquidity / spread gate | Needs real-time spread/depth data, not just price |
-| 14 | Broker fallback + outage pause | Needs a second broker integration and failover logic |
-| 25 | 1D/1H timeframe sleeves | Portfolio architecture change — separate capital pools per timeframe |
-| 26 | Borrow / dividend / tax modeling | New cost model, needs borrow-rate and dividend-calendar data |
-| 29 | Secrets vault | Infra change (AWS Secrets Manager / Vault integration) |
-| 33 | Out-of-distribution detector + emergency flatten | New detector, new "flatten everything" action path |
-| 32 | Broader learning loop (sizing, regime, correlation) | Needs a training/retraining pipeline, not a single fix |
-| 35 | Sub-90-second book/broker reconciliation | Event-driven reconciliation instead of periodic polling — a real architecture change |
+**Track decided 2026-09-09:** US-equities go-live first; crypto/ETH is a second
+version once equities is on the path. Research in `stage-4-data-research.md`;
+wiring plan + rollout order in `stage-4-implementation-plan.md`.
+
+| # | Gap | Why it's Stage 4 | Status |
+|---|-----|-------------------|--------|
+| 2 | Event risk (earnings, FDA, corporate actions, borrow rate) | Needs a calendar/events data source that doesn't exist yet | **DONE 2026-09-09 (earnings + US macro)** — folded into `vinu-stock-price` (`/stock/events`), daily Finnhub pull, `VINU_LIVE_EVENT_BLACKOUT_HOURS` (24), `entry_blocked_by_event_blackout`. CHANGES §S4-2. Borrow rate still out (paid source). Needs `FINNHUB_API_KEY` |
+| 13 | Liquidity / spread gate | Needs real-time spread/depth data, not just price | ✅ **DONE 2026-09-09** — `VINU_LIVE_MAX_SPREAD_BPS`, Alpaca NBBO at order time, `entry_blocked_by_wide_spread`. CHANGES §S4-13. (depth check deferred) |
+| 14 | Broker fallback + outage pause | Needs a second broker integration and failover logic | **Half A DONE 2026-09-09** — `_check_broker_health()` per cycle, `VINU_LIVE_BROKER_STALE_SEC` (180), `entry_blocked_by_broker_outage`, auto-recovers. CHANGES §S4-14A. **Half B (2nd venue): FUTURE CONSIDERATION** — explicitly out of scope for equities v1 (decided 2026-09-09). Revisit post-launch; accepted risk in the interim: no exit path while the sole broker is fully down. |
+| 25 | 1D/1H timeframe sleeves | Portfolio architecture change — separate capital pools per timeframe | Open — refinement, not a blocker |
+| 26 | Borrow / dividend / tax modeling | New cost model, needs borrow-rate and dividend-calendar data | **FUTURE CONSIDERATION** — out of scope for equities v1 (decided 2026-09-09). Only bites on shorts / borrow squeezes; borrow-rate data is paid. Long-only spot equities don't need it. Splits & dividends already handled via Alpaca `adjustment=all`. |
+| 29 | Secrets vault | Infra change (AWS Secrets Manager / Vault integration) | Open — ops hygiene, not a trading-safety gap. `.env` + Docker secrets is acceptable for a single operator. |
+| 33 | Out-of-distribution detector + emergency flatten | New detector, new "flatten everything" action path | **Part 1 DONE 2026-09-09** — `orchestrator.emergency_flatten()` + `POST /live/trade-plan/emergency-{flatten,resume,status}`: one call halts every service (global kill switch) **and** reduce_only-closes every open position; exit-safe; `entry_blocked_by_emergency_halt` while held. CHANGES §S4-33. **Part 2 (auto OOD trigger)** deferred — needs feature-distribution monitoring, post-launch. |
+| 32 | Broader learning loop (sizing, regime, correlation) | Needs a training/retraining pipeline, not a single fix | Open — "get smarter over time", pure post-launch. |
+| 35 | Sub-90-second book/broker reconciliation | Event-driven reconciliation instead of periodic polling — a real architecture change | Open — 90s polling is fine for daily-bar strategies. Post-launch. |
 
 ---
 

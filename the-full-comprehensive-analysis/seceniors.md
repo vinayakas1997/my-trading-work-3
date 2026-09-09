@@ -44,6 +44,11 @@ prioritizing are 21 and 34, the two remaining DANGEROUSLY MIS-HANDLED scenarios 
 now resolved, see below) — those are where the system looks protected but isn't, which
 is the costliest kind of gap.
 
+> **Superseded by the "fixes applied this session" block below.** As of 2026-09-09,
+> #21 is RESOLVED (both halt layers honour entries-only / `reduce_only`) and #34 is
+> downgraded to PARTIALLY HANDLED. This paragraph is the pre-fix snapshot; the
+> running tally further down is authoritative.
+
 **2026-09-09 update, fixes applied this session:**
 - Stage 1: #17 (CVaR/vol-target flags), #21 (global kill switch now exempts
   reduce-only orders — mirrors the fix already present in vinu-live's local breaker),
@@ -107,13 +112,13 @@ See `how-to-make-it-live/` in this folder for the full change log
 | **Trading phase** | Before Entry → Entry |
 | **Human failure** | Ignoring known unknowns; confirmation bias on signal |
 | **Bot failure** | Signal engine doesn't incorporate events calendar, corporate actions, borrow data |
-| **Vina handling** | **NOT HANDLED** |
-| **Existing component(s)** | `strategy-generate` skill (signal engines), `vinu-stock-price` (data), `initial-analysis` (regime) |
-| **Evidence** | `strategy-generate/SKILL.md` — signal engines: crossover, threshold, composite, ML. No mention of earnings calendar, news events, borrow rates, corporate actions. `vinu-stock-price` docs show price data only. |
-| **Status details** | **No mechanism exists to:**<br>• Check earnings calendar before entry<br>• Check corporate actions (splits, dividends, spinoffs)<br>• Check borrow availability/rate for short side<br>• Check unusual options flow<br>• Check pending news/events<br>• Block or warn on "known unknowns"<br><br>The `OrderGuard` only validates against mandate + artifact status. It has **zero awareness** of event risk. |
-| **Limitation** | Complete blind spot. A strategy with valid ACTIVE artifact can enter day before earnings, before FDA decision, during borrow squeeze — all guards pass. |
-| **Real-world consequence** | Enter long day before negative earnings → gap down >10%; enter short during borrow squeeze → forced buy-in at worst price; enter before split → position sizing wrong overnight |
-| **Severity** | **CRITICAL** — Event risk is a primary cause of catastrophic single-trade losses |
+| **Vina handling** | **PARTIALLY HANDLED** (earnings + US-macro blackout added 2026-09-09, Stage 4 `#2`) |
+| **Existing component(s)** | `strategy-generate` skill (signal engines), `vinu-stock-price` (data + **new `vinu_stock/events/` calendar + `/stock/events` route**), `initial-analysis` (regime), **`orchestrator._maybe_enter` event-blackout guard (new)** |
+| **Evidence** | `strategy-generate/SKILL.md` — signal engines: crossover, threshold, composite, ML. No mention of earnings calendar, news events, borrow rates, corporate actions. `vinu-stock-price` docs show price data only.<br>**Fill applied (2026-09-09):** `vinu_stock/events/{store,finnhub_provider,poller}.py` (local SQLite calendar, daily Finnhub pull via the ingest worker), `service.get_events()` + `GET /stock/events/{symbol}`, `orchestrator.py` `EVENT_BLACKOUT_HOURS` / `entry_blocked_by_event_blackout`. CHANGES §S4-2. Needs `FINNHUB_API_KEY`. |
+| **Status details** | **Now handled:**<br>• **Earnings calendar checked before entry** — `/stock/events/{symbol}` within `VINU_LIVE_EVENT_BLACKOUT_HOURS` (default 24h); a hit blocks the entry<br>• **US macro events** (FOMC / CPI / NFP / PCE) via the same calendar, applied to every symbol<br>• Corporate actions (splits/divs) — already handled upstream by Alpaca `adjustment=all` on bars<br><br>**Still open:**<br>• **Borrow availability/rate for shorts** — the not-shortable check (#16) exists, but no borrow-*rate* feed (paid source)<br>• Unusual options flow — not covered<br>• FDA / ad-hoc catalysts not on the earnings or macro calendar<br>• **Exits are not blacked out** (by design — an event is a reason to be *out*, not stuck)<br>• Guard fires on any in-window event regardless of `severity` — no "high-impact only" knob yet |
+| **Limitation** | The most common event-risk trade — opening the day before scheduled earnings, or into an FOMC/CPI print — is now blocked. Borrow-rate squeezes, options-flow signals, and unscheduled catalysts remain blind spots. Guard is inert until `FINNHUB_API_KEY` is set (fail-open). |
+| **Real-world consequence** | "Enter long day before negative earnings → gap down >10%" is now prevented (`entry_blocked_by_event_blackout`). Borrow-squeeze and pre-split sizing risks remain. |
+| **Severity** | **CRITICAL** — reduced: the scheduled-earnings / scheduled-macro vector is closed on the entry side; borrow + ad-hoc catalysts keep the rating critical until a borrow feed lands. |
 
 ---
 
@@ -125,13 +130,13 @@ See `how-to-make-it-live/` in this folder for the full change log
 | **Trading phase** | Before Entry → Entry |
 | **Human failure** | Picking the signal that confirms bias; ignoring contradiction |
 | **Bot failure** | No conflict resolution between concurrent ACTIVE strategies on same symbol |
-| **Vina handling** | **NOT HANDLED** |
-| **Existing component(s)** | `capital_allocator` (batch funding), `daily-allocation` (weights), `OrderGuard` (concentration) |
-| **Evidence** | `daily-allocation/SKILL.md` — allocation weights per strategy via risk-parity + regime tilt + outcome tilt. `capital_allocator_hook.py` — funds PEND→ACTIVE based on manager decision. `order_guard.py:264-272` — concentration check by symbol weight, not by signal conflict. |
-| **Status details** | **What exists:**<br>• Multiple strategies can be ACTIVE for same symbol (different `artifact_id`)<br>• Daily allocation computes weight *per strategy*<br>• Concentration check limits *total symbol weight*<br><br>**What's missing:**<br>• **No conflict detection** — if Strategy A says BUY and Strategy B says SELL on same symbol, both can be ACTIVE simultaneously<br>• **No resolution logic** — which signal wins? No precedence rule<br>• **No "net signal" computation** — portfolio sees two opposing positions as concentration risk, not signal conflict<br>• **No automated "do not trade when conflicted" guard** |
-| **Limitation** | System can hold offsetting positions (long via Strategy A, short via Strategy B) — net flat but paying double costs. Or both long with different exits. No mechanism to detect or resolve. |
-| **Real-world consequence** | Conflicting strategies fight each other; double commissions/slippage; unclear exit logic; portfolio thinks it's diversified but it's just hedged to zero |
-| **Severity** | **HIGH** — Multi-strategy portfolios inevitably generate conflicts; no resolution = undefined behavior |
+| **Vina handling** | **⚠️ PARTIALLY HANDLED — entry-time conflict block added 2026-09-09 (Stage 3, how-to-make-it-live/CHANGES-2026-09-09.md §S3-3-5)** |
+| **Existing component(s)** | `capital_allocator`, `daily-allocation`, `OrderGuard`, `vinu-live` `orchestrator._maybe_enter` / `_opposing_active_signal` |
+| **Fix applied** | Before opening a symbol, `_maybe_enter` calls `_opposing_active_signal(plan, symbol, direction, all_plans)` against every other ACTIVE `trade_plan` fetched that cycle; if any has the opposite `direction` it returns `entry_blocked_by_signal_conflict` and places no order. Default policy `block`; `VINU_LIVE_SIGNAL_CONFLICT_POLICY=ignore` restores first-plan-wins. Blocks rather than nets — a deliberate choice (netting trades size nobody sized). |
+| **Still open** | Only fires **at entry**, and only between `trade_plan` artifacts (not YAML/quant strategies). No precedence/arbitration rule (it refuses both, doesn't pick a winner), no net-signal sizing, and the allocator can still later fund a counter-strategy — that half is Scenario 5's "open" note. |
+| **Limitation** | A fresh entry into a contested symbol is now blocked; two strategies that were funded at different times, or a conflict that emerges after entry, are Scenario 5's territory. |
+| **Real-world consequence (now)** | Strategy A long + Strategy B short on the same ticker: whichever tries to open second is rejected with `entry_blocked_by_signal_conflict`, visible in the action log, instead of silently creating the offsetting pair. |
+| **Severity** | **HIGH** → **partially mitigated**: simultaneous opposing entries are blocked; cross-strategy arbitration and post-entry conflict handling remain. |
 
 ---
 
@@ -162,13 +167,13 @@ See `how-to-make-it-live/` in this folder for the full change log
 | **Trading phase** | Management |
 | **Human failure** | Ignoring new signal; doubling down on original thesis; cognitive dissonance |
 | **Bot failure** | No mechanism to re-evaluate open positions against new conflicting signals |
-| **Vina handling** | **NOT HANDLED** |
+| **Vina handling** | **NOT HANDLED** (entry-time conflicts are now blocked — see Scenario 3 — but this scenario is specifically about a conflict *after* the position is open) |
 | **Existing component(s)** | Monitor (checks invalidation), daily-allocation (weights), capital_allocator (funding) |
-| **Evidence** | `monitor-shock-exit.md` — Monitor only checks *frozen invalidation conditions* from TradePlan. It does **not** re-run signal generation or check other strategies' signals. `daily-allocation` recomputes weights daily but doesn't trigger position changes. |
-| **Status details** | **No mechanism for:**<br>• "Signal X fired for open position Y — should we reduce/close?"<br>• Cross-strategy signal monitoring for open positions<br>• Dynamic position adjustment based on new signals (only rebalance_request from capital_allocator, which Monitor can decline)<br>• The `rebalance_guard` only checks kill switch, not signal conflicts |
-| **Limitation** | Once a position is open, Vina **only** watches its specific invalidation conditions. New contradictory signals from other strategies are ignored until next daily allocation cycle (which only changes *target weights*, not current positions). |
-| **Real-world consequence** | Long trend position held while mean-reversion strategy screams short; position rides reversal that a dynamic system would have reduced; capital allocator may later fund the counter-trend strategy creating offsetting position |
-| **Severity** | **HIGH** — Signal conflicts on open positions are common; no handling = blind spot |
+| **Evidence** | `monitor-shock-exit.md` — Monitor only checks *frozen invalidation conditions* from TradePlan. It does **not** re-run signal generation or check other strategies' signals. `daily-allocation` recomputes weights daily but doesn't trigger position changes. The 2026-09-09 `_opposing_active_signal` fix runs only in `_maybe_enter` (before a position exists), not in `_evaluate_open_position`. |
+| **Status details** | **No mechanism for:**<br>• "Signal X fired for open position Y — should we reduce/close?"<br>• Cross-strategy signal monitoring for open positions<br>• Dynamic position adjustment based on new signals (only rebalance_request from capital_allocator — now forceable via `critical`, Scenario 23, but still not signal-driven)<br>• The `rebalance_guard` only checks kill switch, not signal conflicts |
+| **Limitation** | Once a position is open, Vina **only** watches its specific invalidation conditions. A new contradictory signal from another strategy on an already-open position is still ignored. |
+| **Real-world consequence** | Long trend position held while mean-reversion strategy screams short; position rides reversal that a dynamic system would have reduced. (A *fresh* entry into that conflict is now blocked — Scenario 3.) |
+| **Severity** | **HIGH** — the post-entry half is unhandled; only the pre-entry half (Scenario 3) has a guard. |
 
 ---
 
@@ -289,13 +294,13 @@ See `how-to-make-it-live/` in this folder for the full change log
 | **Trading phase** | Management → Exit (cascading) |
 | **Human failure** | False diversification; thinking 3 positions = 3x risk reduction; correlation blindness |
 | **Bot failure** | Correlation checked at promotion/order time only; no runtime correlation monitoring for open positions |
-| **Vina handling** | **PARTIALLY HANDLED** |
-| **Existing component(s)** | `OrderGuard` (portfolio concentration check at order time), `vinu-portfolio` (shock correlation DCC-GARCH), `daily-allocation` (correlation_matrix, crisis_correlation) |
-| **Evidence** | `order_guard.py:274-305` — checks `max_pairwise_correlation` against *current* portfolio correlation matrix at **order time only**.<br>`daily-allocation/SKILL.md:130-150` — `shock_correlation` with `crisis_correlation` (DCC-GARCH) and `shock_delta` (>0.4 = regime shift).<br>`money-gate.md` gap #4 — "9 per ticker same shape crossover pairwise 0.9 + ACTIVE same = 4x risk. Paper tests single, live holds batch." |
-| **Status details** | **What Vina catches:**<br>• At **order time**: rejects new order if would exceed correlation/concentration limits<br>• Daily allocation computes `crisis_correlation` and `shock_delta` (portfolio-level DCC-GARCH)<br>• `shock_count` and `n_high_correlation_pairs` tracked<br><br>**What Vina misses:**<br>• **No runtime correlation monitor for open positions** — correlation checked only at order entry and daily allocation<br>• **No "correlation breakout" trigger** — if crisis_correlation spikes intra-day, no automatic position reduction<br>• **No portfolio-level stop** — only individual position invalidation; no "portfolio DD > X% from correlated move" action<br>• **Sleeves not implemented** — money-gate: "corr 0.85 gate + symbol 20% cap + sleeves 1D/1H separate + turnover cap" — **not built** |
-| **Limitation** | Correlation risk is measured but **not acted upon** for existing positions. Only prevents *new* orders that worsen it. |
-| **Real-world consequence** | Correlated portfolio draws down 3-4x single-position risk; no automatic de-risking; daily allocation reduces *new* capital but existing positions ride the correlated crash |
-| **Severity** | **CRITICAL** — Explicitly called out in money-gate as gap #4; portfolio blowup risk |
+| **Vina handling** | **⚠️ PARTIALLY HANDLED — runtime monitor added 2026-09-09 (Stage 3, how-to-make-it-live/CHANGES-2026-09-09.md §S3-12)** |
+| **Existing component(s)** | `OrderGuard` (portfolio concentration check at order time), `vinu-portfolio` (shock correlation DCC-GARCH), `daily-allocation`, `vinu-live` `orchestrator._check_runtime_correlation` |
+| **Fix applied** | `vinu-live` `orchestrator._check_runtime_correlation(prices)` runs every cycle: reuses `_compute_covariance` (DCC/shrinkage) → `correlation_from_covariance`, computes each open pair's co-movement *in the direction the book is exposed* (`corr · sign(expo_a) · sign(expo_b)` — a correlated long+short is a hedge, not flagged), and `reduce_only`-trims the **larger** position of any pair at/above `VINU_LIVE_RUNTIME_CORR_THRESHOLD` (0.85) by `VINU_LIVE_RUNTIME_CORR_REDUCE_PCT` (25%), once per `VINU_LIVE_RUNTIME_CORR_COOLDOWN_SEC` (1h) per symbol. Default ON. |
+| **Still open** | No **portfolio-level** stop (a "total DD from correlated move > X% → flatten" action); the trim is pairwise-greedy (larger of each flagged pair), not an optimiser that picks the minimum set of cuts; 1D/1H **sleeves** still not built (Scenario 25); `vinu-portfolio`'s `crisis_correlation`/`shock_delta` at the daily-allocation layer still only steer *new* capital, not open positions (this fix is the `vinu-live` side only). |
+| **Limitation** | Correlated open positions are now actively trimmed pair-by-pair; there is still no single portfolio-wide correlated-drawdown circuit beyond the existing −20% breaker. |
+| **Real-world consequence (now)** | Long AAPL+MSFT+NVDA with correlation spiking to 0.9: each cycle the largest of each 0.85+ pair is cut 25% (hourly per name), bleeding down the concentrated exposure instead of riding it fully into the correlated crash. |
+| **Severity** | **CRITICAL** → **partially mitigated**: open-position correlation is now acted on, not just measured; a portfolio-level correlated-DD stop and sleeve isolation remain. |
 
 ---
 
@@ -307,13 +312,13 @@ See `how-to-make-it-live/` in this folder for the full change log
 | **Trading phase** | Entry / Exit |
 | **Human failure** | Market orders in illiquid conditions; not using limits; underestimating slippage |
 | **Bot failure** | No liquidity awareness; fixed slippage model; no partial fill handling |
-| **Vina handling** | **NOT HANDLED** |
-| **Existing component(s)** | `trade_tool.py` (order types), `OrderGuard` (price bands?), `vinu-simulator` (cost model) |
-| **Evidence** | `trade_tool.py:42-46` — supports `market`, `limit`, `stop`, `stop_limit`.<br>`money-gate.md` gap #2 — "Sim 0.001 + slippage 0.0005 fixed. Live spread + queue + latency + partial + borrow + fees 0.2 to 0.5 percent per turn."<br>`costs.py:73`, `execution.py:33` — fixed cost model.<br>`16-broker-fills.md` gaps — partial fills, queue position, latency not modeled. |
-| **Status details** | **No mechanism for:**<br>• Real-time spread/liquidity monitoring<br>• Dynamic order type selection (market vs limit vs algo)<br>• Partial fill management (time-in-force, fill-or-kill logic)<br>• Slippage model that adapts to conditions<br>• "Liquidity gate" — block orders when spread > threshold<br>• Queue position awareness |
-| **Limitation** | Vina assumes liquid markets. Cost model is fixed (0.1% + 0.05%). Live reality 0.2-0.5%/turn. No protection against liquidity events. |
-| **Real-world consequence** | Market orders in news spike fill at +2% slippage; stops don't trigger (gap risk); limit orders miss fills; position trapped |
-| **Severity** | **CRITICAL** — Money-gate gap #2: "Gross 1.0 becomes net 0.2" — 80% edge destroyed by costs |
+| **Vina handling** | **PARTIALLY HANDLED** (entry-side spread gate added 2026-09-09, Stage 4 `#13`) |
+| **Existing component(s)** | `trade_tool.py` (order types), `OrderGuard` (price bands?), `vinu-simulator` (cost model), **`vinu-stock-price` `/stock/quote` + `orchestrator._maybe_enter` spread gate (new)** |
+| **Evidence** | `trade_tool.py:42-46` — supports `market`, `limit`, `stop`, `stop_limit`.<br>`money-gate.md` gap #2 — "Sim 0.001 + slippage 0.0005 fixed. Live spread + queue + latency + partial + borrow + fees 0.2 to 0.5 percent per turn."<br>`costs.py:73`, `execution.py:33` — fixed cost model.<br>`16-broker-fills.md` gaps — partial fills, queue position, latency not modeled.<br>**Fill applied:** `vinu_stock/providers/quote.py`, `service.py` (`get_quote`, 5s TTL), `routes_read.py` (`GET /stock/quote/{symbol}`), `orchestrator.py` (`MAX_SPREAD_BPS` / `_spread_bps_from_quote` / `entry_blocked_by_wide_spread`). CHANGES §S4-13. |
+| **Status details** | **Now handled:**<br>• **Real-time spread monitoring at order time** — live Alpaca NBBO, 5s-cached<br>• **Liquidity gate — block ENTRY when spread_bps > `VINU_LIVE_MAX_SPREAD_BPS` (default 25 = 0.25%)**; fail-open if no quote<br>• Partial-fill management — already added Stage 3 `#15` (`_confirm_fill`, books actual filled qty)<br><br>**Still open:**<br>• **Exits are NOT spread-gated** (by design — a trapped position must still be exitable) — so the news-spike exit-slippage case is unmitigated<br>• No L2 depth / book-impact check (`VINU_LIVE_MAX_BOOK_PCT` deferred)<br>• No dynamic order-type selection (market vs limit vs algo)<br>• Slippage cost model still fixed (0.1% + 0.05%) in sim<br>• No queue-position awareness |
+| **Limitation** | Entry side is now protected against opening into a blown-out spread. Exit side, the adaptive cost model, and order-type selection are unchanged. |
+| **Real-world consequence** | Entries into a news-spike wide market are now blocked (`entry_blocked_by_wide_spread`). Exit slippage during a liquidity event is still taken. |
+| **Severity** | **CRITICAL** — Money-gate gap #2: "Gross 1.0 becomes net 0.2" — 80% edge destroyed by costs. Entry-side spread gate trims the worst of it; residual is exit slippage + fixed cost model. |
 
 ---
 
@@ -326,12 +331,12 @@ See `how-to-make-it-live/` in this folder for the full change log
 | **Human failure** | Panic; no backup plan; manual intervention impossible |
 | **Bot failure** | No fallback broker; no stale data detection; no "outage mode" |
 | **Vina handling** | **PARTIALLY HANDLED** |
-| **Existing component(s)** | `kill_switch` (halt), `OrderGuard` (fail-open on broker errors), `Monitor` (reconciliation), `health banner` (UI) |
-| **Evidence** | `money-gate.md` gap #7 — "Alpaca down, Polygon lag, LLM 400 fail, portfolio unreachable funding skipped fail-closed. Stuck flat cannot exit on outage."<br>`monitor-shock-exit.md` — `VINU_LIVE_TURBULENCE_PAUSE_ENTRIES` knob (not built).<br>`kill_switch.py` — filesystem-based, works across processes.<br>`order_guard.py:132-133, 151-152` — broker errors → `logger.warning` → **fail-open (allows order)**. |
-| **Status details** | **What Vina catches:**<br>• Kill switch works via filesystem (independent of broker API)<br>• OrderGuard fails *open* on broker errors (allows order rather than blocking)<br>• Monitor reconciles book vs broker every cycle<br><br>**What Vina misses (documented gaps):**<br>• **No fallback broker** — `VINU_BROKER_FALLBACK_URL` knob defined but not implemented<br>• **No stale data alert/pause** — `VINU_OUTAGE_PAUSE_ENTRIES` knob defined, not built<br>• **No "data lag > X min → pause entries, allow exits" logic**<br>• **No second broker environment** — single point of failure<br>• **Health banner only in UI** — no automated response |
-| **Limitation** | Fail-open on broker errors means orders *can* be submitted (if broker comes back), but if broker is **down**, orders fail. No exit path during outage. |
-| **Real-world consequence** | Position moves -20% during API outage; kill switch can halt *new* entries but cannot *exit* existing position; manual intervention required but may be impossible |
-| **Severity** | **CRITICAL** — Single point of failure; documented as gap #7 in money-gate |
+| **Existing component(s)** | `kill_switch` (halt), `OrderGuard` (fail-open on broker errors), `Monitor` (reconciliation), `health banner` (UI), **`orchestrator._check_broker_health()` broker-outage pause (new)** |
+| **Evidence** | `money-gate.md` gap #7 — "Alpaca down, Polygon lag, LLM 400 fail, portfolio unreachable funding skipped fail-closed. Stuck flat cannot exit on outage."<br>`monitor-shock-exit.md` — `VINU_LIVE_TURBULENCE_PAUSE_ENTRIES` knob (not built).<br>`kill_switch.py` — filesystem-based, works across processes.<br>`order_guard.py:132-133, 151-152` — broker errors → `logger.warning` → **fail-open (allows order)**.<br>**Fill applied (Half A, 2026-09-09):** `orchestrator.py` — `_check_broker_health()` runs once per cycle before the plan loop; `BROKER_STALE_SEC` (`VINU_LIVE_BROKER_STALE_SEC`, default 180, 0 disables); `self._broker_degraded` → `_maybe_enter` returns `entry_blocked_by_broker_outage`. CHANGES §S4-14A. |
+| **Status details** | **What Vina catches:**<br>• Kill switch works via filesystem (independent of broker API)<br>• OrderGuard fails *open* on broker errors (allows order rather than blocking)<br>• Monitor reconciles book vs broker every cycle<br>• **NEW: broker-outage pause** — a per-cycle `/agent/broker/account` probe; if it stays unreachable past `BROKER_STALE_SEC` (or has never answered since worker start), new **entries** pause automatically and resume on the next healthy probe. Exits/reduces are **never** gated.<br><br>**Still open:**<br>• **No fallback broker** — Half B (`VINU_AGENT_BROKER_ORDER=alpaca,<2nd>` + a 2nd `Broker` impl) is the next `#14` item, not yet built → **still no exit path while the sole broker is down**<br>• **No stale-*data*-feed pause distinct from broker** — data-freshness guard (#16) pauses entries on a stale price feed but there is no "allow exits, pause entries" split tied to feed lag specifically<br>• Health banner still UI-only for the human |
+| **Limitation** | Entry side now auto-pauses on a detected broker outage and auto-resumes. The **exit path during an outage is unchanged** — with a single broker down, an open position still cannot be exited until Half B (second venue) lands. |
+| **Real-world consequence** | New entries stop within one cycle of the broker going dark (no orders fired blindly into a dead API). An already-open position still can't be exited during a full outage of the only broker. |
+| **Severity** | **CRITICAL** — reduced on the entry side; the single-point-of-failure exit risk remains until `#14` Half B. Documented as gap #7 in money-gate. |
 
 ---
 
@@ -343,13 +348,13 @@ See `how-to-make-it-live/` in this folder for the full change log
 | **Trading phase** | Entry / Management |
 | **Human failure** | Not managing partial fill; leaving unfilled residue; averaging at worse prices |
 | **Bot failure** | No partial fill handling logic; no residue management |
-| **Vina handling** | **NOT HANDLED** |
-| **Existing component(s)** | `trade_tool.py` (submits order), `HistoricalFillBroker` (replay), Alpaca broker (live) |
-| **Evidence** | `trade_tool.py:205-216` — submits order, returns broker response with `broker_status`.<br>`16-broker-fills.md` gap #1 — "Partial fills not handled; residue management missing."<br>No code for: partial fill detection, residue cancellation, position adjustment, re-submission logic. |
-| **Status details** | **No mechanism for:**<br>• Detecting partial fill vs full fill<br>• Auto-canceling unfilled residue after timeout<br>• Adjusting position sizing for partial fill<br>• Re-submitting residue at market/limit<br>• Tracking "intended vs actual" position size |
-| **Limitation** | Order submission is fire-and-forget. Partial fills create unintended position sizes with no system awareness. |
-| **Real-world consequence** | 20% filled position has wrong risk profile; residue cancels or fills next day at different price; position sizing broken; risk limits calculated on intended size, not actual |
-| **Severity** | **HIGH** — Common in live trading; completely unhandled |
+| **Vina handling** | **⚠️ PARTIALLY HANDLED — fill tracking added 2026-09-09 (Stage 3, how-to-make-it-live/CHANGES-2026-09-09.md §S3-15)** |
+| **Existing component(s)** | `trade_tool.py` (submits order), `HistoricalFillBroker` (replay), Alpaca broker (live), `vinu-live` `orchestrator._maybe_enter` / `_reconcile_book_with_broker` |
+| **Fix applied** | `_maybe_enter()` no longer books the intended qty on `submitted`; it snapshots the broker's position, polls `/agent/broker/positions` (`VINU_LIVE_FILL_CONFIRM_ATTEMPTS`×`_DELAY_SEC`) and books the **actual filled** qty, flagging `partial_fill`/`intended_qty` in the action on a shortfall. `_reconcile_book_with_broker()` — which already ran every cycle but only logged — now **corrects** the book toward broker truth (`VINU_LIVE_RECONCILE_AUTOCORRECT`): reduce/close on book>broker, add on book<broker (same side), and alert-without-change on side conflicts, phantom broker positions, or an implausible (`>MAX_RATIO`) gap. Both fail open when the broker snapshot is empty/untrusted. |
+| **Still open** | **Residue cancellation** — no `GET`/`DELETE /agent/broker/order/{id}` route exists, so a still-open working order can't be explicitly killed (market/day orders resolve intra-session, so exposure is tracked even though the residual order isn't). Exits/reduces get only the one-cycle-lagged reconciliation backstop, not an in-cycle `_confirm_fill` like entries. No re-submission of the unfilled remainder. |
+| **Limitation** | The account's *real exposure* is now tracked and the book self-heals within a cycle; the *unfilled remainder* still isn't actively managed. |
+| **Real-world consequence (now)** | A 200-of-1000 fill books 200, and risk/exit/P&L run off 200; the 800 residue still sits until the exchange resolves it, and isn't re-submitted. |
+| **Severity** | **HIGH** → **partially mitigated**: "risk limits on intended not actual size" is fixed for the entry path + reconciliation; residue management and exit-path in-cycle confirmation remain. |
 
 ---
 
@@ -361,13 +366,13 @@ See `how-to-make-it-live/` in this folder for the full change log
 | **Trading phase** | All phases |
 | **Human failure** | Not checking data freshness; trusting stale signals |
 | **Bot failure** | No data freshness SLA; no "stale data = no trade" guard |
-| **Vina handling** | **PARTIALLY HANDLED** |
+| **Vina handling** | **⚠️ PARTIALLY HANDLED — entry guard added 2026-09-09 (Stage 3, how-to-make-it-live/CHANGES-2026-09-09.md §S3-16)** |
 | **Existing component(s)** | `vinu-stock-price` (ingestion), `initial-analysis` (freshness), `Monitor` (live metrics), `18-data-pipeline.md` |
-| **Evidence** | `18-data-pipeline.md` — backfill flow, live ingest, market calendar, retry-gap validation.<br>`monitor-shock-exit.md` — `VINU_LIVE_DATA_ROOT` knob; live metrics compute from `vinu-stock-price`.<br>`money-gate.md` gap #5 — "data lag 30min stale" listed as unsolved. |
-| **Status details** | **What exists:**<br>• Data pipeline with retry/gap validation<br>• Market calendar awareness<br>• Live ingest (14-live-ingest.md)<br><br>**What's missing:**<br>• **No data freshness SLA enforcement** — no "if data > 5min old, pause trading"<br>• **No staleness check in OrderGuard** — orders can execute on stale data<br>• **No staleness check in Monitor** — invalidation checked on potentially stale prices<br>• **30min lag documented as unsolved** (money-gate gap #5) |
-| **Limitation** | Pipeline is robust but **no guard prevents trading on stale data**. |
-| **Real-world consequence** | Invalidations missed (price moved but data hasn't); entries at stale prices; stops not triggered; positions managed on ghost data |
-| **Severity** | **CRITICAL** — Data quality is foundation; no freshness guard = blind trading |
+| **Fix applied** | `vinu-live` `orchestrator._fetch_prices()` now records the newest bar's `bar_ts` per symbol; `_maybe_enter()` returns `entry_blocked_by_stale_data` (and never calls the broker) when that timestamp is older than `VINU_LIVE_PRICE_MAX_AGE_HOURS` (default 96h — tuned for daily bars over a long weekend; must be tightened for intraday intervals). `_evaluate_open_position()` detects the same staleness but only logs it — exits/reduces are never gated on freshness, same entries-only shape as HALT/turbulence/cooldown. Fail-open when no timestamp is available. |
+| **Still open** | The guard lives only in `vinu-live`'s trade-plan loop. `OrderGuard` (the shared order gate for the LLM `submit_order` tool) has no freshness check; a market-calendar-aware "is this the latest expected session" check (tighter than a wall-clock hour threshold) still needs the calendar data source Scenario 2 is about; the LLM agent path and `initial-analysis` are unguarded. |
+| **Limitation** | Automated trade-plan entries are now gated; a manual/agent order or an analysis run still isn't. |
+| **Real-world consequence (now)** | An automated entry against a feed that stalled >96h ago is blocked; open positions still evaluate (so a real invalidation on a stale-but-moving mark still fires an exit). |
+| **Severity** | **CRITICAL** → **partially mitigated**: the automated entry path no longer trades blind on a dead feed; the shared `OrderGuard` and agent paths still can. |
 
 ---
 
@@ -451,14 +456,15 @@ See `how-to-make-it-live/` in this folder for the full change log
 | **Trading phase** | Exit (during crisis) |
 | **Human failure** | Not anticipating kill switch blocks exits; no manual override ready |
 | **Bot failure** | Kill switch doesn't distinguish entries vs exits; HALT_ALL blocks everything |
-| **Vina handling** | **DANGEROUSLY MIS-HANDLED — CONFIRMED, with a nuance found 2026-09-09** |
-| **Verified (re-check)** | There are actually **two separate halt mechanisms**, and only one was fixed. (1) `vinu-live`'s local breaker (`orchestrator.py:49-110`, `check_limits()`) now correctly implements entries-only via `HALT_POLICY=entries_only` / `_halt_allows_exit()` — exits ARE allowed through this layer. (2) The **global filesystem kill switch** (`kill_switch.py`, engaged by `PortfolioDrawdownMonitor` at -20% DD via `POST /broker/halt`) is checked separately and later, inside `OrderGuard.check()` in `vinu-agent`. Its own comment says explicitly: "shared by both the LLM's submit_order tool and vinu-live's order placement (both route through /broker/order)" — meaning even an exit order that clears the local breaker still gets rejected here if the global kill switch is engaged, **regardless of `side`.** So: the entries-only fix landed in one guard but not the other, and the global kill switch — the one actually triggered by the -20% drawdown circuit breaker this scenario describes — still blocks exits exactly as originally documented. **Still genuinely CRITICAL, verdict unchanged.** |
+| **Vina handling** | **✅ RESOLVED — fixed 2026-09-09 (Stage 1, how-to-make-it-live/CHANGES-2026-09-09.md §2)** |
+| **Verified (re-check history)** | Original re-check found **two separate halt mechanisms**, only one fixed: (1) `vinu-live`'s local breaker (`orchestrator.py`, `check_limits()`) already did entries-only via `HALT_POLICY=entries_only` / `_halt_allows_exit()`; (2) the **global filesystem kill switch** (`kill_switch.py`, engaged by `PortfolioDrawdownMonitor` at -20% DD via `POST /broker/halt`), checked inside `OrderGuard.check()`, rejected *everything* regardless of `side` — so an exit clearing the local breaker still got rejected here. **This is now fixed** (see Fix applied below); the doc-only Scenario 21 block had lagged the code — corrected during the re-audit. |
+| **Fix applied** | `OrderGuard.check()` / `pre_approve()` gained a `reduce_only: bool` flag and `_halt_policy_allows_reduce_only()` (reads the **same** `VINU_LIVE_HALT_POLICY`, default `entries_only`, so the two halt layers share one policy knob). When the kill switch is engaged AND `reduce_only=True` AND the policy allows it, the order is let through (logged as a warning, not silent). Plumbed through `OrderRequest` (`routes_broker.py`), `TradeTool`, and all four genuinely risk-reducing call sites in `vinu-live`'s `orchestrator._submit_order` (50%-at-1R take-profit, allocator rebalance reduce, invalidation full close, contingency partial reduce); the one entry call site stays `reduce_only=False`. A naive "let all `sell` orders through" was rejected on purpose — a short entry is a `sell` that *increases* risk. Verified in code: `order_guard.py:76-115`. |
 | **Existing component(s)** | `kill_switch.py`, `OrderGuard.check()`, `Monitor` breaker, `monitor-shock-exit.md` gap #1 |
 | **Evidence** | `monitor-shock-exit.md` gap #1: "`HALT_ENTRIES` vs `HALT_ALL`. Block entries always on HALT. Allow risk-reducing exits on HALT. This is Row 12 kill policy undecided."<br>`kill_switch.py:100-109` — `is_trading_halted()` returns `True` for global halt, no scope for "allow exits".<br>`order_guard.py:86-87` — `if is_trading_halted(scope=symbol): return GuardResult(False, "Trading is halted by kill switch")` — **blocks all orders**.<br>`money-gate.md` kills: "HALT entries-only allow exits... Kill scope symbol vs global pinned. `order_guard.py` + `kill_switch.py` entries vs exits split... Risk-reducing always allowed."<br>**Confirmed independently**: `order_guard.py:check()` takes a `side` parameter, but the halt check at line 86 (`is_trading_halted(scope=symbol)`) fires unconditionally — no branch reads `side` to let a `sell`/risk-reducing order through. |
-| **Status details** | **What exists:**<br>• Kill switch works (filesystem-based, cross-process)<br>• Portfolio drawdown monitor triggers halt at -20%<br>• Scoped halts per symbol/strategy<br><br>**Dangerous mis-handling:**<br>• **Global halt blocks EXIT orders** — position trapped during worst drawdown<br>• **No "entries only" mode** — documented as undecided (Row 12), and confirmed absent in code<br>• **No "risk-reducing orders always allowed" logic** — kill switch is binary<br>• **Knobs defined but not built:** `VINU_LIVE_HALT_POLICY=entries_only` |
-| **Limitation** | Kill switch is a **blunt instrument**. When it triggers (exactly when you most need to exit), it prevents exits. |
-| **Real-world consequence** | Portfolio hits -20% → halt engages → market crashes further → position cannot be closed → -40% loss instead of -20% |
-| **Severity** | **CRITICAL** — **DANGEROUSLY MIS-HANDLED**: Safety mechanism becomes liability at worst moment |
+| **Status details** | **What exists now:**<br>• Kill switch works (filesystem-based, cross-process)<br>• Portfolio drawdown monitor triggers halt at -20%<br>• Scoped halts per symbol/strategy<br>• **`VINU_LIVE_HALT_POLICY=entries_only` is now honoured by *both* halt layers** — the local breaker and `OrderGuard`'s global-kill-switch check<br>• **Risk-reducing (`reduce_only`) orders pass a halt** at both layers; every `vinu-live` exit/reduce call site sets the flag<br><br>**Residual (not blocking):**<br>• The `reduce_only` flag on the LLM's own `submit_order` tool is available but the agent isn't yet prompted to set it — only `vinu-live`'s deterministic exit paths do (Stage 5 concern) |
+| **Limitation** | A manual exit via the LLM `submit_order` tool during a halt still requires the caller to pass `reduce_only=true`; `vinu-live`'s automated exits do this already. |
+| **Real-world consequence (now)** | Portfolio hits -20% → halt engages → `vinu-live`'s invalidation / contingency / take-profit exits and allocator-driven reduces all still execute → position can be closed / de-risked during the drawdown. |
+| **Severity** | ~~CRITICAL — DANGEROUSLY MIS-HANDLED~~ → **RESOLVED (2026-09-09)**. Downgraded: automated risk-reducing orders survive a halt at both layers. |
 
 ---
 
@@ -487,13 +493,13 @@ See `how-to-make-it-live/` in this folder for the full change log
 | **Trading phase** | Portfolio management (rebalance) |
 | **Human failure** | Not following rebalance discipline; protecting winners too long |
 | **Bot failure** | Rebalance is advisory only; no enforcement; gain-protect can block necessary rotation |
-| **Vina handling** | **PARTIALLY HANDLED** |
-| **Existing component(s)** | `capital_allocator_hook.py`, `rebalance_guard.py`, `vinu-live` `TradePlanOrchestrator` |
-| **Evidence** | `capital_allocator_hook.py:19-28` — "Rebalance advisory only. Capital asks, monitor decides. Invalidation first, rebalance second. Gain protect 5 percent holds profitable."<br>`rebalance_guard.py:27-38` — Only checks kill switch; **does not enforce rebalance**.<br>`monitor-shock-exit.md` — "Gain protect 5 percent holds profitable. File `orchestrator.py:428,430`." |
-| **Status details** | **What exists:**<br>• Capital allocator can request unwind (rebalance_request)<br>• Rebalance guard checks kill switch (fail-closed)<br>• Monitor has gain-protect (holds profitable positions 5%+ above entry)<br><br>**What's missing:**<br>• **No enforcement** — Monitor can decline rebalance indefinitely<br>• **No "must rebalance" override** — if capital allocator decides rotation needed, no mechanism to force it<br>• **Gain-protect hardcoded 5%** — may block necessary risk reduction<br>• **No timeline** — rebalance request sits until Monitor's next cycle (90s) but decision is discretionary |
-| **Limitation** | Rebalance is **request/response**, not **command/control**. Capital allocator decides; Monitor can say no. |
-| **Real-world consequence** | Degraded strategy kept because it's "currently profitable"; better strategy unfunded; portfolio misses regime adaptation |
-| **Severity** | **MEDIUM** — Design choice (advisory), but creates rigidity |
+| **Vina handling** | **✅ RESOLVED — `critical` override added 2026-09-09 (Stage 3, how-to-make-it-live/CHANGES-2026-09-09.md §S3-23)** |
+| **Existing component(s)** | `capital_allocator_hook.py`, `rebalance_guard.py`, `vinu-live` `TradePlanOrchestrator`, `rebalance_intake.py` |
+| **Fix applied** | `RebalanceRequest` gained `critical: bool` (dataclass + `rebalance_requests.critical` SQLite column via `SCHEMA_VERSION` 1→2 migration); `submit()` / `pending_for()` / `submit_rebalance_request()` / the `POST /trade-plan/rebalance-request` body all carry it. `_evaluate_rebalance_request` skips the `favorable_move_pct > 5%` decline when `request.critical` is set (logs a warning that it is overriding gain-protect). The breaker check, `reduce_only`, and the 50% reduce are unchanged — a `critical` request still cannot bypass a kill-switch HALT. |
+| **Still open** | Gain-protect stays hardcoded at 5% for non-critical requests (not a configurable ladder); still no *timeline*/escalation if a non-critical request is repeatedly declined; the allocator must decide to set `critical` (no automatic "this rotation is overdue" trigger). |
+| **Limitation** | The allocator can now force a reallocation through when it flags it critical; a normal request is still discretionary for the Monitor. |
+| **Real-world consequence (now)** | The allocator marks the A→B rotation `critical: true`; the Monitor reduces Strategy A's position 50% despite it being +6.67%, instead of protecting it indefinitely. |
+| **Severity** | ~~MEDIUM~~ → **RESOLVED** for the "no force" gap; the fixed 5% threshold for ordinary requests is a remaining nit, not a blocker. |
 
 ---
 
@@ -668,13 +674,13 @@ See `how-to-make-it-live/` in this folder for the full change log
 | **Trading phase** | All phases |
 | **Human failure** | Applying normal rules to abnormal conditions |
 | **Bot failure** | No "out-of-distribution" detection; no emergency mode |
-| **Vina handling** | **NOT HANDLED** |
-| **Existing component(s)** | `shock_correlation.py` (crisis_correlation), `Monitor` shock clustering, `kill_switch` |
-| **Evidence** | `shock_correlation.py` — DCC-GARCH estimates crisis correlation.<br>`Monitor` — shock clustering triggers off-cycle check.<br>But: no "unprecedented" detector; no "emergency flatten" mode. |
-| **Status details** | **What exists:**<br>• Crisis correlation detection (DCC-GARCH)<br>• Shock clustering trigger<br>• Kill switch (portfolio DD -20%)<br><br>**What's missing:**<br>• **No OOD (out-of-distribution) detector** on features/regime<br>• **No "emergency mode"** — flatten portfolio, halt all entries<br>• **No "volatility explosion" guard** — VIX > 60 → auto-reduce<br>• **No "correlation 1.0" guard** — crisis_correlation > 0.95 → flatten<br>• **No liquidity crisis mode** — spread > 5x normal → halt |
-| **Limitation** | System has shock *detection* but no shock *response* beyond kill switch (which blocks exits — see Scenario 21). |
-| **Real-world consequence** | 2020 March / 2010 Flash Crash / 1987 style event → system trades through it with normal logic → catastrophic loss |
-| **Severity** | **CRITICAL** — Tail events are where systems die; no emergency protocol |
+| **Vina handling** | **PARTIALLY HANDLED** (manual emergency-flatten added 2026-09-09, Stage 4 `#33` part 1; the auto-detector is still out) |
+| **Existing component(s)** | `shock_correlation.py` (crisis_correlation), `Monitor` shock clustering, `kill_switch`, **`orchestrator.emergency_flatten()` + `/live/trade-plan/emergency-{flatten,resume,status}` (new)** |
+| **Evidence** | `shock_correlation.py` — DCC-GARCH estimates crisis correlation.<br>`Monitor` — shock clustering triggers off-cycle check.<br>**Fill applied (2026-09-09):** `orchestrator.py` `emergency_flatten()` sets the agent's global kill switch (all services) **and** reduce_only-closes every open book position; `emergency_resume()` lifts it; `_maybe_enter` refuses entries via `entry_blocked_by_emergency_halt` while the mirror flag is set (refreshed each cycle from `/agent/broker/status`). CHANGES §S4-33. |
+| **Status details** | **What exists now:**<br>• Crisis correlation detection (DCC-GARCH)<br>• Shock clustering trigger<br>• Kill switch (portfolio DD -20%) — with a reduce_only exemption so exits pass (Scenario 21 fix)<br>• **NEW: one-call emergency FLATTEN** — halt every service + market-close every position, `POST /live/trade-plan/emergency-flatten`; deliberate `emergency-resume` to undo<br>• Runtime pairwise-correlation de-risk (Scenario 12 fix)<br><br>**Still open:**<br>• **No automatic OOD detector** — the flatten is a *manual* pull; nothing fires it on "features out of distribution" yet (that's `#33` part 2, deferred — needs feature-distribution monitoring)<br>• No "VIX > 60 → auto-reduce" / "crisis_correlation > 0.95 → auto-flatten" wiring<br>• No liquidity-crisis auto-mode (the spread gate #13 blocks *entries* only) |
+| **Limitation** | There is now a **shock response** — a single deliberate command flattens the book and halts everything, and it's exit-safe (reduce_only). What's missing is the automatic *trigger*: a human (or a future detector) still has to decide "this is the event" and hit it. |
+| **Real-world consequence** | A 2020-March / Flash-Crash-style event: an operator watching the system can now flatten + halt in one call and it will actually get the exits out. Un-attended, the system still trades through with normal logic until the −20% kill switch or a manual flatten. |
+| **Severity** | **CRITICAL** — downgraded on the response side (a real emergency protocol now exists); stays critical until the trigger is automated. |
 
 ---
 
@@ -784,12 +790,12 @@ See `how-to-make-it-live/` in this folder for the full change log
 
 | # | Scenario | Gap |
 |---|----------|-----|
-| 2 | **Event risk (earnings, FDA, corporate actions, borrow spikes)** | No calendar check; no borrow rate; no news/event gate anywhere in the signal or order path |
+| 2 | **Event risk (earnings, FDA, corporate actions, borrow spikes)** | ~~No calendar check~~ → **earnings + US-macro blackout added 2026-09-09** (`/stock/events`, `VINU_LIVE_EVENT_BLACKOUT_HOURS`, Stage 4 `#2`); still no borrow-rate feed, no FDA/ad-hoc catalyst calendar |
 | 3 | **Conflicting signals (same symbol, multiple strategies)** | No conflict detection; no resolution rule; offsetting positions possible and invisible as such |
 | 5 | **New signal contradicts an already-open position** | Monitor only re-checks the frozen invalidation conditions on the position it opened; it never re-runs or listens to other strategies' live signals |
 | 7 | **Revenge trading (2 losses → immediate re-entry)** | Explicitly documented as unbuilt; only a 60s debounce exists, not a loss-count cooldown |
 | 9 | **Hesitation on a valid signal (missed entry)** | No signal TTL, no tracking of "generated but not acted on," no real-time nudge |
-| 13 | **Liquidity disappearing (spread widens 10x, no fills)** | No liquidity/spread monitoring, no dynamic order-type switching, fixed slippage model regardless of conditions |
+| 13 | **Liquidity disappearing (spread widens 10x, no fills)** | ~~No liquidity/spread monitoring~~ → **entry-side spread gate added 2026-09-09** (`VINU_LIVE_MAX_SPREAD_BPS`, Stage 4 `#13`); still no exit-side gate (by design), no dynamic order-type switching, fixed slippage model |
 | 15 | **Partial fill leaves an unintended position size** | No fill-state tracking; risk checks continue to assume the intended size, not the actual size |
 | 19 | **PBO computed but not persisted** | Overfitting score vanishes after the research call returns; cannot be checked at promotion time |
 | 20 | **YAML strategies have zero outcome tracking** | 4 built-in strategies get a permanent neutral allocation weight no matter how they perform |
@@ -800,7 +806,7 @@ See `how-to-make-it-live/` in this folder for the full change log
 | 28 | **Container restart wipes paper-trading state** | Paper positions/P&L live in ephemeral storage; a redeploy resets the 10-day validation clock to zero |
 | 30 | **"I don't know" — system always produces an action** | No uncertainty-to-inaction pathway; conflicting/stale/absent information still yields a trade decision |
 | 31 | **Quant signal vs LLM research vs human disagree** | Whichever order is submitted last wins; no aggregation, no size reduction on disagreement |
-| 33 | **Market behaves outside anything in the backtest distribution** | Shock detection exists, but there is no out-of-distribution flag and no emergency-flatten response |
+| 33 | **Market behaves outside anything in the backtest distribution** | ~~no emergency-flatten response~~ → **manual emergency-flatten added 2026-09-09** (`/live/trade-plan/emergency-flatten`, Stage 4 `#33` part 1): one call halts every service + reduce_only-closes every position, exit-safe. Still no *automatic* out-of-distribution trigger (part 2, deferred). |
 | 36 | **Signal aging — a TradePlan stays "valid" indefinitely if untriggered** | No `valid_until`/`max_age` field; a 3-day-old setup with no fill is still actionable |
 
 **Common thread**: these are not weaknesses in an existing mechanism — there is genuinely **no code path** that reasons about the situation at all. If one of these happens, the system's behavior is whatever falls out of components built for a different purpose (e.g., a stale TradePlan just sits there because nothing was ever built to expire it), not a deliberate decision.

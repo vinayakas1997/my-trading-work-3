@@ -110,6 +110,14 @@ class TestAuthorTradePlan:
         assert plan.forecast is not None
         assert plan.position_size_pct == plan.risk_bands.max_position_size_pct
         assert plan.risk_bands.var_95_limit >= 0
+        # how-to-make-it-live.md #17: CVaR + daily vol frozen onto the plan so
+        # the live entry path can gate/scale on them (they were computed by
+        # fetch_risk_state but discarded by _build_risk_band before). Stored
+        # as positive fractions; synthetic returns have real variance + losses.
+        assert isinstance(plan.risk_bands.cvar_95_limit, float)
+        assert isinstance(plan.risk_bands.daily_vol, float)
+        assert plan.risk_bands.cvar_95_limit > 0
+        assert plan.risk_bands.daily_vol > 0
         # Cluster membership present -> the cluster-correlation contingency rule fires.
         assert any(r.metric == "shock_cluster_correlation" for r in plan.contingency_rules)
         # Every rule is a mechanically evaluable metric/operator/threshold triple.

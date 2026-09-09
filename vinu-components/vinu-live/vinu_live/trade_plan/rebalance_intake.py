@@ -31,7 +31,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS rebalance_requests (
     symbol       TEXT PRIMARY KEY,
     reason       TEXT NOT NULL,
-    requested_at REAL NOT NULL
+    requested_at REAL NOT NULL,
+    critical     INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -41,6 +42,11 @@ class RebalanceRequest:
     symbol: str
     reason: str
     requested_at: float
+    # how-to-make-it-live.md #23: a critical request bypasses the
+    # orchestrator's 5% unrealized-gain protect -- for a genuinely urgent
+    # reallocation the allocator should be able to force through, not have
+    # declined indefinitely because the position happens to be up.
+    critical: bool = False
 
 
 class RebalanceRequestQueue(SQLiteBackend):
@@ -50,13 +56,22 @@ class RebalanceRequestQueue(SQLiteBackend):
     same symbol."""
 
     SCHEMA = SCHEMA
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
+    MIGRATIONS = [
+        ("ALTER TABLE rebalance_requests ADD COLUMN critical INTEGER NOT NULL DEFAULT 0",
+         "add critical flag to rebalance_requests (how-to-make-it-live.md #23)"),
+    ]
 
-    def submit(self, symbol: str, reason: str) -> RebalanceRequest:
-        request = RebalanceRequest(symbol=symbol.upper(), reason=reason, requested_at=time.time())
+    def submit(self, symbol: str, reason: str, critical: bool = False) -> RebalanceRequest:
+        request = RebalanceRequest(
+            symbol=symbol.upper(), reason=reason, requested_at=time.time(), critical=bool(critical),
+        )
         self.upsert(
             "rebalance_requests",
-            {"symbol": request.symbol, "reason": request.reason, "requested_at": request.requested_at},
+            {
+                "symbol": request.symbol, "reason": request.reason,
+                "requested_at": request.requested_at, "critical": int(request.critical),
+            },
             conflict_columns=["symbol"],
         )
         return request
@@ -68,7 +83,11 @@ class RebalanceRequestQueue(SQLiteBackend):
         ).fetchone()
         if row is None:
             return None
-        return RebalanceRequest(symbol=row["symbol"], reason=row["reason"], requested_at=row["requested_at"])
+        critical = bool(row["critical"]) if "critical" in row.keys() else False
+        return RebalanceRequest(
+            symbol=row["symbol"], reason=row["reason"],
+            requested_at=row["requested_at"], critical=critical,
+        )
 
     def consume(self, symbol: str) -> None:
         """Removes a pending request once the orchestrator has evaluated

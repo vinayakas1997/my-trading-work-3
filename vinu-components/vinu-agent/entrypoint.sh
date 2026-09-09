@@ -45,6 +45,13 @@ blocked_tickers: []
 max_position_pct: 0.25
 max_order_value: 50000.0
 max_daily_orders: 20
+# how-to-make-it-live.md #8: portfolio-wide daily order ceiling across ALL
+# symbols (max_daily_orders above is per-symbol -- 20/symbol x N symbols had
+# no aggregate cap). reduce_only orders are exempt. Tune to your live symbol
+# count: this 50 is a safety net for a ~3-9 symbol universe -- generous over
+# realistic daily operation, but a hard stop well before a runaway
+# signal fan-out or retry loop turns into hundreds of orders.
+max_daily_orders_portfolio: 50
 max_daily_trade_volume: 200000.0
 max_capital_utilization_pct: 1.0
 require_active_artifact: true

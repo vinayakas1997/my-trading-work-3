@@ -127,6 +127,10 @@ def _build_risk_band(risk_state: dict[str, Any], personality: dict[str, Any]) ->
     vol = risk_state["annualized_volatility"]
     var_95 = abs(risk_state["var_95_daily"])
     kelly = risk_state["kelly_fraction"]
+    # how-to-make-it-live.md #17: carry CVaR + daily vol onto the frozen plan so
+    # the live entry path can gate/scale on them. Stored as positive fractions.
+    cvar_95 = abs(float(risk_state.get("cvar_95_daily", 0.0) or 0.0))
+    daily_vol = abs(float(risk_state.get("daily_volatility", 0.0) or 0.0))
 
     # Half-Kelly, capped at 10% of portfolio per position -- avoids full-Kelly's
     # well-known overbetting under estimation error.
@@ -144,6 +148,8 @@ def _build_risk_band(risk_state: dict[str, Any], personality: dict[str, Any]) ->
         max_cluster_exposure_pct=max_cluster_exposure_pct,
         volatility_band_upper=vol * 1.5,
         volatility_band_lower=vol * 0.5,
+        cvar_95_limit=cvar_95,
+        daily_vol=daily_vol,
     )
 
 

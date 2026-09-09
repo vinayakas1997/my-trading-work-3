@@ -99,10 +99,21 @@ def ingest_main(argv: list[str] | None = None) -> None:
             run_cycle(service)
         return
 
+    def refresh_events(service: StockService) -> None:
+        # how-to-make-it-live.md #2: opportunistic daily calendar pull. No-ops
+        # unless a kind's last pull is stale; never raises.
+        try:
+            result = service.refresh_events()
+            if result.get("refreshed"):
+                logging.info("Events calendar refreshed: %s", result["refreshed"])
+        except Exception as e:  # defensive -- must never kill the ingest loop
+            logging.warning("Events refresh failed (non-fatal): %s", e)
+
     with StockService() as service:
         while True:
             sync_and_backfill(service)
             run_cycle(service)
+            refresh_events(service)
             sleep_sec = service.get_settings().poll_interval_sec
             logging.info("Sleeping %s seconds until next ingest", sleep_sec)
             time.sleep(sleep_sec)

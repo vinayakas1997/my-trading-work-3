@@ -255,6 +255,13 @@ class RiskBand:
     max_cluster_exposure_pct: float = 0.0
     volatility_band_upper: float = 0.0
     volatility_band_lower: float = 0.0
+    # how-to-make-it-live.md #17: frozen at authoring time from fetch_risk_state()
+    # so the live entry path (vinu-live orchestrator._maybe_enter) can run the
+    # CVaR tail gate + dynamic vol targeting that position_sizing.py implements
+    # but nothing on the live path ever fed data to. Both as positive daily
+    # fractions (0.03 = 3%). 0.0 = not computed -> gate/scale is skipped.
+    cvar_95_limit: float = 0.0
+    daily_vol: float = 0.0
 
 
 # Comparison operators a deterministic evaluator (Phase 6) can apply to a live

@@ -42,6 +42,10 @@ class VinuStockConfig:
     alpaca_api_secret: str
     alpaca_data_base_url: str
     shared_watchlist_path: Path | None
+    # how-to-make-it-live.md #2 (Stage 4): event-risk calendar
+    finnhub_api_key: str
+    events_macro_enabled: bool
+    events_refresh_hours: float
 
 
 def load_config() -> VinuStockConfig:
@@ -66,6 +70,11 @@ def load_config() -> VinuStockConfig:
             "ALPACA_DATA_BASE_URL", "https://data.alpaca.markets"
         ),
         shared_watchlist_path=shared_path,
+        finnhub_api_key=load_secret("finnhub_api_key", "FINNHUB_API_KEY") or "",
+        events_macro_enabled=os.environ.get(
+            "VINU_EVENTS_MACRO_ENABLED", "true"
+        ).lower() in ("1", "true", "yes"),
+        events_refresh_hours=float(os.environ.get("VINU_EVENTS_REFRESH_HOURS", "20")),
     )
 
 

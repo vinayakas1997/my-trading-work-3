@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,7 +14,11 @@ import duckdb
 LOG = logging.getLogger(__name__)
 from vinu_stock.backfill.orchestrator import BackfillSummary, run_backfill
 from vinu_stock.config import VinuStockConfig, load_config
+from vinu_stock.events.finnhub_provider import FinnhubCalendarProvider
+from vinu_stock.events.poller import refresh_calendar
+from vinu_stock.events.store import EventsStore
 from vinu_stock.live.ingest_cycle import LiveIngestSummary, run_live_cycle
+from vinu_stock.providers.quote import AlpacaQuoteProvider
 from vinu_stock.providers.registry import ProviderRegistry
 from vinu_stock.query.engine import fetch_candles
 from vinu_stock.settings.store import SettingsView
@@ -48,6 +53,16 @@ class StockService:
         self._backend = backend or MetaBackend(self._config.meta_db_path)
         self._owns_backend = backend is None
         self._registry = ProviderRegistry(self._config)
+        # how-to-make-it-live.md #13: order-time NBBO reads for vinu-live's
+        # spread gate. Cached with a short TTL below so a burst of entry
+        # attempts in one cycle collapses to a single upstream call.
+        self._quote_provider = AlpacaQuoteProvider(self._config)
+        self._quote_cache: dict[str, tuple[dict[str, Any], float]] = {}
+        # how-to-make-it-live.md #2: event-risk calendar. Own SQLite file next
+        # to the meta db; refreshed daily by the ingest worker (refresh_events),
+        # read at order time by vinu-live via /stock/events/{symbol}.
+        self._events_store = EventsStore(str(self._config.data_root / "vinu_events.db"))
+        self._calendar_provider = FinnhubCalendarProvider(self._config.finnhub_api_key)
         self._duckdb_conn = duckdb.connect()
         # data_root is resolved from the environment (VINU_STOCK_DATA_ROOT via
         # load_config()) -- the environment is the source of truth, NOT the
@@ -66,6 +81,11 @@ class StockService:
         if hasattr(self, "_duckdb_conn") and self._duckdb_conn:
             try:
                 self._duckdb_conn.close()
+            except Exception:
+                pass
+        if hasattr(self, "_events_store"):
+            try:
+                self._events_store.close()
             except Exception:
                 pass
         if self._owns_backend:
@@ -209,7 +229,71 @@ class StockService:
             connection=self._duckdb_conn,
         )
 
+    _QUOTE_TTL_SEC = 5.0
+
+    def get_quote(self, symbol: str) -> dict[str, Any]:
+        """Latest bid/ask/spread for `symbol` (how-to-make-it-live.md #13).
+        In-process TTL cache: repeated calls within _QUOTE_TTL_SEC return the
+        same payload, so a cycle that attempts several entries hits the
+        upstream data API once. A failed fetch is cached too -- if the venue
+        is unreachable, do not hammer it once per entry; the consumer fails
+        open on `ok: false` regardless."""
+        sym = symbol.strip().upper()
+        now = time.monotonic()
+        cached = self._quote_cache.get(sym)
+        if cached is not None and (now - cached[1]) < self._QUOTE_TTL_SEC:
+            return cached[0]
+        result = self._quote_provider.get_quote(sym)
+        payload: dict[str, Any] = {
+            "symbol": sym,
+            "ok": result.success,
+            "bid": result.bid,
+            "ask": result.ask,
+            "mid": result.mid,
+            "spread_bps": result.spread_bps,
+            "ts": result.ts,
+            "error": result.error,
+        }
+        self._quote_cache[sym] = (payload, now)
+        return payload
+
+    # --- Event-risk calendar (how-to-make-it-live.md #2) --------------------
+
+    def get_events(self, symbol: str, *, within_hours: float = 48.0) -> dict[str, Any]:
+        """Upcoming earnings / macro events for `symbol` inside the next
+        `within_hours`. `blackout` is True iff at least one is found -- the
+        field vinu-live's entry guard reads. Always succeeds; an empty /
+        unconfigured calendar just yields `blackout: false`."""
+        sym = symbol.strip().upper()
+        now = time.time()
+        rows = self._events_store.upcoming(sym, now, now + within_hours * 3600.0)
+        return {
+            "symbol": sym,
+            "within_hours": within_hours,
+            "blackout": bool(rows),
+            "events": rows,
+            "configured": self._calendar_provider.is_configured(),
+        }
+
+    def refresh_events(self) -> dict[str, Any]:
+        """Opportunistic daily calendar pull, called from the ingest worker
+        loop. No-ops unless a `kind`'s last pull is older than
+        VINU_EVENTS_REFRESH_HOURS. Never raises."""
+        return refresh_calendar(
+            self._events_store,
+            self._calendar_provider,
+            self.get_watchlist(),
+            macro_enabled=self._config.events_macro_enabled,
+            min_interval_hours=self._config.events_refresh_hours,
+        )
+
     def health(self) -> dict[str, Any]:
         info = self._backend.health_info(self.data_root)
         info["providers"] = self._registry.provider_status()
+        info["events"] = {
+            "configured": self._calendar_provider.is_configured(),
+            "rows": self._events_store.count(),
+            "last_pull_earnings": self._events_store.get_last_pull("earnings"),
+            "last_pull_economic": self._events_store.get_last_pull("economic"),
+        }
         return info
