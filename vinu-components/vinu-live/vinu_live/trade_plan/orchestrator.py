@@ -33,6 +33,7 @@ from vinu_live.book.positions import (
     reduce_position,
     update_stop_loss,
 )
+from vinu_live.book.lock import book_lock, lock_path_for_book
 from vinu_live.book.schema import Position
 from vinu_live.breaker.engine import BreakerVerdict, check_limits
 from vinu_live.breaker.limits import BreakerState
@@ -229,6 +230,11 @@ RECONCILE_AUTOCORRECT = _os.environ.get(
 # A book/broker gap this many times the book size is a bug, not a partial fill
 # -- reconciliation refuses to auto-correct past it and alerts instead.
 RECONCILE_MAX_RATIO = float(_os.environ.get("VINU_LIVE_RECONCILE_MAX_RATIO", "10.0"))
+# A symbol this instance placed an order on within this many seconds is skipped
+# by auto-correct: the broker's /positions endpoint lags a fresh fill by up to
+# ~1s, and reconciling against that stale view trims a correct book position.
+# The next cycle (order settled) reconciles it normally. 0 disables the defer.
+RECONCILE_SETTLE_SEC = float(_os.environ.get("VINU_LIVE_RECONCILE_SETTLE_SEC", "12"))
 
 
 # how-to-make-it-live.md #12 (Stage 3): runtime correlation monitor. The
@@ -437,6 +443,18 @@ class TradePlanOrchestrator:
             _headers = None
         self._http = httpx.AsyncClient(timeout=30.0, headers=_headers)
         self._book = book or init_book(str(self._config.data_root / "trade_plan_book.db"))
+        # how-to-make-it-live.md #35 fix: cross-process lock guarding every
+        # "read book -> decide -> write book" section, so the long-running
+        # worker and a throwaway HTTP-route orchestrator cannot double-apply a
+        # correction. Path is derived from the actual book db file (a temp file
+        # in tests, ":memory:" -> disabled).
+        self._book_lock_path = lock_path_for_book(getattr(self._book, "_db_path", None))
+        # Per-symbol monotonic time of the last order this instance placed, so
+        # end-of-cycle reconciliation can DEFER a symbol whose fill has not had
+        # time to propagate to the broker's position endpoint yet (observed:
+        # reconcile trimmed a correct 5.74-share book to ~1 because Alpaca's
+        # /positions lagged the fill by <1s).
+        self._recently_traded: dict[str, float] = {}
         self._breaker_state = BreakerState()
         self._reconciler = ReconciliationEngine()
         self._cycle_count = 0
@@ -955,10 +973,12 @@ class TradePlanOrchestrator:
             intended_delta = qty if direction == "long" else -qty
             actual_delta, partial = await self._confirm_fill(symbol, pre_signed, intended_delta)
             fill_qty = abs(actual_delta) or qty  # never book a zero-share position
-            open_position(
-                self._book, symbol, direction, fill_qty, price,
-                artifact_id=plan.get("_artifact_id", ""),
-            )
+            self._note_traded(symbol)
+            with book_lock(self._book_lock_path):
+                open_position(
+                    self._book, symbol, direction, fill_qty, price,
+                    artifact_id=plan.get("_artifact_id", ""),
+                )
             if partial:
                 LOG.warning(
                     "Partial fill on %s entry: intended %.4f, filled %.4f -- booked actual",
@@ -1192,12 +1212,34 @@ class TradePlanOrchestrator:
         if verdict == BreakerVerdict.HALT:
             LOG.warning("Breaker HALT entries-only -- allowing risk-reducing exit for %s: %s", symbol, reason)
 
-        side = "sell" if position.side == "long" else "buy"
-        order_result = await self._submit_order(symbol, side, position.qty, reduce_only=True)
+        # Close against the LIVE broker holding, not the (possibly stale) book
+        # qty -- observed live: a reduce_only SELL for the book qty on an
+        # already-flat account opened a short.
+        close_qty, close_side, note = await self._broker_close_plan(
+            symbol, position.side, position.qty,
+        )
+        if note == "broker_flat":
+            with book_lock(self._book_lock_path):
+                close_position(self._book, position.position_id, price)
+            LOG.warning(
+                "Invalidation exit %s: broker already flat -- closed stale book position, no order",
+                symbol,
+            )
+            return {"symbol": symbol, "action": "invalidation_exit_book_only", "reason": "broker_flat", "rule": rule}
+        if note == "side_conflict":
+            LOG.error(
+                "Invalidation exit %s: broker holds the OPPOSITE side -- not trading (needs review)",
+                symbol,
+            )
+            return {"symbol": symbol, "action": "exit_blocked_side_conflict", "rule": rule}
+
+        order_result = await self._submit_order(symbol, close_side, close_qty, reduce_only=True)
         if order_result.get("status") == "submitted":
-            close_position(self._book, position.position_id, price)
-            LOG.info("Invalidation exit for %s (rule: %s)", symbol, rule.get("condition"))
-            return {"symbol": symbol, "action": "invalidation_exit", "rule": rule}
+            self._note_traded(symbol)
+            with book_lock(self._book_lock_path):
+                close_position(self._book, position.position_id, price)
+            LOG.info("Invalidation exit for %s %.4f (rule: %s)", symbol, close_qty, rule.get("condition"))
+            return {"symbol": symbol, "action": "invalidation_exit", "qty": close_qty, "rule": rule}
 
         LOG.info("Invalidation exit not filled for %s: broker status=%s", symbol, order_result.get("status"))
         return {"symbol": symbol, "action": "exit_not_filled", "broker_status": order_result.get("status"), "rule": rule}
@@ -1226,12 +1268,25 @@ class TradePlanOrchestrator:
                 LOG.warning("Breaker HALT -- skipping reduce for %s: %s", symbol, reason)
                 return {"symbol": symbol, "action": "reduce_blocked_by_breaker", "reason": reason, "rule": rule}
 
-            side = "sell" if position.side == "long" else "buy"
-            order_result = await self._submit_order(symbol, side, reduce_qty, reduce_only=True)
+            close_qty, close_side, note = await self._broker_close_plan(
+                symbol, position.side, reduce_qty,
+            )
+            if note == "broker_flat":
+                with book_lock(self._book_lock_path):
+                    close_position(self._book, position.position_id, price)
+                LOG.warning("Reduce %s: broker flat -- closed stale book position, no order", symbol)
+                return {"symbol": symbol, "action": "reduce_book_only", "reason": "broker_flat", "rule": rule}
+            if note == "side_conflict":
+                LOG.error("Reduce %s: broker holds the OPPOSITE side -- not trading (needs review)", symbol)
+                return {"symbol": symbol, "action": "reduce_blocked_side_conflict", "rule": rule}
+
+            order_result = await self._submit_order(symbol, close_side, close_qty, reduce_only=True)
             if order_result.get("status") == "submitted":
-                reduce_position(self._book, position.position_id, reduce_qty, price)
-                LOG.info("Reduced %s by %.4f (rule: %s)", symbol, reduce_qty, rule.get("condition"))
-                return {"symbol": symbol, "action": "reduce_position", "qty": reduce_qty, "rule": rule}
+                self._note_traded(symbol)
+                with book_lock(self._book_lock_path):
+                    reduce_position(self._book, position.position_id, close_qty, price)
+                LOG.info("Reduced %s by %.4f (rule: %s)", symbol, close_qty, rule.get("condition"))
+                return {"symbol": symbol, "action": "reduce_position", "qty": close_qty, "rule": rule}
 
             LOG.info("Reduce not filled for %s: broker status=%s", symbol, order_result.get("status"))
             return {"symbol": symbol, "action": "reduce_not_filled", "broker_status": order_result.get("status"), "rule": rule}
@@ -1330,7 +1385,9 @@ class TradePlanOrchestrator:
             side = "sell" if pos.side == "long" else "buy"
             order_result = await self._submit_order(target, side, reduce_qty, reduce_only=True)
             if order_result.get("status") == "submitted":
-                reduce_position(self._book, pos.position_id, reduce_qty, price)
+                self._note_traded(target)
+                with book_lock(self._book_lock_path):
+                    reduce_position(self._book, pos.position_id, reduce_qty, price)
                 self._last_corr_reduce[target] = now
                 LOG.warning(
                     "Runtime correlation: %s~%s corr %.2f (comovement %.2f >= %.2f) -- "
@@ -1468,6 +1525,39 @@ class TradePlanOrchestrator:
     def _find_open_position(self, symbol: str) -> Position | None:
         positions = list_open_positions(self._book, symbol=symbol)
         return positions[0] if positions else None
+
+    def _note_traded(self, symbol: str) -> None:
+        """Stamp `symbol` as just-traded by this instance (fill-propagation
+        grace for _reconcile_book_with_broker -- see RECONCILE_SETTLE_SEC)."""
+        self._recently_traded[symbol] = time.monotonic()
+
+    async def _broker_close_plan(
+        self, symbol: str, book_side: str, book_qty: float,
+    ) -> tuple[float, str, str]:
+        """How to actually close a book position against the LIVE broker
+        holding -- never asking the broker to trade more than it holds, and
+        never flipping a flat / opposite account into a NEW position (observed
+        live: a reduce_only SELL for the book qty on an already-flat account
+        opened a short). Returns (qty_to_send, order_side, note):
+          "ok"             -> place an order for qty_to_send on order_side
+          "broker_flat"    -> broker holds nothing; send nothing, just fix book
+          "side_conflict"  -> broker holds the OTHER side; send nothing, alert
+          "no_broker_view" -> broker unreadable; fall back to the book qty
+        """
+        try:
+            broker = await self._fetch_broker_positions()
+        except Exception:  # noqa: BLE001
+            broker = {}
+        fallback_side = "sell" if book_side == "long" else "buy"
+        if not broker:
+            return float(book_qty), fallback_side, "no_broker_view"
+        bq = float(broker.get(symbol, 0.0))
+        if abs(bq) <= 1e-9:
+            return 0.0, "", "broker_flat"
+        book_signed = book_qty if book_side == "long" else -book_qty
+        if bq * book_signed < 0:
+            return 0.0, "", "side_conflict"
+        return min(float(book_qty), abs(bq)), ("sell" if bq > 0 else "buy"), "ok"
 
     async def _submit_order(
         self, symbol: str, side: str, qty: float, artifact_id: str = "", reduce_only: bool = False,
@@ -1640,16 +1730,36 @@ class TradePlanOrchestrator:
         closed: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
         for pos in positions:
-            side = "sell" if pos.side == "long" else "buy"
             px = prices.get(pos.symbol) or float(pos.avg_entry)
-            order_result = await self._submit_order(
-                pos.symbol, side, pos.qty, artifact_id=pos.artifact_id, reduce_only=True,
+            row: dict[str, Any] = {"symbol": pos.symbol, "side": pos.side, "qty": float(pos.qty)}
+            # Close against the LIVE broker holding -- never over-ask (Alpaca
+            # 403s a reduce_only for more than held) and never sell into a flat
+            # account (that opens a short).
+            close_qty, close_side, note = await self._broker_close_plan(
+                pos.symbol, pos.side, pos.qty,
             )
-            row = {"symbol": pos.symbol, "side": pos.side, "qty": float(pos.qty)}
-            if order_result.get("status") == "submitted":
-                close_position(self._book, pos.position_id, px)
+            if note == "broker_flat":
+                with book_lock(self._book_lock_path):
+                    close_position(self._book, pos.position_id, px)
+                row["note"] = "broker_flat_book_closed"
                 closed.append(row)
-                LOG.warning("Emergency flatten: closed %s %s %.4f", pos.side, pos.symbol, pos.qty)
+                LOG.warning("Emergency flatten: %s broker already flat -- closed stale book position", pos.symbol)
+                continue
+            if note == "side_conflict":
+                row["note"] = "side_conflict_not_traded"
+                failed.append(row)
+                LOG.error("Emergency flatten: %s broker holds the OPPOSITE side -- NOT trading (needs review)", pos.symbol)
+                continue
+            order_result = await self._submit_order(
+                pos.symbol, close_side, close_qty, artifact_id=pos.artifact_id, reduce_only=True,
+            )
+            if order_result.get("status") == "submitted":
+                self._note_traded(pos.symbol)
+                with book_lock(self._book_lock_path):
+                    close_position(self._book, pos.position_id, px)
+                row["qty"] = close_qty
+                closed.append(row)
+                LOG.warning("Emergency flatten: closed %s %s %.4f", pos.side, pos.symbol, close_qty)
             else:
                 row["broker_status"] = order_result.get("status")
                 failed.append(row)
@@ -1774,37 +1884,62 @@ class TradePlanOrchestrator:
     # ------------------------------------------------------------------
 
     async def _reconcile_book_with_broker(self, prices: dict[str, float]) -> dict[str, Any]:
-        open_positions = list_open_positions(self._book)
-        expected = {p.symbol: (p.qty if p.side == "long" else -p.qty) for p in open_positions}
+        # The broker fetch is network I/O -- do it OUTSIDE the book lock so a
+        # slow broker can't stall the other process's cycle.
         actual = await self._fetch_broker_positions()
-        portfolio_value = sum(abs(q) * prices.get(sym, 0.0) for sym, q in expected.items()) or 1.0
-        report = self._reconciler.reconcile(expected, actual, portfolio_value)
+        now = time.monotonic()
         corrections: list[dict[str, Any]] = []
-        if report.drift_detected:
-            LOG.warning(
-                "Book/broker drift detected: %d symbol(s), %.2f%% total",
-                len(report.symbol_drifts), report.total_drift_pct,
-            )
-            # how-to-make-it-live.md #15: don't just warn -- pull the book back
-            # to broker truth. The broker is ground truth for what the account
-            # actually holds (a partial fill, or a bracket leg that fired
-            # between cycles). Skipped entirely when the broker snapshot is
-            # empty (can't tell a real flat account from a failed fetch).
-            if RECONCILE_AUTOCORRECT and actual:
-                by_symbol = {p.symbol: p for p in open_positions}
-                for d in report.symbol_drifts:
-                    corr = self._reconcile_symbol(
-                        d["symbol"], by_symbol.get(d["symbol"]),
-                        actual.get(d["symbol"], 0.0),
-                        prices.get(d["symbol"], 0.0),
-                    )
-                    if corr:
-                        corrections.append(corr)
+        deferred: list[str] = []
+        # Cross-process lock: another orchestrator (the HTTP-route throwaway, or
+        # the background worker) must not be mid read-decide-write on the book
+        # while we correct it. Re-read the book INSIDE the lock -- it may have
+        # changed since our broker fetch above.
+        with book_lock(self._book_lock_path):
+            open_positions = list_open_positions(self._book)
+            expected = {p.symbol: (p.qty if p.side == "long" else -p.qty) for p in open_positions}
+            portfolio_value = sum(abs(q) * prices.get(sym, 0.0) for sym, q in expected.items()) or 1.0
+            report = self._reconciler.reconcile(expected, actual, portfolio_value)
+            if report.drift_detected:
+                LOG.warning(
+                    "Book/broker drift detected: %d symbol(s), %.2f%% total",
+                    len(report.symbol_drifts), report.total_drift_pct,
+                )
+                # how-to-make-it-live.md #15: don't just warn -- pull the book
+                # back to broker truth. The broker is ground truth for what the
+                # account actually holds (a partial fill, or a bracket leg that
+                # fired between cycles). Skipped entirely when the broker
+                # snapshot is empty (can't tell a real flat account from a
+                # failed fetch).
+                if RECONCILE_AUTOCORRECT and actual:
+                    by_symbol = {p.symbol: p for p in open_positions}
+                    for d in report.symbol_drifts:
+                        sym = d["symbol"]
+                        last = self._recently_traded.get(sym)
+                        if (
+                            RECONCILE_SETTLE_SEC > 0
+                            and last is not None
+                            and (now - last) < RECONCILE_SETTLE_SEC
+                        ):
+                            # fill hasn't propagated to /positions yet -- the
+                            # next cycle reconciles it for real.
+                            LOG.info(
+                                "RECONCILE: deferring %s -- this instance traded it %.1fs ago "
+                                "(< %.0fs settle)", sym, now - last, RECONCILE_SETTLE_SEC,
+                            )
+                            deferred.append(sym)
+                            continue
+                        corr = self._reconcile_symbol(
+                            sym, by_symbol.get(sym),
+                            actual.get(sym, 0.0), prices.get(sym, 0.0),
+                        )
+                        if corr:
+                            corrections.append(corr)
         return {
             "drift_detected": report.drift_detected,
             "n_drifts": len(report.symbol_drifts),
             "total_drift_pct": report.total_drift_pct,
             "corrections": corrections,
+            "deferred": deferred,
         }
 
     def _reconcile_symbol(

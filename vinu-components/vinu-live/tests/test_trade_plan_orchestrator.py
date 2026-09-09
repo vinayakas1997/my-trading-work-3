@@ -1906,6 +1906,143 @@ class TestReconciliation:
         assert report["drift_detected"] is False
 
 
+class TestReconcileRobustness:
+    """Fixes for the 4 bugs the live end-to-end run exposed: (1) reconcile
+    racing a fresh fill's broker-propagation lag, (2) two orchestrators
+    double-correcting the shared book, (3) emergency_flatten over-asking vs
+    the real broker holding, (4) exit paths selling into a flat/opposite
+    account and opening an unintended position."""
+
+    # -- #1: settle-window defer -----------------------------------------------
+
+    def test_reconcile_defers_a_symbol_this_instance_just_traded(self, book) -> None:
+        open_position(book, "AAPL", "long", 5.74, 313.0)
+        orch = _make_orchestrator(book)
+        orch._recently_traded["AAPL"] = time.monotonic()  # just filled
+        get_mock, _ = _router(get_routes={"/broker/positions": [{"symbol": "AAPL", "qty": 1.0}]})
+        orch._http.get = get_mock
+
+        report = asyncio.run(orch._reconcile_book_with_broker({"AAPL": 313.0}))
+
+        assert report["drift_detected"] is True
+        assert report["deferred"] == ["AAPL"]
+        assert report["corrections"] == []
+        # book left intact -- the stale broker view did NOT trim it
+        assert list_open_positions(book, symbol="AAPL")[0].qty == qty_float(5.74)
+
+    def test_reconcile_corrects_once_past_the_settle_window(self, book) -> None:
+        open_position(book, "AAPL", "long", 5.74, 313.0)
+        orch = _make_orchestrator(book)
+        orch._recently_traded["AAPL"] = time.monotonic() - 999  # long settled
+        get_mock, _ = _router(get_routes={"/broker/positions": [{"symbol": "AAPL", "qty": 1.0}]})
+        orch._http.get = get_mock
+
+        report = asyncio.run(orch._reconcile_book_with_broker({"AAPL": 313.0}))
+
+        assert report["deferred"] == []
+        assert report["corrections"][0]["action"] == "reduced_to_match_broker"
+        assert list_open_positions(book, symbol="AAPL")[0].qty == qty_float(1.0)
+
+    def test_settle_defer_disabled_by_env(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "RECONCILE_SETTLE_SEC", 0.0)
+        open_position(book, "AAPL", "long", 5.74, 313.0)
+        orch = _make_orchestrator(book)
+        orch._recently_traded["AAPL"] = time.monotonic()
+        get_mock, _ = _router(get_routes={"/broker/positions": [{"symbol": "AAPL", "qty": 1.0}]})
+        orch._http.get = get_mock
+
+        report = asyncio.run(orch._reconcile_book_with_broker({"AAPL": 313.0}))
+        assert report["deferred"] == []
+        assert report["corrections"][0]["action"] == "reduced_to_match_broker"
+
+    # -- #3/#4: _broker_close_plan -------------------------------------------
+
+    def test_broker_close_plan_caps_at_broker_qty(self, book) -> None:
+        orch = _make_orchestrator(book)
+        orch._fetch_broker_positions = AsyncMock(return_value={"AAPL": 3.0})
+        qty, side, note = asyncio.run(orch._broker_close_plan("AAPL", "long", 6.0))
+        assert (qty, side, note) == (3.0, "sell", "ok")
+
+    def test_broker_close_plan_broker_flat(self, book) -> None:
+        orch = _make_orchestrator(book)
+        orch._fetch_broker_positions = AsyncMock(return_value={"MSFT": 1.0})
+        qty, side, note = asyncio.run(orch._broker_close_plan("AAPL", "long", 6.0))
+        assert (qty, note) == (0.0, "broker_flat")
+
+    def test_broker_close_plan_side_conflict(self, book) -> None:
+        orch = _make_orchestrator(book)
+        orch._fetch_broker_positions = AsyncMock(return_value={"AAPL": -5.0})
+        qty, side, note = asyncio.run(orch._broker_close_plan("AAPL", "long", 6.0))
+        assert (qty, note) == (0.0, "side_conflict")
+
+    def test_broker_close_plan_no_view_falls_back_to_book(self, book) -> None:
+        orch = _make_orchestrator(book)
+        orch._fetch_broker_positions = AsyncMock(return_value={})
+        qty, side, note = asyncio.run(orch._broker_close_plan("AAPL", "short", 6.0))
+        assert (qty, side, note) == (6.0, "buy", "no_broker_view")
+
+    # -- #4: exit never opens an unintended position -------------------------
+
+    def test_invalidation_exit_is_book_only_when_broker_flat(self, book) -> None:
+        open_position(book, "AAPL", "long", 6.0, 300.0)
+        orch = _make_orchestrator(book)
+        # broker holds nothing for AAPL (externally flattened)
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": [{"symbol": "MSFT", "qty": 1.0}]},
+            post_routes={"/broker/order": {"status": "submitted"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+        pos = list_open_positions(book, symbol="AAPL")[0]
+
+        action = asyncio.run(
+            orch._apply_invalidation(pos, 250.0, 100000.0, {"condition": "test", "action": "exit"})
+        )
+
+        assert action["action"] == "invalidation_exit_book_only"
+        assert post_mock.call_count == 0          # NO sell order placed
+        assert list_open_positions(book, symbol="AAPL") == []   # book cleaned up
+
+    def test_emergency_flatten_closes_at_broker_qty_not_book_qty(self, book) -> None:
+        open_position(book, "AAPL", "long", 6.0, 313.0)   # book says 6
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={
+                "/broker/positions": [{"symbol": "AAPL", "qty": 5.7}],  # broker says 5.7
+                "/candles/AAPL": {"data": [{"close": 313.0}]},
+            },
+            post_routes={"/broker/halt": {"status": "ok"}, "/broker/order": {"status": "submitted"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        result = asyncio.run(orch.emergency_flatten(reason="test"))
+
+        assert result["count_closed"] == 1
+        assert result["positions_closed"][0]["qty"] == 5.7   # capped at broker, not 6
+        order_calls = [c for c in post_mock.call_args_list if "/broker/order" in c.args[0]]
+        assert order_calls[0].kwargs["json"]["qty"] == 5.7
+
+    def test_emergency_flatten_book_only_when_broker_flat(self, book) -> None:
+        open_position(book, "AAPL", "long", 6.0, 313.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={
+                "/broker/positions": [{"symbol": "MSFT", "qty": 1.0}],  # AAPL absent -> flat
+                "/candles/AAPL": {"data": [{"close": 313.0}]},
+            },
+            post_routes={"/broker/halt": {"status": "ok"}, "/broker/order": {"status": "submitted"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        result = asyncio.run(orch.emergency_flatten(reason="test"))
+
+        assert result["count_closed"] == 1
+        assert result["positions_closed"][0]["note"] == "broker_flat_book_closed"
+        order_calls = [c for c in post_mock.call_args_list if "/broker/order" in c.args[0]]
+        assert len(order_calls) == 0             # no order -- would have opened a short
+        assert list_open_positions(book) == []
+
+
 class TestFullCycle:
     def test_cycle_enters_new_plan_end_to_end(self, book) -> None:
         orch = _make_orchestrator(book)
