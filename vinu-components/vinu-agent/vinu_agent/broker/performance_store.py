@@ -28,13 +28,53 @@ class PaperPerformanceStore(SQLiteBackend):
     CREATE TABLE IF NOT EXISTS paper_performance (
         artifact_id TEXT PRIMARY KEY,
         returns_json TEXT NOT NULL,
-        updated_at REAL NOT NULL
+        updated_at REAL NOT NULL,
+        meta_json TEXT NOT NULL DEFAULT '{}'
     );
     """
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(self, db_path: str | Path = ":memory:") -> None:
         super().__init__(db_path)
+        self._ensure_v2()
+
+    def _ensure_v2(self) -> None:
+        # Same 4-field shape as rehearsal (14): run_id + regime + conditions.
+        conn = self._get_conn()
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(paper_performance)").fetchall()]
+        if "meta_json" not in cols:
+            conn.execute("ALTER TABLE paper_performance ADD COLUMN meta_json TEXT NOT NULL DEFAULT '{}'")
+        conn.commit()
+
+    def record_meta(self, artifact_id: str, meta: dict[str, Any]) -> None:
+        self._ensure_v2()
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE paper_performance SET meta_json = ? WHERE artifact_id = ?",
+            (json.dumps(meta), artifact_id),
+        )
+        if conn.total_changes == 0:
+            self.upsert(
+                "paper_performance",
+                {"artifact_id": artifact_id, "returns_json": "[]", "updated_at": time.time(), "meta_json": json.dumps(meta)},
+                conflict_columns=["artifact_id"],
+            )
+        else:
+            conn.commit()
+
+    def get_meta(self, artifact_id: str) -> dict[str, Any]:
+        self._ensure_v2()
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT meta_json FROM paper_performance WHERE artifact_id = ?", (artifact_id,)
+        ).fetchone()
+        if row is None:
+            return {}
+        try:
+            data = json.loads(row["meta_json"])
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
 
     def record_daily_return(self, artifact_id: str, daily_return: float) -> None:
         existing = self.get_daily_returns(artifact_id)
