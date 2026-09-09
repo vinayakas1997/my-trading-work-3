@@ -11,7 +11,9 @@ Bugs found while implementing: none, defaults keep backward compat.
 Other files touched:
 - vinu-components/vinu-simulator/vinu_simulator/engine/costs.py
 - vinu-components/vinu-live/vinu_live/trade_plan/orchestrator.py
-Next: borrow/corp check (needs broker shortable endpoint).
+Next: corp actions (splits/dividends adjust, needs corporate feed).
+Done4:
+- borrow guard: Alpaca get_asset + GET /broker/asset + orchestrator short block on explicit False, 30+32 green.
 Done2:
 - scheduler.py: slice client_order_id idempotency + partial summary log, remainder next cycle via reconciler, 19 green.
 Done3:
