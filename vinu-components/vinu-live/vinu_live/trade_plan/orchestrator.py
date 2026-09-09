@@ -610,11 +610,28 @@ class TradePlanOrchestrator:
         positions = list_open_positions(self._book, symbol=symbol)
         return positions[0] if positions else None
 
-    async def _submit_order(self, symbol: str, side: str, qty: float) -> dict[str, Any]:
+    async def _submit_order(
+        self, symbol: str, side: str, qty: float, artifact_id: str = "",
+    ) -> dict[str, Any]:
+        # Idempotency (16 step8): client_order_id = artifact+symbol+side+qty+minute bucket.
+        # Retry within same minute dedupes on broker, no double fill.
+        import os as _os
+
+        if _os.environ.get("VINU_EXEC_IDEMPOTENCY_ENABLED", "true").lower() not in ("1", "true", "yes"):
+            client_order_id = ""
+        else:
+            import time as _time
+
+            bucket = int(_time.time() // 60)
+            base = artifact_id or "no-artifact"
+            client_order_id = f"{base}-{symbol}-{side}-{qty:.4f}-{bucket}"
         try:
+            payload: dict[str, Any] = {"symbol": symbol, "side": side, "qty": qty, "order_type": "market"}
+            if client_order_id:
+                payload["client_order_id"] = client_order_id
             resp = await self._http.post(
                 f"{self._config.agent_api_url}/agent/broker/order",
-                json={"symbol": symbol, "side": side, "qty": qty, "order_type": "market"},
+                json=payload,
             )
             if resp.status_code != 200:
                 return {"status": "error", "http_status": resp.status_code}
