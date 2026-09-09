@@ -11,7 +11,9 @@ Bugs found while implementing: none, additive no break 9 green.
 Other files touched:
 - vinu-components/vinu-research/vinu_research/comparison.py
 - vinu-components/vinu-agent/vinu_agent/agent/research_artifact_writer.py:112
-Next: freeze hash required + rehearsal cost-aware.
+Next: freeze hash required (entry: writer run-lookup service call).
+Done5:
+- rehearsal cost-aware verified: same run_backtest + T+1 + 0.001/0.0005 costs as every backtest (tools.py:410).
 Done3:
 - Artifact.regime_tag + store migration + writer passthrough, real DB 5 rows migrate '' verified, 60+9 green.
 Done4:
