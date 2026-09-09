@@ -15,7 +15,7 @@ One table. Update when folder changes.
 | 13-risk | 13-risk-allocation-full.md | done (guards) | agent build | 2026-09-09 | cvar+vol+ladder+cap green, BL/HRP deferred |
 | 14-storage-3x | 14-simulation-storage.md | doing (models+loop done) | agent build | 2026-09-09 | regime tagged 58 green, paper pending |
 | 15-monitor | 15-monitor-shock-exit.md | done | agent build | 2026-09-09 | all 6 safety rails closed, 70 green |
-| 16-broker | 16-broker-fills.md | doing (fills+idem done) | agent build | 2026-09-09 | spread+queue+idemp 10+30 green, rest open |
+| 16-broker | 16-broker-fills.md | done | agent build | 2026-09-09 | all 6 closed: fills+idem+partial+borrow+corp |
 | 17-ui | 17-ui-status.md | done (CLI v1) | agent build | 2026-09-09 | checkbox+pipeline+banner+csv, web v2 later |
 | 18-data | 18-data-pipeline.md | done | agent build | 2026-09-09 | order+lineage+refill+PIT closed |
 | 19-portfolio | 19-portfolio-inside.md | done | agent build | 2026-09-09 | all 5 closed, 116 green |

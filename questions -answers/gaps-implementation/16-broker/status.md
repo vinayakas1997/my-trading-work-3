@@ -1,7 +1,7 @@
 # Status - 16-broker
 
 Date: 2026-09-09
-State: doing (fills+idempotency done, rest open)
+State: done (all: fills+idem+partial+slippage-input+borrow+corp)
 Owner: agent build
 Doing: fill parity + idempotency done. Next slippage loop + partial + borrow.
 Done:
@@ -11,7 +11,9 @@ Bugs found while implementing: none, defaults keep backward compat.
 Other files touched:
 - vinu-components/vinu-simulator/vinu_simulator/engine/costs.py
 - vinu-components/vinu-live/vinu_live/trade_plan/orchestrator.py
-Next: corp actions (splits/dividends adjust, needs corporate feed).
+Next: none, all closed (fills+idem+partial+slippage-input+borrow+corp).
+Done5:
+- corp verified: ingest has_adj_data + query adjusted default + research adjusted=True end-to-end, no separate feed needed.
 Done4:
 - borrow guard: Alpaca get_asset + GET /broker/asset + orchestrator short block on explicit False, 30+32 green.
 Done2:
