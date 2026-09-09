@@ -1,8 +1,9 @@
-# Testing - 08-advanced-sweep (step1)
+# Testing - 08-advanced-sweep (step1+2)
 
-Command: same as 03 (shared file).
-Expected: 35 passed both modes.
-Actual: 35 passed true + false.
-Status: green for step1, red for rest.
+Command:
+- python3 -m pytest vinu-research/tests/test_sweep_grid.py -q
+Expected: 13 passed, oversized+config subsamples, no-config raises.
+Actual: 13 passed.
+Status: green for step1+2, red for purge pending.
 Proof log: build output 2026-09-09.
-Note: step2+ needs separate tests when built.
+Note: purge+barrier pending separate.

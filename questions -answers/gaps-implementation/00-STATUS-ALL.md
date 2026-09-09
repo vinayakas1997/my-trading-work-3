@@ -7,7 +7,7 @@ One table. Update when folder changes.
 | 02-llm-400 | 02-inefficiencies-found.md #1 | done | built 06:24 | 2026-09-08 | loop.py keep user, 8e1c13d, NVDA 200 |
 | 03-vectorbt-not-connected | 03-vectorbt-not-connected.md, 07 No.3, 08 step1 | done | agent build | 2026-09-09 | gather sem5 order kept, rollback false, 35 green both |
 | 07-sweep-7 | 07-sweep-grid-7-inefficiencies.md | doing (No.4+No.2+No.5 done) | agent build | 2026-09-09 | base_code + custom + 2+ FAIL green, rest open |
-| 08-advanced-sweep | 08-advanced-sweep-adopt.md | doing (step1 done) | agent build | 2026-09-09 | fast done via 03, next hyperopt |
+| 08-advanced-sweep | 08-advanced-sweep-adopt.md | doing (step1+2 done) | agent build | 2026-09-09 | fast+hyperopt 13 green, purge pending |
 | 09-top3-9 | 09-top3-per-timeframe.md | doing (diversity done) | agent build | 2026-09-09 | _shape+diverse_top_n green, writer 9 pending |
 | 10-env-knobs | 10-env-knobs.md | doing (sweep wired) | agent build | 2026-09-09 | config+grid env wired 53 green, docs pending |
 | 11-paper-9 | 11-paper-all-6-live.md | doing (knob done) | agent build | 2026-09-09 | paper-days 1D/1H wired 10 green, writer 9 pending |

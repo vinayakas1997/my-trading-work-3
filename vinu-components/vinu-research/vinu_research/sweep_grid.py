@@ -115,6 +115,18 @@ async def run_sweep_grid(
     """
     if not param_grid:
         raise ValueError("param_grid must contain at least one point.")
+    # Hyperopt 8 smart (08 step2): oversized grids (>MAX) subsample evenly to
+    # HYPEROPT_MAX_POINTS only when caller passes config with hyperopt on.
+    # No config = fail-closed raise (tests unchanged). Env/config only.
+    _use_hyperopt = False
+    _hyperopt_max = int(os.environ.get("VINU_SWEEP_HYPEROPT_MAX_POINTS", "8"))
+    if config is not None:
+        _use_hyperopt = bool(getattr(config, "sweep_use_hyperopt", False))
+        _hyperopt_max = int(getattr(config, "sweep_hyperopt_max_points", _hyperopt_max))
+    if len(param_grid) > MAX_GRID_POINTS and _use_hyperopt:
+        step = len(param_grid) / _hyperopt_max
+        param_grid = [param_grid[int(i * step)] for i in range(_hyperopt_max)]
+        LOG.info("Hyperopt coarse round: oversized grid subsampled to %d points", _hyperopt_max)
     if len(param_grid) > MAX_GRID_POINTS:
         raise GridTooLargeError(
             f"Requested grid has {len(param_grid)} points, exceeding the "
