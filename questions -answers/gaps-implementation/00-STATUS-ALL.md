@@ -20,7 +20,7 @@ One table. Update when folder changes.
 | 18-data | 18-data-pipeline.md | doing (order done) | agent build | 2026-09-09 | tushare+env 13 green, PIT pending |
 | 19-portfolio | 19-portfolio-inside.md | doing (ladder done) | agent build | 2026-09-09 | halve/flat/halt 9 green, regime pending |
 | 20-learning | 20-learning-over-time.md | doing (worker done) | agent build | 2026-09-09 | LESSON after 30 16 green, decay pending |
-| 21-workers | 21-significance-skills.md | doing (mute+pin done) | agent build | 2026-09-09 | 44 green, audit pending |
+| 21-workers | 21-significance-skills.md | done | agent build | 2026-09-09 | mute+pin+audit+notify 51 green |
 | 22-infra | 22-infra-secrets-docker.md | doing (retry done) | agent build | 2026-09-09 | sim retry3 + secrets ok, slim later |
 | 23-runbooks | 23-runbooks-ats-full.md | done | agent build | 2026-09-09 | ATS-first rule added |
 | 24-corners | 24-remaining-corners.md | done | agent build | 2026-09-09 | Sec1-5 closed, .pyc untracked |

@@ -1,7 +1,7 @@
 # Status - 21-workers
 
 Date: 2026-09-09
-State: doing (mute+version done, audit pending)
+State: done (mute+pin+audit+notify)
 Owner: agent build
 Doing: flag mute + pin done. Next skill audit check.
 Done:
@@ -9,6 +9,8 @@ Done:
 Bugs found while implementing: none, 44 green, mute verified true.
 Other files touched:
 - vinu-components/vinu-agent/vinu_agent/agent/significance_triage.py:93
-Next: notify protocol.
+Next: none, all closed.
 Done2:
 - skill_audit.py: current_skill_versions hash snapshot for provable pins, 51 green.
+Done3:
+- significance_triage.py: deliver_flag mute-aware, large_funding always alerts, returns delivered bool, 51 green.
