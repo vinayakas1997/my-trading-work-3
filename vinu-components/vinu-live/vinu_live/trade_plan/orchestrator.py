@@ -120,6 +120,26 @@ def _position_age_days(opened_at: str) -> int:
         return 0
 
 
+TRAILING_ATR_MULT = float(_os.environ.get("VINU_LIVE_TRAILING_ATR_MULT", "2.0"))
+
+
+def trailing_stop_for(position: Any, price: float, closes: list[float]) -> float | None:
+    """Trailing 2x ATR stop (15 step2): mean absolute daily move over last 14
+    closes as ATR proxy. Long: price - mult*ATR. Short: price + mult*ATR.
+    Returns None when not enough data. Ratchet-only enforced by caller."""
+    if TRAILING_ATR_MULT <= 0 or len(closes) < 3 or price <= 0:
+        return None
+    window = closes[-15:]
+    moves = [abs(window[i] - window[i - 1]) for i in range(1, len(window))]
+    atr = sum(moves) / len(moves) if moves else 0.0
+    if atr <= 0:
+        return None
+    side = getattr(position, "side", getattr(position, "direction", "long"))
+    if str(side).lower() in ("short", "sell"):
+        return price + TRAILING_ATR_MULT * atr
+    return price - TRAILING_ATR_MULT * atr
+
+
 class TradePlanOrchestrator:
     def __init__(
         self,
@@ -504,6 +524,25 @@ class TradePlanOrchestrator:
             return await self._evaluate_rebalance_request(
                 position, price, portfolio_value, rebalance_request,
             )
+
+        # Trailing 2x ATR (15 step2): ratchet stop up for longs (down for
+        # shorts), never loosen. Best-effort, never blocks hold.
+        try:
+            _new_stop = trailing_stop_for(position, price, recent_prices)
+            if _new_stop is not None:
+                _old = getattr(position, "stop_loss", None)
+                _side = str(getattr(position, "side", getattr(position, "direction", "long"))).lower()
+                if _side in ("short", "sell"):
+                    _ratchet = _old is None or _new_stop < _old
+                else:
+                    _ratchet = _old is None or _new_stop > _old
+                if _ratchet:
+                    from vinu_live.book.positions import update_stop_loss as _update_sl
+
+                    _update_sl(self._book, position.position_id, _new_stop)
+                    LOG.info("Trailing stop ratchet %s: %s -> %s", symbol, _old, round(_new_stop, 2))
+        except Exception as e:
+            LOG.debug("Trailing ratchet failed for %s: %s", symbol, e)
 
         LOG.info("No rule triggered for %s -- holding unchanged", symbol)
         return {"symbol": symbol, "action": "hold", "reason": "no_rule_triggered"}
