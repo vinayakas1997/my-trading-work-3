@@ -11,4 +11,6 @@ Bugs found while implementing: none.
 Other files touched:
 - vinu-components/vinu-research/vinu_research/models.py:625
 - vinu-components/vinu-research/vinu_research/loop.py:859
-Next: paper same shape + notebook.
+Next: notebook side-by-side view.
+Done3:
+- performance_store.py: meta_json v2 run_id+regime+conditions per artifact, 2 green.
