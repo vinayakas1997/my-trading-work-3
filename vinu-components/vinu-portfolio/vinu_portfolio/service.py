@@ -397,9 +397,14 @@ class PortfolioService:
         weighting tilt, not a safety gate, so it must never block
         allocation the way OrderGuard's checks correctly block orders.
         """
+        return await self._fetch_symbol_regime(self._config.benchmark_symbol)
+
+    async def _fetch_symbol_regime(self, symbol: str) -> dict[str, Any]:
+        """Per-symbol regime (19 step2): same classifier as benchmark, run
+        on the symbol's own daily closes. Fail-open to unavailable."""
         try:
             resp = await self._http.get(
-                f"{self._config.stock_api_url}/stock/candles/{self._config.benchmark_symbol}",
+                f"{self._config.stock_api_url}/stock/candles/{symbol}",
                 params={"interval": "1d", "adjusted": True},
             )
             if resp.status_code != 200:
@@ -410,9 +415,11 @@ class PortfolioService:
                 return {"status": "unavailable", "regime": None}
             closes = pd.Series([float(r["close"]) for r in records])
             returns = closes.pct_change().dropna()
-            return classify_current_regime(returns)
+            out = classify_current_regime(returns)
+            out["symbol"] = symbol
+            return out
         except Exception as e:
-            LOG.warning("Failed to fetch benchmark regime: %s", e)
+            LOG.warning("Failed to fetch regime for %s: %s", symbol, e)
             return {"status": "unavailable", "regime": None}
 
     async def _fetch_outcome_confidence(self, strategy: dict[str, Any]) -> dict[str, Any]:
@@ -522,15 +529,28 @@ class PortfolioService:
         if base["status"] != "ok":
             return base
 
+        import os as _os
+
         regime_info = await self._fetch_benchmark_regime()
         regime = regime_info.get("regime")
+        # Per-symbol regime (19 step2): when enabled, each sleeve's own
+        # symbol regime overrides benchmark for its tilt. Default off keeps
+        # benchmark-only behavior. Fail-open: unavailable -> benchmark.
+        _per_sym = _os.environ.get("VINU_PORTFOLIO_PER_SYMBOL_REGIME", "false").lower() in ("1", "true", "yes")
+        per_symbol_regime: dict[str, Any] = {}
+        if _per_sym:
+            _syms = sorted({(w.get("symbol") or w.get("name", "")).upper() for w in base["weights"] if w.get("symbol") or w.get("name")})
+            for _s in _syms[:10]:
+                per_symbol_regime[_s] = await self._fetch_symbol_regime(_s)
 
         by_name = {s["name"]: s for s in base["strategies"]}
         tilted: list[dict[str, Any]] = []
         for w in base["weights"]:
             strategy = by_name.get(w["name"], {})
             confidence = await self._fetch_outcome_confidence(strategy)
-            regime_mult = self._regime_alignment_multiplier(w["name"], regime)
+            _sym = (w.get("symbol") or "").upper()
+            _local = (per_symbol_regime.get(_sym) or {}).get("regime") if _sym else None
+            regime_mult = self._regime_alignment_multiplier(w["name"], _local or regime)
             outcome_mult = self._outcome_confidence_multiplier(confidence)
             tilted.append({
                 **w,
@@ -554,6 +574,7 @@ class PortfolioService:
             **base,
             "weights": tilted,
             "regime": regime_info,
+            "per_symbol_regime": per_symbol_regime,
             "account_equity": equity,
         }
 

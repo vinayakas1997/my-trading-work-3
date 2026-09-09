@@ -9,4 +9,6 @@ Done:
 Bugs found while implementing: none, 9 green, ladder verified 0/-5 ok -11 halve -16 flat -21 halt.
 Other files touched:
 - vinu-components/vinu-portfolio/vinu_portfolio/circuit_breakers.py:23
-Next: per-symbol regime + sleeves + hysteresis.
+Next: sleeves + hysteresis.
+Done2:
+- service.py: _fetch_symbol_regime per-symbol classifier + VINU_PORTFOLIO_PER_SYMBOL_REGIME env (default off benchmark), per_symbol_regime in allocation, 118 green (auth 2 pre-existing).

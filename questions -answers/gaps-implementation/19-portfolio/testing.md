@@ -1,8 +1,10 @@
-# Testing - 19-portfolio (DD ladder)
+# Testing - 19-portfolio (ladder+per-symbol)
 
-Command: python3 -m pytest vinu-portfolio/tests/test_circuit_breakers.py vinu-portfolio/tests/test_drawdown_scheduler.py -q
-Expected: 9 passed, ladder ok/halve/flat/halt.
-Actual: 9 passed, 100 ok 95 ok 89 halve 84 flat 79 halt.
-Status: green for ladder, red for regime pending.
+Command:
+- python3 -m pytest vinu-portfolio/tests/test_circuit_breakers.py vinu-portfolio/tests/test_drawdown_scheduler.py -q
+- python3 -m pytest vinu-portfolio/tests/ -q
+Expected: 9 + 118 passed, per-symbol defaults off.
+Actual: 9 + 118 passed, auth 2 pre-existing fail same on stash.
+Status: green for ladder+per-symbol, red for sleeves pending.
 Proof log: build output 2026-09-09.
-Note: regime+sleeves pending separate.
+Note: sleeves+hysteresis pending separate.
