@@ -9,6 +9,8 @@ Done:
 Bugs found while implementing: test_api health providers permission error pre-existing, 13 green.
 Other files touched:
 - vinu-components/vinu-stock-price/vinu_stock/providers/registry.py:23
-Next: PIT as-of join test + gap scan backfill.
+Next: PIT as-of join test.
 Done2:
 - models.py lineage_hash + loop.py data_hash per run, 74 green (freeze.py already exists).
+Done3:
+- year_job.py: gap refill queue same year, merge no double, 3 green.
