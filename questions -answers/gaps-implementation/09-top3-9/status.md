@@ -1,7 +1,7 @@
 # Status - 09-top3-9
 
 Date: 2026-09-09
-State: doing (diversity+writer done, regime pending)
+State: done (all: diversity+writer+regime+freeze+corr+rehearsal)
 Owner: agent build
 Doing: diversity + writer done. Next regime tag + freeze + corr.
 Done:
@@ -11,7 +11,9 @@ Bugs found while implementing: none, additive no break 9 green.
 Other files touched:
 - vinu-components/vinu-research/vinu_research/comparison.py
 - vinu-components/vinu-agent/vinu_agent/agent/research_artifact_writer.py:112
-Next: freeze hash required (entry: writer run-lookup service call).
+Next: none, all closed (diversity+writer+regime+freeze+corr+rehearsal).
+Done6:
+- Artifact.freeze_hash config lineage + migration + writer fills, old rows '' verified, 60+9 green. (Caught own bug: helper placed inside class broke create, fixed + green.)
 Done5:
 - rehearsal cost-aware verified: same run_backtest + T+1 + 0.001/0.0005 costs as every backtest (tools.py:410).
 Done3:
