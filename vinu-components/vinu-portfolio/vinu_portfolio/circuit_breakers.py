@@ -24,8 +24,14 @@ class PortfolioDrawdownMonitor:
         self,
         drawdown_threshold: float = -0.20,
         agent_api_url: str | None = None,
+        halve_threshold: float | None = None,
+        flat_threshold: float | None = None,
     ) -> None:
         self._threshold = drawdown_threshold
+        # DD de-risk (19 step2): halve at -10%, flat at -15%, halt at -20%.
+        # Env only, defaults keep old halt behavior plus new actions.
+        self._halve = -abs(float(halve_threshold)) if halve_threshold is not None else -abs(float(os.environ.get("VINU_PORTFOLIO_DD_HALVE", "-0.10")))
+        self._flat = -abs(float(flat_threshold)) if flat_threshold is not None else -abs(float(os.environ.get("VINU_PORTFOLIO_DD_FLAT", "-0.15")))
         self._peak_value: float | None = None
         self._agent_api_url = agent_api_url or os.environ.get(
             "VINU_AGENT_API_URL", "http://localhost:8086"
@@ -53,10 +59,22 @@ class PortfolioDrawdownMonitor:
             self._halt_trading(current_drawdown)
             halted = True
 
+        # Action ladder: ok -> halve -> flat -> halt. Orchestrator halves size
+        # at halve, exits to flat at flat, HALT entries-only at halt.
+        if threshold_breached:
+            action = "halt"
+        elif current_drawdown <= self._flat:
+            action = "flat"
+        elif current_drawdown <= self._halve:
+            action = "halve"
+        else:
+            action = "ok"
+
         return {
             "current_drawdown": round(current_drawdown, 4),
             "threshold_breached": threshold_breached,
             "halted": halted,
+            "action": action,
         }
 
     def _halt_trading(self, drawdown: float) -> None:

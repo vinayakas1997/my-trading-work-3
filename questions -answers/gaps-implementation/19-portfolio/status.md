@@ -1,10 +1,12 @@
 # Status - 19-portfolio
 
 Date: 2026-09-09
-State: open (02 done, 24 Sec1 done, rest open)
-Owner: -
-Doing: plan created, waiting build order.
-Done: -
-Bugs found while implementing: -
-Other files touched: -
-Next: start per 00-AGENT-INSTRUCTIONS order.
+State: doing (DD ladder done, regime pending)
+Owner: agent build
+Doing: halve/flat/halt done. Next per-symbol regime + sleeves.
+Done:
+- circuit_breakers.py: halve -10% flat -15% halt -20% env knobs, action ok/halve/flat/halt.
+Bugs found while implementing: none, 9 green, ladder verified 0/-5 ok -11 halve -16 flat -21 halt.
+Other files touched:
+- vinu-components/vinu-portfolio/vinu_portfolio/circuit_breakers.py:23
+Next: per-symbol regime + sleeves + hysteresis.

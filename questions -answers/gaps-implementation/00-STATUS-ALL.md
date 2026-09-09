@@ -18,7 +18,7 @@ One table. Update when folder changes.
 | 16-broker | 16-broker-fills.md | doing (fills+idem done) | agent build | 2026-09-09 | spread+queue+idemp 10+30 green, rest open |
 | 17-ui | 17-ui-status.md | doing (checkbox done) | agent build | 2026-09-09 | ui-status.py 27/27 green, page pending |
 | 18-data | 18-data-pipeline.md | doing (order done) | agent build | 2026-09-09 | tushare+env 13 green, PIT pending |
-| 19-portfolio | 19-portfolio-inside.md | open | - | - | DD halve + per-symbol regime |
+| 19-portfolio | 19-portfolio-inside.md | doing (ladder done) | agent build | 2026-09-09 | halve/flat/halt 9 green, regime pending |
 | 20-learning | 20-learning-over-time.md | open | - | - | lesson worker + calibration wire |
 | 21-workers | 21-significance-skills.md | open | - | - | mute + version pin |
 | 22-infra | 22-infra-secrets-docker.md | open | - | - | secrets check + retry + slim later |
