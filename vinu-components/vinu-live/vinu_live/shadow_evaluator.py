@@ -99,10 +99,29 @@ class ShadowEvaluator:
                 "promoted": False,
             }
 
+        import os as _os
+
         degradation = (
             (backtest_sharpe - paper_sharpe) / max(abs(backtest_sharpe), 1e-6)
             if backtest_sharpe != 0 else 1.0
         )
+
+        # Auto-pause (12 step4): paper Sharpe deeply negative -> auto_paused,
+        # fast pause without waiting for full paper window. Never promotes.
+        try:
+            _pause_at = float(_os.environ.get("VINU_SHADOW_AUTO_PAUSE_SHARPE", "-1.0"))
+        except ValueError:
+            _pause_at = -1.0
+        if paper_sharpe <= _pause_at:
+            return {
+                "artifact_id": artifact_id,
+                "name": name,
+                "status": "auto_paused",
+                "paper_sharpe": round(paper_sharpe, 4),
+                "backtest_sharpe": round(backtest_sharpe, 4),
+                "degradation": round(degradation, 4),
+                "promoted": False,
+            }
 
         promoted = paper_sharpe > 0 and degradation <= self._max_sharpe_degradation
 

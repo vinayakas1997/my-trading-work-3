@@ -9,4 +9,6 @@ Done:
 Bugs found while implementing: none, rehearsal k=0 deselect, paper/loop 58 green.
 Other files touched:
 - vinu-components/vinu-research/vinu_research/loop.py:859
-Next: partial size + auto-pause + HRP decision last.
+Next: partial size + HRP decision last.
+Done2:
+- shadow_evaluator.py: auto_paused when paper Sharpe <= -1.0 env, fast pause never promotes, 7 green.

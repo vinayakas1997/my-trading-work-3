@@ -82,17 +82,15 @@ async def test_insufficient_data_when_no_daily_returns(evaluator):
 @pytest.mark.asyncio
 async def test_withholds_promotion_when_degradation_exceeds_tolerance(evaluator):
     """Paper Sharpe degrades well beyond max_sharpe_degradation (default
-    0.5) vs. backtest Sharpe -- must NOT promote. Confirmed against the
-    real branch in _evaluate_one: `promoted = paper_sharpe > 0 and
-    degradation <= self._max_sharpe_degradation`, status becomes
-    'below_threshold', artifact stays exactly where it was (no promote
-    call is made at all -- _promote_artifact is only ever called inside
-    the `if promoted:` branch)."""
+    0.5) vs. backtest Sharpe -- must NOT promote. Consistently-negative
+    returns push paper Sharpe below the auto-pause floor (-1.0), so status
+    is 'auto_paused' (a stronger below_threshold). Artifact stays exactly
+    where it was (no promote call at all)."""
     artifacts = [
         {"artifact_id": "art-bad", "name": "degraded-strategy", "initial_sharpe": 2.0},
     ]
-    # Small, consistently-negative daily returns -> negative paper Sharpe,
-    # a massive degradation from a backtest Sharpe of 2.0.
+    # Small, consistently-negative daily returns -> deeply negative paper
+    # Sharpe, a massive degradation from a backtest Sharpe of 2.0.
     returns = [-0.01, -0.008, -0.012, -0.01, -0.015, -0.009, -0.011]
 
     with patch.object(evaluator._http, "get", _mock_get(artifacts, returns)):
@@ -102,9 +100,9 @@ async def test_withholds_promotion_when_degradation_exceeds_tolerance(evaluator)
     assert len(results) == 1
     r = results[0]
     assert r["artifact_id"] == "art-bad"
-    assert r["status"] == "below_threshold"
+    assert r["status"] == "auto_paused"
     assert r["promoted"] is False
-    assert r["paper_sharpe"] is not None
+    assert r["paper_sharpe"] is not None and r["paper_sharpe"] <= -1.0
     mock_post.assert_not_called()  # no /promote call at all -- never touches the artifact's status
 
 
