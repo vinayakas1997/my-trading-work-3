@@ -321,16 +321,28 @@ def format_flag_message(flag: SignificanceFlag) -> str:
     )
 
 
-async def deliver_flag(flag: SignificanceFlag, targets: list[ChannelTarget]) -> None:
+def _is_muted(flag: SignificanceFlag) -> bool:
+    return bool(flag.muted_until) and flag.muted_until > _now()
+
+
+async def deliver_flag(flag: SignificanceFlag, targets: list[ChannelTarget]) -> bool:
     """Best-effort per channel -- one channel failing must not prevent
     delivery through the others, and never raises back into the caller
-    (informational only, see module docstring)."""
+    (informational only, see module docstring).
+
+    Mute protocol (21 step1): muted flags don't re-deliver, except
+    large_funding which always alerts. Returns True if delivered.
+    """
+    if _is_muted(flag) and flag.reason != "large_funding":
+        LOG.info("flag %s muted until %s, skipping delivery", flag.flag_id, flag.muted_until)
+        return False
     text = format_flag_message(flag)
     for target in targets:
         try:
             await target.channel.send_message(target.chat_id, text)
         except Exception:
             LOG.exception("failed to deliver flag %s via a channel, continuing with the others", flag.flag_id)
+    return True
 
 
 # ---------------------------------------------------------------------------
