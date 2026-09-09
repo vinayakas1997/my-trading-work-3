@@ -121,6 +121,27 @@ def _position_age_days(opened_at: str) -> int:
 
 
 TRAILING_ATR_MULT = float(_os.environ.get("VINU_LIVE_TRAILING_ATR_MULT", "2.0"))
+TURBULENCE_VOL = float(_os.environ.get("VINU_LIVE_TURBULENCE_VOL", "0.05"))
+
+
+async def turbulence_active(fetch_recent: Any, symbol: str) -> tuple[bool, str]:
+    """Turbulence VIX pause (15 step3): 14d realized vol above threshold ->
+    pause entries (exits never blocked). Fail-open on missing data."""
+    if TURBULENCE_VOL <= 0:
+        return False, ""
+    try:
+        prices = await fetch_recent(symbol)
+        if len(prices) < 15:
+            return False, ""
+        import statistics as _st
+
+        rets = [(prices[i] - prices[i - 1]) / prices[i - 1] for i in range(1, len(prices)) if prices[i - 1] > 0]
+        vol = _st.pstdev(rets[-14:]) if len(rets) >= 14 else 0.0
+        if vol > TURBULENCE_VOL:
+            return True, f"turbulence: 14d vol {vol:.3f} > {TURBULENCE_VOL:.3f}, entries paused"
+        return False, ""
+    except Exception:
+        return False, ""
 
 
 def trailing_stop_for(position: Any, price: float, closes: list[float]) -> float | None:
@@ -430,6 +451,11 @@ class TradePlanOrchestrator:
         if locked:
             LOG.warning("Cooldown -- skipping entry for %s: %s", symbol, lock_reason)
             return {"symbol": symbol, "action": "entry_blocked_by_cooldown", "reason": lock_reason}
+
+        turb, turb_reason = await turbulence_active(self._fetch_recent_prices, symbol)
+        if turb:
+            LOG.warning("Turbulence -- skipping entry for %s: %s", symbol, turb_reason)
+            return {"symbol": symbol, "action": "entry_blocked_by_turbulence", "reason": turb_reason}
 
         side = "buy" if direction == "long" else "sell"
         order_result = await self._submit_order(symbol, side, qty)
