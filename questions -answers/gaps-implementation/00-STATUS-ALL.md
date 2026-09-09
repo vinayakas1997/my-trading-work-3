@@ -21,7 +21,7 @@ One table. Update when folder changes.
 | 19-portfolio | 19-portfolio-inside.md | done | agent build | 2026-09-09 | all 5 closed, 116 green |
 | 20-learning | 20-learning-over-time.md | doing (worker done) | agent build | 2026-09-09 | LESSON after 30 16 green, decay pending |
 | 21-workers | 21-significance-skills.md | done | agent build | 2026-09-09 | mute+pin+audit+notify 51 green |
-| 22-infra | 22-infra-secrets-docker.md | doing (retry done) | agent build | 2026-09-09 | sim retry3 + secrets ok, slim later |
+| 22-infra | 22-infra-secrets-docker.md | done | agent build | 2026-09-09 | retry+secrets closed, slim deferred post-Full |
 | 23-runbooks | 23-runbooks-ats-full.md | done | agent build | 2026-09-09 | ATS-first rule added |
 | 24-corners | 24-remaining-corners.md | done | agent build | 2026-09-09 | Sec1-5 closed, .pyc untracked |
 | 25-money-gate | 25-money-gate.md | doing (gate enforced) | agent build | 2026-09-09 | edge/costs/sizing/exec partial, no fund |
