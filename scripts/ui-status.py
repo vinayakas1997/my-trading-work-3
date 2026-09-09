@@ -54,6 +54,34 @@ def drill(run_id: str):
     con.close()
 
 
+PIPELINE_STAGES = ["watchlist_gate", "summary_agent", "planner_triage", "sweep", "risk_gatekeeper", "capital_allocator", "live_shadow", "monitor"]
+
+LEDGER_DB = Path(__file__).resolve().parent.parent / "vinu-components/data/agent/ticker_ledger.db"
+
+
+def pipeline(symbol: str):
+    """Pipeline 0-7 page (17 step1): latest ledger event per stage for ticker."""
+    import sqlite3 as _sql
+
+    print(f"pipeline {symbol.upper()}")
+    try:
+        con = _sql.connect(f"file:{LEDGER_DB}?mode=ro", uri=True)
+        cur = con.cursor()
+        for i, stage in enumerate(PIPELINE_STAGES):
+            cur.execute(
+                "SELECT event_type, timestamp, text FROM ticker_ledger WHERE ticker=? AND stage=? ORDER BY timestamp DESC LIMIT 1",
+                (symbol.upper(), stage),
+            )
+            row = cur.fetchone()
+            if row:
+                print(f"  {i} {stage}: {row[0]} @ {row[1]}")
+            else:
+                print(f"  {i} {stage}: -")
+        con.close()
+    except Exception as e:
+        print(f"ledger unavailable: {e}")
+
+
 def export_csv(path: str = "ui-status.csv"):
     """CSV export (17 step3): checkbox table to file."""
     import csv as _csv
@@ -76,12 +104,15 @@ if __name__ == "__main__":
     ap.add_argument("--granularity", default="1D")
     ap.add_argument("--run-id", default="")
     ap.add_argument("--csv", default="")
+    ap.add_argument("--pipeline", default="")
     a = ap.parse_args()
     halted = halt_banner()
     if a.run_id:
         drill(a.run_id)
     elif a.csv:
         export_csv(a.csv)
+    elif a.pipeline:
+        pipeline(a.pipeline)
     else:
         checkbox(a.all, a.symbol, a.granularity)
     if halted:
