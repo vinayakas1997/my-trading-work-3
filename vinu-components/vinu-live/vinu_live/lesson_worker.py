@@ -54,11 +54,22 @@ def cycle(data_root: Path | str = "", db_path: Path | str = "") -> dict:
         else:
             cur.execute("SELECT COUNT(*) FROM positions WHERE status='closed'")
         closed = cur.fetchone()[0]
+        # Slippage feedback input (16): realized fill costs per lesson so
+        # monthly review can compare modeled vs realized. Fail-open zeros.
+        fills = 0
+        avg_commission = 0.0
+        try:
+            cur.execute("SELECT COUNT(*), AVG(commission) FROM fills")
+            row = cur.fetchone()
+            fills = row[0] or 0
+            avg_commission = round(row[1] or 0.0, 4)
+        except Exception:
+            pass
     except Exception as e:
         return {"status": "failed", "error": str(e)}
     finally:
         con.close()
     if not should_write_lesson(closed):
-        return {"status": "skipped_not_enough", "closed": closed}
-    p = write_lesson({"closed": closed, "at": datetime.now(timezone.utc).isoformat()}, root)
-    return {"status": "ok", "closed": closed, "lesson": str(p)}
+        return {"status": "skipped_not_enough", "closed": closed, "fills": fills, "avg_commission": avg_commission}
+    p = write_lesson({"closed": closed, "fills": fills, "avg_commission": avg_commission, "at": datetime.now(timezone.utc).isoformat()}, root)
+    return {"status": "ok", "closed": closed, "fills": fills, "avg_commission": avg_commission, "lesson": str(p)}

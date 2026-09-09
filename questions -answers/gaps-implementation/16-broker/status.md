@@ -11,6 +11,8 @@ Bugs found while implementing: none, defaults keep backward compat.
 Other files touched:
 - vinu-components/vinu-simulator/vinu_simulator/engine/costs.py
 - vinu-components/vinu-live/vinu_live/trade_plan/orchestrator.py
-Next: slippage feedback monthly, borrow/corp check.
+Next: borrow/corp check (needs broker shortable endpoint).
 Done2:
 - scheduler.py: slice client_order_id idempotency + partial summary log, remainder next cycle via reconciler, 19 green.
+Done3:
+- lesson_worker.py: fills + avg_commission per lesson for monthly slippage review, live 1 closed 2 fills verified.
