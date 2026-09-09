@@ -9,4 +9,6 @@ Done:
 Bugs found while implementing: none, defaults disabled until hook wires.
 Other files touched:
 - vinu-components/vinu-agent/vinu_agent/agent/position_sizing.py
-Next: auto 4-guard counts, BL/HRP after ACTIVE 3 + paper 10d, execution guards pin.
+Next: BL/HRP after ACTIVE 3 + paper 10d (needs live history).
+Done2:
+- service.py: composition action cap VINU_PORTFOLIO_MAX_ACTION 0.20 per cycle + renormalize, 116 green.
