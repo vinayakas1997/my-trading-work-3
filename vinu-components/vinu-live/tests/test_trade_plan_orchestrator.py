@@ -239,7 +239,10 @@ class TestEvaluateOpenPosition:
         assert action["action"] == "hold"
         assert "No rule triggered" in caplog.text
 
-    def test_breaker_halt_blocks_invalidation_exit(self, book) -> None:
+    def test_breaker_halt_blocks_invalidation_exit(self, book, monkeypatch) -> None:
+        # Old policy all = block exit (rollback). New default entries_only = allow exit.
+        import vinu_live.trade_plan.orchestrator as _orch_mod
+        monkeypatch.setattr(_orch_mod, "HALT_POLICY", "all")
         open_position(book, "AAPL", "long", 10.0, 150.0)
         orch = _make_orchestrator(book)
         orch._breaker_state.halted = True
@@ -260,6 +263,29 @@ class TestEvaluateOpenPosition:
         assert action["action"] == "exit_blocked_by_breaker"
         assert post_mock.call_count == 0
         assert list_open_positions(book, symbol="AAPL")[0].qty == 10.0
+
+    def test_breaker_halt_entries_only_allows_exit(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as _orch_mod
+        monkeypatch.setattr(_orch_mod, "HALT_POLICY", "entries_only")
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._breaker_state.halted = True
+        orch._breaker_state.halted_reason = "manual test halt"
+        get_mock, post_mock = _router(
+            get_routes={
+                "/candles/AAPL": {"data": []},
+                "/angle/shock_clustering/AAPL": {"data": []},
+                "/broker/positions": [],
+            },
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        position = list_open_positions(book, symbol="AAPL")[0]
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 130.0, 100000.0))
+
+        assert action["action"] in ("invalidation_exit", "exit_not_filled")
+        # Risk-reducing exit attempted even on HALT entries-only.
 
 
 class TestRebalanceRequestIntake:

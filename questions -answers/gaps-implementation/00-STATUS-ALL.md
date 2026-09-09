@@ -14,7 +14,7 @@ One table. Update when folder changes.
 | 12-seven-day-10 | 12-seven-day-finish-10.md | open | - | - | 10 points, trading days + overlap |
 | 13-risk | 13-risk-allocation-full.md | doing (tail+vol done) | agent build | 2026-09-09 | cvar+vol 38 green, BL/HRP later |
 | 14-storage-3x | 14-simulation-storage.md | open | - | - | backtest+rehearsal+paper full |
-| 15-monitor | 15-monitor-shock-exit.md | open | - | - | HALT entries-only + time-stop first |
+| 15-monitor | 15-monitor-shock-exit.md | doing (HALT+time-stop done) | agent build | 2026-09-09 | entries-only allow exits 30 green, rest open |
 | 16-broker | 16-broker-fills.md | open | - | - | fills parity + kill + idempotency |
 | 17-ui | 17-ui-status.md | open | - | - | checkbox + 0-7 page + drill-down |
 | 18-data | 18-data-pipeline.md | open | - | - | PIT + gap + failover first |

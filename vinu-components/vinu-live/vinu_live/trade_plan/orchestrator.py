@@ -46,6 +46,27 @@ LOG = logging.getLogger(__name__)
 _COVARIANCE_WINDOW = 63
 _RETURNS_LOOKBACK_DAYS = 90
 
+# Monitor safety (15 steps 1-2): HALT entries-only + time-stop.
+# entries_only = block entries, allow risk-reducing exits/reduces.
+# all = block everything (old behavior, for debug rollback).
+import os as _os
+HALT_POLICY = _os.environ.get("VINU_LIVE_HALT_POLICY", "entries_only")
+MAX_HOLD_DAYS = int(_os.environ.get("VINU_LIVE_MAX_HOLD_DAYS", "30"))
+
+
+def _halt_allows_exit() -> bool:
+    return HALT_POLICY == "entries_only"
+
+
+def _position_age_days(opened_at: str) -> int:
+    try:
+        opened = datetime.fromisoformat(opened_at)
+        if opened.tzinfo is None:
+            opened = opened.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - opened).days
+    except (ValueError, TypeError):
+        return 0
+
 
 class TradePlanOrchestrator:
     def __init__(
@@ -395,6 +416,16 @@ class TradePlanOrchestrator:
             days_elapsed=days_elapsed,
         )
 
+        # Time-stop (15 step2): loser sits forever without invalidation.
+        # Auto exit on max_hold_days expiry with reason time_stop. Risk-reducing, allowed on HALT entries-only.
+        age_days = _position_age_days(position.opened_at)
+        if MAX_HOLD_DAYS > 0 and age_days > MAX_HOLD_DAYS:
+            LOG.info("Time-stop expiry for %s -- age %dd > max %dd", symbol, age_days, MAX_HOLD_DAYS)
+            return await self._apply_invalidation(
+                position, price, portfolio_value,
+                {"condition": f"time_stop age {age_days}d > max {MAX_HOLD_DAYS}d", "action": "exit"},
+            )
+
         triggered_invalidations = find_triggered_rules(
             plan.get("invalidation_conditions") or [], metrics,
         )
@@ -482,9 +513,11 @@ class TradePlanOrchestrator:
     ) -> dict[str, Any]:
         symbol = position.symbol
         verdict, reason = await self._check_breaker(portfolio_value)
-        if verdict == BreakerVerdict.HALT:
+        if verdict == BreakerVerdict.HALT and not _halt_allows_exit():
             LOG.warning("Breaker HALT -- skipping invalidation exit for %s: %s", symbol, reason)
             return {"symbol": symbol, "action": "exit_blocked_by_breaker", "reason": reason, "rule": rule}
+        if verdict == BreakerVerdict.HALT:
+            LOG.warning("Breaker HALT entries-only -- allowing risk-reducing exit for %s: %s", symbol, reason)
 
         side = "sell" if position.side == "long" else "buy"
         order_result = await self._submit_order(symbol, side, position.qty)
@@ -516,7 +549,7 @@ class TradePlanOrchestrator:
             reduce_pct = params.get("reduce_by_pct", 0.5)
             reduce_qty = position.qty * reduce_pct
             verdict, reason = await self._check_breaker(portfolio_value)
-            if verdict == BreakerVerdict.HALT:
+            if verdict == BreakerVerdict.HALT and not _halt_allows_exit():
                 LOG.warning("Breaker HALT -- skipping reduce for %s: %s", symbol, reason)
                 return {"symbol": symbol, "action": "reduce_blocked_by_breaker", "reason": reason, "rule": rule}
 
