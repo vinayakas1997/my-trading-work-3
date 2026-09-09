@@ -10,7 +10,9 @@ Done:
 Bugs found while implementing: first subsampled 12 to 8 broke tests, fixed to oversized + config-gated.
 Other files touched:
 - vinu-components/vinu-research/vinu_research/sweep_grid.py:39
-Next: triple-barrier + notebook.
+Next: notebook rank view (view layer, CSV covers interim).
+Done5:
+- labels.py triple-barrier +1/-1/0 pure + 4 tests green.
 Done4:
 - lookahead verified: test_custom_sim future-fill guard 3 green (engine raises on bfill leak).
 Done3:
