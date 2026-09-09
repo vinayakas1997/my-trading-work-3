@@ -584,6 +584,24 @@ class PortfolioService:
             if _tot2 > 0:
                 for t in tilted:
                     t["target_weight"] = round(t["target_weight"] / _tot2, 4)
+        # Composition action cap 20% (13 step1): no single sleeve moves more
+        # than VINU_PORTFOLIO_MAX_ACTION per cycle -- big rotations phase in
+        # gradually. New sleeves (no memory) uncapped first run. Renormalize.
+        try:
+            _max_act = float(_os.environ.get("VINU_PORTFOLIO_MAX_ACTION", "0.20"))
+        except ValueError:
+            _max_act = 0.20
+        if self._last_weights and _max_act > 0:
+            for t in tilted:
+                _old_w = self._last_weights.get(t["name"])
+                if _old_w is not None:
+                    _d = t["target_weight"] - _old_w
+                    if abs(_d) > _max_act:
+                        t["target_weight"] = round(_old_w + _max_act * (1 if _d > 0 else -1), 4)
+            _tot3 = sum(t["target_weight"] for t in tilted)
+            if _tot3 > 0:
+                for t in tilted:
+                    t["target_weight"] = round(t["target_weight"] / _tot3, 4)
         self._last_weights = {t["name"]: t["target_weight"] for t in tilted}
 
         equity = await self._fetch_account_equity()
