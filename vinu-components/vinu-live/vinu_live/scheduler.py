@@ -215,7 +215,13 @@ class LiveScheduler:
         delays = schedule_slice_delays(
             plan.total_orders, total_window_minutes=60,
         )
+        import time as _time
+
         for i, slice_ in enumerate(plan.slices):
+            # Idempotency (16): same minute-bucket key as orchestrator so a
+            # retried slice dedupes on broker instead of double-filling.
+            _bucket = int(_time.time() // 60)
+            _cid = f"sched-{slice_.symbol}-{slice_.side}-{slice_.qty:.4f}-{slice_.slice_number}-{_bucket}"
             try:
                 resp = await self._http.post(
                     f"{self._config.agent_api_url}/agent/broker/order",
@@ -224,6 +230,7 @@ class LiveScheduler:
                         "side": slice_.side,
                         "qty": slice_.qty,
                         "order_type": "market",
+                        "client_order_id": _cid,
                     },
                 )
                 result = {
@@ -256,6 +263,13 @@ class LiveScheduler:
                     LOG.warning("HALT file detected mid-plan — stopping remaining %d slices", len(plan.slices) - i - 1)
                     break
 
+        # Partial summary (16): slices already continue on failure above;
+        # report partial so caller sees submitted vs failed, remainder is
+        # retried next cycle via reconciler drift, never silently dropped.
+        ok = sum(1 for s in submitted if s.get("status") == "submitted")
+        bad = len(submitted) - ok
+        if bad:
+            LOG.warning("Partial fills: %d/%d slices submitted, %d failed — remainder next cycle", ok, len(submitted), bad)
         return submitted
 
     @staticmethod

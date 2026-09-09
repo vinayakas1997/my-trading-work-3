@@ -1,10 +1,11 @@
-# Testing - 16-broker (fills+idempotency)
+# Testing - 16-broker (fills+idempotency+partial)
 
 Command:
 - python3 -m pytest vinu-simulator/tests/ -q -k "cost"
 - python3 -m pytest vinu-live/tests/test_trade_plan_orchestrator.py -q
-Expected: 10 passed + 30 passed, spread raises buy lowers sell.
-Actual: 10 passed + 30 passed, base 1001.50 vs spread 1001.75, sell 998.25.
-Status: green for fills+idempotency, red for rest.
+- python3 -m pytest vinu-live/tests/ -q -k "scheduler or execution"
+Expected: 10 + 30 + 19 passed, partial continues on failure.
+Actual: 10 + 30 + 19 passed.
+Status: green for fills+idempotency+partial, red for slippage/borrow pending.
 Proof log: build output 2026-09-09.
-Note: slippage loop + partial pending separate.
+Note: slippage loop + borrow pending separate.
