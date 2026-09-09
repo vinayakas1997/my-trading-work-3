@@ -9,4 +9,6 @@ Done:
 Bugs found while implementing: none, 44 green, mute verified true.
 Other files touched:
 - vinu-components/vinu-agent/vinu_agent/agent/significance_triage.py:93
-Next: skill_audit version check + notify protocol.
+Next: notify protocol.
+Done2:
+- skill_audit.py: current_skill_versions hash snapshot for provable pins, 51 green.

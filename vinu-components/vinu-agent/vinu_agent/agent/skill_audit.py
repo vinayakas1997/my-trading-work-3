@@ -128,6 +128,22 @@ class SkillAuditStore(SQLiteBackend):
         return entry
 
 
+def current_skill_versions(skills_root: Path) -> dict[str, str]:
+    """Version pin (21 step2): provable {skill_path: content_hash} snapshot.
+    Flags carry skill_version (git sha or env); this maps it to exact skill
+    content so a reader can verify what version produced a flag."""
+    out: dict[str, str] = {}
+    for rel_path in AUDITED_SKILL_PATHS:
+        path = skills_root / rel_path
+        if not path.exists():
+            continue
+        try:
+            out[rel_path] = _content_hash(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+    return out
+
+
 def check_skill_edits(skills_root: Path, audit_store: SkillAuditStore) -> list[SkillEditEntry]:
     """Call on service startup (or periodically, once a real scheduler
     exists -- none does yet, same gap as Phase 0's RunLog trigger). Only

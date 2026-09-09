@@ -1,8 +1,8 @@
-# Testing - 21-workers (mute+version)
+# Testing - 21-workers (mute+version+audit)
 
-Command: python3 -m pytest vinu-agent/tests/ -q -k "significance"
-Expected: 44 passed, mute true version pinned.
-Actual: 44 passed, version test123 muted true.
-Status: green for mute+version, red for audit pending.
+Command: python3 -m pytest vinu-agent/tests/ -q -k "skill_audit or significance"
+Expected: 51 passed, mute true version + hash snapshot.
+Actual: 51 passed.
+Status: green for mute+version+audit, red for notify pending.
 Proof log: build output 2026-09-09.
-Note: audit pending separate.
+Note: notify protocol pending separate.
