@@ -23,7 +23,7 @@ One table. Update when folder changes.
 | 21-workers | 21-significance-skills.md | doing (mute+pin done) | agent build | 2026-09-09 | 44 green, audit pending |
 | 22-infra | 22-infra-secrets-docker.md | doing (retry done) | agent build | 2026-09-09 | sim retry3 + secrets ok, slim later |
 | 23-runbooks | 23-runbooks-ats-full.md | done | agent build | 2026-09-09 | ATS-first rule added |
-| 24-corners | 24-remaining-corners.md | doing | - | 2026-09-09 | Sec1 entrypoints closed, Sec2-5 outline |
+| 24-corners | 24-remaining-corners.md | doing (Sec1+2 done) | agent build | 2026-09-09 | entrypoints+scripts green, Sec3-5 pending |
 | 25-money-gate | 25-money-gate.md | open | - | - | 2/10 today, 5 proofs to fund |
 
 Rules: store 3 trade 3 now 9 live. Prune 90d dry-run true. SQLite now vector later 1000.
