@@ -11,4 +11,6 @@ Bugs found while implementing: mock db_path fallback fixed with Path exists chec
 Other files touched:
 - vinu-components/vinu-live/vinu_live/trade_plan/orchestrator.py
 - vinu-components/vinu-live/tests/test_trade_plan_orchestrator.py
-Next: trailing 2x ATR + bracket 50% at 1R + turbulence VIX pause.
+Next: bracket 50% at 1R + turbulence VIX pause.
+Done3:
+- orchestrator.py: trailing_stop_for 2x ATR proxy ratchet up longs down shorts never loosen, 30 green.
