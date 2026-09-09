@@ -908,6 +908,15 @@ class StrategyResearchLoop:
 
         is_sharpe = in_sample_result.metrics.sharpe_ratio
         reh_sharpe = rehearsal_bt.metrics.sharpe_ratio
+        reh_dd = rehearsal_bt.metrics.max_drawdown
+        # Regime tag (14): trend/range/high-vol from rehearsal itself.
+        if reh_dd <= -0.10:
+            _regime = "high-vol"
+        elif reh_sharpe >= 0.5:
+            _regime = "trend"
+        else:
+            _regime = "range"
+        _rehearsal_meta["regime_breakdown"] = {"rehearsal_regime": _regime}
 
         if reh_sharpe < 0:
             passed, note = False, f"rehearsal Sharpe {reh_sharpe:.2f} negative over {rehearsal_from}→{rehearsal_to} (bar-by-bar, cost-aware)"
