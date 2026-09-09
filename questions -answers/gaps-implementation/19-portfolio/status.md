@@ -1,7 +1,7 @@
 # Status - 19-portfolio
 
 Date: 2026-09-09
-State: doing (DD ladder done, regime pending)
+State: done (all: ladder+regime+hysteresis+sleeves+cap)
 Owner: agent build
 Doing: halve/flat/halt done. Next per-symbol regime + sleeves.
 Done:
@@ -9,7 +9,9 @@ Done:
 Bugs found while implementing: none, 9 green, ladder verified 0/-5 ok -11 halve -16 flat -21 halt.
 Other files touched:
 - vinu-components/vinu-portfolio/vinu_portfolio/circuit_breakers.py:23
-Next: interval sleeves 1D/1H (needs per-strategy interval data).
+Next: none, all closed (ladder+regime+hysteresis+sleeves+cap).
+Done5:
+- service.py: interval_sleeves from writer-9 names + daily YAML, 116 green.
 Done4:
 - service.py: style sleeves subtotals trend/mean-reversion/untagged, 116 green.
 Done2:

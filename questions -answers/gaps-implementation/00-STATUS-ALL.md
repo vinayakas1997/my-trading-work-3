@@ -18,7 +18,7 @@ One table. Update when folder changes.
 | 16-broker | 16-broker-fills.md | doing (fills+idem done) | agent build | 2026-09-09 | spread+queue+idemp 10+30 green, rest open |
 | 17-ui | 17-ui-status.md | done (CLI v1) | agent build | 2026-09-09 | checkbox+pipeline+banner+csv, web v2 later |
 | 18-data | 18-data-pipeline.md | done | agent build | 2026-09-09 | order+lineage+refill+PIT closed |
-| 19-portfolio | 19-portfolio-inside.md | doing (ladder done) | agent build | 2026-09-09 | halve/flat/halt 9 green, regime pending |
+| 19-portfolio | 19-portfolio-inside.md | done | agent build | 2026-09-09 | all 5 closed, 116 green |
 | 20-learning | 20-learning-over-time.md | doing (worker done) | agent build | 2026-09-09 | LESSON after 30 16 green, decay pending |
 | 21-workers | 21-significance-skills.md | done | agent build | 2026-09-09 | mute+pin+audit+notify 51 green |
 | 22-infra | 22-infra-secrets-docker.md | doing (retry done) | agent build | 2026-09-09 | sim retry3 + secrets ok, slim later |
