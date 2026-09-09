@@ -1,7 +1,7 @@
 # Status - 13-risk
 
 Date: 2026-09-09
-State: doing (tail+vol done, BL/HRP later)
+State: done (guards; BL/HRP deferred with entry)
 Owner: agent build
 Doing: tail CVaR + vol targeting done. Next auto 4-guard + BL/HRP later.
 Done:
@@ -9,6 +9,7 @@ Done:
 Bugs found while implementing: none, defaults disabled until hook wires.
 Other files touched:
 - vinu-components/vinu-agent/vinu_agent/agent/position_sizing.py
-Next: BL/HRP after ACTIVE 3 + paper 10d (needs live history).
+Next: none, guards closed. BL/HRP entries below.
 Done2:
 - service.py: composition action cap VINU_PORTFOLIO_MAX_ACTION 0.20 per cycle + renormalize, 116 green.
+BL/HRP deferred (entry: ACTIVE 3 + paper 10d + 60d live; have 0 ACTIVE, 0d live). Guards closed: CVaR gate, vol targeting, DD ladder, action cap.

@@ -12,7 +12,7 @@ One table. Update when folder changes.
 | 10-env-knobs | 10-env-knobs.md | done | agent build | 2026-09-09 | sweep+docs+mirror closed |
 | 11-paper-9 | 11-paper-all-6-live.md | doing (knob+writer+promote done) | agent build | 2026-09-09 | paper loops all 7 green, read-all pending |
 | 12-seven-day-10 | 12-seven-day-finish-10.md | done | agent build | 2026-09-09 | window+pause closed, HRP deferred 30t+60d |
-| 13-risk | 13-risk-allocation-full.md | doing (tail+vol done) | agent build | 2026-09-09 | cvar+vol 38 green, BL/HRP later |
+| 13-risk | 13-risk-allocation-full.md | done (guards) | agent build | 2026-09-09 | cvar+vol+ladder+cap green, BL/HRP deferred |
 | 14-storage-3x | 14-simulation-storage.md | doing (models+loop done) | agent build | 2026-09-09 | regime tagged 58 green, paper pending |
 | 15-monitor | 15-monitor-shock-exit.md | doing (HALT+time-stop done) | agent build | 2026-09-09 | entries-only allow exits 30 green, rest open |
 | 16-broker | 16-broker-fills.md | doing (fills+idem done) | agent build | 2026-09-09 | spread+queue+idemp 10+30 green, rest open |
