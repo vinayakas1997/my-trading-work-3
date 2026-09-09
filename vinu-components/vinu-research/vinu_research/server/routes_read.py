@@ -152,6 +152,7 @@ async def list_artifacts(
             "deflated_sharpe": a.deflated_sharpe,
             "holdout_passed": a.holdout_passed,
             "stress_test_passed": a.stress_test_passed,
+            "pbo": a.pbo,
         }
         for a in artifacts
     ]

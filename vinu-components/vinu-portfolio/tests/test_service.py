@@ -291,7 +291,7 @@ class TestFetchBenchmarkRegime:
 
 
 class TestFetchOutcomeConfidence:
-    def test_yaml_strategy_always_not_tracked(self) -> None:
+    def test_yaml_strategy_with_no_symbol_not_tracked(self) -> None:
         svc = _service()
         result = asyncio.run(svc._fetch_outcome_confidence({"kind": "yaml", "name": "a"}))
         assert result == {"source": "not_tracked", "accuracy": None, "n_entries": 0}
@@ -359,6 +359,118 @@ class TestFetchOutcomeConfidence:
         assert result["accuracy"] == 1.0
 
 
+class TestYamlTrackRecord:
+    """Stage 2 (how-to-make-it-live.md #20): YAML strategies used to be
+    permanently "not_tracked" no matter how long they ran -- there was no
+    calibration_entries equivalent for a portfolio target-weight strategy.
+    _fetch_yaml_track_record derives a directional track record from the
+    weight history + price history vinu-portfolio already fetches
+    elsewhere; these prove the accuracy math and the fail-open contract."""
+
+    @staticmethod
+    def _bar_ts(date_str: str) -> int:
+        from datetime import datetime, timezone
+        return int(datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc).timestamp())
+
+    def _mock_http(self, svc: PortfolioService, weights, candles) -> None:
+        async def _get(url, **kwargs):
+            if "candles" in url:
+                return _resp(200, {"data": candles})
+            return _resp(200, weights)
+        svc._http.get = AsyncMock(side_effect=_get)
+
+    def _strategy(self) -> dict:
+        return {
+            "kind": "yaml", "name": "s1", "symbol": "AAPL",
+            "weights_source": "http://strategy-api-test/strategy/weights/s1",
+        }
+
+    def _sample_series(self):
+        weights = [
+            {"date": "2024-01-01", "weight": 1.0},   # long
+            {"date": "2024-01-02", "weight": 1.0},   # long
+            {"date": "2024-01-03", "weight": -1.0},  # short
+            {"date": "2024-01-04", "weight": 0.0},   # flat -- no call, excluded
+        ]
+        candles = [
+            {"bar_ts": self._bar_ts("2024-01-01"), "close": 100.0},
+            {"bar_ts": self._bar_ts("2024-01-02"), "close": 105.0},  # +5% -- day1's long call: correct
+            {"bar_ts": self._bar_ts("2024-01-03"), "close": 103.0},  # -1.9% -- day2's long call: wrong
+            {"bar_ts": self._bar_ts("2024-01-04"), "close": 110.0},  # +6.8% -- day3's short call: wrong
+        ]
+        return weights, candles
+
+    def test_computes_directional_accuracy(self) -> None:
+        svc = _service(min_calibration_entries_for_tilt=2)
+        weights, candles = self._sample_series()
+        self._mock_http(svc, weights, candles)
+
+        result = asyncio.run(svc._fetch_outcome_confidence(self._strategy()))
+
+        assert result["source"] == "yaml_track_record"
+        assert result["n_entries"] == 3  # day4's flat weight excludes the (day3,day4) call
+        assert result["accuracy"] == pytest.approx(1 / 3)
+
+    def test_insufficient_entries(self) -> None:
+        svc = _service(min_calibration_entries_for_tilt=10)
+        weights, candles = self._sample_series()
+        self._mock_http(svc, weights, candles)
+
+        result = asyncio.run(svc._fetch_outcome_confidence(self._strategy()))
+
+        assert result["source"] == "insufficient_data"
+        assert result["accuracy"] is None
+        assert result["n_entries"] == 3
+
+    def test_all_flat_weights_is_not_tracked(self) -> None:
+        svc = _service(min_calibration_entries_for_tilt=1)
+        weights = [
+            {"date": "2024-01-01", "weight": 0.0},
+            {"date": "2024-01-02", "weight": 0.0},
+        ]
+        candles = [
+            {"bar_ts": self._bar_ts("2024-01-01"), "close": 100.0},
+            {"bar_ts": self._bar_ts("2024-01-02"), "close": 101.0},
+        ]
+        self._mock_http(svc, weights, candles)
+
+        result = asyncio.run(svc._fetch_outcome_confidence(self._strategy()))
+
+        assert result == {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+
+    def test_empty_weights_is_not_tracked(self) -> None:
+        svc = _service()
+        self._mock_http(svc, [], [{"bar_ts": self._bar_ts("2024-01-01"), "close": 100.0}])
+        result = asyncio.run(svc._fetch_outcome_confidence(self._strategy()))
+        assert result == {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+
+    def test_empty_candles_is_not_tracked(self) -> None:
+        svc = _service()
+        self._mock_http(svc, [{"date": "2024-01-01", "weight": 1.0}], [])
+        result = asyncio.run(svc._fetch_outcome_confidence(self._strategy()))
+        assert result == {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+
+    def test_missing_symbol_is_not_tracked_without_any_http_call(self) -> None:
+        svc = _service()
+        svc._http.get = AsyncMock(side_effect=AssertionError("must not be called"))
+        result = asyncio.run(
+            svc._fetch_outcome_confidence({"kind": "yaml", "name": "s1", "weights_source": "http://x"})
+        )
+        assert result == {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+
+    def test_fails_open_on_http_error(self) -> None:
+        svc = _service()
+        svc._http.get = AsyncMock(side_effect=ConnectionError("strategy-api down"))
+        result = asyncio.run(svc._fetch_outcome_confidence(self._strategy()))
+        assert result == {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+
+    def test_fails_open_on_non_200_weights(self) -> None:
+        svc = _service()
+        svc._http.get = AsyncMock(return_value=_resp(500))
+        result = asyncio.run(svc._fetch_outcome_confidence(self._strategy()))
+        assert result == {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+
+
 class TestRegimeAlignmentMultiplier:
     @staticmethod
     def _service_with_tags(tmp_path, bound=0.3) -> PortfolioService:
@@ -410,6 +522,51 @@ class TestOutcomeConfidenceMultiplier:
     def test_coinflip_accuracy_is_neutral(self) -> None:
         svc = _service(outcome_tilt_bound=0.3)
         assert svc._outcome_confidence_multiplier({"accuracy": 0.5}) == pytest.approx(1.0)
+
+
+class TestConfidenceGradientMultiplier:
+    """Stage 2 (how-to-make-it-live.md #34): a strategy that barely cleared
+    the promotion bar and one that cleared it comfortably used to get
+    identical downstream allocation weight -- promotion.meets_promotion_bar
+    is binary, nothing carried the margin forward."""
+
+    def test_yaml_strategy_is_always_neutral(self) -> None:
+        svc = _service()
+        strategy = {"kind": "yaml", "deflated_sharpe": 0.99}
+        assert svc._confidence_gradient_multiplier(strategy) == pytest.approx(1.0)
+
+    def test_missing_deflated_sharpe_is_neutral(self) -> None:
+        svc = _service()
+        assert svc._confidence_gradient_multiplier({"kind": "llm_python"}) == pytest.approx(1.0)
+
+    def test_at_threshold_gets_the_low_bound(self) -> None:
+        svc = _service(promotion_deflated_sharpe_threshold=0.95, confidence_tilt_bound=0.3)
+        strategy = {"kind": "llm_python", "deflated_sharpe": 0.95}
+        assert svc._confidence_gradient_multiplier(strategy) == pytest.approx(0.7)
+
+    def test_at_ceiling_gets_the_high_bound(self) -> None:
+        svc = _service(promotion_deflated_sharpe_threshold=0.95, confidence_tilt_bound=0.3)
+        strategy = {"kind": "llm_python", "deflated_sharpe": 1.0}
+        assert svc._confidence_gradient_multiplier(strategy) == pytest.approx(1.3)
+
+    def test_below_threshold_is_clamped_to_the_low_bound(self) -> None:
+        """A force=true override could promote below-threshold artifacts --
+        those size as conservatively as a bare pass, not worse and not
+        neutral."""
+        svc = _service(promotion_deflated_sharpe_threshold=0.95, confidence_tilt_bound=0.3)
+        strategy = {"kind": "llm_python", "deflated_sharpe": 0.5}
+        assert svc._confidence_gradient_multiplier(strategy) == pytest.approx(0.7)
+
+    def test_midpoint_between_threshold_and_ceiling(self) -> None:
+        svc = _service(promotion_deflated_sharpe_threshold=0.9, confidence_tilt_bound=0.3)
+        strategy = {"kind": "llm_python", "deflated_sharpe": 0.95}  # halfway from 0.9 to 1.0
+        assert svc._confidence_gradient_multiplier(strategy) == pytest.approx(1.0)
+
+    def test_a_barely_passed_strategy_gets_smaller_weight_than_a_strongly_passed_one(self) -> None:
+        svc = _service(promotion_deflated_sharpe_threshold=0.95, confidence_tilt_bound=0.3)
+        bare = svc._confidence_gradient_multiplier({"kind": "llm_python", "deflated_sharpe": 0.951})
+        strong = svc._confidence_gradient_multiplier({"kind": "llm_python", "deflated_sharpe": 0.999})
+        assert bare < strong
 
 
 class TestComputeDailyAllocation:
@@ -464,6 +621,37 @@ class TestComputeDailyAllocation:
         result = asyncio.run(svc.compute_daily_allocation())
         assert result["weights"][0]["position_size"] == pytest.approx(100_000.0, rel=0.01)
         assert result["account_equity"] == 100_000.0
+
+    def test_confidence_gradient_tilts_llm_python_strategies(self) -> None:
+        """Stage 2 (#34): two llm_python strategies with equal base weight
+        but different promotion margins must end up with different final
+        weight -- this is the end-to-end proof, not just the unit-level
+        multiplier math above."""
+        svc = _service(
+            promotion_deflated_sharpe_threshold=0.95, confidence_tilt_bound=0.3,
+            outcome_tilt_bound=0.0,
+        )
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [
+                {"name": "bare_pass", "kind": "llm_python", "deflated_sharpe": 0.951},
+                {"name": "strong_pass", "kind": "llm_python", "deflated_sharpe": 0.999},
+            ],
+            "weights": [
+                {"name": "bare_pass", "kind": "llm_python", "symbol": "", "target_weight": 0.5},
+                {"name": "strong_pass", "kind": "llm_python", "symbol": "", "target_weight": 0.5},
+            ],
+            "correlation_matrix": None,
+        })
+        svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
+        svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
+        svc._fetch_account_equity = AsyncMock(return_value=None)
+
+        result = asyncio.run(svc.compute_daily_allocation())
+
+        weights = {w["name"]: w for w in result["weights"]}
+        assert weights["strong_pass"]["target_weight"] > weights["bare_pass"]["target_weight"]
+        assert weights["bare_pass"]["confidence_gradient_multiplier"] < weights["strong_pass"]["confidence_gradient_multiplier"]
 
 
 class TestFetchAccountEquity:

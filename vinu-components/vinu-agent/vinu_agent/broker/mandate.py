@@ -22,6 +22,13 @@ class TradingMandate:
     max_order_value: float = 50000.0
     max_daily_orders: int = 10
     max_daily_trade_volume: float = 200000.0
+    # Stage 2 (how-to-make-it-live.md #8): max_daily_orders/max_daily_trade_volume
+    # above are both PER-SYMBOL -- 10/symbol x 20 traded symbols is 200 orders/day
+    # with nothing capping the total. 0 (default) = no portfolio-wide cap, since
+    # the right number depends entirely on how many symbols a given deployment
+    # trades; unlike the per-symbol defaults above, there's no safe non-zero
+    # default that fits every mandate.
+    max_daily_orders_portfolio: int = 0
     # Cap on total capital deployed across ALL open positions combined, as a
     # fraction of account equity — distinct from max_position_pct, which only
     # caps a single order/position. e.g. 0.60 means at most 60% of equity may
@@ -66,6 +73,7 @@ class TradingMandate:
                 max_order_value=float(raw.get("max_order_value", 50000.0)),
                 max_daily_orders=int(raw.get("max_daily_orders", 10)),
                 max_daily_trade_volume=float(raw.get("max_daily_trade_volume", 200000.0)),
+                max_daily_orders_portfolio=int(raw.get("max_daily_orders_portfolio", 0)),
                 max_capital_utilization_pct=float(raw.get("max_capital_utilization_pct", 1.0)),
                 require_active_artifact=bool(raw.get("require_active_artifact", True)),
                 require_market_open=bool(raw.get("require_market_open", True)),
@@ -87,6 +95,7 @@ class TradingMandate:
             "max_order_value": self.max_order_value,
             "max_daily_orders": self.max_daily_orders,
             "max_daily_trade_volume": self.max_daily_trade_volume,
+            "max_daily_orders_portfolio": self.max_daily_orders_portfolio,
             "max_capital_utilization_pct": self.max_capital_utilization_pct,
             "require_active_artifact": self.require_active_artifact,
             "require_market_open": self.require_market_open,

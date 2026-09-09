@@ -51,6 +51,7 @@ class Broker(Protocol):
         take_profit_price: float | None = None,
         stop_loss_price: float | None = None,
         stop_loss_limit_price: float | None = None,
+        client_order_id: str | None = None,
     ) -> dict: ...
 
     def cancel_order(self, order_id: str) -> dict: ...

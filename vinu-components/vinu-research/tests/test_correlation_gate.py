@@ -29,6 +29,7 @@ def make_artifact(artifact_id: str = "art_test", strategy_code: str = "def gener
         deflated_sharpe=0.96,
         holdout_passed=True,
         stress_test_passed=True,
+        pbo=0.3,
     )
 
 
@@ -99,6 +100,45 @@ class TestMeetsPromotionBar:
         assert verdict.eligible is False
         assert any("correlation" in r for r in verdict.reasons)
 
+    def test_rejects_pbo_above_threshold(self):
+        """Stage 2 (how-to-make-it-live.md #19): PBO is now actually checked
+        at promotion, not just computed and discarded at research time."""
+        cfg = ResearchConfig()
+        artifact = make_artifact()
+        artifact.pbo = 0.75
+        verdict = meets_promotion_bar(artifact, cfg)
+        assert verdict.eligible is False
+        assert any("PBO" in r for r in verdict.reasons)
+
+    def test_passes_pbo_below_threshold(self):
+        cfg = ResearchConfig()
+        artifact = make_artifact()
+        artifact.pbo = 0.3
+        verdict = meets_promotion_bar(artifact, cfg)
+        assert verdict.eligible is True
+
+    def test_rejects_when_pbo_required_but_never_computed(self):
+        cfg = ResearchConfig()
+        artifact = make_artifact()
+        artifact.pbo = None
+        verdict = meets_promotion_bar(artifact, cfg)
+        assert verdict.eligible is False
+        assert any("PBO" in r for r in verdict.reasons)
+
+    def test_missing_pbo_allowed_when_not_required(self):
+        cfg = ResearchConfig(promotion_pbo_required=False)
+        artifact = make_artifact()
+        artifact.pbo = None
+        verdict = meets_promotion_bar(artifact, cfg)
+        assert verdict.eligible is True
+
+    def test_custom_pbo_threshold(self):
+        cfg = ResearchConfig(promotion_pbo_threshold=0.5)
+        artifact = make_artifact()
+        artifact.pbo = 0.6
+        verdict = meets_promotion_bar(artifact, cfg)
+        assert verdict.eligible is False
+
 
 class TestPromotionConfig:
     def test_defaults(self):
@@ -110,6 +150,11 @@ class TestPromotionConfig:
         cfg = ResearchConfig(promotion_correlation_threshold=0.75, promotion_correlation_required=True)
         assert cfg.promotion_correlation_threshold == 0.75
         assert cfg.promotion_correlation_required is True
+
+    def test_pbo_defaults(self):
+        cfg = ResearchConfig()
+        assert cfg.promotion_pbo_threshold == 0.7
+        assert cfg.promotion_pbo_required is True
 
 
 class TestBacktestAndGetReturns:

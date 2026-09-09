@@ -185,3 +185,31 @@ class TestContextManager:
         info = s2.health_info()
         assert info["total_runs"] == 1
         s2.close()
+
+
+class TestPbo:
+    """Stage 2 (how-to-make-it-live.md #19): PBO used to be computed once
+    per run() call and returned in the live response, but never persisted
+    -- there was no `pbo` column in research_runs at all. These prove it
+    round-trips through insert, update, and read."""
+
+    def test_insert_persists_pbo(self, storage: ResearchStorage, sample_record: ResearchRunRecord) -> None:
+        sample_record.pbo = 0.42
+        r = storage.insert_run(sample_record)
+        fetched = storage.get_run(r.id)
+        assert fetched is not None
+        assert fetched.pbo == pytest.approx(0.42)
+
+    def test_insert_persists_none_pbo(self, storage: ResearchStorage, sample_record: ResearchRunRecord) -> None:
+        sample_record.pbo = None
+        r = storage.insert_run(sample_record)
+        fetched = storage.get_run(r.id)
+        assert fetched is not None
+        assert fetched.pbo is None
+
+    def test_update_run_persists_pbo(self, storage: ResearchStorage, inserted_run: ResearchRunRecord) -> None:
+        inserted_run.pbo = 0.15
+        storage.update_run(inserted_run)
+        fetched = storage.get_run(inserted_run.id)
+        assert fetched is not None
+        assert fetched.pbo == pytest.approx(0.15)

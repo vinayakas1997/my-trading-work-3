@@ -123,6 +123,58 @@ def _position_age_days(opened_at: str) -> int:
 TRAILING_ATR_MULT = float(_os.environ.get("VINU_LIVE_TRAILING_ATR_MULT", "2.0"))
 TURBULENCE_VOL = float(_os.environ.get("VINU_LIVE_TURBULENCE_VOL", "0.05"))
 
+# Stage 2 (how-to-make-it-live.md #24): TradePlan.forecast.confidence was
+# computed by research/the LLM but never read at the one place a TradePlan's
+# size is actually decided (this file's _maybe_enter). Same
+# forecast_confidence_scale formula as vinu-agent/agent/position_sizing.py
+# -- duplicated rather than imported because vinu-live and vinu-agent are
+# separate deployable services with no shared package for this, same reason
+# this file already reimplements small pieces of shared logic locally
+# elsewhere (see daily-allocation's own note on regime_analysis). Defaults
+# ON, same reasoning as position_sizing.py's copy: this closes a silent
+# "the data exists but nothing reads it" gap, it isn't a new optional extra.
+FORECAST_SCALING_ENABLED = _os.environ.get(
+    "VINU_RISK_FORECAST_SCALING_ENABLED", "true"
+).lower() in ("1", "true", "yes")
+FORECAST_SCALING_FLOOR = float(_os.environ.get("VINU_RISK_FORECAST_SCALING_FLOOR", "0.5"))
+
+
+SIGNAL_MAX_AGE_HOURS = float(_os.environ.get("VINU_LIVE_SIGNAL_MAX_AGE_HOURS", "72"))
+
+
+def _signal_age_hours(created_at: Any) -> float | None:
+    """Stage 2 (how-to-make-it-live.md #9/#36): a TradePlan was "valid until
+    invalidated," never "valid for a window" -- a 3-day-old setup with no
+    fill was still actionable, because nothing ever read the timestamp
+    trade_plan_authoring.py's author_trade_plan() already stamps on every
+    plan (TradePlan.created_at, set at generation time and carried through
+    Artifact.trade_plan_data -- this file already reads that same dict for
+    every other field). Returns None (unknown age, never blocks) if
+    created_at is missing or unparseable -- fail-open, same posture as
+    every other data-quality guard in this file."""
+    if not created_at:
+        return None
+    try:
+        created = datetime.fromisoformat(str(created_at))
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - created).total_seconds() / 3600.0
+    except (ValueError, TypeError):
+        return None
+
+
+def _forecast_confidence_scale(confidence: Any, floor: float = FORECAST_SCALING_FLOOR) -> float:
+    """confidence as a direct fraction of the plan's own max size, floored
+    so a real forecast is dampened, never zeroed, by conviction alone.
+    None/non-positive confidence = 1.0 (no scaling, fail-open)."""
+    try:
+        c = float(confidence)
+    except (TypeError, ValueError):
+        return 1.0
+    if c <= 0.0:
+        return 1.0
+    return max(float(floor), min(1.0, c))
+
 
 async def turbulence_active(fetch_recent: Any, symbol: str) -> tuple[bool, str]:
     """Turbulence VIX pause (15 step3): 14d realized vol above threshold ->
@@ -433,10 +485,32 @@ class TradePlanOrchestrator:
         if direction not in ("long", "short"):
             return None
 
+        if SIGNAL_MAX_AGE_HOURS > 0:
+            age_hours = _signal_age_hours(plan.get("created_at"))
+            if age_hours is not None and age_hours > SIGNAL_MAX_AGE_HOURS:
+                LOG.info(
+                    "Trade plan for %s is %.1fh old (max %.1fh) -- skipping stale entry",
+                    symbol, age_hours, SIGNAL_MAX_AGE_HOURS,
+                )
+                return {
+                    "symbol": symbol, "action": "entry_blocked_by_stale_signal",
+                    "reason": f"signal age {age_hours:.1f}h exceeds max {SIGNAL_MAX_AGE_HOURS:.1f}h",
+                }
+
         size_pct = (plan.get("risk_bands") or {}).get("max_position_size_pct", 0.0) or 0.0
         if size_pct <= 0:
             LOG.info("Trade plan for %s has no position size -- skipping entry", symbol)
             return None
+
+        if FORECAST_SCALING_ENABLED:
+            confidence = (plan.get("forecast") or {}).get("confidence")
+            scale = _forecast_confidence_scale(confidence)
+            if scale < 1.0:
+                LOG.info(
+                    "Trade plan for %s: forecast confidence %s scales size %.1f%% -> %.1f%%",
+                    symbol, confidence, size_pct * 100, size_pct * scale * 100,
+                )
+            size_pct *= scale
 
         qty = (size_pct * portfolio_value) / price
         if qty <= 0:
@@ -599,7 +673,7 @@ class TradePlanOrchestrator:
                 if _risk > 0 and _gain >= _risk:
                     _bracket_qty = position.qty * 0.5
                     _bracket_side = "sell" if _is_long else "buy"
-                    _bracket_res = await self._submit_order(symbol, _bracket_side, _bracket_qty)
+                    _bracket_res = await self._submit_order(symbol, _bracket_side, _bracket_qty, reduce_only=True)
                     if _bracket_res.get("status") == "submitted":
                         from vinu_live.book.positions import reduce_position as _reduce_pos
 
@@ -654,7 +728,7 @@ class TradePlanOrchestrator:
 
         reduce_qty = position.qty * 0.5
         side = "sell" if position.side == "long" else "buy"
-        order_result = await self._submit_order(symbol, side, reduce_qty)
+        order_result = await self._submit_order(symbol, side, reduce_qty, reduce_only=True)
         if order_result.get("status") == "submitted":
             reduce_position(self._book, position.position_id, reduce_qty, price)
             LOG.info("Honored rebalance request for %s (reason: %s)", symbol, request.reason)
@@ -681,7 +755,7 @@ class TradePlanOrchestrator:
             LOG.warning("Breaker HALT entries-only -- allowing risk-reducing exit for %s: %s", symbol, reason)
 
         side = "sell" if position.side == "long" else "buy"
-        order_result = await self._submit_order(symbol, side, position.qty)
+        order_result = await self._submit_order(symbol, side, position.qty, reduce_only=True)
         if order_result.get("status") == "submitted":
             close_position(self._book, position.position_id, price)
             LOG.info("Invalidation exit for %s (rule: %s)", symbol, rule.get("condition"))
@@ -715,7 +789,7 @@ class TradePlanOrchestrator:
                 return {"symbol": symbol, "action": "reduce_blocked_by_breaker", "reason": reason, "rule": rule}
 
             side = "sell" if position.side == "long" else "buy"
-            order_result = await self._submit_order(symbol, side, reduce_qty)
+            order_result = await self._submit_order(symbol, side, reduce_qty, reduce_only=True)
             if order_result.get("status") == "submitted":
                 reduce_position(self._book, position.position_id, reduce_qty, price)
                 LOG.info("Reduced %s by %.4f (rule: %s)", symbol, reduce_qty, rule.get("condition"))
@@ -772,10 +846,16 @@ class TradePlanOrchestrator:
         return positions[0] if positions else None
 
     async def _submit_order(
-        self, symbol: str, side: str, qty: float, artifact_id: str = "",
+        self, symbol: str, side: str, qty: float, artifact_id: str = "", reduce_only: bool = False,
     ) -> dict[str, Any]:
         # Idempotency (16 step8): client_order_id = artifact+symbol+side+qty+minute bucket.
         # Retry within same minute dedupes on broker, no double fill.
+        #
+        # Stage 1 (how-to-make-it-live.md): this was previously computed and
+        # sent but silently dropped -- OrderRequest (vinu-agent's HTTP
+        # schema) had no client_order_id field, so it never reached Alpaca
+        # and the dedup never actually happened. Fixed at the OrderRequest /
+        # TradeTool / AlpacaBroker layer; this call site is unchanged.
         import os as _os
 
         if _os.environ.get("VINU_EXEC_IDEMPOTENCY_ENABLED", "true").lower() not in ("1", "true", "yes"):
@@ -787,7 +867,10 @@ class TradePlanOrchestrator:
             base = artifact_id or "no-artifact"
             client_order_id = f"{base}-{symbol}-{side}-{qty:.4f}-{bucket}"
         try:
-            payload: dict[str, Any] = {"symbol": symbol, "side": side, "qty": qty, "order_type": "market"}
+            payload: dict[str, Any] = {
+                "symbol": symbol, "side": side, "qty": qty, "order_type": "market",
+                "reduce_only": reduce_only,
+            }
             if client_order_id:
                 payload["client_order_id"] = client_order_id
             resp = await self._http.post(

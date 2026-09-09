@@ -198,6 +198,10 @@ class ResearchService:
                 )
             record.holdout_passed = result.holdout.passed if result.holdout else None
             record.stress_test_passed = result.stress_test.passed if result.stress_test else None
+            # Stage 2 (how-to-make-it-live.md #19): persist PBO instead of
+            # letting it vanish when this response is discarded -- see the
+            # ResearchRunRecord.pbo docstring.
+            record.pbo = result.pbo.get("pbo") if result.pbo else None
             record.report_md = result.report_md or ""
             best_rec = next(
                 (r for r in result.iterations if r.iteration == result.best_iteration),
@@ -345,6 +349,7 @@ class ResearchService:
         artifact.deflated_sharpe = record.deflated_sharpe
         artifact.holdout_passed = record.holdout_passed
         artifact.stress_test_passed = record.stress_test_passed
+        artifact.pbo = record.pbo
         self._strategy_store.upsert_artifact(artifact)
         self._strategy_store.append_bench_entry(BenchEntry(
             artifact_id=artifact.artifact_id,

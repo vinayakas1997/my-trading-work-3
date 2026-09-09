@@ -40,6 +40,18 @@ class ResearchRunRecord:
     holdout_passed: bool | None = None
     # None when no stress window had usable price data.
     stress_test_passed: bool | None = None
+    # Probability of Backtest Overfitting (Bailey/Borwein/Lopez de Prado
+    # combinatorially symmetric CV, see vinu_research.pbo) for the winning
+    # candidate — how much of the observed edge across all trial parameter
+    # sets is explainable by selection bias alone. None when the run had too
+    # few splits to compute it (see pbo.py's own PBO_MIN_SPLIT_PERIODS gate).
+    # Stage 2 (how-to-make-it-live.md #19): this used to be computed and
+    # returned in the live ResearchResult response but never persisted here
+    # -- the warning vanished the moment the response was read, so it could
+    # never be checked again at promotion time. Now persisted alongside
+    # holdout_passed/stress_test_passed, the two other fields promotion.py
+    # already gates on.
+    pbo: float | None = None
     # Short, plain-English narrative of what happened and why — distinct
     # from report_md (a metrics-table markdown report). Best-effort LLM
     # call; empty if the LLM wasn't configured or the call failed. See
@@ -70,4 +82,5 @@ class ResearchRunRecord:
             "holdout_passed": self.holdout_passed,
             "stress_test_passed": self.stress_test_passed,
             "summary_text": self.summary_text,
+            "pbo": self.pbo,
         }

@@ -12,6 +12,7 @@ class SymbolPlan:
     base_weight: float = 0.0
     regime_multiplier: float = 1.0
     outcome_multiplier: float = 1.0
+    confidence_gradient_multiplier: float = 1.0
     outcome_source: str = "not_tracked"
     position_size: float | None = None
     direction: str | None = None

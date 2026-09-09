@@ -167,6 +167,12 @@ class Artifact:
     holdout_passed: bool | None = None
     # None when no stress window had usable price data, from StressTestResult.passed.
     stress_test_passed: bool | None = None
+    # Probability of Backtest Overfitting (see ResearchRunRecord.pbo for the
+    # full note) — None when the source run had too few splits to compute
+    # it. Stage 2 (how-to-make-it-live.md #19): checked by
+    # promotion.meets_promotion_bar the same way holdout_passed/
+    # stress_test_passed already are.
+    pbo: float | None = None
     # Periodic re-validation tracking — updated when the artifact's strategy is
     # re-backtested against fresh data to check for decay.
     last_validated_ts: str = ""

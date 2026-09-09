@@ -67,6 +67,18 @@ class DailyLimitStore(SQLiteBackend):
         row = self._row_for(symbol)
         return int(row[0]) if row else 0
 
+    def count_today_total(self) -> int:
+        """Stage 2 (how-to-make-it-live.md #8): sum of order_count across
+        EVERY symbol today, for OrderGuard's portfolio-wide daily order cap
+        -- max_daily_orders above is per-symbol and 10/symbol x N traded
+        symbols has no ceiling on its own."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT COALESCE(SUM(order_count), 0) FROM daily_limits WHERE date = ?",
+            (_today(),),
+        ).fetchone()
+        return int(row[0]) if row else 0
+
     def volume_today(self, symbol: str) -> float:
         row = self._row_for(symbol)
         return float(row[1]) if row else 0.0

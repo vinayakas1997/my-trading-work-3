@@ -52,6 +52,18 @@ class PortfolioConfig:
     benchmark_symbol: str = DEFAULT_BENCHMARK_SYMBOL
     regime_tilt_bound: float = 0.3
     outcome_tilt_bound: float = 0.3
+    # Stage 2 (how-to-make-it-live.md #34): a strategy that barely cleared
+    # the promotion bar (deflated Sharpe just above threshold) used to get
+    # identical allocation weight to one that cleared it comfortably --
+    # the promotion decision was binary, and nothing downstream carried the
+    # margin forward. confidence_tilt_bound mirrors regime/outcome_tilt_bound's
+    # own +-30% shape; promotion_deflated_sharpe_threshold must track
+    # vinu-research's own ResearchConfig.promotion_deflated_sharpe_threshold
+    # (both default to 0.95) -- duplicated across the service boundary the
+    # same way this session's other cross-service fixes were, since
+    # vinu-portfolio has no dependency on vinu-research's config module.
+    confidence_tilt_bound: float = 0.3
+    promotion_deflated_sharpe_threshold: float = 0.95
     min_calibration_entries_for_tilt: int = 5
     tags_path: Path = DEFAULT_TAGS_PATH
     game_plan_readiness_threshold: float = 0.5
@@ -76,6 +88,10 @@ class PortfolioConfig:
             benchmark_symbol=os.getenv("VINU_PORTFOLIO_BENCHMARK_SYMBOL", DEFAULT_BENCHMARK_SYMBOL),
             regime_tilt_bound=float(os.getenv("VINU_PORTFOLIO_REGIME_TILT_BOUND", "0.3")),
             outcome_tilt_bound=float(os.getenv("VINU_PORTFOLIO_OUTCOME_TILT_BOUND", "0.3")),
+            confidence_tilt_bound=float(os.getenv("VINU_PORTFOLIO_CONFIDENCE_TILT_BOUND", "0.3")),
+            promotion_deflated_sharpe_threshold=float(
+                os.getenv("VINU_PORTFOLIO_PROMOTION_DSR_THRESHOLD", "0.95")
+            ),
             min_calibration_entries_for_tilt=int(
                 os.getenv("VINU_PORTFOLIO_MIN_CALIBRATION_ENTRIES", "5")
             ),

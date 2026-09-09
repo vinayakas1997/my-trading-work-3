@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS research_runs (
     deflated_sharpe REAL NOT NULL DEFAULT 0.0,
     holdout_passed INTEGER,
     stress_test_passed INTEGER,
-    summary_text TEXT NOT NULL DEFAULT ''
+    summary_text TEXT NOT NULL DEFAULT '',
+    pbo REAL
 );
 CREATE INDEX IF NOT EXISTS idx_research_status ON research_runs(status);
 CREATE INDEX IF NOT EXISTS idx_research_symbol ON research_runs(symbol);
@@ -70,6 +71,7 @@ _MIGRATIONS: list[tuple[str, str]] = [
     ("ALTER TABLE research_catalog ADD COLUMN consecutive_validation_failures INTEGER NOT NULL DEFAULT 0", "add_consecutive_validation_failures"),
     ("ALTER TABLE research_catalog ADD COLUMN exhausted INTEGER NOT NULL DEFAULT 0", "add_exhausted"),
     ("ALTER TABLE research_runs ADD COLUMN summary_text TEXT NOT NULL DEFAULT ''", "add_summary_text"),
+    ("ALTER TABLE research_runs ADD COLUMN pbo REAL", "add_pbo"),
 ]
 
 
@@ -102,8 +104,8 @@ class ResearchStorage(SQLiteBackend):
                 (user_idea, symbol, from_date, to_date, status, total_iterations,
                  best_iteration, best_sharpe, best_max_dd, report_md, error_message,
                  approved, approved_at, created_at, updated_at, strategy_code, deflated_sharpe,
-                 holdout_passed, stress_test_passed, summary_text)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 holdout_passed, stress_test_passed, summary_text, pbo)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 record.user_idea, record.symbol, record.from_date, record.to_date,
                 record.status, record.total_iterations, record.best_iteration,
@@ -113,6 +115,7 @@ class ResearchStorage(SQLiteBackend):
                 None if record.holdout_passed is None else int(record.holdout_passed),
                 None if record.stress_test_passed is None else int(record.stress_test_passed),
                 record.summary_text,
+                record.pbo,
             ),
         )
         conn.commit()
@@ -198,7 +201,7 @@ class ResearchStorage(SQLiteBackend):
                 status = ?, total_iterations = ?, best_iteration = ?,
                 best_sharpe = ?, best_max_dd = ?, report_md = ?,
                 error_message = ?, updated_at = ?, strategy_code = ?, deflated_sharpe = ?,
-                holdout_passed = ?, stress_test_passed = ?, summary_text = ?
+                holdout_passed = ?, stress_test_passed = ?, summary_text = ?, pbo = ?
                WHERE id = ?""",
             (
                 record.status, record.total_iterations, record.best_iteration,
@@ -208,6 +211,7 @@ class ResearchStorage(SQLiteBackend):
                 None if record.holdout_passed is None else int(record.holdout_passed),
                 None if record.stress_test_passed is None else int(record.stress_test_passed),
                 record.summary_text,
+                record.pbo,
                 record.id,
             ),
         )
@@ -492,4 +496,5 @@ class ResearchStorage(SQLiteBackend):
                 else bool(row["stress_test_passed"])
             ),
             summary_text=row["summary_text"] if "summary_text" in row.keys() else "",
+            pbo=row["pbo"] if "pbo" in row.keys() and row["pbo"] is not None else None,
         )

@@ -205,9 +205,18 @@ class TestPortfolioConcentration:
             max_symbol_concentration_pct=0.1, allow_short=True,
         )
         guard = _guard(mandate)
-        with patch("vinu_agent.broker.order_guard.requests.get") as mock_get:
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {"symbols": []}
+        with patch("vinu_agent.broker.order_guard.requests.get", return_value=resp) as mock_get:
             result = guard.check("AAPL", "sell", qty=10, price=100.0)
-        mock_get.assert_not_called()
+        # Concentration only ever calls /portfolio/state and only for buys;
+        # the one call seen here is _check_risk_budget's /portfolio/risk/status
+        # (Stage 2 #22), which runs for any non-reduce_only order regardless
+        # of side -- a "sell" with no open position to reduce is a short
+        # entry, which is still new/increasing exposure.
+        called_urls = [c.args[0] for c in mock_get.call_args_list]
+        assert all("/portfolio/state" not in u for u in called_urls)
         assert result
 
     def test_rejects_when_symbol_already_over_concentration_cap(self) -> None:
@@ -301,9 +310,86 @@ class TestPortfolioConcentration:
     def test_disabled_by_default_skips_call(self) -> None:
         mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, require_market_open=False)
         guard = _guard(mandate)
-        with patch("vinu_agent.broker.order_guard.requests.get") as mock_get:
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {"symbols": []}
+        with patch("vinu_agent.broker.order_guard.requests.get", return_value=resp) as mock_get:
             result = guard.check("AAPL", "buy", qty=10, price=100.0)
+        # Concentration itself is disabled (default mandate thresholds are
+        # 1.0) and must not call /portfolio/state; the risk-budget check
+        # (Stage 2 #22) is unconditional and does call /portfolio/risk/status.
+        called_urls = [c.args[0] for c in mock_get.call_args_list]
+        assert all("/portfolio/state" not in u for u in called_urls)
+        assert result
+
+
+class TestRiskBudget:
+    """Stage 2 (how-to-make-it-live.md #22): vinu-portfolio's
+    compute_risk_budget() correctly computes a TIER_HALT / halted status per
+    symbol, but nothing enforced it -- it was a dashboard number, not a
+    guard. These prove OrderGuard now actually reads and acts on it."""
+
+    def test_blocks_new_order_for_halted_symbol(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, require_market_open=False)
+        guard = _guard(mandate)
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {
+            "symbols": [{"symbol": "AAPL", "halted": True, "daily_pnl_pct": -3.2}],
+        }
+        with patch("vinu_agent.broker.order_guard.requests.get", return_value=resp):
+            result = guard.check("AAPL", "buy", qty=10, price=100.0)
+        assert not result
+        assert "TIER_HALT" in result.reason
+
+    def test_allows_order_for_non_halted_symbol(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, require_market_open=False)
+        guard = _guard(mandate)
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {
+            "symbols": [{"symbol": "AAPL", "halted": False, "daily_pnl_pct": -0.5}],
+        }
+        with patch("vinu_agent.broker.order_guard.requests.get", return_value=resp):
+            result = guard.check("AAPL", "buy", qty=10, price=100.0)
+        assert result
+
+    def test_reduce_only_bypasses_halted_symbol(self) -> None:
+        """The whole point of TIER_HALT is to stop digging the hole deeper --
+        it must never block an order that's shrinking exposure on the
+        already-halted symbol, same posture as the kill-switch reduce_only
+        exemption (Scenario 21)."""
+        mandate = TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False, require_market_open=False, allow_short=True,
+        )
+        guard = _guard(mandate)
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {
+            "symbols": [{"symbol": "AAPL", "halted": True, "daily_pnl_pct": -3.2}],
+        }
+        with patch("vinu_agent.broker.order_guard.requests.get", return_value=resp) as mock_get:
+            result = guard.check("AAPL", "sell", qty=10, price=100.0, reduce_only=True)
         mock_get.assert_not_called()
+        assert result
+
+    def test_fails_open_on_lookup_error(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, require_market_open=False)
+        guard = _guard(mandate)
+        with patch("vinu_agent.broker.order_guard.requests.get", side_effect=ConnectionError("down")):
+            result = guard.check("AAPL", "buy", qty=10, price=100.0)
+        assert result
+
+    def test_ignores_other_symbols_in_the_budget(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, require_market_open=False)
+        guard = _guard(mandate)
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {
+            "symbols": [{"symbol": "MSFT", "halted": True, "daily_pnl_pct": -3.2}],
+        }
+        with patch("vinu_agent.broker.order_guard.requests.get", return_value=resp):
+            result = guard.check("AAPL", "buy", qty=10, price=100.0)
         assert result
 
 
@@ -386,6 +472,75 @@ class TestDailyLimits:
         guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=store)
         result = guard.check("MSFT", "buy", qty=10, price=100.0)
         assert result  # MSFT's own count is still 0
+
+
+class TestPortfolioDailyOrderCap:
+    """Stage 2 (how-to-make-it-live.md #8): max_daily_orders above is
+    per-symbol only -- 10/symbol x N traded symbols has no ceiling of its
+    own without this. Same fresh-OrderGuard-per-call shape as
+    TestDailyLimits above, sharing one DailyLimitStore."""
+
+    def test_disabled_by_default(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, require_market_open=False)
+        store = DailyLimitStore(":memory:")
+        broker = MagicMock()
+        broker.get_account.return_value = _account()
+
+        for symbol in ("AAPL", "MSFT", "NVDA", "GOOG"):
+            guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=store)
+            assert guard.pre_approve(symbol, "buy", qty=1, price=100.0)
+
+    def test_blocks_once_total_across_symbols_is_reached(self) -> None:
+        mandate = TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False, require_market_open=False,
+            max_daily_orders=10, max_daily_orders_portfolio=3,
+        )
+        store = DailyLimitStore(":memory:")
+        broker = MagicMock()
+        broker.get_account.return_value = _account()
+
+        for symbol in ("AAPL", "MSFT", "NVDA"):
+            guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=store)
+            assert guard.pre_approve(symbol, "buy", qty=1, price=100.0)
+
+        # a 4th symbol, none of them individually anywhere near
+        # max_daily_orders=10 -- only the portfolio-wide total blocks this
+        guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=store)
+        result = guard.check("GOOG", "buy", qty=1, price=100.0)
+        assert not result
+        assert "Portfolio-wide daily order limit" in result.reason
+
+    def test_reduce_only_bypasses_the_cap(self) -> None:
+        mandate = TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False, require_market_open=False,
+            allow_short=True, max_daily_orders=10, max_daily_orders_portfolio=1,
+        )
+        store = DailyLimitStore(":memory:")
+        broker = MagicMock()
+        broker.get_account.return_value = _account()
+
+        guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=store)
+        assert guard.pre_approve("AAPL", "buy", qty=1, price=100.0)  # uses up the cap of 1
+
+        guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=store)
+        result = guard.check("MSFT", "sell", qty=1, price=100.0, reduce_only=True)
+        assert result
+
+    def test_new_order_still_blocked_once_cap_reached(self) -> None:
+        mandate = TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False, require_market_open=False,
+            max_daily_orders=10, max_daily_orders_portfolio=1,
+        )
+        store = DailyLimitStore(":memory:")
+        broker = MagicMock()
+        broker.get_account.return_value = _account()
+
+        guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=store)
+        assert guard.pre_approve("AAPL", "buy", qty=1, price=100.0)
+
+        guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=store)
+        result = guard.check("MSFT", "buy", qty=1, price=100.0)
+        assert not result
 
 
 class TestMaxCapitalUtilization:

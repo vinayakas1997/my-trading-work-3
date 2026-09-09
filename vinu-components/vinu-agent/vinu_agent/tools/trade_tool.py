@@ -69,6 +69,10 @@ class TradeTool(BaseTool):
                 "type": "number",
                 "description": "Optional limit price for the stop-loss leg (stop-limit instead of stop-market). Only used if stop_loss_price is set.",
             },
+            "reduce_only": {
+                "type": "boolean",
+                "description": "True if this order only closes or shrinks an existing position (an exit or a partial reduce), never opens/increases one. Reduce-only orders are still allowed through a kill-switch halt when VINU_LIVE_HALT_POLICY=entries_only (default); a mis-flagged increasing order is caught downstream by OrderGuard's other checks, not by this flag alone.",
+            },
         },
         "required": ["symbol", "qty", "side"],
     }
@@ -87,6 +91,8 @@ class TradeTool(BaseTool):
         take_profit_price = kwargs.get("take_profit_price")
         stop_loss_price = kwargs.get("stop_loss_price")
         stop_loss_limit_price = kwargs.get("stop_loss_limit_price")
+        reduce_only = bool(kwargs.get("reduce_only", False))
+        client_order_id = kwargs.get("client_order_id") or None
         session_id = getattr(self, "_session_id", "")
 
         broker = _make_broker(self._as_of, session_id)
@@ -138,7 +144,7 @@ class TradeTool(BaseTool):
 
         estimated_value = qty * (limit_price or 0.0) if limit_price else qty * 100.0
 
-        result = guard.check(symbol, side, qty, estimated_value=estimated_value)
+        result = guard.check(symbol, side, qty, estimated_value=estimated_value, reduce_only=reduce_only)
         if not result:
             AuditLogger.log("order_rejected", {
                 "symbol": symbol, "side": side, "qty": qty,
@@ -191,7 +197,7 @@ class TradeTool(BaseTool):
             # and this point would correctly report not-allowed here, but
             # the order was submitted anyway.
             with kill_switch_lock():
-                pre_result = guard.pre_approve(symbol, side, qty)
+                pre_result = guard.pre_approve(symbol, side, qty, reduce_only=reduce_only)
                 if not pre_result:
                     AuditLogger.log("order_rejected", {
                         "symbol": symbol, "side": side, "qty": qty,
@@ -213,6 +219,7 @@ class TradeTool(BaseTool):
                     take_profit_price=take_profit_price,
                     stop_loss_price=stop_loss_price,
                     stop_loss_limit_price=stop_loss_limit_price,
+                    client_order_id=client_order_id,
                 )
             return json.dumps({
                 "status": "submitted",

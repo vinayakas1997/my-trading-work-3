@@ -95,6 +95,8 @@ class OrderRequest(BaseModel):
     take_profit_price: float | None = None
     stop_loss_price: float | None = None
     stop_loss_limit_price: float | None = None
+    reduce_only: bool = False
+    client_order_id: str | None = None
 
 
 @router.post("/broker/order")

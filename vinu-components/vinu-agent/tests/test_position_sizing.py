@@ -17,6 +17,7 @@ from vinu_agent.agent.position_sizing import (
     atr_stop_size,
     compute_position_size,
     fixed_fractional_size,
+    forecast_confidence_scale,
     fractional_kelly_size,
     full_kelly_fraction,
 )
@@ -140,6 +141,79 @@ class TestComputePositionSize:
             account_equity=100000.0, method="atr_stop", entry_price=10.0, atr=0.0,
         )
         assert without_atr["method"] == "fixed_fractional"
+
+    def test_forecast_confidence_scales_size_down(self) -> None:
+        """Stage 2 (how-to-make-it-live.md #24): a low-conviction forecast
+        must produce a smaller size than a high-conviction one for the
+        identical edge -- previously TradePlan.forecast.confidence was
+        computed and never read by anything that sizes a position."""
+        full = compute_position_size(
+            account_equity=100000.0, method="fixed_fractional", risk_pct=0.02,
+        )["size"]
+        high_confidence = compute_position_size(
+            account_equity=100000.0, method="fixed_fractional", risk_pct=0.02,
+            forecast_confidence=0.9,
+        )["size"]
+        low_confidence = compute_position_size(
+            account_equity=100000.0, method="fixed_fractional", risk_pct=0.02,
+            forecast_confidence=0.52,
+        )["size"]
+        assert low_confidence < high_confidence <= full
+        assert low_confidence == pytest.approx(1040.0)  # 2000 * max(0.5, 0.52)
+
+    def test_forecast_confidence_floored_not_zeroed(self) -> None:
+        result = compute_position_size(
+            account_equity=100000.0, method="fixed_fractional", risk_pct=0.02,
+            forecast_confidence=0.01,
+        )
+        assert result["size"] == pytest.approx(1000.0)  # 2000 * floor 0.5, not 2000 * 0.01
+
+    def test_forecast_confidence_none_is_no_op(self) -> None:
+        with_none = compute_position_size(
+            account_equity=100000.0, method="fixed_fractional", risk_pct=0.02,
+            forecast_confidence=None,
+        )["size"]
+        without_arg = compute_position_size(
+            account_equity=100000.0, method="fixed_fractional", risk_pct=0.02,
+        )["size"]
+        assert with_none == without_arg == pytest.approx(2000.0)
+
+    def test_forecast_scaling_disabled_is_no_op(self) -> None:
+        result = compute_position_size(
+            account_equity=100000.0, method="fixed_fractional", risk_pct=0.02,
+            forecast_confidence=0.1, forecast_scaling_enabled=False,
+        )
+        assert result["size"] == pytest.approx(2000.0)
+
+    def test_forecast_confidence_recorded_for_traceability(self) -> None:
+        result = compute_position_size(
+            account_equity=100000.0, method="fixed_fractional", risk_pct=0.02,
+            forecast_confidence=0.7,
+        )
+        assert result["inputs"]["forecast_confidence"] == 0.7
+
+
+class TestForecastConfidenceScale:
+    def test_high_confidence_near_one(self) -> None:
+        assert forecast_confidence_scale(0.95) == pytest.approx(0.95)
+
+    def test_full_confidence_is_uncapped_at_one(self) -> None:
+        assert forecast_confidence_scale(1.0) == pytest.approx(1.0)
+
+    def test_low_confidence_floored(self) -> None:
+        assert forecast_confidence_scale(0.1, floor=0.5) == pytest.approx(0.5)
+
+    def test_custom_floor(self) -> None:
+        assert forecast_confidence_scale(0.1, floor=0.2) == pytest.approx(0.2)
+
+    def test_none_is_fail_open(self) -> None:
+        assert forecast_confidence_scale(None) == pytest.approx(1.0)
+
+    def test_zero_is_fail_open(self) -> None:
+        assert forecast_confidence_scale(0.0) == pytest.approx(1.0)
+
+    def test_out_of_range_confidence_clamped(self) -> None:
+        assert forecast_confidence_scale(1.5) == pytest.approx(1.0)
 
 
 class TestComputePositionSizeTool:

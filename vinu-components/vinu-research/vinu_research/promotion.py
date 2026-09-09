@@ -7,7 +7,9 @@ deflated Sharpe ratio (multiple-comparisons-corrected confidence that
 best_sharpe reflects real skill, cumulative across every past trial run
 against the symbol — see ResearchService.run_research) and the true
 out-of-sample holdout check (a trailing slice of data the refinement loop
-never tuned against — see StrategyResearchLoop._split_research_and_holdout).
+never tuned against — see StrategyResearchLoop._split_research_and_holdout),
+and the Probability of Backtest Overfitting (PBO, combinatorially symmetric
+CV — see vinu_research.pbo) added in Stage 2 (how-to-make-it-live.md #19).
 """
 
 from __future__ import annotations
@@ -53,6 +55,20 @@ def meets_promotion_bar(artifact: Artifact, config: ResearchConfig, correlation_
             )
         elif artifact.stress_test_passed is False:
             reasons.append("failed at least one historical stress window")
+
+    if config.promotion_pbo_required:
+        if artifact.pbo is None:
+            reasons.append(
+                "PBO required but was never computed for this artifact "
+                "(too few splits in the research window to run combinatorial CV)"
+            )
+        elif artifact.pbo > config.promotion_pbo_threshold:
+            reasons.append(
+                f"PBO {artifact.pbo:.3f} above severe-overfitting threshold "
+                f"{config.promotion_pbo_threshold:.3f} — the observed edge across "
+                f"trial parameter sets is more likely explained by selection bias "
+                f"than genuine skill"
+            )
 
     if correlation_verdict is not None and not correlation_verdict.eligible:
         reasons.extend(correlation_verdict.reasons)

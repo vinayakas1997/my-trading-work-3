@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from vinu_live.book.positions import init_book, list_open_positions, open_position
+from vinu_live.book.quantize import qty_float
 from vinu_live.breaker.engine import BreakerVerdict
 from vinu_live.config import LiveConfig
 from vinu_live.trade_plan.orchestrator import TradePlanOrchestrator
@@ -174,6 +175,163 @@ class TestEntry:
 
         assert action["action"] == "entry_not_filled"
         assert list_open_positions(book) == []
+
+
+class TestForecastConfidenceScalesEntrySize:
+    """Stage 2 (how-to-make-it-live.md #24): TradePlan.forecast.confidence
+    was computed but never read at the one place a TradePlan's actual entry
+    size is decided. _SAMPLE_PLAN's own risk_bands.max_position_size_pct is
+    0.05 -- at price 150 / portfolio 100000, that's qty 33.33 unscaled."""
+
+    def test_high_confidence_uses_close_to_full_size(self, book) -> None:
+        orch = _make_orchestrator(book)
+        plan = {**_SAMPLE_PLAN, "forecast": {"confidence": 0.95}}
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        qty = list_open_positions(book, symbol="AAPL")[0].qty
+        assert qty == qty_float(0.05 * 0.95 * 100000.0 / 150.0)
+
+    def test_low_confidence_shrinks_size_but_floors_at_half(self, book) -> None:
+        orch = _make_orchestrator(book)
+        plan = {**_SAMPLE_PLAN, "forecast": {"confidence": 0.1}}
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        qty = list_open_positions(book, symbol="AAPL")[0].qty
+        # floored at 0.5, not scaled all the way down to 0.1
+        assert qty == qty_float(0.05 * 0.5 * 100000.0 / 150.0)
+
+    def test_missing_forecast_uses_full_size(self, book) -> None:
+        orch = _make_orchestrator(book)
+        plan = {k: v for k, v in _SAMPLE_PLAN.items() if k != "forecast"}
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        qty = list_open_positions(book, symbol="AAPL")[0].qty
+        assert qty == qty_float(0.05 * 100000.0 / 150.0)
+
+    def test_disabled_via_env_uses_full_size(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as orch_mod
+        monkeypatch.setattr(orch_mod, "FORECAST_SCALING_ENABLED", False)
+        orch = _make_orchestrator(book)
+        plan = {**_SAMPLE_PLAN, "forecast": {"confidence": 0.1}}
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        qty = list_open_positions(book, symbol="AAPL")[0].qty
+        assert qty == qty_float(0.05 * 100000.0 / 150.0)
+
+
+class TestSignalAgeBlocksStaleEntry:
+    """Stage 2 (how-to-make-it-live.md #9/#36): a TradePlan was "valid until
+    invalidated," not "valid for a window" -- a several-day-old setup with
+    no fill was still actionable forever. trade_plan_authoring.py already
+    stamps created_at at generation time; this proves _maybe_enter now
+    actually reads it."""
+
+    @staticmethod
+    def _iso_hours_ago(hours: float) -> str:
+        from datetime import datetime, timedelta, timezone
+        return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+    def test_fresh_signal_enters_normally(self, book) -> None:
+        orch = _make_orchestrator(book)
+        plan = {**_SAMPLE_PLAN, "created_at": self._iso_hours_ago(1)}
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        action = asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+
+    def test_stale_signal_blocks_entry(self, book) -> None:
+        orch = _make_orchestrator(book)
+        plan = {**_SAMPLE_PLAN, "created_at": self._iso_hours_ago(100.0)}  # default max is 72h
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        action = asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entry_blocked_by_stale_signal"
+        assert post_mock.call_count == 0
+        assert list_open_positions(book) == []
+
+    def test_missing_created_at_never_blocks(self, book) -> None:
+        orch = _make_orchestrator(book)
+        plan = {k: v for k, v in _SAMPLE_PLAN.items() if k != "created_at"}
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        action = asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+
+    def test_unparseable_created_at_never_blocks(self, book) -> None:
+        orch = _make_orchestrator(book)
+        plan = {**_SAMPLE_PLAN, "created_at": "not-a-timestamp"}
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        action = asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+
+    def test_disabled_via_env_never_blocks(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as orch_mod
+        monkeypatch.setattr(orch_mod, "SIGNAL_MAX_AGE_HOURS", 0.0)
+        orch = _make_orchestrator(book)
+        plan = {**_SAMPLE_PLAN, "created_at": self._iso_hours_ago(100000.0)}
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        action = asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
 
 
 class TestEvaluateOpenPosition:

@@ -189,3 +189,26 @@ class TestInvalidTransitions:
         strategy_store.mark_benching(artifact.artifact_id)
         with pytest.raises(InvalidStatusTransition):
             strategy_store.mark_pendblock(artifact.artifact_id)
+
+
+class TestPboPersistence:
+    """Stage 2 (how-to-make-it-live.md #19): Artifact.pbo, the promotion-time
+    counterpart to research_runs.pbo -- proves it round-trips through
+    upsert_artifact/get_artifact the same way holdout_passed/
+    stress_test_passed already do."""
+
+    def test_upsert_persists_pbo(self, strategy_store: SqliteStrategyStore) -> None:
+        a = Artifact.create("strategy", "AAPL-pbo-test")
+        a.pbo = 0.42
+        strategy_store.upsert_artifact(a)
+        fetched = strategy_store.get_artifact(a.artifact_id)
+        assert fetched is not None
+        assert fetched.pbo == pytest.approx(0.42)
+
+    def test_upsert_persists_none_pbo(self, strategy_store: SqliteStrategyStore) -> None:
+        a = Artifact.create("strategy", "AAPL-pbo-none")
+        a.pbo = None
+        strategy_store.upsert_artifact(a)
+        fetched = strategy_store.get_artifact(a.artifact_id)
+        assert fetched is not None
+        assert fetched.pbo is None

@@ -183,12 +183,21 @@ class AlpacaBroker:
         take_profit_price: float | None = None,
         stop_loss_price: float | None = None,
         stop_loss_limit_price: float | None = None,
+        client_order_id: str | None = None,
     ) -> dict:
         """Submit an order. Passing take_profit_price and/or stop_loss_price
         attaches Alpaca's native bracket-order legs (order_class "bracket" when
         both are given, "oto" when only one is — see Alpaca's order-class docs),
         so the exit is a real resting order placed at entry time, not something
         that has to be watched and submitted manually later.
+
+        client_order_id (Stage 1, how-to-make-it-live.md): Alpaca de-dupes on
+        this field server-side -- a retried submission with the same value
+        doesn't double-fill. Previously vinu-live computed this
+        (artifact+symbol+side+qty+minute-bucket) and sent it, but it was
+        silently dropped at the HTTP boundary (OrderRequest had no such
+        field) and never reached here, so the "idempotency" protection
+        never actually ran. Now plumbed all the way through.
         """
         payload: dict[str, object] = {
             "symbol": symbol.upper(),
@@ -197,6 +206,8 @@ class AlpacaBroker:
             "type": order_type,
             "time_in_force": time_in_force,
         }
+        if client_order_id:
+            payload["client_order_id"] = client_order_id
         if limit_price is not None:
             payload["limit_price"] = str(limit_price)
         if stop_price is not None:

@@ -52,6 +52,21 @@ DEFAULT_CVAR_ENABLED = _os.environ.get("VINU_RISK_CVAR_ENABLED", "false").lower(
 DEFAULT_CVAR_THRESHOLD = float(_os.environ.get("VINU_RISK_CVAR_THRESHOLD", "0.03"))
 DEFAULT_VOL_TARGET_ENABLED = _os.environ.get("VINU_RISK_VOL_TARGET_ENABLED", "false").lower() in ("1", "true", "yes")
 DEFAULT_VOL_TARGET = float(_os.environ.get("VINU_RISK_VOL_TARGET", "0.15"))
+# Stage 2 (how-to-make-it-live.md #24): TradePlan.forecast.confidence existed
+# on every trade plan but was never read by anything that sizes a position --
+# a 0.52 (barely-better-than-coin-flip) forecast and a 0.85 (high-conviction)
+# forecast got identical size. Unlike CVaR/vol-target above (which shipped
+# disabled and stayed that way until Stage 1 flipped them), this defaults ON
+# -- the whole point of this fix is to close a silent "the data exists but
+# nothing reads it" gap, not add another one. Floor at 0.5 so a real, if
+# modest, forecast can never be scaled to a no-op-sized order; a genuinely
+# missing/zero confidence is treated as "no information" (fail-open, no
+# scaling) rather than as a rejection -- that is what promotion-time PBO/
+# holdout checks are for, not size-time.
+DEFAULT_FORECAST_SCALING_ENABLED = _os.environ.get(
+    "VINU_RISK_FORECAST_SCALING_ENABLED", "true"
+).lower() in ("1", "true", "yes")
+DEFAULT_FORECAST_SCALING_FLOOR = float(_os.environ.get("VINU_RISK_FORECAST_SCALING_FLOOR", "0.5"))
 
 _METHODS = ("fractional_kelly", "fixed_fractional", "atr_stop")
 
@@ -76,6 +91,22 @@ def vol_target_scale(current_vol: float, target_vol: float = DEFAULT_VOL_TARGET)
         return 1.0
     scale = tgt / cur
     return max(0.25, min(1.0, scale))
+
+
+def forecast_confidence_scale(
+    confidence: float | None, floor: float = DEFAULT_FORECAST_SCALING_FLOOR,
+) -> float:
+    """confidence as a direct fraction of the caller's requested size,
+    floored so a real forecast is dampened, never zeroed, by conviction
+    alone. None/non-positive confidence = 1.0 (no scaling, fail-open --
+    the caller didn't supply a forecast, not evidence the forecast is bad)."""
+    try:
+        c = float(confidence)
+    except (TypeError, ValueError):
+        return 1.0
+    if c <= 0.0:
+        return 1.0
+    return max(float(floor), min(1.0, c))
 
 
 def full_kelly_fraction(win_rate: float, payoff_ratio: float) -> float:
@@ -157,6 +188,9 @@ def compute_position_size(
     current_vol: float | None = None,
     vol_target: float = DEFAULT_VOL_TARGET,
     vol_target_enabled: bool = DEFAULT_VOL_TARGET_ENABLED,
+    forecast_confidence: float | None = None,
+    forecast_scaling_floor: float = DEFAULT_FORECAST_SCALING_FLOOR,
+    forecast_scaling_enabled: bool = DEFAULT_FORECAST_SCALING_ENABLED,
 ) -> dict[str, Any]:
     """The configurable entry point risk_gatekeeper calls. Returns a dict
     recording both the size AND every input that produced it, so the
@@ -189,6 +223,7 @@ def compute_position_size(
         "atr_stop_multiple": atr_stop_multiple,
         "cvar_95": cvar_95,
         "current_vol": current_vol,
+        "forecast_confidence": forecast_confidence,
     }
 
     # Tail gate (13 step1): block when CVaR 95% exceeds threshold. Fail-closed when enabled.
@@ -200,9 +235,12 @@ def compute_position_size(
         }
 
     def _apply_vol(size: float) -> float:
+        adjusted = size
         if vol_target_enabled and current_vol is not None:
-            return round(size * vol_target_scale(current_vol, vol_target), 2)
-        return round(size, 2)
+            adjusted *= vol_target_scale(current_vol, vol_target)
+        if forecast_scaling_enabled and forecast_confidence is not None:
+            adjusted *= forecast_confidence_scale(forecast_confidence, forecast_scaling_floor)
+        return round(adjusted, 2)
 
     if method == "fractional_kelly":
         full_kelly = full_kelly_fraction(win_rate, payoff_ratio)

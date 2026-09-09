@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
     deflated_sharpe REAL NOT NULL DEFAULT 0.0,
     holdout_passed INTEGER,
     stress_test_passed INTEGER,
+    pbo REAL,
     last_validated_ts TEXT NOT NULL DEFAULT '',
     revalidation_count INTEGER NOT NULL DEFAULT 0,
     last_revalidation_verdict INTEGER,
@@ -166,6 +167,7 @@ class SqliteStrategyStore:
             ("deflated_sharpe", "REAL NOT NULL DEFAULT 0.0"),
             ("holdout_passed", "INTEGER"),
             ("stress_test_passed", "INTEGER"),
+            ("pbo", "REAL"),
             ("last_validated_ts", "TEXT NOT NULL DEFAULT ''"),
             ("revalidation_count", "INTEGER NOT NULL DEFAULT 0"),
             ("last_revalidation_verdict", "INTEGER"),
@@ -204,10 +206,10 @@ class SqliteStrategyStore:
                (artifact_id, type, name, universe, status, decay_horizon,
                 signal_definition, entry_rules, exit_rules, created_at, updated_at,
                 strategy_code, source_run_id, initial_sharpe, initial_max_dd, deflated_sharpe,
-                holdout_passed, stress_test_passed,
+                holdout_passed, stress_test_passed, pbo,
                 last_validated_ts, revalidation_count, last_revalidation_verdict,
                 trade_plan_data, approved_size, origin_angles, regime_tag, freeze_hash)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 artifact.artifact_id,
                 artifact.type,
@@ -227,6 +229,7 @@ class SqliteStrategyStore:
                 artifact.deflated_sharpe,
                 None if artifact.holdout_passed is None else int(artifact.holdout_passed),
                 None if artifact.stress_test_passed is None else int(artifact.stress_test_passed),
+                artifact.pbo,
                 artifact.last_validated_ts,
                 artifact.revalidation_count,
                 None if artifact.last_revalidation_verdict is None else int(artifact.last_revalidation_verdict),
@@ -556,6 +559,7 @@ class SqliteStrategyStore:
                 None if "stress_test_passed" not in row.keys() or row["stress_test_passed"] is None
                 else bool(row["stress_test_passed"])
             ),
+            pbo=row["pbo"] if "pbo" in row.keys() and row["pbo"] is not None else None,
             last_validated_ts=row["last_validated_ts"] if "last_validated_ts" in row.keys() else "",
             revalidation_count=row["revalidation_count"] if "revalidation_count" in row.keys() else 0,
             last_revalidation_verdict=(

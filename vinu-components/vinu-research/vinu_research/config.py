@@ -126,6 +126,15 @@ class ResearchConfig:
     promotion_deflated_sharpe_threshold: float = 0.95
     promotion_holdout_required: bool = True
     promotion_stress_test_required: bool = True
+    # Stage 2 (how-to-make-it-live.md #19): PBO was computed at research time
+    # but never checked again at promotion -- the warning vanished the
+    # moment the live response was read. 0.7 matches sweep_grid.py's
+    # existing pbo_severe convention for the sweep-recipe path; same
+    # required-by-default posture as holdout/stress_test above (None because
+    # too few splits to compute it, same as an unset holdout, is a reason to
+    # withhold promotion, not a reason to wave it through).
+    promotion_pbo_threshold: float = 0.7
+    promotion_pbo_required: bool = True
     # Cross-strategy correlation gate: before promoting, the candidate's daily
     # returns are compared against all ACTIVE strategies. If the average pairwise
     # correlation exceeds this threshold, promotion is blocked and the artifact
@@ -266,6 +275,12 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         ).lower() in ("1", "true", "yes"),
         promotion_stress_test_required=os.environ.get(
             "VINU_RESEARCH_PROMOTION_STRESS_TEST_REQUIRED", "true"
+        ).lower() in ("1", "true", "yes"),
+        promotion_pbo_threshold=float(
+            os.environ.get("VINU_RESEARCH_PROMOTION_PBO_THRESHOLD", "0.7")
+        ),
+        promotion_pbo_required=os.environ.get(
+            "VINU_RESEARCH_PROMOTION_PBO_REQUIRED", "true"
         ).lower() in ("1", "true", "yes"),
         promotion_correlation_threshold=float(
             os.environ.get("VINU_RESEARCH_PROMOTION_CORRELATION_THRESHOLD", "0.85")

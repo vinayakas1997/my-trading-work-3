@@ -55,6 +55,15 @@ class PortfolioService:
         self._returns_cache_ttl = 60.0
         # Hysteresis (19 step3): last tilted weights, no flip-flop on noise.
         self._last_weights: dict[str, float] = {}
+        # Stage 2 (how-to-make-it-live.md #22): DailyPositionTracker must live
+        # on the service instance, not be created fresh inside
+        # compute_risk_status() -- a fresh tracker every call meant
+        # record_daily_pnl() always started from zero, so tier/halted status
+        # never accumulated across a real trading day. _service in
+        # server/app.py is constructed once and reused across requests, so
+        # this now actually persists for the process lifetime (resets at UTC
+        # midnight via DailyPositionTracker's own _check_reset()).
+        self._risk_tracker = DailyPositionTracker()
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -132,6 +141,9 @@ class PortfolioService:
                 "symbol": a.get("universe", [""])[0] if a.get("universe") else "",
                 "artifact_id": a.get("artifact_id", ""),
                 "weights_source": f"artifact:{a.get('artifact_id', '')}",
+                # Stage 2 (how-to-make-it-live.md #34): confidence-gradient
+                # sizing needs the promotion margin, not just pass/fail.
+                "deflated_sharpe": a.get("deflated_sharpe", 0.0),
             }
             for a in data
         ]
@@ -143,7 +155,10 @@ class PortfolioService:
         store = get_strategy_store()
         artifacts = await asyncio.to_thread(store.list_artifacts_by_statuses, [ArtifactStatus.ACTIVE])
         return [
-            {"name": a.name, "artifact_id": a.artifact_id, "universe": a.universe}
+            {
+                "name": a.name, "artifact_id": a.artifact_id, "universe": a.universe,
+                "deflated_sharpe": a.deflated_sharpe,
+            }
             for a in artifacts
         ]
 
@@ -428,10 +443,14 @@ class PortfolioService:
         """Recent directional accuracy for a strategy, if any is tracked.
 
         llm_python strategies may have a calibration track record (Phase 7's
-        record-outcome path, trade_plan-type artifacts only). YAML
-        strategies have no outcome tracking anywhere in this codebase --
-        always reported "not_tracked", never fabricated.
+        record-outcome path, trade_plan-type artifacts only). Stage 2
+        (how-to-make-it-live.md #20): YAML strategies used to have no
+        outcome tracking anywhere in this codebase -- always "not_tracked",
+        never fabricated, but also never anything else no matter how long
+        they ran. See _fetch_yaml_track_record for what they get now.
         """
+        if strategy.get("kind") == "yaml":
+            return await self._fetch_yaml_track_record(strategy)
         if strategy.get("kind") != "llm_python":
             return {"source": "not_tracked", "accuracy": None, "n_entries": 0}
 
@@ -460,6 +479,100 @@ class PortfolioService:
         if n_entries < self._config.min_calibration_entries_for_tilt:
             return {"source": "insufficient_data", "accuracy": None, "n_entries": n_entries}
         return {"source": "calibration", "accuracy": accuracy, "n_entries": n_entries}
+
+    async def _fetch_yaml_track_record(self, strategy: dict[str, Any]) -> dict[str, Any]:
+        """Stage 2 (how-to-make-it-live.md #20): YAML strategies have no
+        artifact_id and no discrete open/closed positions the way
+        trade_plan strategies do -- there is no `calibration_entries` row
+        to read at all, and never will be without inventing a whole new
+        position-tracking concept for a portfolio target-weight strategy.
+
+        This derives a directional track record from the two series
+        vinu-portfolio already fetches elsewhere for correlation purposes
+        (the strategy's own historical target-weight series via
+        weights_source, and the symbol's own price history): for each pair
+        of consecutive dates where the strategy held a non-flat weight on
+        the earlier date, was that weight's sign (long/short) the same
+        sign as the symbol's realized return between the two dates? A flat
+        (~0) weight is not a directional call and is excluded, not scored
+        as wrong.
+
+        Fails open to "not_tracked" (never a fabricated accuracy) if either
+        series is unavailable or empty -- same contract the docstring above
+        already promised for the "no data" case; the difference now is that
+        a strategy that HAS run long enough gets a real answer instead of a
+        permanent one.
+        """
+        symbol = strategy.get("symbol", "")
+        weights_source = strategy.get("weights_source", "")
+        if not symbol or not weights_source:
+            return {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+
+        try:
+            w_resp = await self._http.get(weights_source)
+            if w_resp.status_code != 200:
+                return {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+            weights_raw = w_resp.json()
+            if not isinstance(weights_raw, list) or not weights_raw:
+                return {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+
+            p_resp = await self._http.get(
+                f"{self._config.stock_api_url}/stock/candles/{symbol}",
+                params={"interval": "1d", "adjusted": True},
+            )
+            if p_resp.status_code != 200:
+                return {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+            candles = (p_resp.json() or {}).get("data") or []
+            if not candles:
+                return {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+        except Exception as e:
+            LOG.warning(
+                "Failed to fetch YAML track record inputs for %s: %s", strategy.get("name", ""), e,
+            )
+            return {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+
+        weight_by_date: dict[str, float] = {}
+        for w in weights_raw:
+            d = w.get("date")
+            if d is None:
+                continue
+            weight_by_date[str(d)[:10]] = float(w.get("weight", 0.0) or 0.0)
+
+        close_by_date: dict[str, float] = {}
+        for c in candles:
+            bar_ts = c.get("bar_ts")
+            if bar_ts is None or c.get("close") is None:
+                continue
+            date_str = datetime.fromtimestamp(int(bar_ts), tz=timezone.utc).date().isoformat()
+            close_by_date[date_str] = float(c["close"])
+
+        dates = sorted(set(weight_by_date) & set(close_by_date))
+        correct = 0
+        total_calls = 0
+        for prev_date, cur_date in zip(dates, dates[1:]):
+            prev_weight = weight_by_date.get(prev_date)
+            prev_close = close_by_date.get(prev_date)
+            cur_close = close_by_date.get(cur_date)
+            if prev_weight is None or not prev_close or cur_close is None:
+                continue
+            if abs(prev_weight) < 1e-9:
+                continue  # flat -- no directional call made, not a wrong prediction
+            realized_return = (cur_close - prev_close) / prev_close
+            if realized_return == 0:
+                continue
+            total_calls += 1
+            if (prev_weight > 0) == (realized_return > 0):
+                correct += 1
+
+        if total_calls == 0:
+            return {"source": "not_tracked", "accuracy": None, "n_entries": 0}
+        if total_calls < self._config.min_calibration_entries_for_tilt:
+            return {"source": "insufficient_data", "accuracy": None, "n_entries": total_calls}
+        return {
+            "source": "yaml_track_record",
+            "accuracy": correct / total_calls,
+            "n_entries": total_calls,
+        }
 
     async def _fetch_calibration_in_process(self, artifact_id: str) -> tuple[int, float]:
         from vinu_portfolio.research_link import get_strategy_store
@@ -511,6 +624,40 @@ class PortfolioService:
         bound = self._config.outcome_tilt_bound
         return 1.0 + bound * (2.0 * accuracy - 1.0)
 
+    def _confidence_gradient_multiplier(self, strategy: dict[str, Any]) -> float:
+        """Stage 2 (how-to-make-it-live.md #34): promotion.meets_promotion_bar()
+        is a binary pass/fail gate -- a strategy at deflated Sharpe 0.951
+        (bare pass) and one at 0.99 (comfortable pass) cleared the exact
+        same threshold and, before this, received identical downstream
+        allocation weight. deflated_sharpe is itself a probability bounded
+        to [0, 1] (see walk_forward.deflated_sharpe_ratio's own docstring --
+        despite the name it is not a Sharpe ratio), so the meaningful range
+        to spread across is [promotion_deflated_sharpe_threshold, 1.0], not
+        an unbounded scale.
+
+        Only applies to llm_python strategies -- YAML strategies never go
+        through this promotion bar at all, so there is no margin to read.
+        Same +-bound linear-map shape as _outcome_confidence_multiplier
+        above, at the low end (bare-minimum pass) rather than the middle
+        (accuracy 0.5) since a below-threshold deflated_sharpe should
+        never reach here under normal operation -- the promotion gate
+        already rejected it -- and a force=true override should size as
+        conservatively as a bare pass, not be treated as neutral.
+        """
+        if strategy.get("kind") != "llm_python":
+            return 1.0
+        deflated_sharpe = strategy.get("deflated_sharpe")
+        if deflated_sharpe is None:
+            return 1.0
+        threshold = self._config.promotion_deflated_sharpe_threshold
+        span = 1.0 - threshold
+        if span <= 0:
+            return 1.0
+        frac = (float(deflated_sharpe) - threshold) / span
+        frac = max(0.0, min(1.0, frac))
+        bound = self._config.confidence_tilt_bound
+        return (1.0 - bound) + frac * (2.0 * bound)
+
     async def compute_daily_allocation(
         self, extra_candidates: list[dict[str, Any]] | None = None
     ) -> dict[str, Any]:
@@ -554,13 +701,15 @@ class PortfolioService:
             _local = (per_symbol_regime.get(_sym) or {}).get("regime") if _sym else None
             regime_mult = self._regime_alignment_multiplier(w["name"], _local or regime)
             outcome_mult = self._outcome_confidence_multiplier(confidence)
+            confidence_gradient_mult = self._confidence_gradient_multiplier(strategy)
             tilted.append({
                 **w,
                 "base_weight": w["target_weight"],
                 "regime_multiplier": round(regime_mult, 4),
                 "outcome_multiplier": round(outcome_mult, 4),
+                "confidence_gradient_multiplier": round(confidence_gradient_mult, 4),
                 "outcome_source": confidence.get("source"),
-                "target_weight": w["target_weight"] * regime_mult * outcome_mult,
+                "target_weight": w["target_weight"] * regime_mult * outcome_mult * confidence_gradient_mult,
             })
 
         total = sum(t["target_weight"] for t in tilted)
@@ -668,6 +817,7 @@ class PortfolioService:
                 base_weight=w.get("base_weight", 0.0),
                 regime_multiplier=w.get("regime_multiplier", 1.0),
                 outcome_multiplier=w.get("outcome_multiplier", 1.0),
+                confidence_gradient_multiplier=w.get("confidence_gradient_multiplier", 1.0),
                 outcome_source=outcome_source,
                 position_size=w.get("position_size"),
                 direction=w.get("direction"),
@@ -798,8 +948,7 @@ class PortfolioService:
         equity = game_plan.get("account_equity")
         positions = await self._fetch_positions()
 
-        tracker = DailyPositionTracker()
-        budget = compute_risk_budget(positions, equity, regime=regime, tracker=tracker)
+        budget = compute_risk_budget(positions, equity, regime=regime, tracker=self._risk_tracker)
 
         result = budget.to_dict()
         result["regime"] = regime

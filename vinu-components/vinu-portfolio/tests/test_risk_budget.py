@@ -172,12 +172,15 @@ class TestComputeRiskStatus:
         assert result["aggregate"]["n_positions"] == 1
         assert result["game_plan_readiness"] == 0.5
 
-    def test_daily_pnl_does_not_accumulate_across_repeated_calls(self) -> None:
-        """Documents a known gap (see live-safety/SKILL.md's 'Daily risk
-        budget' section): compute_risk_status() builds a fresh
-        DailyPositionTracker on every call, so repeated polling never
-        accumulates P&L the way DailyPositionTracker itself supports —
-        each call just reflects that call's unrealized_pl snapshot."""
+    def test_daily_pnl_accumulates_across_repeated_calls(self) -> None:
+        """Stage 2 fix (how-to-make-it-live.md #22): compute_risk_status()
+        used to build a fresh DailyPositionTracker on every call, so
+        repeated polling never accumulated P&L the way DailyPositionTracker
+        itself supports -- each call just reflected that call's
+        unrealized_pl snapshot, silently under-counting real daily risk.
+        The tracker now lives on the service instance (self._risk_tracker,
+        set once in __init__) and is reused across calls, so two calls in
+        the same trading day correctly accumulate."""
         svc = TestComputeRiskStatus._service()
         svc.compute_daily_game_plan = AsyncMock(
             return_value={
@@ -192,7 +195,5 @@ class TestComputeRiskStatus:
         )
         first = asyncio.run(svc.compute_risk_status())
         second = asyncio.run(svc.compute_risk_status())
-        # If daily_pnl accumulated across calls (as DailyPositionTracker
-        # supports in isolation), the second call would show 1000.0, not 500.0.
         assert first["symbols"][0]["daily_pnl"] == 500.0
-        assert second["symbols"][0]["daily_pnl"] == 500.0
+        assert second["symbols"][0]["daily_pnl"] == 1000.0

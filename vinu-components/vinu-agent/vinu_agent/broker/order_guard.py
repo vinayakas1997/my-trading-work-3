@@ -19,6 +19,15 @@ from .mandate import TradingMandate
 logger = logging.getLogger(__name__)
 
 
+def _halt_policy_allows_reduce_only() -> bool:
+    """Same knob vinu-live's orchestrator.py reads for its own local
+    breaker (_halt_allows_exit) -- one env var controls both halt layers,
+    so operators only have one policy to reason about, not two that can
+    silently disagree. Default "entries_only" matches the documented
+    default in .env-example / VINU_LIVE_HALT_POLICY."""
+    return os.environ.get("VINU_LIVE_HALT_POLICY", "entries_only") == "entries_only"
+
+
 @dataclass
 class GuardResult:
     allowed: bool
@@ -71,6 +80,7 @@ class OrderGuard:
         qty: float,
         price: float | None = None,
         estimated_value: float | None = None,
+        reduce_only: bool = False,
     ) -> GuardResult:
         # Phase 3 (New-talk-agents/new-thinking/new-restructure/phases/
         # phase-3-kill-switch/): scope convention is the ticker symbol --
@@ -83,8 +93,26 @@ class OrderGuard:
         # vinu-live's order placement (both route through /broker/order).
         # is_trading_halted(scope=...) already checks the global halt
         # first internally, so this one call covers both.
+        #
+        # Stage 1 (how-to-make-it-live.md): this used to block ALL orders
+        # unconditionally on halt, including exits -- meaning a position
+        # could get trapped mid-crash by the exact -20% drawdown breaker
+        # that was supposed to be protecting it. vinu-live's local breaker
+        # (orchestrator.py's _halt_allows_exit()) already made this
+        # distinction for its own HALT check; this mirrors the same
+        # VINU_LIVE_HALT_POLICY policy at the real order-execution
+        # boundary so a reduce-only order (an exit or a position decrease,
+        # never a new/increasing position) still clears the global kill
+        # switch when the policy is entries-only.
         if is_trading_halted(scope=symbol):
-            return GuardResult(False, "Trading is halted by kill switch")
+            if reduce_only and _halt_policy_allows_reduce_only():
+                logger.warning(
+                    "Kill switch halted for %s, but allowing reduce-only order "
+                    "(side=%s qty=%s) through -- VINU_LIVE_HALT_POLICY=entries_only",
+                    symbol, side, qty,
+                )
+            else:
+                return GuardResult(False, "Trading is halted by kill switch")
 
         # B20 — message throttle (10 orders/sec per instance)
         now = time.monotonic()
@@ -118,6 +146,21 @@ class OrderGuard:
                 False,
                 f"Daily order limit ({mandate.max_daily_orders}) reached for {symbol}",
             )
+
+        # Stage 2 (how-to-make-it-live.md #8): max_daily_orders above is
+        # per-symbol only -- 10/symbol x 20 traded symbols is 200 orders/day
+        # with nothing capping the total. Exempt reduce_only: a portfolio-
+        # wide overtrading cap must never be the thing that stops you from
+        # de-risking on a bad day, same posture as the kill-switch and
+        # risk-budget reduce_only exemptions above.
+        if mandate.max_daily_orders_portfolio > 0 and not reduce_only:
+            total_count = self._daily_limit_store.count_today_total()
+            if total_count >= mandate.max_daily_orders_portfolio:
+                return GuardResult(
+                    False,
+                    f"Portfolio-wide daily order limit ({mandate.max_daily_orders_portfolio}) "
+                    f"reached across all symbols",
+                )
 
         if mandate.max_position_pct < 1.0:
             try:
@@ -165,6 +208,11 @@ class OrderGuard:
             concentration_result = self._check_portfolio_concentration(symbol, side, value)
             if not concentration_result:
                 return concentration_result
+
+        if not reduce_only:
+            risk_budget_result = self._check_risk_budget(symbol, side)
+            if not risk_budget_result:
+                return risk_budget_result
 
         if mandate.max_daily_trade_volume > 0:
             daily_total = self._daily_limit_store.volume_today(symbol)
@@ -306,8 +354,53 @@ class OrderGuard:
 
         return GuardResult(True)
 
-    def pre_approve(self, symbol: str, side: str, qty: float, price: float | None = None) -> GuardResult:
-        result = self.check(symbol, side, qty, price)
+    def _check_risk_budget(self, symbol: str, side: str) -> GuardResult:
+        """Stage 2 (how-to-make-it-live.md #22): vinu-portfolio's
+        compute_risk_budget() already computes a correct per-symbol tier
+        (warning/-1%, reduce/-2%, halt/-3% of equity) and a
+        suggested_size_multiplier, but nothing downstream ever enforced it
+        -- it was a decision-support number on a dashboard, not a guard. A
+        symbol at TIER_HALT (suggested_size_multiplier 0.0) could still
+        receive new orders because OrderGuard never asked.
+
+        Only blocks NEW/increasing exposure (reduce_only orders skip this
+        check entirely, same posture as the kill-switch exemption above --
+        risk-reducing an already-halted symbol is exactly what should still
+        be allowed). Fails open on any lookup problem, same posture as
+        _check_portfolio_concentration.
+        """
+        try:
+            try:
+                from vinu_infra.auth import internal_auth_headers as _iah
+                _h = _iah() or None
+            except Exception:
+                _h = None
+            resp = requests.get(f"{self._portfolio_api_url}/portfolio/risk/status", headers=_h, timeout=10.0)
+            resp.raise_for_status()
+            budget = resp.json()
+        except Exception as e:
+            logger.warning("Could not check risk budget for %s: %s", symbol, e)
+            return GuardResult(True)
+
+        for s in budget.get("symbols", []):
+            if s.get("symbol") != symbol:
+                continue
+            if s.get("halted"):
+                return GuardResult(
+                    False,
+                    f"{symbol} is at risk-budget TIER_HALT (daily P&L "
+                    f"{s.get('daily_pnl_pct', 0):.2f}% of equity) — new/increasing "
+                    f"orders blocked until the next trading day; risk-reducing "
+                    f"orders are still allowed.",
+                )
+            break
+
+        return GuardResult(True)
+
+    def pre_approve(
+        self, symbol: str, side: str, qty: float, price: float | None = None, reduce_only: bool = False,
+    ) -> GuardResult:
+        result = self.check(symbol, side, qty, price, reduce_only=reduce_only)
         if result:
             value = qty * (price or 0.0)
             self._increment_daily_count(symbol, value)

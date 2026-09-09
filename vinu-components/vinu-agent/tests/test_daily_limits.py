@@ -54,6 +54,29 @@ class TestDailyLimitStore:
         assert store.volume_today("MSFT") == 2000.0
 
 
+class TestCountTodayTotal:
+    """Stage 2 (how-to-make-it-live.md #8): max_daily_orders is per-symbol
+    only -- 10/symbol x N traded symbols has no ceiling of its own without
+    this."""
+
+    def test_zero_with_no_orders(self, store: DailyLimitStore) -> None:
+        assert store.count_today_total() == 0
+
+    def test_sums_across_symbols(self, store: DailyLimitStore) -> None:
+        store.record_order("AAPL", 1000.0)
+        store.record_order("AAPL", 1000.0)
+        store.record_order("MSFT", 2000.0)
+        store.record_order("NVDA", 3000.0)
+        assert store.count_today_total() == 4
+
+    def test_matches_sum_of_per_symbol_counts(self, store: DailyLimitStore) -> None:
+        for _ in range(3):
+            store.record_order("AAPL", 100.0)
+        for _ in range(2):
+            store.record_order("MSFT", 100.0)
+        assert store.count_today_total() == store.count_today("AAPL") + store.count_today("MSFT")
+
+
 class TestDailyLimitStorePersistsAcrossInstances:
     """The actual bug being closed: OrderGuard is constructed fresh on
     every trade_tool.py execute() call -- counts recorded by one
