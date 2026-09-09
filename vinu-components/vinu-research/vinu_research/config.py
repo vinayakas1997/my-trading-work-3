@@ -169,6 +169,16 @@ class ResearchConfig:
     # slower than a strategy's rolling Sharpe. Set to 0 to disable.
     regime_recompute_interval_days: int = 1
 
+    # Sweep knobs (10-env-knobs.md): intervals + topN + fast flags. Env only, no code change to flip.
+    sweep_intervals: str = "1d,1H,15min"
+    sweep_top_n_per_interval: int = 3
+    sweep_use_vectorbt: bool = True
+    sweep_vectorbt_concurrency: int = 5
+    sweep_use_hyperopt: bool = True
+    sweep_hyperopt_max_points: int = 8
+    sweep_diversity_required: bool = True
+    sweep_min_succeeds_for_pass: int = 2
+
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
 
@@ -279,6 +289,14 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         regime_recompute_interval_days=int(
             os.environ.get("VINU_RESEARCH_REGIME_RECOMPUTE_INTERVAL_DAYS", "1")
         ),
+        sweep_intervals=os.environ.get("VINU_SWEEP_INTERVALS", "1d,1H,15min"),
+        sweep_top_n_per_interval=int(os.environ.get("VINU_SWEEP_TOP_N_PER_INTERVAL", "3")),
+        sweep_use_vectorbt=os.environ.get("VINU_SWEEP_USE_VECTORBT", "true").lower() in ("1", "true", "yes"),
+        sweep_vectorbt_concurrency=int(os.environ.get("VINU_SWEEP_VECTORBT_CONCURRENCY", "5")),
+        sweep_use_hyperopt=os.environ.get("VINU_SWEEP_USE_HYPEROPT", "true").lower() in ("1", "true", "yes"),
+        sweep_hyperopt_max_points=int(os.environ.get("VINU_SWEEP_HYPEROPT_MAX_POINTS", "8")),
+        sweep_diversity_required=os.environ.get("VINU_SWEEP_DIVERSITY_REQUIRED", "true").lower() in ("1", "true", "yes"),
+        sweep_min_succeeds_for_pass=int(os.environ.get("VINU_SWEEP_MIN_SUCCEEDS_FOR_PASS", "2")),
         host=os.environ.get("VINU_RESEARCH_HOST", DEFAULT_HOST),
         port=int(os.environ.get("VINU_RESEARCH_PORT", str(DEFAULT_PORT))),
     )

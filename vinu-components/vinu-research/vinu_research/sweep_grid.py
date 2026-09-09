@@ -155,11 +155,17 @@ async def run_sweep_grid(
         except (ParameterNotFoundError, ValueError, RuntimeError) as exc:
             return GridPointOutcome(params=point, succeeded=False, error=str(exc))
 
+    use_vbt = USE_VECTORBT
+    vbt_conc = VECTORBT_MAX_CONCURRENCY
+    if config is not None:
+        use_vbt = bool(getattr(config, "sweep_use_vectorbt", use_vbt))
+        vbt_conc = int(getattr(config, "sweep_vectorbt_concurrency", vbt_conc))
+
     outcomes: list[GridPointOutcome] = []
-    if USE_VECTORBT and requested > 1:
+    if use_vbt and requested > 1:
         import asyncio as _asyncio
 
-        _sem = _asyncio.Semaphore(max(1, VECTORBT_MAX_CONCURRENCY))
+        _sem = _asyncio.Semaphore(max(1, vbt_conc))
 
         async def _bounded(point: dict[str, Any]) -> GridPointOutcome:
             async with _sem:
