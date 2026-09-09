@@ -17,7 +17,7 @@ One table. Update when folder changes.
 | 15-monitor | 15-monitor-shock-exit.md | doing (HALT+time-stop done) | agent build | 2026-09-09 | entries-only allow exits 30 green, rest open |
 | 16-broker | 16-broker-fills.md | doing (fills+idem done) | agent build | 2026-09-09 | spread+queue+idemp 10+30 green, rest open |
 | 17-ui | 17-ui-status.md | doing (checkbox done) | agent build | 2026-09-09 | ui-status.py 27/27 green, page pending |
-| 18-data | 18-data-pipeline.md | open | - | - | PIT + gap + failover first |
+| 18-data | 18-data-pipeline.md | doing (order done) | agent build | 2026-09-09 | tushare+env 13 green, PIT pending |
 | 19-portfolio | 19-portfolio-inside.md | open | - | - | DD halve + per-symbol regime |
 | 20-learning | 20-learning-over-time.md | open | - | - | lesson worker + calibration wire |
 | 21-workers | 21-significance-skills.md | open | - | - | mute + version pin |

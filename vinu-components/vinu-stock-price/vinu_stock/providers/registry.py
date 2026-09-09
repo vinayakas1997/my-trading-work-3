@@ -20,8 +20,18 @@ ProviderRole = Literal["backfill", "live", "fallback"]
 
 _CONFIG_PATH = Path(__file__).resolve().parent / "config" / "providers.yaml"
 
+import os as _os
+
+
+def _env_chain(default: list[str]) -> list[str]:
+    raw = _os.environ.get("VINU_PROVIDER_ORDER", "")
+    if raw.strip():
+        return [p.strip() for p in raw.split(",") if p.strip()]
+    return default
+
+
 FALLBACK_CHAINS: dict[str, list[str]] = {
-    "us_equity": ["alpaca", "polygon", "yahoo"],
+    "us_equity": _env_chain(["alpaca", "polygon", "tushare", "yahoo"]),
     "crypto": ["alpaca", "yahoo"],
     "a_share": ["yahoo"],
 }
