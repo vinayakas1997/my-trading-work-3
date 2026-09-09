@@ -1,5 +1,6 @@
 # Full Pattern — Full Runbook (stage-by-stage trigger → response → store → TickerLedger ref_id)
 
+> Rule (23): run ATS 15min wiring first before Full. ATS catches plumbing in ~14min, Full trusts metrics only after ATS green.
 > One real ticker (AAPL first) end-to-end, full window `2022-01-01`. Same table as ATS `04-ats-runbook` but now metrics are production-trustworthy and `what wil happen` includes promotion thresholds.
 
 | # | Stage | Trigger (real) | Response you see | Store you confirm | `TickerLedger` row | What wil happen (why) |

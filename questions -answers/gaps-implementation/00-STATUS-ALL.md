@@ -22,7 +22,7 @@ One table. Update when folder changes.
 | 20-learning | 20-learning-over-time.md | doing (worker done) | agent build | 2026-09-09 | LESSON after 30 16 green, decay pending |
 | 21-workers | 21-significance-skills.md | doing (mute+pin done) | agent build | 2026-09-09 | 44 green, audit pending |
 | 22-infra | 22-infra-secrets-docker.md | doing (retry done) | agent build | 2026-09-09 | sim retry3 + secrets ok, slim later |
-| 23-runbooks | 23-runbooks-ats-full.md | open | - | - | ATS 15min before Full rule |
+| 23-runbooks | 23-runbooks-ats-full.md | done | agent build | 2026-09-09 | ATS-first rule added |
 | 24-corners | 24-remaining-corners.md | doing | - | 2026-09-09 | Sec1 entrypoints closed, Sec2-5 outline |
 | 25-money-gate | 25-money-gate.md | open | - | - | 2/10 today, 5 proofs to fund |
 

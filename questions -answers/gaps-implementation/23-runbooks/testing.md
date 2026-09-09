@@ -1,8 +1,8 @@
-# Testing - 23-runbooks
+# Testing - 23-runbooks (ATS-first rule)
 
-Command: TBD per plan.md acceptance.
-Expected: TBD.
-Actual: not run yet.
-Status: red (not started).
-Proof log: -
-Note: update green/red same day, link log path. Push only when green.
+Command: grep -n "ATS 15min" new-vision/test-plan/full-pattern/03-full-runbook.md
+Expected: rule line found.
+Actual: rule found line 3.
+Status: green docs only.
+Proof log: build output 2026-09-09.
+Note: no code test needed.
