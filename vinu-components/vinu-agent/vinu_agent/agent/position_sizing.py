@@ -45,8 +45,37 @@ DEFAULT_RISK_PER_TRADE_PCT = 0.02
 # ATR stop multiple for atr_stop sizing (reference default: 2 * ATR).
 DEFAULT_ATR_STOP_MULTIPLE = 2.0
 DEFAULT_METHOD = "fractional_kelly"
+# Tail + vol (13 Now 1+2): CVaR 95% gate + dynamic vol targeting 15% 21d.
+# Env only, no code change to flip. Disabled by default until wired in hook.
+import os as _os
+DEFAULT_CVAR_ENABLED = _os.environ.get("VINU_RISK_CVAR_ENABLED", "false").lower() in ("1", "true", "yes")
+DEFAULT_CVAR_THRESHOLD = float(_os.environ.get("VINU_RISK_CVAR_THRESHOLD", "0.03"))
+DEFAULT_VOL_TARGET_ENABLED = _os.environ.get("VINU_RISK_VOL_TARGET_ENABLED", "false").lower() in ("1", "true", "yes")
+DEFAULT_VOL_TARGET = float(_os.environ.get("VINU_RISK_VOL_TARGET", "0.15"))
 
 _METHODS = ("fractional_kelly", "fixed_fractional", "atr_stop")
+
+
+def cvar_exceeds(cvar_95: float, threshold: float = DEFAULT_CVAR_THRESHOLD) -> bool:
+    """True if tail risk blocks sizing. cvar_95 as positive loss fraction (0.04 = 4% daily)."""
+    try:
+        return float(cvar_95) > float(threshold)
+    except (TypeError, ValueError):
+        return False
+
+
+def vol_target_scale(current_vol: float, target_vol: float = DEFAULT_VOL_TARGET) -> float:
+    """position = target / current, capped 0.25x to 1x. High vol halves size auto.
+    Non-positive current_vol = 1.0 (no scaling, fail-open)."""
+    try:
+        cur = float(current_vol)
+        tgt = float(target_vol)
+    except (TypeError, ValueError):
+        return 1.0
+    if cur <= 0.0 or tgt <= 0.0:
+        return 1.0
+    scale = tgt / cur
+    return max(0.25, min(1.0, scale))
 
 
 def full_kelly_fraction(win_rate: float, payoff_ratio: float) -> float:
@@ -122,6 +151,12 @@ def compute_position_size(
     entry_price: float = 0.0,
     atr: float = 0.0,
     atr_stop_multiple: float = DEFAULT_ATR_STOP_MULTIPLE,
+    cvar_95: float | None = None,
+    cvar_threshold: float = DEFAULT_CVAR_THRESHOLD,
+    cvar_enabled: bool = DEFAULT_CVAR_ENABLED,
+    current_vol: float | None = None,
+    vol_target: float = DEFAULT_VOL_TARGET,
+    vol_target_enabled: bool = DEFAULT_VOL_TARGET_ENABLED,
 ) -> dict[str, Any]:
     """The configurable entry point risk_gatekeeper calls. Returns a dict
     recording both the size AND every input that produced it, so the
@@ -152,23 +187,38 @@ def compute_position_size(
         "entry_price": entry_price,
         "atr": atr,
         "atr_stop_multiple": atr_stop_multiple,
+        "cvar_95": cvar_95,
+        "current_vol": current_vol,
     }
+
+    # Tail gate (13 step1): block when CVaR 95% exceeds threshold. Fail-closed when enabled.
+    if cvar_enabled and cvar_95 is not None and cvar_exceeds(cvar_95, cvar_threshold):
+        return {
+            "status": "ok", "size": 0.0, "method": method,
+            "reason": f"CVaR 95% {cvar_95} exceeds {cvar_threshold}, blocked",
+            "inputs": inputs,
+        }
+
+    def _apply_vol(size: float) -> float:
+        if vol_target_enabled and current_vol is not None:
+            return round(size * vol_target_scale(current_vol, vol_target), 2)
+        return round(size, 2)
 
     if method == "fractional_kelly":
         full_kelly = full_kelly_fraction(win_rate, payoff_ratio)
         size = fractional_kelly_size(account_equity, win_rate, payoff_ratio, kelly_fraction)
         return {
-            "status": "ok", "size": round(size, 2), "method": method,
+            "status": "ok", "size": _apply_vol(size), "method": method,
             "kelly_pct": round(full_kelly * 100.0, 2), "inputs": inputs,
         }
     if method == "fixed_fractional":
         size = fixed_fractional_size(account_equity, risk_pct)
         return {
-            "status": "ok", "size": round(size, 2), "method": method, "inputs": inputs,
+            "status": "ok", "size": _apply_vol(size), "method": method, "inputs": inputs,
         }
     # atr_stop
     size = atr_stop_size(account_equity, entry_price, atr, risk_pct, atr_stop_multiple)
     used_method = "atr_stop" if (entry_price > 0.0 and atr > 0.0) else "fixed_fractional"
     return {
-        "status": "ok", "size": round(size, 2), "method": used_method, "inputs": inputs,
+        "status": "ok", "size": _apply_vol(size), "method": used_method, "inputs": inputs,
     }

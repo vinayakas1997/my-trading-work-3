@@ -12,7 +12,7 @@ One table. Update when folder changes.
 | 10-env-knobs | 10-env-knobs.md | doing (sweep wired) | agent build | 2026-09-09 | config+grid env wired 53 green, docs pending |
 | 11-paper-9 | 11-paper-all-6-live.md | doing (knob done) | agent build | 2026-09-09 | paper-days 1D/1H wired 10 green, writer 9 pending |
 | 12-seven-day-10 | 12-seven-day-finish-10.md | open | - | - | 10 points, trading days + overlap |
-| 13-risk | 13-risk-allocation-full.md | open | - | - | tail CVaR + vol + retention 90d |
+| 13-risk | 13-risk-allocation-full.md | doing (tail+vol done) | agent build | 2026-09-09 | cvar+vol 38 green, BL/HRP later |
 | 14-storage-3x | 14-simulation-storage.md | open | - | - | backtest+rehearsal+paper full |
 | 15-monitor | 15-monitor-shock-exit.md | open | - | - | HALT entries-only + time-stop first |
 | 16-broker | 16-broker-fills.md | open | - | - | fills parity + kill + idempotency |
