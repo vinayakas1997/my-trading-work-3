@@ -61,4 +61,14 @@ def run_year_job(
             ok=True,
             error=f"gap_warning: {gap_count} missing session bars in {year}",
         )
+        # Gap refill (18): queue same year for retry -- merge=True dedupes on
+        # write (no double), OR IGNORE dedupes the queue. Hole fills next run.
+        import os as _os
+
+        try:
+            _th = int(_os.environ.get("VINU_GAP_REFILL_THRESHOLD", "0"))
+        except ValueError:
+            _th = 0
+        if gap_count > _th:
+            catalog.queue_backfill_job(sym, year)
     return True, row_count, provider_id, ""
