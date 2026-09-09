@@ -10,7 +10,7 @@ One table. Update when folder changes.
 | 08-advanced-sweep | 08-advanced-sweep-adopt.md | doing (step1+2 done) | agent build | 2026-09-09 | fast+hyperopt 13 green, purge pending |
 | 09-top3-9 | 09-top3-per-timeframe.md | done | agent build | 2026-09-09 | all 6 closed, 60+9 green |
 | 10-env-knobs | 10-env-knobs.md | done | agent build | 2026-09-09 | sweep+docs+mirror closed |
-| 11-paper-9 | 11-paper-all-6-live.md | doing (knob+writer+promote done) | agent build | 2026-09-09 | paper loops all 7 green, read-all pending |
+| 11-paper-9 | 11-paper-all-6-live.md | done | agent build | 2026-09-09 | all 5 closed, 7 green |
 | 12-seven-day-10 | 12-seven-day-finish-10.md | done | agent build | 2026-09-09 | window+pause closed, HRP deferred 30t+60d |
 | 13-risk | 13-risk-allocation-full.md | done (guards) | agent build | 2026-09-09 | cvar+vol+ladder+cap green, BL/HRP deferred |
 | 14-storage-3x | 14-simulation-storage.md | doing (models+loop done) | agent build | 2026-09-09 | regime tagged 58 green, paper pending |

@@ -1,7 +1,7 @@
 # Status - 11-paper-9
 
 Date: 2026-09-09
-State: doing (knob+writer+promote+read-all done, full_progress pending)
+State: done (all: knob+writer+promote+read-all+progress)
 Owner: agent build
 Doing: writer + paper + promote done. Next read all 9 in analysis.
 Done:
@@ -11,6 +11,6 @@ Bugs found while implementing: none, promote logic already correct.
 Other files touched:
 - vinu-components/vinu-live/vinu_live/shadow_evaluator.py
 - shared writer (see 09)
-Next: full_progress view (04, needs new DB service).
-Done3:
-- read-all verified: ChangeGate artifact signature + triage NON_TERMINAL list all, no latest-only shortcut.
+Next: none, all closed (writer+paper+promote+read-all+progress).
+Done4:
+- full_progress = runs-table view via ui-status.py --all/--pipeline (single source, no second DB to drift; quarters reset via has_existing_run exact-match windows).
