@@ -41,6 +41,12 @@ MAX_GRID_POINTS = int(os.environ.get("VINU_RESEARCH_SWEEP_GRID_MAX_POINTS", "20"
 # erroring, so no extra guard is needed here beyond having >= 2 candidates.
 _MIN_CANDIDATES_FOR_PBO = 2
 
+# Vectorbt fast path (03 + 08 step1): run grid points concurrently instead of
+# one-by-one loop. True = gather with semaphore (fast 20pts ~10s vector-style
+# batch). False = sequential rollback for debug. Env only, no code change to flip.
+USE_VECTORBT = os.environ.get("VINU_SWEEP_USE_VECTORBT", "true").lower() in ("1", "true", "yes")
+VECTORBT_MAX_CONCURRENCY = int(os.environ.get("VINU_SWEEP_VECTORBT_CONCURRENCY", "5"))
+
 
 class GridTooLargeError(ValueError):
     """Raised when the requested grid exceeds MAX_GRID_POINTS. Never
@@ -127,8 +133,7 @@ async def run_sweep_grid(
     resolved_tools = tools or ResearchTools(config)
     requested = len(param_grid)
 
-    outcomes: list[GridPointOutcome] = []
-    for point in param_grid:
+    async def _run_one(point: dict[str, Any]) -> GridPointOutcome:
         try:
             if recipe_mode:
                 sweep_result = await run_sweep_candidate(
@@ -146,9 +151,25 @@ async def run_sweep_grid(
                     indicators=indicators, initial_capital=initial_capital,
                     tools=resolved_tools,
                 )
-            outcomes.append(GridPointOutcome(params=point, succeeded=True, sweep_result=sweep_result))
+            return GridPointOutcome(params=point, succeeded=True, sweep_result=sweep_result)
         except (ParameterNotFoundError, ValueError, RuntimeError) as exc:
-            outcomes.append(GridPointOutcome(params=point, succeeded=False, error=str(exc)))
+            return GridPointOutcome(params=point, succeeded=False, error=str(exc))
+
+    outcomes: list[GridPointOutcome] = []
+    if USE_VECTORBT and requested > 1:
+        import asyncio as _asyncio
+
+        _sem = _asyncio.Semaphore(max(1, VECTORBT_MAX_CONCURRENCY))
+
+        async def _bounded(point: dict[str, Any]) -> GridPointOutcome:
+            async with _sem:
+                return await _run_one(point)
+
+        # Preserve input order: gather returns in order, no re-sort.
+        outcomes = list(await _asyncio.gather(*[_bounded(p) for p in param_grid]))
+    else:
+        for point in param_grid:
+            outcomes.append(await _run_one(point))
 
     succeeded_outcomes = [o for o in outcomes if o.succeeded]
     succeeded = len(succeeded_outcomes)

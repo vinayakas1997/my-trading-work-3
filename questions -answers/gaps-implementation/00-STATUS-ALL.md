@@ -5,9 +5,9 @@ One table. Update when folder changes.
 | Folder | Source doc | Status | Owner | Date | Note |
 |---|---|---|---|---|---|
 | 02-llm-400 | 02-inefficiencies-found.md #1 | done | built 06:24 | 2026-09-08 | loop.py keep user, 8e1c13d, NVDA 200 |
-| 03-vectorbt-not-connected | 03-vectorbt-not-connected.md, 07 No.3, 08 step1 | open | - | - | 190s slow, need 20pts 10s |
+| 03-vectorbt-not-connected | 03-vectorbt-not-connected.md, 07 No.3, 08 step1 | done | agent build | 2026-09-09 | gather sem5 order kept, rollback false, 35 green both |
 | 07-sweep-7 | 07-sweep-grid-7-inefficiencies.md | doing (No.4+No.2 done) | agent build | 2026-09-09 | base_code link + custom grid green, rest open |
-| 08-advanced-sweep | 08-advanced-sweep-adopt.md | open | - | - | 1+2 vectorbt+hyperopt, A-E |
+| 08-advanced-sweep | 08-advanced-sweep-adopt.md | doing (step1 done) | agent build | 2026-09-09 | fast done via 03, next hyperopt |
 | 09-top3-9 | 09-top3-per-timeframe.md | open | - | - | 9 per ticker 27 total, writer 1 to 9 |
 | 10-env-knobs | 10-env-knobs.md | open | - | - | 36 knobs, intervals 1d,1H,15min |
 | 11-paper-9 | 11-paper-all-6-live.md | open | - | - | paper all 9, promote best forward |
