@@ -36,9 +36,10 @@ class ResearchTools:
             f"{self._config.features_api_url}/features", "vinu-features",
             timeout=60.0, max_retries=3, circuit_breaker_threshold=3,
         )
+        # Retry 10s x3 same as allocator (22 step2): simulator flaps fixed.
         self._simulator_client = ResilientClient(
             f"{self._config.simulator_api_url}/simulator", "vinu-simulator",
-            timeout=120.0, max_retries=2, circuit_breaker_threshold=3,
+            timeout=120.0, max_retries=3, circuit_breaker_threshold=3,
         )
         self._correlation_client = ResilientClient(
             f"{self._config.correlation_api_url}/analysis", "vinu-initial-analysis",
