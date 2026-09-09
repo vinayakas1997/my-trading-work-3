@@ -75,3 +75,50 @@ def best_candidate(
         return None
     ranked = rank_candidates(candidates, backtest_results)
     return ranked[0]
+
+
+def _shape_of(code: str) -> str:
+    """Coarse shape tag for diversity: never 3 same shapes in top3 (09).
+    Heuristic on code text, not exact: rsi/bollinger/zscore/macd/crossover/mean-reversion/momentum."""
+    t = (code or "").lower()
+    if "rsi" in t:
+        return "rsi"
+    if "bollinger" in t or "bb_" in t or "bbl" in t:
+        return "bollinger"
+    if "zscore" in t or "z_score" in t or "mean_reversion" in t:
+        return "zscore"
+    if "macd" in t:
+        return "macd"
+    if "momentum" in t:
+        return "momentum"
+    if "sma" in t or "crossover" in t or "sma_" in t or "fast" in t and "slow" in t:
+        return "crossover"
+    return "other"
+
+
+def diverse_top_n(
+    ranked: list[RankedCandidate],
+    n: int = 3,
+) -> list[RankedCandidate]:
+    """Top-N with different shapes (09 diversity rule).
+    Keeps best per shape, drops same-shape duplicates.
+    Never 3 crossover variants. Order kept by score within shape pick."""
+    seen: set[str] = set()
+    out: list[RankedCandidate] = []
+    for r in ranked:
+        s = _shape_of(r.candidate.code)
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(r)
+        if len(out) >= n:
+            break
+    # If fewer than n diverse (e.g. all same shape), fill rest by score.
+    if len(out) < n:
+        for r in ranked:
+            if r in out:
+                continue
+            out.append(r)
+            if len(out) >= n:
+                break
+    return out[:n]

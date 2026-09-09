@@ -8,7 +8,7 @@ One table. Update when folder changes.
 | 03-vectorbt-not-connected | 03-vectorbt-not-connected.md, 07 No.3, 08 step1 | done | agent build | 2026-09-09 | gather sem5 order kept, rollback false, 35 green both |
 | 07-sweep-7 | 07-sweep-grid-7-inefficiencies.md | doing (No.4+No.2 done) | agent build | 2026-09-09 | base_code link + custom grid green, rest open |
 | 08-advanced-sweep | 08-advanced-sweep-adopt.md | doing (step1 done) | agent build | 2026-09-09 | fast done via 03, next hyperopt |
-| 09-top3-9 | 09-top3-per-timeframe.md | open | - | - | 9 per ticker 27 total, writer 1 to 9 |
+| 09-top3-9 | 09-top3-per-timeframe.md | doing (diversity done) | agent build | 2026-09-09 | _shape+diverse_top_n green, writer 9 pending |
 | 10-env-knobs | 10-env-knobs.md | open | - | - | 36 knobs, intervals 1d,1H,15min |
 | 11-paper-9 | 11-paper-all-6-live.md | open | - | - | paper all 9, promote best forward |
 | 12-seven-day-10 | 12-seven-day-finish-10.md | open | - | - | 10 points, trading days + overlap |
