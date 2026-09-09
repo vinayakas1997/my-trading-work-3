@@ -11,6 +11,8 @@ Bugs found while implementing: none, additive no break 9 green.
 Other files touched:
 - vinu-components/vinu-research/vinu_research/comparison.py
 - vinu-components/vinu-agent/vinu_agent/agent/research_artifact_writer.py:112
-Next: freeze hash required + corr gate 0.85 + rehearsal cost-aware.
+Next: freeze hash required + rehearsal cost-aware.
 Done3:
 - Artifact.regime_tag + store migration + writer passthrough, real DB 5 rows migrate '' verified, 60+9 green.
+Done4:
+- corr gate 0.85 already wired promotion_correlation_threshold, 14 green verified.
