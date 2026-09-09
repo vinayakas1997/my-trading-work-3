@@ -33,6 +33,15 @@ def checkbox(all_rows: bool = False, symbol: str = "AAPL", granularity: str = "1
     con.close()
 
 
+def halt_banner() -> bool:
+    """HALT banner (17 step3): .vinu-live/HALT or data/live HALT file."""
+    for p in [Path.home() / ".vinu-live" / "HALT", Path("vinu-components/data/live/HALT")]:
+        if p.exists():
+            print(f"HALT ACTIVE: {p} — entries blocked, exits allowed")
+            return True
+    return False
+
+
 def drill(run_id: str):
     con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
     cur = con.cursor()
@@ -45,14 +54,35 @@ def drill(run_id: str):
     con.close()
 
 
+def export_csv(path: str = "ui-status.csv"):
+    """CSV export (17 step3): checkbox table to file."""
+    import csv as _csv
+
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+    cur = con.cursor()
+    cur.execute("SELECT symbol, granularity, COUNT(DISTINCT CASE WHEN granularity='1D' AND angle_name='trend_session_structure' THEN NULL ELSE angle_name END) FROM runs GROUP BY symbol, granularity ORDER BY symbol, granularity")
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = _csv.writer(f)
+        w.writerow(["symbol", "granularity", "distinct_angles"])
+        w.writerows(cur.fetchall())
+    con.close()
+    print(f"wrote {path}")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--symbol", default="AAPL")
     ap.add_argument("--granularity", default="1D")
     ap.add_argument("--run-id", default="")
+    ap.add_argument("--csv", default="")
     a = ap.parse_args()
+    halted = halt_banner()
     if a.run_id:
         drill(a.run_id)
+    elif a.csv:
+        export_csv(a.csv)
     else:
         checkbox(a.all, a.symbol, a.granularity)
+    if halted:
+        sys.exit(2)

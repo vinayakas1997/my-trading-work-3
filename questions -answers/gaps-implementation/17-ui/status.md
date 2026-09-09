@@ -10,4 +10,6 @@ Done:
 Bugs found while implementing: AAPL 1D raw 28 includes trend_session_structure row, excluded per spec.
 Other files touched:
 - scripts/ui-status.py (new)
-Next: pipeline page + banner + CSV export.
+Next: pipeline 0-7 page.
+Done2:
+- ui-status.py: HALT banner (exit 2) + --csv export, verified.
