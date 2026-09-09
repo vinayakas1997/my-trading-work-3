@@ -608,15 +608,22 @@ class PortfolioService:
         if equity is not None:
             tilted = apply_position_sizing(tilted, equity, target_vol=self._config.target_volatility)
 
-        # Sleeves (19 step3): subtotal weights by style tag (trend-following
-        # vs mean-reversion vs untagged). Interval sleeves (1D/1H) need per-
-        # strategy interval data that doesn't exist yet -- style sleeves now,
-        # interval split later. Fail-open: untagged bucket, never blocks.
+        # Sleeves (19 step3): subtotal weights by style tag AND by interval.
+        # Interval source: YAML registry strategies are all schedule:daily;
+        # llm_python artifacts carry interval in writer-9 names (-1d-/-1H-/
+        # -15min-). Unknown -> "unknown" bucket, never blocks.
+        import re as _re
+
         tags = self._load_tags()
         sleeves: dict[str, float] = {}
+        interval_sleeves: dict[str, float] = {}
         for t in tilted:
             _style = str((tags.get(t["name"]) or {}).get("style", "untagged"))
             sleeves[_style] = round(sleeves.get(_style, 0.0) + t["target_weight"], 4)
+            _nm = t["name"] or ""
+            _m = _re.search(r"-(1d|1H|15min)-", _nm)
+            _iv = _m.group(1) if _m else "daily"
+            interval_sleeves[_iv] = round(interval_sleeves.get(_iv, 0.0) + t["target_weight"], 4)
 
         return {
             **base,
@@ -624,6 +631,7 @@ class PortfolioService:
             "regime": regime_info,
             "per_symbol_regime": per_symbol_regime,
             "sleeves": sleeves,
+            "interval_sleeves": interval_sleeves,
             "account_equity": equity,
         }
 
