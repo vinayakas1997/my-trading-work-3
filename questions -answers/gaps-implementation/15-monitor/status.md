@@ -1,7 +1,7 @@
 # Status - 15-monitor
 
 Date: 2026-09-09
-State: doing (HALT+time-stop+cooldown done, rest open)
+State: done (all: HALT+time-stop+cooldown+trailing+turbulence+bracket)
 Owner: agent build
 Doing: HALT + time-stop + cooldown done. Next trailing + bracket + turbulence.
 Done:
@@ -11,7 +11,9 @@ Bugs found while implementing: mock db_path fallback fixed with Path exists chec
 Other files touched:
 - vinu-components/vinu-live/vinu_live/trade_plan/orchestrator.py
 - vinu-components/vinu-live/tests/test_trade_plan_orchestrator.py
-Next: bracket 50% at 1R (needs partial_taken state, schema change).
+Next: none, all 5 closed (HALT/time-stop/cooldown/trailing/turbulence/bracket).
+Done5:
+- book v3 partial_taken + orchestrator bracket 50% at 1R needs real stop, 70 green.
 Done3:
 - orchestrator.py: trailing_stop_for 2x ATR proxy ratchet up longs down shorts never loosen, 30 green.
 Done4:
