@@ -570,6 +570,30 @@ class TradePlanOrchestrator:
         except Exception as e:
             LOG.debug("Trailing ratchet failed for %s: %s", symbol, e)
 
+        # Bracket 50% at 1R (15 step3): risk = |entry - stop|, gain at least
+        # 1R and no partial taken yet -> reduce half. Needs a real stop;
+        # without one there is no R to measure against, so skip (honest).
+        # Risk-reducing, allowed on HALT entries-only.
+        try:
+            _stop = getattr(position, "stop_loss", None)
+            _taken = bool(getattr(position, "partial_taken", False))
+            if _stop and not _taken and position.avg_entry > 0:
+                _is_long = str(getattr(position, "side", "long")).lower() not in ("short", "sell")
+                _risk = abs(position.avg_entry - _stop)
+                _gain = (price - position.avg_entry) if _is_long else (position.avg_entry - price)
+                if _risk > 0 and _gain >= _risk:
+                    _bracket_qty = position.qty * 0.5
+                    _bracket_side = "sell" if _is_long else "buy"
+                    _bracket_res = await self._submit_order(symbol, _bracket_side, _bracket_qty)
+                    if _bracket_res.get("status") == "submitted":
+                        from vinu_live.book.positions import reduce_position as _reduce_pos
+
+                        _reduce_pos(self._book, position.position_id, _bracket_qty, price)
+                        LOG.info("Bracket 1R partial for %s: reduced %.4f @ %.2f", symbol, _bracket_qty, price)
+                        return {"symbol": symbol, "action": "bracket_partial", "qty": _bracket_qty, "price": price}
+        except Exception as e:
+            LOG.debug("Bracket partial failed for %s: %s", symbol, e)
+
         LOG.info("No rule triggered for %s -- holding unchanged", symbol)
         return {"symbol": symbol, "action": "hold", "reason": "no_rule_triggered"}
 

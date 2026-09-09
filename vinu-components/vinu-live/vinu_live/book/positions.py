@@ -35,7 +35,8 @@ class BookBackend(SQLiteBackend):
             stop_loss REAL,
             take_profit REAL,
             opened_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            partial_taken INTEGER DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS {CLOSED_POSITIONS_TABLE} (
             position_id TEXT PRIMARY KEY,
@@ -61,7 +62,7 @@ class BookBackend(SQLiteBackend):
             commission REAL DEFAULT 0
         );
     """
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
     # Phase 7: link positions back to the trade-plan artifact that authored them, and track
     # which closed positions the feedback loop has already fed back upstream.
     MIGRATIONS = [
@@ -71,6 +72,8 @@ class BookBackend(SQLiteBackend):
          "add artifact_id to closed_positions"),
         (f"ALTER TABLE {CLOSED_POSITIONS_TABLE} ADD COLUMN feedback_processed_at TEXT",
          "add feedback_processed_at to closed_positions"),
+        (f"ALTER TABLE {OPEN_POSITIONS_TABLE} ADD COLUMN partial_taken INTEGER DEFAULT 0",
+         "add partial_taken to open_positions"),
     ]
 
 
@@ -214,7 +217,7 @@ def reduce_position(
         return None
 
     conn.execute(
-        f"UPDATE {OPEN_POSITIONS_TABLE} SET qty = ?, realized_pnl = ?, updated_at = ? WHERE position_id = ?",
+        f"UPDATE {OPEN_POSITIONS_TABLE} SET qty = ?, realized_pnl = ?, partial_taken = 1, updated_at = ? WHERE position_id = ?",
         [float(remaining), float(new_realized), now_iso(), position_id],
     )
     filled_at = now_iso()
@@ -382,4 +385,5 @@ def _row_to_position(row: dict[str, Any]) -> Position:
         opened_at=row["opened_at"],
         updated_at=row["updated_at"],
         artifact_id=row.get("artifact_id", "") or "",
+        partial_taken=bool(row.get("partial_taken", 0) or 0),
     )

@@ -23,6 +23,8 @@ class Position:
     # any -- empty for positions opened outside the Phase 6 trade-plan orchestrator. Phase 7's
     # feedback loop needs this to know which forecast to score when the position closes.
     artifact_id: str = ""
+    # Bracket 50% at 1R (15 step3): once taken, never again for this position.
+    partial_taken: bool = False
 
     def current_value(self, current_price: float) -> float:
         return self.qty * current_price * (1 if self.side == "long" else -1)
