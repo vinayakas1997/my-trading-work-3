@@ -860,6 +860,11 @@ class StrategyResearchLoop:
         if lookback < 1:
             return None
         rehearsal_from_dt = to_dt - timedelta(days=lookback)
+        # Trading days (12): if window start lands weekend, step back to Friday
+        # so 7 calendar ≈ 5 trading holds. Overlap honest: rehearsal sits inside
+        # in-sample, so trade_overlap=1.0 optimistic until WF gap excludes it.
+        while rehearsal_from_dt.weekday() >= 5:
+            rehearsal_from_dt -= timedelta(days=1)
         rehearsal_from = rehearsal_from_dt.strftime("%Y-%m-%d")
         rehearsal_to = to_date
 
@@ -875,6 +880,17 @@ class StrategyResearchLoop:
         if rehearsal_bt is None:
             return None
         # Too few bars to judge: window may be before IPO or have holidays
+        _rehearsal_meta = {
+            "rehearsal_run_id": getattr(in_sample_result, "run_id", ""),
+            "regime_breakdown": {},
+            "conditions": {
+                "lookback_days": lookback,
+                "trading_days": True,
+                "wf_gap_days": int(getattr(self._config, "walk_forward_gap_days", 5)),
+                "cost_model": "almgren-chriss+T+1",
+            },
+            "trade_overlap": 1.0,
+        }
         if rehearsal_bt.trade_count == 0 and rehearsal_bt.equity_points < 3:
             return PaperRehearsalResult(
                 rehearsal_from=rehearsal_from,
@@ -887,6 +903,7 @@ class StrategyResearchLoop:
                 passed=True,
                 note="no data or no trades in rehearsal window — not evaluable, treated as pass",
                 raw_metrics=rehearsal_bt.metrics.__dict__,
+                **_rehearsal_meta,
             )
 
         is_sharpe = in_sample_result.metrics.sharpe_ratio
@@ -917,6 +934,7 @@ class StrategyResearchLoop:
             passed=passed,
             note=note,
             raw_metrics=rehearsal_bt.metrics.__dict__,
+            **_rehearsal_meta,
         )
 
     async def _run_walk_forward(

@@ -11,7 +11,7 @@ One table. Update when folder changes.
 | 09-top3-9 | 09-top3-per-timeframe.md | doing (diversity done) | agent build | 2026-09-09 | _shape+diverse_top_n green, writer 9 pending |
 | 10-env-knobs | 10-env-knobs.md | doing (sweep wired) | agent build | 2026-09-09 | config+grid env wired 53 green, docs pending |
 | 11-paper-9 | 11-paper-all-6-live.md | doing (knob done) | agent build | 2026-09-09 | paper-days 1D/1H wired 10 green, writer 9 pending |
-| 12-seven-day-10 | 12-seven-day-finish-10.md | open | - | - | 10 points, trading days + overlap |
+| 12-seven-day-10 | 12-seven-day-finish-10.md | doing (window done) | agent build | 2026-09-09 | trading-days+overlap 58 green, pause pending |
 | 13-risk | 13-risk-allocation-full.md | doing (tail+vol done) | agent build | 2026-09-09 | cvar+vol 38 green, BL/HRP later |
 | 14-storage-3x | 14-simulation-storage.md | doing (models done) | agent build | 2026-09-09 | 4 fields 16 green, loop pending |
 | 15-monitor | 15-monitor-shock-exit.md | doing (HALT+time-stop done) | agent build | 2026-09-09 | entries-only allow exits 30 green, rest open |
