@@ -127,8 +127,10 @@ def write_artifacts_from_top3(
     """
     import os as _os
 
+    # Agent mirror (10): same knob as research sweep_top_n_per_interval.
+    # Reads VINU_SWEEP_TOP_N_PER_INTERVAL first, VINU_SWEEP_TOP_N fallback.
     try:
-        _top = int(_os.environ.get("VINU_SWEEP_TOP_N", str(top_n)))
+        _top = int(_os.environ.get("VINU_SWEEP_TOP_N_PER_INTERVAL", _os.environ.get("VINU_SWEEP_TOP_N", str(top_n))))
     except ValueError:
         _top = top_n
     ids: list[str] = []

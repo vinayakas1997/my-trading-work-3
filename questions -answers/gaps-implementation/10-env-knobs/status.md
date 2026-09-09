@@ -1,7 +1,7 @@
 # Status - 10-env-knobs
 
 Date: 2026-09-09
-State: doing (sweep knobs wired, rest open)
+State: done (sweep+docs+mirror)
 Owner: agent build
 Doing: sweep intervals/topN/vectorbt/diversity wired to config.
 Done:
@@ -11,6 +11,8 @@ Bugs found while implementing: none, env + config consistent.
 Other files touched:
 - vinu-components/vinu-research/vinu_research/config.py
 - vinu-components/vinu-research/vinu_research/sweep_grid.py
-Next: agent config mirror + INTERVALS loop.
+Next: none, all closed.
 Done2:
 - .env-example: gap knobs section sweep/paper/DD/provider/fills/lesson/mute.
+Done3:
+- writer TOP_N mirror: reads TOP_N_PER_INTERVAL first TOP_N fallback, verified 2 cap. INTERVALS loop via sweep_interval_list 1d first.
