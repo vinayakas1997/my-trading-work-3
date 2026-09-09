@@ -19,7 +19,7 @@ One table. Update when folder changes.
 | 17-ui | 17-ui-status.md | done (CLI v1) | agent build | 2026-09-09 | checkbox+pipeline+banner+csv, web v2 later |
 | 18-data | 18-data-pipeline.md | done | agent build | 2026-09-09 | order+lineage+refill+PIT closed |
 | 19-portfolio | 19-portfolio-inside.md | done | agent build | 2026-09-09 | all 5 closed, 116 green |
-| 20-learning | 20-learning-over-time.md | doing (worker done) | agent build | 2026-09-09 | LESSON after 30 16 green, decay pending |
+| 20-learning | 20-learning-over-time.md | done | agent build | 2026-09-09 | worker+decay+STAR+context closed |
 | 21-workers | 21-significance-skills.md | done | agent build | 2026-09-09 | mute+pin+audit+notify 51 green |
 | 22-infra | 22-infra-secrets-docker.md | done | agent build | 2026-09-09 | retry+secrets closed, slim deferred post-Full |
 | 23-runbooks | 23-runbooks-ats-full.md | done | agent build | 2026-09-09 | ATS-first rule added |
