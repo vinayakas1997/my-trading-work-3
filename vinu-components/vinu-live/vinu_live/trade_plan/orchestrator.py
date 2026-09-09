@@ -46,12 +46,64 @@ LOG = logging.getLogger(__name__)
 _COVARIANCE_WINDOW = 63
 _RETURNS_LOOKBACK_DAYS = 90
 
-# Monitor safety (15 steps 1-2): HALT entries-only + time-stop.
+# Monitor safety (15 steps 1-2): HALT entries-only + time-stop + cooldown.
 # entries_only = block entries, allow risk-reducing exits/reduces.
 # all = block everything (old behavior, for debug rollback).
+# Cooldown: N consecutive losses locks new entries for H hours (revenge block).
 import os as _os
 HALT_POLICY = _os.environ.get("VINU_LIVE_HALT_POLICY", "entries_only")
 MAX_HOLD_DAYS = int(_os.environ.get("VINU_LIVE_MAX_HOLD_DAYS", "30"))
+COOLDOWN_LOSSES = int(_os.environ.get("VINU_LIVE_COOLDOWN_LOSSES", "2"))
+COOLDOWN_HOURS = float(_os.environ.get("VINU_LIVE_COOLDOWN_HOURS", "24"))
+
+
+def cooldown_active(book: Any) -> tuple[bool, str]:
+    """2 losses in a row -> lock entries 24h (15 step2). Exits never blocked."""
+    if COOLDOWN_LOSSES <= 0 or COOLDOWN_HOURS <= 0:
+        return False, ""
+    try:
+        import sqlite3 as _sql
+        from pathlib import Path as _Path
+
+        _dbp = getattr(book, "db_path", None)
+        con = None
+        if isinstance(_dbp, (str, _Path)) and _Path(str(_dbp)).exists():
+            con = _sql.connect(f"file:{_dbp}?mode=ro", uri=True)
+        if con is None:
+            # Fallback: list_closed_positions helper shape (mocks, other backends).
+            from vinu_live.book.positions import list_closed_positions as _list
+            closed = _list(book)
+            rows = [{"realized_pnl": c.get("realized_pnl", 0), "closed_at": c.get("closed_at", "")} for c in closed]
+        else:
+            try:
+                cur = con.cursor()
+                cur.execute("SELECT realized_pnl, closed_at FROM closed_positions ORDER BY closed_at DESC LIMIT 10")
+                rows = [{"realized_pnl": r[0], "closed_at": r[1]} for r in cur.fetchall()]
+            finally:
+                con.close()
+        streak = 0
+        latest: str = ""
+        for r in rows:
+            if (r.get("realized_pnl") or 0) < 0:
+                streak += 1
+                if not latest:
+                    latest = r.get("closed_at", "")
+            else:
+                break
+        if streak < COOLDOWN_LOSSES:
+            return False, ""
+        if latest:
+            try:
+                dt = datetime.fromisoformat(latest)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                if (datetime.now(timezone.utc) - dt).total_seconds() > COOLDOWN_HOURS * 3600:
+                    return False, ""
+            except (ValueError, TypeError):
+                pass
+        return True, f"cooldown: {streak} consecutive losses, entries locked {COOLDOWN_HOURS:g}h"
+    except Exception:
+        return False, ""
 
 
 def _halt_allows_exit() -> bool:
@@ -353,6 +405,11 @@ class TradePlanOrchestrator:
         if verdict == BreakerVerdict.HALT:
             LOG.warning("Breaker HALT -- skipping entry for %s: %s", symbol, reason)
             return {"symbol": symbol, "action": "entry_blocked_by_breaker", "reason": reason}
+
+        locked, lock_reason = cooldown_active(self._book)
+        if locked:
+            LOG.warning("Cooldown -- skipping entry for %s: %s", symbol, lock_reason)
+            return {"symbol": symbol, "action": "entry_blocked_by_cooldown", "reason": lock_reason}
 
         side = "buy" if direction == "long" else "sell"
         order_result = await self._submit_order(symbol, side, qty)
