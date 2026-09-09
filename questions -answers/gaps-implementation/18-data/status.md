@@ -1,7 +1,7 @@
 # Status - 18-data
 
 Date: 2026-09-09
-State: doing (provider order done, PIT/gap pending)
+State: done (order+lineage+refill+PIT)
 Owner: agent build
 Doing: failover order done. Next PIT test + gap scan backfill.
 Done:
@@ -9,7 +9,9 @@ Done:
 Bugs found while implementing: test_api health providers permission error pre-existing, 13 green.
 Other files touched:
 - vinu-components/vinu-stock-price/vinu_stock/providers/registry.py:23
-Next: PIT as-of join test.
+Next: none, order+lineage+refill+PIT closed (failover first already via registry).
+Done4:
+- test_pit.py: as-of excludes future + indicators match slice, 2 green.
 Done2:
 - models.py lineage_hash + loop.py data_hash per run, 74 green (freeze.py already exists).
 Done3:
