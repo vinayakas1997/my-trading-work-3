@@ -116,6 +116,20 @@ class ScheduledResearchExecutor:
         return result
 
     async def decay_scan(self) -> int:
+        # Single decay policy (20 step2): ratio + forgetting in one place.
+        # VINU_DECAY_RATIO (default 0.5): rolling/initial below this -> decay.
+        # VINU_DECAY_FORGET_DAYS (default 90): snapshot older than this is
+        # stale evidence -> treat as decayed (old wins don't protect).
+        import os as _os
+
+        try:
+            _ratio_th = float(_os.environ.get("VINU_DECAY_RATIO", "0.5"))
+        except ValueError:
+            _ratio_th = 0.5
+        try:
+            _forget_days = float(_os.environ.get("VINU_DECAY_FORGET_DAYS", "90"))
+        except ValueError:
+            _forget_days = 90.0
         decayed_count = 0
         debug_log("decay_scan: starting", level=1)
         try:
@@ -131,8 +145,18 @@ class ScheduledResearchExecutor:
                 snapshot = await asyncio.to_thread(self.service.strategy_store.get_latest_snapshot, art.artifact_id)
                 if snapshot is not None and art.initial_sharpe > 0:
                     ratio = snapshot.rolling_sharpe / art.initial_sharpe if art.initial_sharpe else 0
-                    if ratio < 0.5:
-                        LOG.warning("Decay detected for %s: sharpe=%.2f vs initial=%.2f", art.artifact_id, snapshot.rolling_sharpe, art.initial_sharpe)
+                    stale = False
+                    try:
+                        _sts = getattr(snapshot, "as_of", "") or getattr(snapshot, "created_at", "")
+                        if _sts:
+                            _dt = datetime.fromisoformat(str(_sts))
+                            if _dt.tzinfo is None:
+                                _dt = _dt.replace(tzinfo=timezone.utc)
+                            stale = (datetime.now(timezone.utc) - _dt).days > _forget_days
+                    except (ValueError, TypeError):
+                        stale = False
+                    if ratio < _ratio_th or stale:
+                        LOG.warning("Decay detected for %s: sharpe=%.2f vs initial=%.2f ratio=%.2f stale=%s", art.artifact_id, snapshot.rolling_sharpe, art.initial_sharpe, ratio, stale)
                         debug_log(f"decay_scan: decayed {art.artifact_id} ratio={ratio:.2f}", level=1)
                         result = await self.service.refresh_strategy(art.artifact_id, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
                         if result.get("full_research"):

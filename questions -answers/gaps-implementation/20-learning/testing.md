@@ -1,10 +1,10 @@
-# Testing - 20-learning (lesson v1)
+# Testing - 20-learning (worker+decay)
 
 Command:
 - python3 -m pytest vinu-live/tests/test_feedback_loop.py -q
-- python3 -c "from vinu_live.lesson_worker import cycle; print(cycle())"
-Expected: 16 passed, cycle skipped_not_enough closed 1.
-Actual: 16 passed, skipped_not_enough closed 1 correct.
-Status: green for worker, red for decay/PRIDE pending.
+- python3 -m pytest vinu-research/tests/ -q -k "decay or executor or scheduled"
+Expected: 16 + 67 passed, stale snapshot decayed.
+Actual: 16 + 67 passed, 1 pre-existing lazy_init fail same on stash.
+Status: green for worker+decay, red for PRIDE pending.
 Proof log: build output 2026-09-09.
-Note: decay + PRIDE pending separate.
+Note: PRIDE + regime lessons pending separate.
