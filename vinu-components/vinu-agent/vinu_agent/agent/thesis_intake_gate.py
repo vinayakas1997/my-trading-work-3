@@ -70,7 +70,7 @@ class ThesisIntakeGate:
         self._threshold = near_duplicate_threshold
         self._k_cap = k_cap
 
-    def check(self, ticker: str, thesis_text: str) -> ThGateResult:
+    def check(self, ticker: str, thesis_text: str, human_priority: bool = False) -> ThGateResult:
         """Fail-closed direction here is toward ALLOWING through to
         Thesis Intake on either lookup failing -- this is a cost gate, not
         a safety gate (unlike Phase 3's Kill Switch check): the worst case
@@ -106,9 +106,13 @@ class ThesisIntakeGate:
             LOG.warning("K-cap lookup failed for %s, defaulting to allow: %s", ticker, exc)
             return ThGateResult(True, "passed THGATE (K-cap check failed, defaulted to allow)")
 
-        if count >= self._k_cap:
+        # Human priority (07 No.7): human theories bypass K-cap, never blocked
+        # by machine proposal count. Duplicate check above still applies.
+        if count >= self._k_cap and not human_priority:
             return ThGateResult(
                 False, f"ticker at distinct-candidate cap ({count}/{self._k_cap}) this cycle",
             )
+        if count >= self._k_cap and human_priority:
+            return ThGateResult(True, "passed THGATE (human priority bypasses K-cap)")
 
         return ThGateResult(True, "passed THGATE")

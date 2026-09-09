@@ -179,6 +179,13 @@ class ResearchConfig:
     sweep_diversity_required: bool = True
     sweep_min_succeeds_for_pass: int = 2
 
+    def sweep_interval_list(self) -> list[str]:
+        """Ordered intervals, 1D first (07 No.1): callers run 1d before 1H
+        before 15min so slower, more-trusted evidence lands first."""
+        order = {"1d": 0, "1D": 0, "1h": 1, "1H": 1, "15min": 2, "15m": 2}
+        parts = [p.strip() for p in (self.sweep_intervals or "").split(",") if p.strip()]
+        return sorted(parts, key=lambda p: order.get(p, 99))
+
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
 
