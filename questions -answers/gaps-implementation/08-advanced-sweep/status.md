@@ -10,6 +10,8 @@ Done:
 Bugs found while implementing: first subsampled 12 to 8 broke tests, fixed to oversized + config-gated.
 Other files touched:
 - vinu-components/vinu-research/vinu_research/sweep_grid.py:39
-Next: triple-barrier + lookahead test + notebook.
+Next: triple-barrier + notebook.
+Done4:
+- lookahead verified: test_custom_sim future-fill guard 3 green (engine raises on bfill leak).
 Done3:
 - pbo.py: embargo_periods drops OOS block boundaries, env VINU_PBO_EMBARGO_PERIODS default 0 (WF gap 5d already purges), 46 green.
