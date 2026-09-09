@@ -9,7 +9,7 @@ One table. Update when folder changes.
 | 07-sweep-7 | 07-sweep-grid-7-inefficiencies.md | doing (No.4+2+5+6 done) | agent build | 2026-09-09 | +angle fit 51 green, No.1/7 pending |
 | 08-advanced-sweep | 08-advanced-sweep-adopt.md | doing (step1+2 done) | agent build | 2026-09-09 | fast+hyperopt 13 green, purge pending |
 | 09-top3-9 | 09-top3-per-timeframe.md | doing (diversity+writer done) | agent build | 2026-09-09 | diverse+top3writer 24+9 green, regime pending |
-| 10-env-knobs | 10-env-knobs.md | doing (sweep wired) | agent build | 2026-09-09 | config+grid env wired 53 green, docs pending |
+| 10-env-knobs | 10-env-knobs.md | doing (sweep+docs done) | agent build | 2026-09-09 | +env-example knobs, mirror pending |
 | 11-paper-9 | 11-paper-all-6-live.md | doing (knob+writer+promote done) | agent build | 2026-09-09 | paper loops all 7 green, read-all pending |
 | 12-seven-day-10 | 12-seven-day-finish-10.md | doing (window done) | agent build | 2026-09-09 | trading-days+overlap 58 green, pause pending |
 | 13-risk | 13-risk-allocation-full.md | doing (tail+vol done) | agent build | 2026-09-09 | cvar+vol 38 green, BL/HRP later |

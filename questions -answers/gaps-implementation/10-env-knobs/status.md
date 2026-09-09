@@ -11,4 +11,6 @@ Bugs found while implementing: none, env + config consistent.
 Other files touched:
 - vinu-components/vinu-research/vinu_research/config.py
 - vinu-components/vinu-research/vinu_research/sweep_grid.py
-Next: .env-example docs + agent config mirror + INTERVALS loop.
+Next: agent config mirror + INTERVALS loop.
+Done2:
+- .env-example: gap knobs section sweep/paper/DD/provider/fills/lesson/mute.
