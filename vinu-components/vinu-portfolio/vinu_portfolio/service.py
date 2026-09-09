@@ -590,11 +590,22 @@ class PortfolioService:
         if equity is not None:
             tilted = apply_position_sizing(tilted, equity, target_vol=self._config.target_volatility)
 
+        # Sleeves (19 step3): subtotal weights by style tag (trend-following
+        # vs mean-reversion vs untagged). Interval sleeves (1D/1H) need per-
+        # strategy interval data that doesn't exist yet -- style sleeves now,
+        # interval split later. Fail-open: untagged bucket, never blocks.
+        tags = self._load_tags()
+        sleeves: dict[str, float] = {}
+        for t in tilted:
+            _style = str((tags.get(t["name"]) or {}).get("style", "untagged"))
+            sleeves[_style] = round(sleeves.get(_style, 0.0) + t["target_weight"], 4)
+
         return {
             **base,
             "weights": tilted,
             "regime": regime_info,
             "per_symbol_regime": per_symbol_regime,
+            "sleeves": sleeves,
             "account_equity": equity,
         }
 
