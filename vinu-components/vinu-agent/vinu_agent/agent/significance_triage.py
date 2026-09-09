@@ -99,6 +99,8 @@ class SignificanceFlag:
     responded_at: str = ""
     response_text: str = ""
     resolved: bool = False
+    muted_until: str = ""
+    skill_version: str = ""
 
     @classmethod
     def from_row(cls, row: dict[str, Any]) -> "SignificanceFlag":
@@ -106,16 +108,43 @@ class SignificanceFlag:
             flag_id=row["flag_id"], ticker=row["ticker"], reason=row["reason"], detail=row["detail"],
             created_at=row["created_at"], responded_at=row.get("responded_at", ""),
             response_text=row.get("response_text", ""), resolved=bool(row.get("resolved", 0)),
+            muted_until=row.get("muted_until", "") or "", skill_version=row.get("skill_version", "") or "",
         )
+
+
+def _skill_version() -> str:
+    # Version pin (21 step2): provable skill version on each flag.
+    # Env override for tests, else short git sha or "unknown".
+    import os as _os
+    import subprocess as _sp
+
+    v = _os.environ.get("VINU_SKILL_VERSION", "").strip()
+    if v:
+        return v
+    try:
+        return _sp.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()[:12]
+    except Exception:
+        return "unknown"
 
 
 class SignificanceFlagStore(SQLiteBackend):
     SCHEMA = SCHEMA
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
+
+    def _ensure_v2(self) -> None:
+        conn = self._get_conn()
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(significance_flags)").fetchall()]
+        if "muted_until" not in cols:
+            conn.execute("ALTER TABLE significance_flags ADD COLUMN muted_until TEXT NOT NULL DEFAULT ''")
+        if "skill_version" not in cols:
+            conn.execute("ALTER TABLE significance_flags ADD COLUMN skill_version TEXT NOT NULL DEFAULT ''")
+        conn.commit()
 
     def create_flag(self, ticker: str, reason: str, detail: str) -> SignificanceFlag:
+        self._ensure_v2()
         flag = SignificanceFlag(
             flag_id=_new_flag_id(), ticker=ticker.upper(), reason=reason, detail=detail, created_at=_now(),
+            skill_version=_skill_version(),
         )
         self.upsert(
             "significance_flags",
@@ -123,10 +152,35 @@ class SignificanceFlagStore(SQLiteBackend):
                 "flag_id": flag.flag_id, "ticker": flag.ticker, "reason": flag.reason,
                 "detail": flag.detail, "created_at": flag.created_at,
                 "responded_at": "", "response_text": "", "resolved": 0,
+                "muted_until": "", "skill_version": flag.skill_version,
             },
             conflict_columns=["flag_id"],
         )
         return flag
+
+    def mute_flag(self, flag_id: str, hours: float = 24.0) -> SignificanceFlag | None:
+        """Mute repeated alerts 24h (21 step1): muted flags don't re-deliver."""
+        import os as _os
+
+        self._ensure_v2()
+        try:
+            hours = float(_os.environ.get("VINU_SIGNIFICANCE_MUTE_HOURS", str(hours)))
+        except ValueError:
+            pass
+        flag = self.get_flag(flag_id)
+        if flag is None:
+            return None
+        until = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + hours * 3600))
+        conn = self._get_conn()
+        conn.execute("UPDATE significance_flags SET muted_until = ? WHERE flag_id = ?", (until, flag_id))
+        conn.commit()
+        flag.muted_until = until
+        return flag
+
+    def is_muted(self, flag: SignificanceFlag) -> bool:
+        if not flag.muted_until:
+            return False
+        return flag.muted_until > _now()
 
     def get_flag(self, flag_id: str) -> SignificanceFlag | None:
         conn = self._get_conn()
