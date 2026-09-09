@@ -632,6 +632,8 @@ class PaperRehearsalResult:
 
     Uses the same simulator + T+1 + cost model as every other backtest, so
     the evidence is directly comparable to the in-sample metrics.
+    Full store (14): run_id link + regime breakdown + conditions + overlap,
+    tiny KBs, worth it for side-by-side backtest vs rehearsal vs paper vs live.
     """
     rehearsal_from: str
     rehearsal_to: str
@@ -643,6 +645,10 @@ class PaperRehearsalResult:
     passed: bool
     note: str = ""
     raw_metrics: dict[str, float] = field(default_factory=dict)
+    rehearsal_run_id: str = ""
+    regime_breakdown: dict[str, Any] = field(default_factory=dict)
+    conditions: dict[str, Any] = field(default_factory=dict)
+    trade_overlap: float | None = None
 
 
 @dataclass
