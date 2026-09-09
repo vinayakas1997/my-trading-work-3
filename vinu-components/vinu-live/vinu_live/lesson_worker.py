@@ -29,9 +29,16 @@ def should_write_lesson(closed_count: int, min_trades: int | None = None) -> boo
 
 
 def write_lesson(summary: dict, data_root: Path | str = "") -> Path:
+    # PRIDE star (20): high-evidence lessons (>=STAR_MIN closed) get STAR
+    # prefix so review prioritizes them. Threshold env, default 50.
+    try:
+        _star_min = int(os.environ.get("VINU_LESSON_STAR_MIN", "50"))
+    except ValueError:
+        _star_min = 50
     d = lesson_dir(data_root)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    p = d / f"LESSON_{ts}.json"
+    star = "STAR_" if (summary.get("closed", 0) or 0) >= _star_min else ""
+    p = d / f"{star}LESSON_{ts}.json"
     p.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     LOG.info("Lesson written %s", p)
     return p
