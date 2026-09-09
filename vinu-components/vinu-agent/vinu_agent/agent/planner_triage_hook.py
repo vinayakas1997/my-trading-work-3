@@ -92,7 +92,7 @@ class PlannerTriage:
         self._k_cap = k_cap
         self._recipes = recipes if recipes is not None else _default_recipes()
 
-    def check(self, ticker: str) -> PlannerTriageResult:
+    def check(self, ticker: str, angles: list[str] | None = None) -> PlannerTriageResult:
         """Fail-closed direction here is toward SKIPPING on any lookup
         failure -- same cost-only category as Phase 0's RunLog trigger and
         THGATE's own near-duplicate check, not a safety gate: the worst
@@ -130,17 +130,19 @@ class PlannerTriage:
         if not self._recipes:
             return PlannerTriageResult(ticker, False, "no sweep recipes available")
 
-        # Deterministic, provisional rotation -- guarantees a DIFFERENT
-        # recipe than however many non-terminal artifacts already exist
-        # for this ticker, without needing a stored "recipe used" field on
-        # Artifact (none exists). Flagged first-pass, same category as
-        # every other un-pinned heuristic across this build: real angle-
-        # characteristic-driven recipe matching is idea_generator's own
-        # LLM job downstream, per mermaid-explanation.md's Planner section
-        # ("Idea shaping... tied explicitly to the angle characteristics
-        # that motivated it") -- this hook only has to pick a reasonable
-        # starting point, not the final answer.
-        recipe_name = self._recipes[len(existing) % len(self._recipes)]
+        # Angle fit (07 No.6): when caller passes angle names, pick recipe
+        # by angle characteristic first (trend->crossover, reversal->rsi,
+        # volatility->garch-like fallback first recipe). Else provisional
+        # rotation by in-flight count. idea_generator LLM refines downstream.
+        recipe_name = ""
+        if angles:
+            joined = " ".join(a.lower() for a in angles)
+            if any(k in joined for k in ("trend", "crossover", "momentum", "breakout")):
+                recipe_name = "crossover" if "crossover" in self._recipes else self._recipes[0]
+            elif any(k in joined for k in ("reversal", "rsi", "mean", "oversold", "overbought")):
+                recipe_name = "rsi" if "rsi" in self._recipes else self._recipes[0]
+        if not recipe_name:
+            recipe_name = self._recipes[len(existing) % len(self._recipes)]
 
         return PlannerTriageResult(
             ticker, True,
