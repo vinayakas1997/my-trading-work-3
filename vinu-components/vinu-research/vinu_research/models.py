@@ -196,6 +196,10 @@ class Artifact:
     # Regime tag (09 step2): trend/range/high-vol at write time, for
     # per-regime review. Never backfilled, same contract as origin_angles.
     regime_tag: str = ""
+    # Freeze hash (09 step3): config lineage at write time (sorted VINU_*
+    # sweep/research env). Proves which config produced the artifact; full
+    # file freeze via vinu_infra/freeze.py. Never backfilled.
+    freeze_hash: str = ""
 
     @classmethod
     def create(cls, type_: str, name: str, universe: list[str] | None = None) -> Artifact:
@@ -218,6 +222,17 @@ class Artifact:
             created_at=now,
             updated_at=now,
         )
+
+
+def freeze_config_hash() -> str:
+    """Config lineage for artifact writes (09 step3): sha of sorted
+    VINU_SWEEP_* and VINU_RESEARCH_* env. Cheap, deterministic, no service
+    call. Full file freeze via vinu_infra/freeze.py."""
+    import hashlib as _hl
+    import os as _os
+
+    items = sorted(f"{k}={v}" for k, v in _os.environ.items() if k.startswith("VINU_SWEEP_") or k.startswith("VINU_RESEARCH_"))
+    return _hl.sha256("|".join(items).encode()).hexdigest()[:12]
 
 
 # ---------------------------------------------------------------------------

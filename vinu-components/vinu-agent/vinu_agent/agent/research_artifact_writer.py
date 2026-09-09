@@ -157,6 +157,12 @@ def write_artifacts_from_top3(
                 a.initial_sharpe = float(c.get("sharpe", 0.0) or 0.0)
                 a.initial_max_dd = float(c.get("max_drawdown", 0.0) or 0.0)
                 a.regime_tag = str(c.get("regime", "") or "").strip()
+                try:
+                    from vinu_research.models import freeze_config_hash as _freeze_hash
+
+                    a.freeze_hash = _freeze_hash()
+                except Exception:
+                    a.freeze_hash = ""
                 angles = c.get("angles_used")
                 if isinstance(angles, list):
                     a.origin_angles = [str(x).strip() for x in angles if str(x).strip()]
