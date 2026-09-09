@@ -109,3 +109,57 @@ def write_artifact_from_research_pass(
     except Exception:
         LOG.exception("failed to write research-pass artifact, continuing without it")
         return None
+
+
+def write_artifacts_from_top3(
+    candidates: list[dict[str, Any]],
+    *,
+    strategy_store: Any,
+    symbol: str,
+    source_run_id: str = "",
+    top_n: int = 3,
+) -> list[str]:
+    """Write 9 not 1 (09 step2): top3 per interval (1d,1H,15min).
+
+    `candidates` each has interval/code/sharpe/max_drawdown/angles_used.
+    Upstream comparison.diverse_top_n already ensures best per shape.
+    Caps top_n per interval, BENCHING, idempotent by name, never raises.
+    """
+    import os as _os
+
+    try:
+        _top = int(_os.environ.get("VINU_SWEEP_TOP_N", str(top_n)))
+    except ValueError:
+        _top = top_n
+    ids: list[str] = []
+    try:
+        from vinu_research.models import Artifact, ArtifactStatus
+
+        sym = symbol.strip().upper()
+        by_interval: dict[str, list[dict[str, Any]]] = {}
+        for c in candidates:
+            by_interval.setdefault(str(c.get("interval", "1d")), []).append(c)
+        for interval, items in by_interval.items():
+            for rank, c in enumerate(items[:_top], start=1):
+                code = str(c.get("strategy_code", "")).strip()
+                if not code:
+                    continue
+                name = f"{sym}-{interval}-top{rank}-{source_run_id or 'manual'}"
+                existing = [a for a in strategy_store.list_artifacts_for_symbol(sym) if a.name == name]
+                if existing:
+                    ids.append(existing[0].artifact_id)
+                    continue
+                a = Artifact.create("strategy", name, universe=[sym])
+                a.status = ArtifactStatus.BENCHING
+                a.strategy_code = code
+                a.initial_sharpe = float(c.get("sharpe", 0.0) or 0.0)
+                a.initial_max_dd = float(c.get("max_drawdown", 0.0) or 0.0)
+                angles = c.get("angles_used")
+                if isinstance(angles, list):
+                    a.origin_angles = [str(x).strip() for x in angles if str(x).strip()]
+                strategy_store.upsert_artifact(a)
+                ids.append(a.artifact_id)
+        return ids
+    except Exception:
+        LOG.exception("failed to write top3 artifacts, continuing without them")
+        return ids
