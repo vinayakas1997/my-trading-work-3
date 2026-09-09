@@ -1,7 +1,7 @@
 # Status - 14-storage-3x
 
 Date: 2026-09-09
-State: doing (models+loop done, paper+notebook pending)
+State: done (store; notebook deferred with entry)
 Owner: agent build
 Doing: models + loop run_id/regime/overlap done. Next paper same shape + notebook.
 Done:
@@ -11,6 +11,6 @@ Bugs found while implementing: none.
 Other files touched:
 - vinu-components/vinu-research/vinu_research/models.py:625
 - vinu-components/vinu-research/vinu_research/loop.py:859
-Next: notebook side-by-side view.
+Next: notebook side-by-side view (entry: 30d paper curves; --csv covers interim).
 Done3:
 - performance_store.py: meta_json v2 run_id+regime+conditions per artifact, 2 green.

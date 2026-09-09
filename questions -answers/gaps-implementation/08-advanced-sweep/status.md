@@ -1,7 +1,7 @@
 # Status - 08-advanced-sweep
 
 Date: 2026-09-09
-State: doing (step1+hyperopt done, purge pending)
+State: done (code; notebook deferred with entry)
 Owner: agent build
 Doing: fast + hyperopt done. Next purge+embargo+triple-barrier.
 Done:
@@ -10,7 +10,7 @@ Done:
 Bugs found while implementing: first subsampled 12 to 8 broke tests, fixed to oversized + config-gated.
 Other files touched:
 - vinu-components/vinu-research/vinu_research/sweep_grid.py:39
-Next: notebook rank view (view layer, CSV covers interim).
+Next: notebook rank view (entry: 30d paper curves to plot; --csv covers interim).
 Done5:
 - labels.py triple-barrier +1/-1/0 pure + 4 tests green.
 Done4:

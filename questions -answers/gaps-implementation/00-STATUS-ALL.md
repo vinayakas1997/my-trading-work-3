@@ -7,13 +7,13 @@ One table. Update when folder changes.
 | 02-llm-400 | 02-inefficiencies-found.md #1 | done | built 06:24 | 2026-09-08 | loop.py keep user, 8e1c13d, NVDA 200 |
 | 03-vectorbt-not-connected | 03-vectorbt-not-connected.md, 07 No.3, 08 step1 | done | agent build | 2026-09-09 | gather sem5 order kept, rollback false, 35 green both |
 | 07-sweep-7 | 07-sweep-grid-7-inefficiencies.md | done | agent build | 2026-09-09 | all 7 No.1-7 green |
-| 08-advanced-sweep | 08-advanced-sweep-adopt.md | doing (step1+2 done) | agent build | 2026-09-09 | fast+hyperopt 13 green, purge pending |
+| 08-advanced-sweep | 08-advanced-sweep-adopt.md | done (code) | agent build | 2026-09-09 | fast+hyperopt+embargo+labels+lookahead, notebook later |
 | 09-top3-9 | 09-top3-per-timeframe.md | done | agent build | 2026-09-09 | all 6 closed, 60+9 green |
 | 10-env-knobs | 10-env-knobs.md | done | agent build | 2026-09-09 | sweep+docs+mirror closed |
 | 11-paper-9 | 11-paper-all-6-live.md | done | agent build | 2026-09-09 | all 5 closed, 7 green |
 | 12-seven-day-10 | 12-seven-day-finish-10.md | done | agent build | 2026-09-09 | window+pause closed, HRP deferred 30t+60d |
 | 13-risk | 13-risk-allocation-full.md | done (guards) | agent build | 2026-09-09 | cvar+vol+ladder+cap green, BL/HRP deferred |
-| 14-storage-3x | 14-simulation-storage.md | doing (models+loop done) | agent build | 2026-09-09 | regime tagged 58 green, paper pending |
+| 14-storage-3x | 14-simulation-storage.md | done (store) | agent build | 2026-09-09 | models+loop+paper closed, notebook later |
 | 15-monitor | 15-monitor-shock-exit.md | done | agent build | 2026-09-09 | all 6 safety rails closed, 70 green |
 | 16-broker | 16-broker-fills.md | done | agent build | 2026-09-09 | all 6 closed: fills+idem+partial+borrow+corp |
 | 17-ui | 17-ui-status.md | done (CLI v1) | agent build | 2026-09-09 | checkbox+pipeline+banner+csv, web v2 later |
