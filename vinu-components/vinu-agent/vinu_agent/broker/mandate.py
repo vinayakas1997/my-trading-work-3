@@ -9,9 +9,50 @@ from typing import Any
 
 import yaml
 
+from vinu_infra.runtime_settings import RuntimeSettings
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MANDATE_PATH = Path.home() / ".vinu" / "mandate.yaml"
+
+# Live-editable overlay for the numeric risk limits below, via
+# POST /agent/admin/settings -- no restart, no mandate.yaml edit needed.
+# OrderGuard constructs a fresh TradingMandate on every order (see
+# order_guard.py's docstring), so an override set here takes effect on the
+# very next order attempt. Deliberately overlays TradingMandate.load()'s
+# result rather than replacing mandate.yaml on disk: a restart always goes
+# back to whatever mandate.yaml actually says, so a live loosening can
+# never silently survive a redeploy. allowed/blocked_tickers,
+# require_active_artifact, require_market_open, require_confirmation,
+# allow_short, allow_margin, and the correlation/concentration caps are
+# NOT here on purpose -- those are pass/fail policy switches, not tuning
+# knobs, and belong in mandate.yaml where changing them is a deliberate,
+# reviewable edit.
+SETTINGS = RuntimeSettings()
+SETTINGS.register(
+    "max_position_pct", default=0.25, minimum=0.0, maximum=1.0,
+    description="Max single position size as a fraction of equity.",
+)
+SETTINGS.register(
+    "max_order_value", default=50000.0, minimum=0.0,
+    description="Max notional value of a single order.",
+)
+SETTINGS.register(
+    "max_daily_orders", default=10, caster=int, minimum=0,
+    description="Max orders per symbol per day.",
+)
+SETTINGS.register(
+    "max_daily_trade_volume", default=200000.0, minimum=0.0,
+    description="Max traded notional per symbol per day.",
+)
+SETTINGS.register(
+    "max_daily_orders_portfolio", default=0, caster=int, minimum=0,
+    description="Max orders per day across the whole portfolio (0 = no cap).",
+)
+SETTINGS.register(
+    "max_capital_utilization_pct", default=1.0, minimum=0.0, maximum=1.0,
+    description="Max fraction of equity that may be deployed across all open positions.",
+)
 
 
 @dataclass
@@ -62,12 +103,12 @@ class TradingMandate:
         path = path or DEFAULT_MANDATE_PATH
         if not path.exists():
             logger.info("No mandate at %s, using defaults", path)
-            return cls()
+            return cls(**SETTINGS.overrides())
         try:
             raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
             allowed = raw.get("allowed_tickers", ["*"])
             blocked = raw.get("blocked_tickers", [])
-            return cls(
+            kwargs: dict[str, Any] = dict(
                 allowed_tickers=set(allowed) if isinstance(allowed, list) else {"*"},
                 blocked_tickers=set(blocked) if isinstance(blocked, list) else set(),
                 max_position_pct=float(raw.get("max_position_pct", 0.25)),
@@ -84,9 +125,16 @@ class TradingMandate:
                 allow_short=bool(raw.get("allow_short", False)),
                 allow_margin=bool(raw.get("allow_margin", False)),
             )
+            # Live admin overrides (POST /agent/admin/settings) win over
+            # mandate.yaml -- an operator tightening/loosening a numeric
+            # risk limit at runtime is deliberately allowed to override
+            # the file without editing it; a restart drops back to the
+            # file's own value (see SETTINGS' module docstring above).
+            kwargs.update(SETTINGS.overrides())
+            return cls(**kwargs)
         except Exception as exc:
             logger.warning("Failed to load mandate from %s: %s — using defaults", path, exc)
-            return cls()
+            return cls(**SETTINGS.overrides())
 
     def to_dict(self) -> dict[str, Any]:
         return {

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from vinu_research.models import Forecast, TradePlan
+from vinu_research.models import Forecast, InvalidationCondition, TradePlan
 from vinu_research.server import routes_trade_plan
 from vinu_research.server.app import create_app
 from vinu_research.service import ResearchService
@@ -33,6 +33,12 @@ async def _fake_author_trade_plan(symbol, timeframe, config, tools, llm_client=N
         direction="long",
         position_size_pct=0.04,
         forecast=Forecast(direction="long", confidence=0.6, magnitude_pct=0.02),
+        # Stage A (A9): freeze_trade_plan refuses a plan with none.
+        invalidation_conditions=[
+            InvalidationCondition(
+                metric="unrealized_pnl_pct", operator="<=", threshold=-0.08, action="exit",
+            ),
+        ],
     )
 
 

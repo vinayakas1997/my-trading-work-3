@@ -11,6 +11,7 @@ from vinu_live.scheduler import LiveScheduler
 from vinu_live.feedback_loop import FeedbackLoopWorker
 from vinu_live.shadow_evaluator import ShadowEvaluator
 from vinu_live.trade_plan.orchestrator import TradePlanOrchestrator
+from vinu_live.trade_plan_approval_worker import TradePlanApprovalWorker
 
 
 def serve_main(args: argparse.Namespace) -> None:
@@ -162,6 +163,59 @@ def shadow_worker_main(args: argparse.Namespace | None = None) -> None:
             print("\n[shadow-worker] Stopped by user.")
         finally:
             await evaluator.close()
+
+    asyncio.run(_worker_loop())
+
+
+def trade_plan_approval_worker_main(args: argparse.Namespace | None = None) -> None:
+    """Continuous trade-plan-approval worker -- Stage 0 (G2a, research-
+    discussion-v1/complete-plan/01-native-gaps.md): author_trade_plan()/
+    freeze_trade_plan() were reachable (vinu-agent's TradePlanTool), but
+    approve_trade_plan() had no scheduled (or any) caller at all -- plans
+    sat at CREATED forever, and TradePlanOrchestrator.cycle() only acts on
+    ACTIVE trade_plan artifacts. Same `while True: cycle(); sleep()` shape
+    as shadow-worker/trade-plan-worker/feedback-worker; the approval gate
+    itself (fail-closed, bootstrap-aware) lives entirely in vinu-research."""
+    config = load_config()
+    interval = (
+        args.interval_sec if args and getattr(args, "interval_sec", None)
+        else config.trade_plan_approval_worker_interval_sec
+    )
+    print(f"[trade-plan-approval-worker] Starting (interval={interval}s)")
+    print(f"[trade-plan-approval-worker] Press Ctrl+C to stop.\n")
+
+    log = logging.getLogger("vinu.live.trade_plan_approval_worker")
+
+    async def _worker_loop() -> None:
+        worker = TradePlanApprovalWorker(
+            research_api_url=config.research_api_url, agent_api_url=config.agent_api_url,
+        )
+        try:
+            while True:
+                try:
+                    results = await worker.approve_all()
+                    approved = sum(1 for r in results if r.get("approved"))
+                    log.info(
+                        "trade-plan-approval cycle complete",
+                        extra={
+                            "vinu_ctx": {
+                                "worker": "trade-plan-approval-worker",
+                                "plans_checked": len(results),
+                                "approved": approved,
+                            }
+                        },
+                    )
+                except Exception:
+                    log.exception(
+                        "trade-plan-approval cycle failed",
+                        extra={"vinu_ctx": {"worker": "trade-plan-approval-worker"}},
+                    )
+                    raise
+                time.sleep(interval)
+        except KeyboardInterrupt:
+            print("\n[trade-plan-approval-worker] Stopped by user.")
+        finally:
+            await worker.close()
 
     asyncio.run(_worker_loop())
 
@@ -319,6 +373,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     fb_worker_p = sub.add_parser("feedback-worker", help="Run continuous feedback-loop worker")
     fb_worker_p.add_argument("--interval", type=int, dest="interval_sec", default=None)
     fb_worker_p.set_defaults(func=feedback_worker_main)
+
+    tpa_worker_p = sub.add_parser("trade-plan-approval-worker", help="Run continuous trade-plan-approval worker loop")
+    tpa_worker_p.add_argument("--interval", type=int, dest="interval_sec", default=None)
+    tpa_worker_p.set_defaults(func=trade_plan_approval_worker_main)
 
     return parser.parse_args(argv)
 

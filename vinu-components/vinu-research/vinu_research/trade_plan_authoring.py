@@ -298,6 +298,19 @@ async def author_trade_plan(
 
 def freeze_trade_plan(store: SqliteStrategyStore, plan: TradePlan) -> Artifact:
     """Persist `plan` as a new CREATED Artifact(type="trade_plan"). Not yet tradeable."""
+    # Stage A (A9 -- daily_stock_analysis's mandatory-invalidation-conditions
+    # rule, see other-repos-world/comprison-other-vinu/04-daily_stock_analysis.md):
+    # a trade plan with no way to be proven wrong is one vinu-live's
+    # orchestrator will hold open indefinitely on the time-stop alone.
+    # `_build_invalidation_conditions` currently always returns >= 2 (the
+    # first two are unconditional), so this is a belt-and-suspenders guard
+    # against a future refactor accidentally making every condition
+    # conditional -- fail closed at freeze time, not silently later.
+    if not plan.invalidation_conditions:
+        raise ValueError(
+            f"trade plan for {plan.symbol} has no invalidation conditions -- "
+            "refusing to freeze a plan that can never be invalidated"
+        )
     artifact = Artifact.create(
         type_="trade_plan",
         name=f"trade_plan_{plan.symbol}_{plan.timeframe}",
@@ -313,6 +326,9 @@ def approve_trade_plan(
     store: SqliteStrategyStore,
     artifact_id: str,
     config: ForecastSkillConfig | None = None,
+    *,
+    force: bool = False,
+    approver: str = "",
 ) -> Artifact:
     """Promote a frozen trade plan to ACTIVE, gated by CalibrationGate (fail-closed).
 
@@ -322,7 +338,19 @@ def approve_trade_plan(
 
     Once ACTIVE, a trade plan is immutable -- a revision requires authoring and freezing a
     new artifact, not mutating this one.
+
+    force=True (Stage 0, G2b, research-discussion-v1/complete-plan/
+    01-native-gaps.md): an explicit human override that bypasses whichever
+    check would otherwise reject -- mirrors vinu_research.promotion's
+    existing `/artifacts/{id}/promote?force=true` pattern, same "human
+    accountability, not a silent bypass" posture the user chose for this
+    (2026-09-10): `approver` is required whenever force is used and is
+    logged with the override, not merged into the ordinary approval log
+    line, so a forced approval is always distinguishable from a gate-
+    cleared one after the fact.
     """
+    if force and not approver:
+        raise ValueError("approver is required when force=True")
     artifact = store.get_artifact(artifact_id)
     if artifact is None:
         raise ValueError(f"no artifact with id {artifact_id}")
@@ -334,15 +362,68 @@ def approve_trade_plan(
         )
 
     tracker = load_calibration_tracker(store, artifact_id, config)
+
+    if not tracker.entries:
+        # Stage 0 (G2a bootstrap fix, research-discussion-v1/complete-plan/
+        # 01-native-gaps.md): calibration_entries are only ever written by
+        # vinu-live's feedback_loop.py after a position closes -- which
+        # requires this exact artifact to already be ACTIVE. Checking
+        # CalibrationGate on a fresh trade plan (zero entries, always)
+        # therefore made approval unsatisfiable for every trade plan ever
+        # authored, not just hard to automate -- confirmed 2026-09-10.
+        # On a first-ever approval, trust the symbol's own ACTIVE strategy
+        # artifact instead: it already cleared vinu_research.promotion.
+        # meets_promotion_bar() (deflated Sharpe / holdout / stress / PBO)
+        # to get there, which is a real, upstream statistical validation --
+        # not a rubber stamp. If the symbol has no ACTIVE strategy backing
+        # it at all, still fail closed; there is no statistical basis to
+        # approve on.
+        symbol = artifact.universe[0] if artifact.universe else ""
+        has_active_strategy = any(
+            a.type == "strategy"
+            for a in store.list_artifacts_for_symbol(symbol, statuses=[ArtifactStatus.ACTIVE])
+        )
+        if not has_active_strategy:
+            reasons = [
+                f"no calibration history yet for this trade plan, and no ACTIVE "
+                f"strategy artifact for {symbol} to bootstrap approval from"
+            ]
+            if not force:
+                logger.warning("[%s] Approval REJECTED: %s", artifact_id, "; ".join(reasons))
+                raise TradePlanApprovalError(reasons)
+            logger.warning(
+                "[%s] Approval FORCED by %s despite: %s",
+                artifact_id, approver, "; ".join(reasons),
+            )
+        artifact.status = ArtifactStatus.ACTIVE
+        saved = store.upsert_artifact(artifact)
+        if force:
+            logger.info("[%s] Approved (forced by %s) -- trade plan is now ACTIVE", artifact_id, approver)
+        else:
+            logger.info(
+                "[%s] Approved via strategy-bootstrap (no calibration history yet, "
+                "%s has an ACTIVE strategy artifact) -- trade plan is now ACTIVE",
+                artifact_id, symbol,
+            )
+        return saved
+
     gate = CalibrationGate(tracker, min_window=tracker.config.min_calibration_window)
     result = gate.check()
     if not result.passed:
-        logger.warning("[%s] Approval REJECTED: %s", artifact_id, "; ".join(result.reasons))
-        raise TradePlanApprovalError(result.reasons)
+        if not force:
+            logger.warning("[%s] Approval REJECTED: %s", artifact_id, "; ".join(result.reasons))
+            raise TradePlanApprovalError(result.reasons)
+        logger.warning(
+            "[%s] Approval FORCED by %s despite: %s",
+            artifact_id, approver, "; ".join(result.reasons),
+        )
 
     artifact.status = ArtifactStatus.ACTIVE
     saved = store.upsert_artifact(artifact)
-    logger.info("[%s] Approved -- trade plan is now ACTIVE", artifact_id)
+    if force and not result.passed:
+        logger.info("[%s] Approved (forced by %s) -- trade plan is now ACTIVE", artifact_id, approver)
+    else:
+        logger.info("[%s] Approved -- trade plan is now ACTIVE", artifact_id)
     return saved
 
 

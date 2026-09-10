@@ -53,6 +53,13 @@ class LiveConfig:
     # original (pre-Phase-5) worker_interval_sec default rather than
     # inventing a new number; not independently tuned.
     shadow_worker_interval_sec: int = 3600
+    # Stage 0 (G2a, research-discussion-v1/complete-plan/01-native-gaps.md):
+    # scans CREATED trade_plan artifacts and calls their approve endpoint
+    # (bootstrap-gated -- see trade_plan_authoring.approve_trade_plan).
+    # Matches trade_plan_worker_interval_sec's own cadence rather than
+    # inventing a separate number -- a freshly authored plan is worth
+    # approving on roughly the same cadence it gets evaluated on.
+    trade_plan_approval_worker_interval_sec: int = 300
 
     @classmethod
     def from_env(cls) -> LiveConfig:
@@ -79,6 +86,9 @@ class LiveConfig:
             ),
             shadow_worker_interval_sec=int(
                 os.getenv("VINU_LIVE_SHADOW_INTERVAL", "3600"),
+            ),
+            trade_plan_approval_worker_interval_sec=int(
+                os.getenv("VINU_LIVE_TRADE_PLAN_APPROVAL_INTERVAL", "300"),
             ),
         )
 

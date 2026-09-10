@@ -1,0 +1,61 @@
+# Complete Adoption Plan — Status Dashboard
+
+**This is the one file to open first, always.** It tells you where things stand without reading anything else. Every other file in this folder is detail; this file is the map.
+
+---
+
+## 🔖 RESUME POINT
+
+**Stage 0 complete (4/4). Stage A: Groups A-1 and A-2 done — 8 implemented, 6 skipped with reasons. Group A-3 next.** A-2 recap: A7 added a trailing-stop activation gate (don't trail until the position is up). A9 made `freeze_trade_plan` fail-closed on a plan with no invalidation conditions. A10 added a Mahalanobis turbulence signal as a 4th OOD-detector signal, reusing data the detector already fetches. A13 added minimal per-entry realized-slippage logging. A6/A8/A11/A12/A14 skipped — each either needs a vinu-research authoring-schema change (out of Stage-A scope), duplicates a mechanism Vina already has, or produces no behavior change for its stated target; reasons are in `02-stage-a-quick-wins.md`. Roughly half of Stage A's items are turning out to be "already covered" or "not a fit for cheap hardening" — that's fine, honest skips with clear reasons are the point. **Next: Group A-3 (`vinu-agent`: TradingMandate / kill switch / position sizing / order rate limiting, items A15-A21) in `02-stage-a-quick-wins.md`. Re-verify each against current `vinu-agent` code first.**
+
+*(Update this line every time you stop working — even mid-item. "Currently in-progress on B4, wiring the poll-mode scanner loop" is exactly the kind of note that belongs here. This is the single most important line in the whole plan folder.)*
+
+---
+
+## Progress summary
+
+| Stage | File | Items | Done | In-progress | Pending | Skipped |
+|---|---|---|---|---|---|---|
+| 0 — Native gaps (fix first, not from the tracker) | `01-native-gaps.md` | 4 (G1, G2a, G2b, G3) | 4 | 0 | 0 | 0 |
+| A — Quick wins (cheap, safe hardening) | `02-stage-a-quick-wins.md` | 38 | 8 | 0 | 24 | 6 |
+| B — `vinu-screener` build (new capability) | `03-stage-b-vinu-screener.md` | 20 | 0 | 0 | 20 | 0 |
+| C — Architecture (bigger, not urgent) | `04-stage-c-architecture.md` | 19 | 0 | 0 | 19 | 0 |
+| **Total** | | **81** | **12** | **0** | **63** | **6** |
+
+*(Update these counts whenever an item's status changes in its stage file. Keep it simple — just re-count, don't try to automate it.)*
+
+---
+
+## Why this order (Stage 0 → A → B → C)
+
+Established in `research-discussion-v1/vinu-lifecycle-story.md` and the sequencing discussion that preceded this plan:
+
+1. **Stage 0 first, always** — these items aren't from the other-repos research at all; they're bugs found by tracing Vina's own code, where the designed behavior and the running behavior have already diverged. Cheaper to fix than most Stage A items, and they determine whether the rest of the system is even running as intended. Fixing Stage A/B items before Stage 0 risks building on top of a gate that doesn't actually gate. (Completed 2026-09-10 — see `05-progress-log.md` for how each item actually played out, several quite differently from how they were first scoped.)
+2. **Stage A next** — cheap, isolated, testable in an afternoon each, no architectural risk. Landing several of these gives real safety improvements fast (the correlation-matrix hardening in particular closes the same bug class already found once this session in the runtime correlation monitor).
+3. **Stage B once A is substantially through** — `vinu-screener` is the one genuinely new capability (see `capability-projection.md`), but it's a bigger, multi-week build; starting it before Stage A's quick wins land means building a new thing on a less-hardened foundation.
+4. **Stage C only when A or B specifically need it** — these are real, valuable, but bigger architectural changes (refactoring TradingMandate into rule objects, persisted trade-limit storage, etc.). Don't front-load them; revisit each one only when something concrete in A or B hits its limit.
+
+## How to use this folder
+
+- **Starting a work session?** Read this file's Resume Point, then open the stage file it points to.
+- **Finishing an item?** Flip its Status in the stage file (`pending` → `in-progress` → `done`, or `skipped` with a one-line reason), then update this file's Progress Summary count and Resume Point.
+- **Found something new while implementing?** (Common — you'll re-read a source file for detail and spot something not captured.) Add a row to the right stage file with a new ID, cite its source, and note in this file's changelog below that it was added.
+- **Item IDs are stable** — `G1`/`G2a`/`G2b`/`G3` (Stage 0), `A1`...`A38` (Stage A), `B1`...`B20` (Stage B), `C1`...`C19` (Stage C). Reference them in commit messages / PRs so a `git log` search for `A12` finds the work later.
+- **Full context for any item** lives in `../adoption-tracker.md` (original source-of-truth row) or the cited per-repo file in `../../comprison-other-vinu/`. The stage files here are deliberately terse — they're a checklist, not a re-explanation.
+- **Want the story, not just the status?** `05-progress-log.md` is a chronological narrative — what was found, what design questions came up mid-implementation and how they were resolved, what broke and got fixed along the way. This file (`00-index.md`) tells you *where things stand*; that one tells you *how it got there*. Append to it after finishing a meaningful chunk of work, same cadence as this file's changelog below but with the actual detail.
+
+## Changelog (append-only, most recent first)
+
+- 2026-09-10 — **Group A-2 complete (A7/A9/A10/A13 done, A6/A8/A11/A12/A14 skipped).** A7: trailing-stop activation gate (`TRAILING_ACTIVATION_PCT`). A9: `freeze_trade_plan` fails closed on zero invalidation conditions (+4 test-fixture updates). A10: Mahalanobis turbulence as OOD signal 4, reusing the detector's existing covariance + return fetches. A13: minimal per-entry realized-slippage logging. 5 skips each with a documented reason (schema-change scope / duplicates existing mechanism / no behavior change for stated target). 12 new tests across vinu-live + vinu-research, both suites green at known baselines.
+- 2026-09-10 — **Group A-1 complete (A1-A4 done, A5 skipped).** A3: fixed a silent `price → 1.0` substitution in `SignalTranslator` and `_compute_expected_positions` that would oversize orders ~price-x (+2 tests). A4: `cap_concentration()` in `risk_utils.py` — the per-strategy cap was applied before renormalization, which undid it (0.30 cap → 0.75 possible); now binds post-normalization with a `1/n` feasibility floor (+7 tests). A5: skipped — Vina's hysteresis dead-band + per-cycle action cap already control turnover better than a soft optimizer-penalty term Vina has no optimizer to attach. All three services' suites green at known baselines.
+- 2026-09-10 — **A1 + A2 done (Stage A underway).** New `vinu_portfolio/risk_utils.py`: Ledoit-Wolf shrinkage (new `scikit-learn` dependency) tried first, spectral PSD repair applied after unconditionally. Wired into both `compute_correlation_matrix()` and `build_portfolio()`, fixing a pre-existing duplication (both independently called raw `.corr()`) along the way. 2 existing tests loosened from exact ±1.0 assertions to threshold checks, since shrinkage correctly no longer produces exact ±1.0 from tiny synthetic series. 12 new tests total. vinu-portfolio suite: 143 passed, 2 pre-existing unrelated failures.
+- 2026-09-10 — Added `05-progress-log.md` — a chronological narrative companion to this changelog, backfilled with the full Stage 0 story (every design pause, what was found, how each was resolved). Use it going forward instead of trying to cram detail into this changelog's one-liners.
+- 2026-09-10 — **G2b done — Stage 0 fully complete (4/4).** Resolved a second design question first (should manual-approve be able to force through a gate rejection — yes, with logged approver accountability). Discovered and reused already-built notification infrastructure (`build_channel_targets`, `HttpTelegramChannel`/`HttpDiscordChannel`) instead of building new. Implemented `force`/`approver` on the approve gate, a new vinu-agent notify route, `/approve_plan` + `!approve_plan` command handlers (deterministic HTTP, not LLM-routed), and wired G2a's worker to notify on rejection. 21 new tests, all three services' suites green at known baselines.
+- 2026-09-10 — **G2a done — found a genuine bootstrap-deadlock bug first.** `CalibrationGate` as originally written could never pass for any trade plan (calibration entries require the plan to already be ACTIVE to exist at all). Resolved with user: bootstrap off the origin strategy's own promotion bar on first approval. Fixed in `trade_plan_authoring.py`, then built the actual missing worker (`TradePlanApprovalWorker`) and wired it into `entrypoint.sh`. 8 new tests total across vinu-research + vinu-live, both suites green at known baselines.
+- 2026-09-10 — **G1 done — narrower than the decision assumed.** Re-checked immediately before coding (the habit this plan itself recommends) and found `ShadowEvaluator`'s BENCHING→ACTIVE path was already correctly gated via `POST /promote` (which calls `meets_promotion_bar()` server-side, fail-closed). Only `capital_allocator_hook`'s separate PEND→ACTIVE funding path was actually missing the check — fixed there. 4 new tests, 2 existing fixtures corrected to use qualifying artifacts. vinu-agent suite 864 passed, same pre-existing baseline of 9 unrelated failures.
+- 2026-09-10 — **G3 done.** Found a real design gap while implementing (no fixed stop price anywhere on the plan to forward) — resolved with user: static catastrophic backstop derived from `cvar_95_limit`, fail-open when not computed. Implemented in `orchestrator.py`'s `_maybe_enter()`/`_submit_order()`; 4 new tests added; full vinu-live suite green (268 passed, 2 pre-existing unrelated failures). First `done` item in the whole 81-item plan.
+- 2026-09-10 — G1 decided (tighten both automatic promotion paths to call `meets_promotion_bar()`) and G2b's channel scope decided (Telegram+Discord, WhatsApp deferred). Stage 0 fully unblocked — all 4 items ready to implement, no open design questions remaining.
+- 2026-09-10 — G2 confirmed dead (no caller in-repo or outside) and given real design direction by the user: split into G2a (auto-approve worker, leans on the existing `CalibrationGate`) and G2b (manual-approve via Telegram/Discord/WhatsApp — Telegram/Discord infra already exists, WhatsApp does not). Item count 80 → 81. G2b has an open scoping question (channels for the first cut) noted in `01-native-gaps.md`.
+- 2026-09-10 — Vibe-Trading's real GitHub URL found (`HKUDS/Vibe-Trading`) and the repo fully audited as a 14th repo (`comprison-other-vinu/14-vibe-trading.md`) — confirmed as the actual source of Vina's own LLM-agent design, and turned out to have a near-exact structural analog to Vina's OrderGuard/TradingMandate. 6 new adoptable items added: A36-A38 (appended to Stage A rather than renumbered, to keep existing IDs stable) and C17-C19 (appended to Stage C). Total items 74 → 80.
+- 2026-09-10 — Pre-build spot-check on Stage 0: re-verified G1/G2/G3 against current code before starting. Found G1 and G2 needed refinement (both were more nuanced than the original trace found — see `01-native-gaps.md` for the corrected findings). G1 is now framed as a design decision (which of 3 promotion paths should run the strict gate), not a simple wiring bug. G2 is now narrower (only `approve_trade_plan`'s caller is actually missing, not the whole pipeline). G3 unchanged. Item counts unaffected — still 74 total, nothing started.
+- 2026-09-10 — Plan created. 74 items total (3 native gaps + 71 tracker items) across 4 stages. Nothing started yet.

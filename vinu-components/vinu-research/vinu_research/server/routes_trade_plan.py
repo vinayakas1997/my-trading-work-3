@@ -71,17 +71,23 @@ async def get_trade_plan(artifact_id: str) -> dict[str, Any]:
 
 
 @router.post("/trade-plan/{artifact_id}/approve")
-async def approve_trade_plan_route(artifact_id: str) -> dict[str, Any]:
+async def approve_trade_plan_route(artifact_id: str, force: bool = False, approver: str = "") -> dict[str, Any]:
     """Promote a frozen trade plan to ACTIVE, gated by calibration (fail-closed).
 
     The gate is checked against persisted `calibration_entries` (Phase 7's write path via
     `POST .../record-outcome`), rebuilt fresh from storage on every call -- not an empty
-    in-memory tracker. A plan with no realized-outcome history yet is correctly rejected.
+    in-memory tracker. A plan with no realized-outcome history yet bootstraps off the
+    symbol's own ACTIVE strategy artifact instead (see approve_trade_plan's docstring) --
+    correctly rejected only when that's also missing.
+
+    force=true (Stage 0, G2b): an explicit human override via Telegram/Discord's
+    `/approve_plan` command -- requires `approver` (the requesting user's identity) so a
+    forced approval is always distinguishable from a gate-cleared one in the logs.
     """
     if _service is None:
         raise HTTPException(status_code=503, detail="Service not initialized")
     try:
-        artifact = approve_trade_plan(_service.strategy_store, artifact_id)
+        artifact = approve_trade_plan(_service.strategy_store, artifact_id, force=force, approver=approver)
     except TradePlanApprovalError as e:
         raise HTTPException(
             status_code=409,

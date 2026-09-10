@@ -38,8 +38,24 @@ def ticker_ledger_store():
     ledger_path.unlink(missing_ok=True)
 
 
-def _pend_artifact(strategy_store: SqliteStrategyStore, symbol: str, approved_size: float = 20000.0) -> str:
+def _pend_artifact(
+    strategy_store: SqliteStrategyStore, symbol: str, approved_size: float = 20000.0,
+    *, clears_promotion_bar: bool = True,
+) -> str:
+    """clears_promotion_bar=True (default) sets deflated_sharpe/holdout/
+    stress_test/pbo to values that pass vinu_research.promotion's default
+    thresholds -- Stage 0 (G1): capital_allocator_hook now runs that gate
+    before funding, so a bare Artifact.create() (deflated_sharpe=0.0,
+    holdout_passed=None) would fail it, which is correct behavior but not
+    what most of these tests (kill-switch gating, unwind) are exercising.
+    Pass False to get the old bare-defaults artifact for tests that
+    specifically want a promotion-bar failure."""
     artifact = Artifact.create("strategy", f"{symbol}-test", universe=[symbol])
+    if clears_promotion_bar:
+        artifact.deflated_sharpe = 1.5
+        artifact.holdout_passed = True
+        artifact.stress_test_passed = True
+        artifact.pbo = 0.1
     strategy_store.upsert_artifact(artifact)
     strategy_store.mark_benching(artifact.artifact_id)
     strategy_store.mark_pend(artifact.artifact_id, approved_size=approved_size)
@@ -154,6 +170,63 @@ class TestKillSwitchGate:
 
         mock_halted.assert_not_called()
         assert strategy_store.get_artifact(artifact_id).status == ArtifactStatus.PEND
+
+
+class TestPromotionBarGate:
+    """Stage 0 (G1, research-discussion-v1/complete-plan/01-native-gaps.md):
+    ShadowEvaluator's BENCHING->ACTIVE path already ran vinu_research.
+    promotion.meets_promotion_bar() (via POST .../artifacts/{id}/promote,
+    fail-closed by default); this PEND->ACTIVE path did not -- a funding
+    decision could activate a strategy that never cleared the statistical
+    bar at all. Checked immediately before the kill-switch block, using the
+    same gate function both paths now share."""
+
+    def test_artifact_failing_promotion_bar_is_not_activated(self, strategy_store) -> None:
+        artifact_id = _pend_artifact(strategy_store, "AAPL", clears_promotion_bar=False)
+        content = _content([{"artifact_id": artifact_id, "funded": True, "amount": 15000.0}])
+
+        with patch("vinu_agent.broker.kill_switch.is_trading_halted", return_value=False):
+            apply_capital_allocator_decision(content, strategy_store=strategy_store)
+
+        # Stays PEND -- funding was decided but the statistical bar wasn't
+        # met, distinct from PENDBLOCK (which is specifically kill-switch).
+        assert strategy_store.get_artifact(artifact_id).status == ArtifactStatus.PEND
+
+    def test_promotion_bar_failure_never_reaches_the_kill_switch_check(self, strategy_store) -> None:
+        artifact_id = _pend_artifact(strategy_store, "AAPL", clears_promotion_bar=False)
+        content = _content([{"artifact_id": artifact_id, "funded": True, "amount": 15000.0}])
+
+        with patch("vinu_agent.broker.kill_switch.is_trading_halted") as mock_halted:
+            apply_capital_allocator_decision(content, strategy_store=strategy_store)
+
+        mock_halted.assert_not_called()
+
+    def test_promotion_bar_failure_writes_distinct_ticker_ledger_event(
+        self, strategy_store, ticker_ledger_store
+    ) -> None:
+        artifact_id = _pend_artifact(strategy_store, "AAPL", clears_promotion_bar=False)
+        content = _content([{"artifact_id": artifact_id, "funded": True, "amount": 15000.0}])
+
+        with patch("vinu_agent.broker.kill_switch.is_trading_halted", return_value=False):
+            apply_capital_allocator_decision(
+                content, strategy_store=strategy_store, ticker_ledger_store=ticker_ledger_store,
+            )
+
+        events = ticker_ledger_store.get_events("AAPL")
+        assert len(events) == 1
+        assert events[0].event_type == "promotion_bar_failed"
+
+    def test_artifact_clearing_promotion_bar_still_activates_normally(self, strategy_store) -> None:
+        # Default clears_promotion_bar=True -- confirms the gate doesn't
+        # block a genuinely qualifying artifact (regression guard alongside
+        # TestKillSwitchGate's own not-halted case).
+        artifact_id = _pend_artifact(strategy_store, "AAPL")
+        content = _content([{"artifact_id": artifact_id, "funded": True, "amount": 15000.0}])
+
+        with patch("vinu_agent.broker.kill_switch.is_trading_halted", return_value=False):
+            apply_capital_allocator_decision(content, strategy_store=strategy_store)
+
+        assert strategy_store.get_artifact(artifact_id).status == ArtifactStatus.ACTIVE
 
 
 class TestUnwindRequests:

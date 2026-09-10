@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from vinu_research.forecast_skill import ForecastSkillConfig
-from vinu_research.models import AngleCalibrationEntry, CalibrationEntry, Forecast, TradePlan
+from vinu_research.models import InvalidationCondition, AngleCalibrationEntry, CalibrationEntry, Forecast, TradePlan
 from vinu_research.trade_plan_authoring import (
     approve_trade_plan,
     freeze_trade_plan,
@@ -17,6 +17,7 @@ def _sample_plan(direction: str = "long") -> TradePlan:
         direction=direction,
         position_size_pct=0.05,
         forecast=Forecast(direction=direction, confidence=0.6, magnitude_pct=0.02, magnitude_std=0.01),
+        invalidation_conditions=[InvalidationCondition(metric="unrealized_pnl_pct", operator="<=", threshold=-0.08, action="exit")],
     )
 
 
@@ -82,7 +83,8 @@ class TestRecordRealizedOutcome:
 
     def test_raises_when_plan_has_no_forecast(self, strategy_store) -> None:
         import pytest
-        plan = TradePlan(symbol="AAPL", timeframe="daily", direction="long")
+        plan = TradePlan(symbol="AAPL", timeframe="daily", direction="long",
+            invalidation_conditions=[InvalidationCondition(metric="unrealized_pnl_pct", operator="<=", threshold=-0.08, action="exit")])
         artifact = freeze_trade_plan(strategy_store, plan)
         with pytest.raises(ValueError):
             record_realized_outcome(strategy_store, artifact.artifact_id, 0.03)

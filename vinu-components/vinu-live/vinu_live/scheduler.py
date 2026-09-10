@@ -283,7 +283,20 @@ class LiveScheduler:
             symbol = tw.get("symbol", "")
             if not symbol:
                 continue
+            # Stage A (A3): same missing-price fix as SignalTranslator.
+            # _build_instruction -- a fabricated expected position (from a
+            # 1.0 price substitution) feeds reconciliation, which
+            # auto-corrects drift, so a bad expected qty could trigger a
+            # real corrective order. Skip an unpriceable symbol entirely
+            # rather than inventing an expected position for it.
+            price = prices.get(symbol)
+            if price is None or price <= 0:
+                LOG.warning(
+                    "No usable price for %s -- excluding it from the expected-position "
+                    "set this cycle so reconciliation doesn't act on a fabricated qty",
+                    symbol,
+                )
+                continue
             target_value = tw.get("target_weight", 0.0) * portfolio_value
-            price = prices.get(symbol, 1.0)
-            expected[symbol] = target_value / price if price > 0 else 0.0
+            expected[symbol] = target_value / price
         return expected

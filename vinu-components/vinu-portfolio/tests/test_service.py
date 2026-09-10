@@ -64,6 +64,30 @@ class TestAllocateRiskParity:
         assert weights["steady"] > weights["volatile"]
         assert weights["steady"] + weights["volatile"] == pytest.approx(1.0)
 
+    def test_per_strategy_cap_actually_binds_after_normalization(self) -> None:
+        # Stage A (A4): the old `min(w, cap)` ran BEFORE the normalize step,
+        # which renormalization then undid. With one very-low-vol strategy
+        # dominating a 4-name book, the raw inv-vol weight for it is well
+        # over the 0.30 cap -- the result must now actually respect 0.30
+        # (rounded), not renormalize back over it.
+        svc = _service(max_per_strategy_weight=0.30)
+        strategies = [{"name": n, "kind": "yaml"} for n in ("dom", "b", "c", "d")]
+        dates = pd.date_range("2024-01-01", periods=40)
+        rng = np.random.default_rng(1)
+        returns_df = pd.DataFrame(
+            {
+                "dom": rng.normal(0, 0.0002, size=40),   # tiny vol -> huge raw inv-vol weight
+                "b": rng.normal(0, 0.03, size=40),
+                "c": rng.normal(0, 0.03, size=40),
+                "d": rng.normal(0, 0.03, size=40),
+            },
+            index=dates,
+        )
+        result = svc.allocate_risk_parity(strategies, returns_df=returns_df)
+        weights = {r["name"]: r["target_weight"] for r in result}
+        assert weights["dom"] <= 0.30 + 1e-4
+        assert sum(weights.values()) == pytest.approx(1.0, abs=1e-3)
+
 
 class TestComputeCorrelationMatrix:
     def test_fewer_than_two_strategies_with_data_returns_none(self) -> None:
@@ -87,7 +111,39 @@ class TestComputeCorrelationMatrix:
         strategies = [{"name": "a", "kind": "yaml"}, {"name": "b", "kind": "yaml"}]
         result = asyncio.run(svc.compute_correlation_matrix(strategies))
         assert result is not None
-        assert result.loc["a", "b"] == pytest.approx(-1.0, abs=1e-6)
+        # Stage A (A2): Ledoit-Wolf shrinkage deliberately pulls this
+        # perfectly-linear-by-construction, 12-sample series pair's raw
+        # -1.0 sample correlation toward a less extreme, better-regularized
+        # estimate -- exact -1.0 is no longer expected, only that the
+        # strong negative relationship is still clearly detected.
+        assert result.loc["a", "b"] < -0.7
+
+    def test_correlation_matrix_is_always_positive_semidefinite(self) -> None:
+        # Stage A (A1): a direct regression guard for the spectral-repair
+        # path, using a case where pandas' pairwise-NaN .corr() handling is
+        # a known way to produce a non-PSD matrix -- three series with
+        # non-overlapping NaN gaps so each pairwise correlation is computed
+        # from a different subset of rows.
+        svc = _service()
+        dates = pd.date_range("2024-01-01", periods=20)
+        rng = np.random.default_rng(3)
+        a = pd.Series(rng.normal(size=20), index=dates)
+        b = pd.Series(rng.normal(size=20), index=dates)
+        c = pd.Series(rng.normal(size=20), index=dates)
+        a.iloc[0:5] = np.nan
+        b.iloc[5:10] = np.nan
+        c.iloc[10:15] = np.nan
+        series = {"a": a, "b": b, "c": c}
+
+        async def fake_fetch(strategy):
+            return series[strategy["name"]]
+
+        svc._fetch_strategy_returns = fake_fetch
+        strategies = [{"name": n, "kind": "yaml"} for n in ("a", "b", "c")]
+        result = asyncio.run(svc.compute_correlation_matrix(strategies))
+        assert result is not None
+        eigenvalues = np.linalg.eigvalsh(result.to_numpy())
+        assert np.all(eigenvalues >= -1e-8)
 
 
 class TestBuildPortfolio:
@@ -204,7 +260,11 @@ class TestBuildPortfolio:
         assert matrix is not None
         idx_x = matrix["strategies"].index("pend_x")
         idx_y = matrix["strategies"].index("pend_y")
-        assert matrix["values"][idx_x][idx_y] == pytest.approx(1.0, abs=1e-6)
+        # Stage A (A2): Ledoit-Wolf shrinkage pulls this perfectly-linear
+        # synthetic pair's raw 1.0 sample correlation toward a less extreme
+        # estimate -- the guard rail this test protects only needs "still
+        # clearly, strongly positively correlated," not exact identity.
+        assert matrix["values"][idx_x][idx_y] > 0.8
 
 
 class TestListActiveStrategies:

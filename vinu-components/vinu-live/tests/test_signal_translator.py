@@ -63,3 +63,29 @@ class TestSignalTranslator:
             prices={"AAPL": 100.0},
         )
         assert instrs == []
+
+    def test_missing_price_skips_the_instruction_fail_closed(self) -> None:
+        # Stage A (A3): a symbol with no entry in `prices` must NOT be
+        # sized off a substituted 1.0 -- that would emit an order ~price-x
+        # too large. Skip it, retry next cycle once priced.
+        t = SignalTranslator()
+        instrs = t.translate(
+            target_weights=[
+                {"symbol": "AAPL", "target_weight": 0.5, "name": "s1"},
+                {"symbol": "TSLA", "target_weight": 0.5, "name": "s2"},
+            ],
+            current_positions={},
+            portfolio_value=100_000.0,
+            prices={"AAPL": 100.0},  # TSLA deliberately absent
+        )
+        assert [i.symbol for i in instrs] == ["AAPL"]
+
+    def test_zero_or_negative_price_also_skips(self) -> None:
+        t = SignalTranslator()
+        instrs = t.translate(
+            target_weights=[{"symbol": "AAPL", "target_weight": 0.5, "name": "s1"}],
+            current_positions={},
+            portfolio_value=100_000.0,
+            prices={"AAPL": 0.0},
+        )
+        assert instrs == []

@@ -6,10 +6,12 @@ from fastapi import APIRouter, Depends, FastAPI
 from pydantic import BaseModel
 
 from vinu_infra.auth import require_auth
+from vinu_infra.runtime_settings import build_admin_settings_router
 from vinu_live.config import load_config
 from vinu_live.feedback_loop import FeedbackLoopWorker
 from vinu_live.scheduler import LiveScheduler
 from vinu_live.shadow_evaluator import ShadowEvaluator
+from vinu_live.trade_plan.orchestrator import SETTINGS as TRADE_PLAN_SETTINGS
 from vinu_live.trade_plan.orchestrator import TradePlanOrchestrator
 
 
@@ -137,6 +139,14 @@ def create_app() -> FastAPI:
     @router.get("/status")
     async def status() -> dict[str, str]:
         return {"status": "idle", "service": "vinu-live"}
+
+    # Live-tunable knobs (currently: the runtime correlation monitor's
+    # threshold/reduce-pct/cooldown) -- GET/PATCH under /live/admin/settings,
+    # gated by the same require_auth as everything else in this router. No
+    # separate admin credential: whoever can call the trade-plan endpoints
+    # can already submit/flatten orders, which is a strictly bigger power
+    # than nudging a threshold.
+    router.include_router(build_admin_settings_router(TRADE_PLAN_SETTINGS))
 
     app.include_router(router, dependencies=[Depends(require_auth)])
     return app

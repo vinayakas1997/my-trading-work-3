@@ -11,7 +11,7 @@ from vinu_live.book.positions import init_book, list_open_positions, open_positi
 from vinu_live.book.quantize import qty_float
 from vinu_live.breaker.engine import BreakerVerdict
 from vinu_live.config import LiveConfig
-from vinu_live.trade_plan.orchestrator import TradePlanOrchestrator
+from vinu_live.trade_plan.orchestrator import TradePlanOrchestrator, trailing_stop_for
 from vinu_live.trade_plan.rebalance_intake import RebalanceRequestQueue
 
 
@@ -443,6 +443,79 @@ class TestCvarGateAndVolTargeting:
 
         qty = list_open_positions(book, symbol="AAPL")[0].qty
         assert qty == qty_float(0.05 * 100000.0 / 150.0)
+
+
+class TestBrokerRestingStopBackstop:
+    """Stage 0 (G3, how-to-make-it-live plan): contingency-rule stops
+    previously only lived in vinu-live's own book (a `stop_loss` field
+    re-evaluated each cycle), never as a real resting order at the broker --
+    so a process outage left an open position with no protection at all.
+    _maybe_enter now derives a one-time, never-updated CATASTROPHIC BACKSTOP
+    stop price from the plan's frozen cvar_95_limit (its 95% daily tail-loss
+    estimate) and forwards it as `stop_loss_price` on entry. The dynamic
+    invalidation/contingency rules remain the primary, tighter exit logic --
+    this is a backstop, not a replacement, and is deliberately never
+    re-placed as the book's own stop tightens/trails."""
+
+    @staticmethod
+    def _mocks():
+        return _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+
+    def test_long_entry_forwards_backstop_stop_below_price(self, book) -> None:
+        orch = _make_orchestrator(book)
+        plan = {**_SAMPLE_PLAN, "direction": "long", "risk_bands": {"max_position_size_pct": 0.05, "cvar_95_limit": 0.05}}
+        get_mock, post_mock = self._mocks()
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+        sent = post_mock.call_args.kwargs["json"]
+        assert sent["stop_loss_price"] == pytest.approx(150.0 * (1 - 0.05))
+
+    def test_short_entry_forwards_backstop_stop_above_price(self, book) -> None:
+        orch = _make_orchestrator(book)
+        plan = {**_SAMPLE_PLAN, "direction": "short", "risk_bands": {"max_position_size_pct": 0.05, "cvar_95_limit": 0.05}}
+        get_mock, post_mock = self._mocks()
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+        sent = post_mock.call_args.kwargs["json"]
+        assert sent["stop_loss_price"] == pytest.approx(150.0 * (1 + 0.05))
+
+    def test_missing_cvar_omits_stop_price_fail_open(self, book) -> None:
+        orch = _make_orchestrator(book)
+        # _SAMPLE_PLAN's risk_bands has no cvar_95_limit -> 0.0 -> no backstop,
+        # not a guessed/default distance -- same fail-open posture as the CVaR
+        # gate and vol-target scaling elsewhere in this file.
+        get_mock, post_mock = self._mocks()
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._maybe_enter(_SAMPLE_PLAN, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+        sent = post_mock.call_args.kwargs["json"]
+        assert "stop_loss_price" not in sent
+
+    def test_reduce_only_exit_never_carries_a_stop_price(self, book) -> None:
+        # Exits (_apply_invalidation / _apply_contingency / trims) call
+        # _submit_order with reduce_only=True and no stop_loss_price -- a
+        # stop-loss on a risk-reducing order would be nonsensical. Assert the
+        # default keeps it out of the payload entirely, not just falsy.
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = self._mocks()
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        asyncio.run(orch._submit_order("AAPL", "sell", 5.0, reduce_only=True))
+
+        sent = post_mock.call_args.kwargs["json"]
+        assert "stop_loss_price" not in sent
+        assert sent["reduce_only"] is True
 
 
 class TestDataFreshnessGuard:
@@ -1372,6 +1445,44 @@ class TestOODDetector:
         assert res["checked"] is False
         assert res["reason"] == "no open positions"
 
+    def test_turbulence_signal_fires_on_extreme_joint_move(self, book, monkeypatch) -> None:
+        # Stage A (A10): a 4th OOD signal -- Mahalanobis distance of today's
+        # joint return vector from its trailing distribution. Realistic
+        # small-variance covariance (daily vol ~1%) + a ~10% last-day move
+        # on both names -> MD^2 far above the 5*n threshold.
+        import numpy as np
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "OOD_DETECTOR_MODE", "alert")
+        open_position(book, "AAA", "long", 100.0, 10.0)
+        open_position(book, "BBB", "long", 100.0, 10.0)
+        orch = _make_orchestrator(book)
+        orch._compute_covariance = AsyncMock(
+            return_value=np.array([[1e-4, 0.0], [0.0, 1e-4]])
+        )
+        orch._fetch_recent_prices = AsyncMock(return_value=self._wild_series())
+
+        res = asyncio.run(orch._check_ood({"AAA": 10.0, "BBB": 10.0}))
+
+        assert "turbulence_md2" in res["detail"]
+        assert res["detail"]["turbulence_md2"] > 5 * 2  # threshold = OOD_TURBULENCE_MULT * n
+        assert any(s.startswith("turbulence") for s in res["signals"])
+
+    def test_turbulence_signal_stays_quiet_on_calm_market(self, book, monkeypatch) -> None:
+        import numpy as np
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "OOD_DETECTOR_MODE", "alert")
+        open_position(book, "AAA", "long", 100.0, 10.0)
+        open_position(book, "BBB", "long", 100.0, 10.0)
+        orch = _make_orchestrator(book)
+        orch._compute_covariance = AsyncMock(
+            return_value=np.array([[1e-4, 0.0], [0.0, 1e-4]])
+        )
+        orch._fetch_recent_prices = AsyncMock(return_value=self._calm_series())
+
+        res = asyncio.run(orch._check_ood({"AAA": 10.0, "BBB": 10.0}))
+
+        assert not any(s.startswith("turbulence") for s in res["signals"])
+
     def test_latched_after_first_action(self, book, monkeypatch) -> None:
         import vinu_live.trade_plan.orchestrator as m
         monkeypatch.setattr(m, "OOD_DETECTOR_MODE", "flatten")
@@ -1385,6 +1496,77 @@ class TestOODDetector:
         assert res["acted"] is False
         assert "already acted" in res["note"]
         orch.emergency_flatten.assert_not_called()
+
+
+class TestTrailingStopActivation:
+    """Stage A (A7): the trailing stop stays inert until the position is up
+    by VINU_LIVE_TRAILING_ACTIVATION_PCT. Default 0.0 keeps the old
+    trail-from-entry behaviour."""
+
+    @staticmethod
+    def _pos(entry: float, side: str = "long"):
+        return type("P", (), {"avg_entry": entry, "side": side})()
+
+    _CLOSES = [100.0 + i * 0.1 for i in range(20)]  # gentle uptrend, non-zero ATR
+
+    def test_default_zero_activation_trails_from_entry(self, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "TRAILING_ACTIVATION_PCT", 0.0)
+        stop = trailing_stop_for(self._pos(100.0), price=100.5, closes=self._CLOSES)
+        assert stop is not None  # trails immediately
+
+    def test_below_activation_returns_none(self, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "TRAILING_ACTIVATION_PCT", 0.05)
+        # only +1% gain, activation needs +5%
+        stop = trailing_stop_for(self._pos(100.0), price=101.0, closes=self._CLOSES)
+        assert stop is None
+
+    def test_at_or_above_activation_engages(self, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "TRAILING_ACTIVATION_PCT", 0.05)
+        stop = trailing_stop_for(self._pos(100.0), price=106.0, closes=self._CLOSES)
+        assert stop is not None
+        assert stop < 106.0  # long trailing stop sits below price
+
+    def test_short_side_activation_uses_favourable_direction(self, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "TRAILING_ACTIVATION_PCT", 0.05)
+        # short entered at 100, price down to 93 -> +7% favourable -> engages
+        stop = trailing_stop_for(self._pos(100.0, side="short"), price=93.0, closes=self._CLOSES)
+        assert stop is not None
+        assert stop > 93.0  # short trailing stop sits above price
+
+
+class TestEntrySlippageBps:
+    """Stage A (A13): monitoring-only observed fill quality for a fresh
+    entry. Positive = filled worse than the mark the order was sized on."""
+
+    def _orch_with_positions(self, book, positions_json):
+        orch = _make_orchestrator(book)
+        get_mock, _ = _router({"/broker/positions": positions_json})
+        orch._http.get = get_mock
+        return orch
+
+    def test_long_filled_higher_is_positive_bps(self, book) -> None:
+        orch = self._orch_with_positions(book, [{"symbol": "AAA", "avg_entry_price": "101.0"}])
+        bps = asyncio.run(orch._entry_slippage_bps("AAA", planned_price=100.0, direction="long", pre_signed=0.0))
+        assert bps == pytest.approx(100.0)  # (101-100)/100 * 10000
+
+    def test_short_filled_higher_is_favourable_negative_bps(self, book) -> None:
+        orch = self._orch_with_positions(book, [{"symbol": "AAA", "avg_entry_price": "101.0"}])
+        bps = asyncio.run(orch._entry_slippage_bps("AAA", planned_price=100.0, direction="short", pre_signed=0.0))
+        assert bps == pytest.approx(-100.0)
+
+    def test_add_to_existing_position_returns_none(self, book) -> None:
+        orch = self._orch_with_positions(book, [{"symbol": "AAA", "avg_entry_price": "101.0"}])
+        bps = asyncio.run(orch._entry_slippage_bps("AAA", planned_price=100.0, direction="long", pre_signed=50.0))
+        assert bps is None
+
+    def test_missing_avg_entry_returns_none(self, book) -> None:
+        orch = self._orch_with_positions(book, [{"symbol": "AAA", "qty": "10"}])
+        bps = asyncio.run(orch._entry_slippage_bps("AAA", planned_price=100.0, direction="long", pre_signed=0.0))
+        assert bps is None
 
 
 class TestEventBlackoutGuard:

@@ -68,6 +68,9 @@ catboost_info/
 # --- Kilo ---
 .kilo
 
+# --- Cloned third-party repos for research (2.6G, each has its own .git) ---
+other-repos-world/repos/
+
 # --- tensors weights ---
 *.ckpt
 *.pt

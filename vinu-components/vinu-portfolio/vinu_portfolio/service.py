@@ -15,6 +15,7 @@ from vinu_portfolio.config import PortfolioConfig, load_config
 from vinu_portfolio.game_plan import DailyGamePlan, SymbolPlan
 from vinu_portfolio.regime import classify_current_regime
 from vinu_portfolio.risk_budget import compute_risk_budget, DailyPositionTracker
+from vinu_portfolio.risk_utils import cap_concentration, robust_correlation_matrix
 from vinu_portfolio.shock_correlation import dcc_shock_correlation
 from vinu_portfolio.sizing import apply_position_sizing
 
@@ -169,11 +170,16 @@ class PortfolioService:
     async def compute_correlation_matrix(
         self, strategies: list[dict[str, Any]]
     ) -> pd.DataFrame | None:
-        """Fetch historical returns for each strategy and compute correlation."""
+        """Fetch historical returns for each strategy and compute correlation.
+
+        Stage A (A1/A2): hardened via risk_utils.robust_correlation_matrix
+        (Ledoit-Wolf shrinkage + spectral PSD repair) instead of a raw
+        returns_df.corr() -- see that module's docstring for why a raw
+        sample correlation from limited history is risky to feed straight
+        into a pass/fail decision downstream.
+        """
         returns_df = await self._build_returns_df(strategies)
-        if returns_df is None:
-            return None
-        return returns_df.corr()
+        return robust_correlation_matrix(returns_df)
 
     async def _build_returns_df(
         self, strategies: list[dict[str, Any]]
@@ -267,8 +273,7 @@ class PortfolioService:
             if total > 0:
                 raw_weights = (inv_vols / total).to_dict()
                 for s in strategies:
-                    w = raw_weights.get(s["name"], 1.0 / len(strategies))
-                    weights[s["name"]] = min(w, self._config.max_per_strategy_weight)
+                    weights[s["name"]] = raw_weights.get(s["name"], 1.0 / len(strategies))
             else:
                 for s in strategies:
                     weights[s["name"]] = 1.0 / len(strategies)
@@ -280,6 +285,14 @@ class PortfolioService:
         if total_weight > 0:
             for k in weights:
                 weights[k] /= total_weight
+
+        # Stage A (A4): enforce the per-strategy cap AFTER normalization,
+        # via cap_concentration's iterative redistribute -- the old
+        # `min(w, cap)` was applied BEFORE the normalize above, which
+        # renormalization then undid (a 0.30 cap could end up at 0.75; see
+        # cap_concentration's docstring). This is the one place the cap
+        # actually binds now.
+        weights = cap_concentration(weights, self._config.max_per_strategy_weight)
 
         result = []
         for s in strategies:
@@ -335,7 +348,14 @@ class PortfolioService:
             return {"status": "empty", "strategies": [], "weights": [], "matrix": None}
 
         returns_df = await self._build_returns_df(strategies)
-        corr_matrix = returns_df.corr() if returns_df is not None else None
+        # Stage A (A1/A2): same hardened path as compute_correlation_matrix
+        # -- this was previously its own separate raw returns_df.corr()
+        # call, computing the same thing twice with two different levels
+        # of trustworthiness. This is the correlation matrix OrderGuard's
+        # pairwise-correlation concentration check (order_guard.py's
+        # _check_portfolio_concentration, via GET /portfolio/state) acts
+        # on for real orders.
+        corr_matrix = robust_correlation_matrix(returns_df)
 
         weights = self.allocate_risk_parity(strategies, returns_df)
 

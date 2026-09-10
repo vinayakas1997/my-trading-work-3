@@ -786,6 +786,15 @@ class TestCapitalAllocatorHook:
         artifact = Artifact.create("strategy", "AAPL-test", universe=["AAPL"])
         artifact.status = ArtifactStatus.PEND
         artifact.approved_size = 25000.0
+        # Stage 0 (G1): capital_allocator_hook now runs vinu_research.
+        # promotion.meets_promotion_bar() before funding -- clear its
+        # default thresholds so this fixture still reaches ACTIVE the way
+        # these tests expect (see test_capital_allocator_hook.py's
+        # _pend_artifact for the equivalent, more detailed comment).
+        artifact.deflated_sharpe = 1.5
+        artifact.holdout_passed = True
+        artifact.stress_test_passed = True
+        artifact.pbo = 0.1
         strategy_store.upsert_artifact(artifact)
         return artifact.artifact_id
 

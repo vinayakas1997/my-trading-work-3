@@ -1,0 +1,33 @@
+# Qlib
+
+https://github.com/microsoft/qlib · 48.4K stars · First released 2020-08-14 · Last updated 2026-09-02
+
+## Advanced Features
+
+- **Cost/impact-aware, asymmetric backtest exchange model** (`qlib/backtest/exchange.py:38-190`) — separate `open_cost`/`close_cost`/`min_cost`, an explicit `impact_cost` (market-impact/slippage rate), configurable `deal_price` (vwap/close/custom), and a `volume_threshold` mechanism supporting both cumulative and per-bar volume caps that throttle how much of an order can actually fill in a bar. A genuine partial-fill/capacity model, not just a flat commission.
+- **Expression/operator engine for feature computation** (`qlib/data/ops.py`) — a large DSL of vectorized, cached rolling operators (`Ref`, `Mean`, `Std`, `Slope`, `Rsquare`, `Resi`, `WMA`, `EMA`, `Rank`, `IdxMax`/`IdxMin`, `Quantile`, `Mad`, boolean/arithmetic ops) that compile into pandas/numpy pipelines with a caching layer (`qlib/data/cache.py`, `backtest/high_performance_ds.py`) — purpose-built for computing cheap technical features across thousands of instruments efficiently.
+- **`TopkDropoutStrategy`** (`qlib/contrib/strategy/signal_strategy.py:75-298`) — a ranked-signal portfolio strategy with `topk`/`n_drop` turnover control, tradability filtering (`only_tradable`, `forbid_all_trade_at_limit` to avoid faking fills through price-limit locks), and hold-time minimums (`hold_thresh`) to prevent whipsaw churn.
+- **Nested decision execution** (`qlib/backtest/executor.py`, `examples/nested_decision_execution/`) — an outer portfolio-level strategy issues coarse-grained target positions, and an inner RL/rule-based execution strategy (`qlib/rl/order_execution/`) fills them at finer time granularity — a clean two-level "what to trade" vs "how to execute" separation.
+- **Recorder/experiment system** (`qlib/workflow/recorder.py`, `record_temp.py`) — auto-computes and persists `SignalRecord` (predictions), `SigAnaRecord`/`HFSignalRecord` (IC, ICIR, Rank IC, long-short Sharpe), and `PortAnaRecord` (full backtest + `risk_analysis`) as artifacts tied to an MLflow-style experiment/run ID.
+- **`risk_analysis`** (`qlib/contrib/evaluate.py:26-96`) — computes annualized return/vol/Sharpe/IR with explicit sum-vs-product accumulation-mode control, to avoid exponential skew in cumulative-return curves.
+
+## Why It's Trusted / Mature
+
+Qlib's credibility comes from being research-first: every model/strategy run auto-produces IC/Sharpe/drawdown artifacts tied to a reproducible experiment ID via the workflow/recorder system, so nothing about a result is a one-off, unrepeatable spreadsheet number. The expression engine gives deterministic, cached, vectorized computation of features across huge universes, which matters for both correctness (same formula, every symbol, no per-symbol drift) and raw speed at scale. Being Microsoft-maintained with 48K stars and 7.6K forks also means the Point-in-Time database and factor store have been stress-tested against real survivorship-bias and lookahead-leak failure modes by a large community, not just one team's assumptions.
+
+## vs Vinu — Gap & Adoptable Logic
+
+**Gap:** Vina's `vinu-research` pipeline (deflated Sharpe, holdout, stress gates) evaluates *promotion decisions*, but has nothing like Qlib's systematic, artifact-linked "every run auto-generates IC/Sharpe/turnover/cost-adjusted-return records with a recorder ID" discipline — a promotion run's supporting evidence isn't itself a persisted, queryable artifact. Vina also has no shared expression engine reusable between research and the in-progress `vinu-screener` — each currently computes features its own way. And there's no analog to Qlib's cost/impact-parameterized backtest exchange with volume-capped fills; `vinu-simulator`'s Almgren-Chriss model covers execution cost from a different angle, but Qlib's simpler bar-level volume-cap + asymmetric open/close cost is a useful complementary check.
+
+**Adopt:**
+- **Volume-capped partial-fill mechanism** (`Exchange.__init__`, params `volume_threshold`, aggregated via `min()` across buy/sell/cum/current) — a concrete, simple pattern to add partial-fill realism to `vinu-simulator` for illiquid/small-cap names, distinct from (and cheaper to implement than) full Almgren-Chriss.
+- **The rolling-operator expression engine** (`qlib/data/ops.py`) as a template for `vinu-screener`'s "cheap price/volume features": build a small library of composable, cached operators (`Rank`, `Slope`, `Rsquare` of price trend, `Std`/`Mad` for volatility, `WMA`/`EMA`) so user-defined rule conditions become expressions over a shared, tested operator set instead of one-off pandas snippets written per rule.
+- **`TopkDropoutStrategy`'s turnover-limiting `n_drop`/`hold_thresh` pattern** — directly relevant if `vinu-screener`'s candidate list needs turnover control (avoid flip-flopping candidates every scan cycle); the `hold_thresh` minimum-holding-period check is a reusable guard on its own.
+- **The Recorder pattern**: attach a `SignalRecord`/`PortAnaRecord`-equivalent to `vinu-research`'s promotion pipeline so every deflated-Sharpe/holdout run automatically persists IC-like signal-quality metrics alongside the pass/fail gate result, not just the final verdict — gives future debugging/auditing of *why* a strategy passed or failed something to look at beyond a boolean.
+
+## Where Vinu Excels
+
+- **A live, real-broker execution path with a full safety-guard stack.** Qlib is research-first — its backtest exchange is a simulator, not a live-order-submission system with a kill switch, reduce_only exemptions, a halt policy, or runtime correlation monitoring. Vina's `vinu-live`/`vinu-agent` is production live-trading infrastructure Qlib has no equivalent of.
+- **Live-tunable risk/operational config without a restart.** Qlib's config is YAML-driven and read once per run; Vina's new runtime-settings admin API lets an operator adjust correlation thresholds or mandate limits on a running process, gated by the same bearer-token auth already protecting every other endpoint.
+- **A human-approval-gated, LLM-assisted research-to-live path.** Qlib's model zoo produces predictions; nothing forces a human-reviewable artifact through a promotion gate before it can place real orders the way `vinu-research` → `vinu-agent` does.
+- **Narrower, hardened scope.** Qlib supports multi-market research with survivorship/PIT concerns at large scale; Vina's tighter US-equities/Alpaca-only focus means the actual order-execution and reconciliation paths get deeper, more specific hardening (documented bugs already found and closed in this session) than a broad research platform typically invests in any one execution path.

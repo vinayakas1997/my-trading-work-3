@@ -99,8 +99,23 @@ class SignalTranslator:
         from decimal import Decimal
 
         target_value = Decimal(str(target_w)) * Decimal(str(portfolio_value))
-        price = prices.get(symbol, 1.0)
-        if price <= 0:
+        # Stage A (A3): fail closed when the symbol has no real price. The
+        # old `prices.get(symbol, 1.0)` silently substituted 1.0 -- for a
+        # $200 stock that sizes the order ~200x too large. `_fetch_prices`
+        # in scheduler.py already documents fixing this exact class of bug
+        # ("silently fell back to a price of 1.0, which made every
+        # downstream qty/value computation nonsense") at the fetch layer;
+        # this reintroduced it downstream. VectorBT's own order engine
+        # (the source for this delta-resolution pattern, see
+        # other-repos-world/comprison-other-vinu/09-vectorbt.md) fail-closes
+        # an unpriceable order rather than guessing.
+        price = prices.get(symbol)
+        if price is None or price <= 0:
+            LOG.warning(
+                "No usable price for %s -- skipping its rebalance instruction "
+                "(target_weight %.4f); will retry next cycle once priced",
+                symbol, target_w,
+            )
             return None
         target_qty = target_value / Decimal(str(price))
         current_qty = Decimal(str(current_positions.get(symbol, 0.0)))

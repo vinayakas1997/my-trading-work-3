@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from vinu_research.calibration import CalibrationGate, CalibrationTracker, get_angle_calibration
 from vinu_research.forecast_skill import ForecastSkillConfig
-from vinu_research.models import AngleCalibrationEntry, Forecast, TradePlan
+from vinu_research.models import AngleCalibrationEntry, Forecast, InvalidationCondition, TradePlan
 from vinu_research.trade_plan_authoring import freeze_trade_plan
 
 
@@ -68,7 +68,8 @@ class TestCalibrationGate:
 
 
 def _frozen_artifact_id(strategy_store) -> str:
-    plan = TradePlan(symbol="AAPL", timeframe="daily", direction="long")
+    plan = TradePlan(symbol="AAPL", timeframe="daily", direction="long",
+        invalidation_conditions=[InvalidationCondition(metric="unrealized_pnl_pct", operator="<=", threshold=-0.08, action="exit")])
     return freeze_trade_plan(strategy_store, plan).artifact_id
 
 

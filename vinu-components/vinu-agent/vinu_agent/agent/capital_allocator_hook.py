@@ -237,6 +237,45 @@ def apply_capital_allocator_decision(
             continue
         ticker = fresh.universe[0] if fresh.universe else ""
 
+        # Stage 0 (G1, how-to-make-it-live plan): this PEND->ACTIVE path is
+        # the risk_gatekeeper/capital_allocator funding decision (Phase 2/3),
+        # a different concern from vinu-research's statistical promotion bar
+        # (deflated Sharpe / holdout / stress test / PBO -- see
+        # vinu_research.promotion.meets_promotion_bar). Before this fix,
+        # nothing on this path ever ran that check -- only ShadowEvaluator's
+        # BENCHING->ACTIVE path did, via POST .../artifacts/{id}/promote.
+        # Two routes to ACTIVE, only one enforcing the bar, was the actual
+        # gap (see research-discussion-v1/complete-plan/01-native-gaps.md
+        # G1) -- not "the gate is dead code" as first assumed; it just
+        # wasn't applied here. A funding decision no longer overrides a
+        # failing statistical bar; it stays PEND for the next cadence run,
+        # same as PENDBLOCK's own auto-retry framing.
+        try:
+            from vinu_research.config import load_config as _load_research_config
+            from vinu_research.promotion import meets_promotion_bar as _meets_promotion_bar
+            _verdict = _meets_promotion_bar(fresh, _load_research_config())
+        except Exception:
+            LOG.exception("promotion-bar check failed for %s, continuing without funding it", artifact_id)
+            continue
+        if not _verdict.eligible:
+            LOG.info(
+                "capital_allocator: %s does not meet the promotion bar, skipping funding: %s",
+                artifact_id, "; ".join(_verdict.reasons),
+            )
+            if ticker_ledger_store is not None and ticker:
+                try:
+                    ticker_ledger_store.add_event(
+                        ticker=ticker, stage="capital_allocator", event_type="promotion_bar_failed",
+                        text=f"funding decided (amount={amount}) but promotion bar not met: {'; '.join(_verdict.reasons)}",
+                        ref_id=artifact_id, source="watchlist",
+                    )
+                except Exception:
+                    LOG.exception(
+                        "failed to write TickerLedger row for %s promotion_bar_failed transition, continuing without it",
+                        artifact_id,
+                    )
+            continue
+
         from ..broker.kill_switch import kill_switch_lock
 
         # Kill-switch check + the transition it gates are both inside this

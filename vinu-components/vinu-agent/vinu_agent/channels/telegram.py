@@ -2,6 +2,7 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
+import httpx
 from telegram import BotCommand, Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
@@ -23,6 +24,12 @@ class TelegramChannel(BaseChannel):
         self._allowed_users: list = config.get("allowed_users", ["*"])
         self._app: Optional[Application] = None
         self._sessions: Dict[str, str] = {}
+        # Stage 0 (G2b): /approve_plan posts directly to vinu-research's
+        # approve endpoint -- deterministic HTTP call, not routed through
+        # the LLM agent loop, same "don't let a safety-critical action
+        # depend on free-text interpretation" posture as the rest of this
+        # build (see the grounding-ledger discussion this plan is built on).
+        self._research_api_url: str = config.get("research_api_url", "http://localhost:8087")
 
     async def start(self) -> None:
         if not self._token:
@@ -34,6 +41,7 @@ class TelegramChannel(BaseChannel):
 
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("new", self._cmd_new))
+        self._app.add_handler(CommandHandler("approve_plan", self._cmd_approve_plan))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
         await self._app.initialize()
@@ -83,6 +91,44 @@ class TelegramChannel(BaseChannel):
         user_id = str(update.effective_user.id) if update.effective_user else ""
         self._sessions.pop(user_id, None)
         await update.message.reply_text("Started a fresh session. What would you like to research?")
+
+    async def _cmd_approve_plan(self, update: Update, context) -> None:
+        """Stage 0 (G2b): force-approves a trade plan the automated
+        bootstrap gate rejected. `approver` is the requesting Telegram
+        user's id+username, logged with the override by vinu-research
+        (approve_trade_plan's `force`/`approver` params) -- a forced
+        approval is always distinguishable from a gate-cleared one, per
+        the user's 2026-09-10 design decision for this feature."""
+        user = update.effective_user
+        user_id_int = user.id if user else 0
+        user_id = str(user_id_int)
+        if not self._is_allowed(user_id_int):
+            await update.message.reply_text("Access denied.")
+            return
+
+        args = context.args if context and getattr(context, "args", None) else []
+        if not args:
+            await update.message.reply_text("Usage: /approve_plan <artifact_id>")
+            return
+        artifact_id = args[0]
+        approver = f"telegram:{user_id}:{user.username or ''}" if user else "telegram:unknown"
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(
+                    f"{self._research_api_url}/research/trade-plan/{artifact_id}/approve",
+                    params={"force": "true", "approver": approver},
+                )
+            if resp.status_code == 200:
+                await update.message.reply_text(f"Approved {artifact_id} (forced by {approver}).")
+            elif resp.status_code == 404:
+                await update.message.reply_text(f"No trade plan found with id {artifact_id}.")
+            else:
+                detail = resp.text
+                await update.message.reply_text(f"Approval failed (HTTP {resp.status_code}): {detail}")
+        except Exception as exc:
+            logger.error("Error forcing approval of %s: %s", artifact_id, exc)
+            await update.message.reply_text(f"Error contacting research service: {exc}")
 
     async def _handle_message(self, update: Update, context) -> None:
         user_id = str(update.effective_user.id) if update.effective_user else ""

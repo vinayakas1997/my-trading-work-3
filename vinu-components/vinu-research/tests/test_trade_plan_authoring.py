@@ -6,7 +6,7 @@ import pytest
 
 from vinu_research.config import ResearchConfig
 from vinu_research.forecast_skill import ForecastSkillConfig
-from vinu_research.models import ArtifactStatus, Forecast, TradePlan
+from vinu_research.models import ArtifactStatus, Forecast, InvalidationCondition, TradePlan
 from vinu_research.trade_plan_authoring import (
     TradePlanApprovalError,
     approve_trade_plan,
@@ -144,6 +144,15 @@ class TestFreezeAndApprove:
             direction="long",
             position_size_pct=0.05,
             forecast=Forecast(direction="long", confidence=0.6, magnitude_pct=0.02),
+            # Stage A (A9): freeze_trade_plan now refuses a plan with no
+            # invalidation conditions -- a real authored plan always has
+            # some (see _build_invalidation_conditions), so the test helper
+            # carries one too.
+            invalidation_conditions=[
+                InvalidationCondition(
+                    metric="unrealized_pnl_pct", operator="<=", threshold=-0.08, action="exit",
+                ),
+            ],
         )
 
     def test_freeze_persists_as_created(self, strategy_store) -> None:
@@ -158,11 +167,52 @@ class TestFreezeAndApprove:
         assert round_tripped.symbol == "AAPL"
         assert round_tripped.forecast.direction == "long"
 
-    def test_approve_fails_closed_with_no_calibration_entries(self, strategy_store) -> None:
+    def test_freeze_refuses_a_plan_with_no_invalidation_conditions(self, strategy_store) -> None:
+        # Stage A (A9): a plan that can never be proven wrong must not be
+        # frozen -- vinu-live would hold it open on the time-stop alone.
+        plan = self._sample_plan()
+        plan.invalidation_conditions = []
+        with pytest.raises(ValueError, match="invalidation"):
+            freeze_trade_plan(strategy_store, plan)
+
+    def test_approve_fails_closed_with_no_calibration_and_no_active_strategy(self, strategy_store) -> None:
+        # No calibration entries (none exist for a fresh plan -- see the
+        # bootstrap test below) AND no ACTIVE strategy artifact for AAPL to
+        # bootstrap from -- genuinely nothing to approve on.
         artifact = freeze_trade_plan(strategy_store, self._sample_plan())
         with pytest.raises(TradePlanApprovalError) as exc_info:
             approve_trade_plan(strategy_store, artifact.artifact_id)
         assert exc_info.value.reasons
+
+    def test_approve_bootstraps_from_active_strategy_with_no_calibration_history(self, strategy_store) -> None:
+        # Stage 0 (G2a bootstrap fix): calibration_entries can never exist
+        # for a brand-new trade plan (they're only written after a position
+        # closes, which requires the plan to already be ACTIVE) -- so the
+        # gate must not simply fail closed forever. An ACTIVE strategy
+        # artifact for the same symbol (which already cleared
+        # meets_promotion_bar()) is sufficient to approve the plan's first
+        # ever activation.
+        from vinu_research.models import Artifact
+
+        strategy = Artifact.create("strategy", "AAPL-strategy", universe=["AAPL"])
+        strategy.status = ArtifactStatus.ACTIVE
+        strategy_store.upsert_artifact(strategy)
+
+        artifact = freeze_trade_plan(strategy_store, self._sample_plan())
+        approved = approve_trade_plan(strategy_store, artifact.artifact_id)
+
+        assert approved.status == ArtifactStatus.ACTIVE
+
+    def test_approve_bootstrap_ignores_strategy_for_a_different_symbol(self, strategy_store) -> None:
+        from vinu_research.models import Artifact
+
+        strategy = Artifact.create("strategy", "MSFT-strategy", universe=["MSFT"])
+        strategy.status = ArtifactStatus.ACTIVE
+        strategy_store.upsert_artifact(strategy)
+
+        artifact = freeze_trade_plan(strategy_store, self._sample_plan())  # AAPL plan
+        with pytest.raises(TradePlanApprovalError):
+            approve_trade_plan(strategy_store, artifact.artifact_id)
 
     def test_approve_succeeds_when_calibration_passes(self, strategy_store) -> None:
         artifact = freeze_trade_plan(strategy_store, self._sample_plan())
@@ -186,3 +236,34 @@ class TestFreezeAndApprove:
     def test_approve_raises_for_missing_artifact(self, strategy_store) -> None:
         with pytest.raises(ValueError):
             approve_trade_plan(strategy_store, "does_not_exist")
+
+    def test_force_approves_despite_no_active_strategy(self, strategy_store) -> None:
+        # Stage 0 (G2b): a human override via Telegram/Discord's /approve_plan
+        # command bypasses the bootstrap check, same "human accountability,
+        # not a silent bypass" posture as /artifacts/{id}/promote?force=true.
+        artifact = freeze_trade_plan(strategy_store, self._sample_plan())
+        approved = approve_trade_plan(strategy_store, artifact.artifact_id, force=True, approver="alice")
+        assert approved.status == ArtifactStatus.ACTIVE
+
+    def test_force_approves_despite_failing_calibration(self, strategy_store) -> None:
+        artifact = freeze_trade_plan(strategy_store, self._sample_plan())
+        cfg = ForecastSkillConfig(min_calibration_window=5)
+        for _ in range(5):
+            record_realized_outcome(strategy_store, artifact.artifact_id, -0.05, cfg)  # losing streak
+
+        approved = approve_trade_plan(strategy_store, artifact.artifact_id, cfg, force=True, approver="bob")
+        assert approved.status == ArtifactStatus.ACTIVE
+
+    def test_force_requires_an_approver(self, strategy_store) -> None:
+        artifact = freeze_trade_plan(strategy_store, self._sample_plan())
+        with pytest.raises(ValueError, match="approver"):
+            approve_trade_plan(strategy_store, artifact.artifact_id, force=True)
+
+    def test_force_still_rejects_mutation_once_active(self, strategy_store) -> None:
+        # force overrides the calibration/bootstrap gate, not the
+        # already-ACTIVE-is-immutable invariant -- that one is absolute.
+        artifact = freeze_trade_plan(strategy_store, self._sample_plan())
+        approve_trade_plan(strategy_store, artifact.artifact_id, force=True, approver="alice")
+
+        with pytest.raises(TradePlanApprovalError):
+            approve_trade_plan(strategy_store, artifact.artifact_id, force=True, approver="alice")

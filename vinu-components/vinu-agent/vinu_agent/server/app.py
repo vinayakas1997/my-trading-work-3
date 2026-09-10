@@ -22,14 +22,19 @@ def _start_channels(app_service: AgentService) -> list[Any]:
     channels: list[Any] = []
     channel_configs = getattr(config, "channels", {})
 
-    tg_config = channel_configs.get("telegram", {})
+    # Stage 0 (G2b): the /approve_plan command handler POSTs directly to
+    # vinu-research's approve endpoint, same URL every other tool in this
+    # service already reads from config.services["vinu_research"].
+    research_api_url = config.services.get("vinu_research", "http://localhost:8087")
+
+    tg_config = {**channel_configs.get("telegram", {}), "research_api_url": research_api_url}
     if tg_config.get("token"):
         tg = TelegramChannel(tg_config, app_service)
         asyncio.create_task(tg.start())
         channels.append(tg)
         logger.info("Telegram channel started")
 
-    dc_config = channel_configs.get("discord", {})
+    dc_config = {**channel_configs.get("discord", {}), "research_api_url": research_api_url}
     if dc_config.get("token"):
         dc = DiscordChannel(dc_config, app_service)
         asyncio.create_task(dc.start())
@@ -43,10 +48,13 @@ def create_app(service: Any = None) -> FastAPI:
     app_service = service or AgentService()
 
     import vinu_agent.server.routes_broker as rb
+    import vinu_agent.server.routes_notify as rn
     import vinu_agent.server.routes_sessions as rs
     import vinu_agent.server.routes_swarm as rw
     import vinu_agent.server.routes_system as rsys
     import vinu_agent.server.routes_ticker_ledger as rtl
+    from vinu_agent.broker.mandate import SETTINGS as MANDATE_SETTINGS
+    from vinu_infra.runtime_settings import build_admin_settings_router
 
     rs._get_service = lambda: app_service
     rw._get_service = lambda: app_service
@@ -59,6 +67,11 @@ def create_app(service: Any = None) -> FastAPI:
     merged.include_router(rsys.router, tags=["system"])
     merged.include_router(rb.router, tags=["broker"])
     merged.include_router(rtl.router, tags=["ticker-ledger"])
+    merged.include_router(rn.router, tags=["notify"])
+    # Live-tunable mandate risk limits -- GET/PATCH under
+    # /agent/admin/settings, gated by the same require_auth as every other
+    # route on this router (wired in by vinu_infra.server.create_app below).
+    merged.include_router(build_admin_settings_router(MANDATE_SETTINGS), tags=["admin"])
 
     _channels: list[Any] = []
 

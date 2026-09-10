@@ -42,6 +42,7 @@ from vinu_live.reconciliation import ReconciliationEngine
 from vinu_live.trade_plan.condition_evaluator import find_triggered_rules
 from vinu_live.trade_plan.live_metrics import compute_live_metrics
 from vinu_live.trade_plan.rebalance_intake import RebalanceRequestQueue
+from vinu_infra.runtime_settings import RuntimeSettings
 
 LOG = logging.getLogger(__name__)
 
@@ -123,6 +124,14 @@ def _position_age_days(opened_at: str) -> int:
 
 
 TRAILING_ATR_MULT = float(_os.environ.get("VINU_LIVE_TRAILING_ATR_MULT", "2.0"))
+# Stage A (A7 -- Hummingbot's TrailingStop.activation_price, see
+# other-repos-world/comprison-other-vinu/06-hummingbot.md): the trailing
+# stop stays inert until the position is up by this fraction. Before that
+# a normal post-entry pullback would ratchet a stop in and take the trade
+# out before it had a chance to work; the plan's fixed invalidation/
+# contingency stops still cover the position in the meantime. 0.0 (default)
+# keeps the pre-A7 behaviour of trailing from entry.
+TRAILING_ACTIVATION_PCT = float(_os.environ.get("VINU_LIVE_TRAILING_ACTIVATION_PCT", "0.0"))
 TURBULENCE_VOL = float(_os.environ.get("VINU_LIVE_TURBULENCE_VOL", "0.05"))
 
 # Stage 2 (how-to-make-it-live.md #24): TradePlan.forecast.confidence was
@@ -254,6 +263,49 @@ RUNTIME_CORR_THRESHOLD = float(_os.environ.get("VINU_LIVE_RUNTIME_CORR_THRESHOLD
 RUNTIME_CORR_REDUCE_PCT = float(_os.environ.get("VINU_LIVE_RUNTIME_CORR_REDUCE_PCT", "0.25"))
 RUNTIME_CORR_COOLDOWN_SEC = float(_os.environ.get("VINU_LIVE_RUNTIME_CORR_COOLDOWN_SEC", "3600"))
 
+# Live-editable overrides for the three tunables above, via
+# POST /live/admin/settings -- no restart needed. RUNTIME_CORR_ENABLED
+# stays a boot-only flag (feature kill switches belong in `.env`, not a
+# runtime HTTP surface); only the numeric thresholds are registered.
+# `SETTINGS.get(...)` always wins over the module constant when read
+# through the helpers below, so existing callers that still reference
+# RUNTIME_CORR_THRESHOLD/REDUCE_PCT/COOLDOWN_SEC directly (e.g. log lines)
+# see the `.env` default, not a live override -- only _check_runtime_correlation
+# itself reads the live value, via runtime_corr_threshold()/_reduce_pct()/_cooldown_sec().
+SETTINGS = RuntimeSettings()
+SETTINGS.register(
+    "runtime_corr_threshold",
+    default=RUNTIME_CORR_THRESHOLD,
+    minimum=0.0,
+    maximum=1.0,
+    description="Co-movement threshold above which the runtime correlation monitor trims a pair.",
+)
+SETTINGS.register(
+    "runtime_corr_reduce_pct",
+    default=RUNTIME_CORR_REDUCE_PCT,
+    minimum=0.0,
+    maximum=1.0,
+    description="Fraction of the larger position's qty to reduce when the pair trips the threshold.",
+)
+SETTINGS.register(
+    "runtime_corr_cooldown_sec",
+    default=RUNTIME_CORR_COOLDOWN_SEC,
+    minimum=0.0,
+    description="Per-symbol seconds between runtime-correlation reductions.",
+)
+
+
+def runtime_corr_threshold() -> float:
+    return SETTINGS.get("runtime_corr_threshold")
+
+
+def runtime_corr_reduce_pct() -> float:
+    return SETTINGS.get("runtime_corr_reduce_pct")
+
+
+def runtime_corr_cooldown_sec() -> float:
+    return SETTINGS.get("runtime_corr_cooldown_sec")
+
 
 # how-to-make-it-live.md #3/#5 (Stage 3): conflicting-signal detection. More
 # than one ACTIVE trade_plan can name the same symbol (a 1D sweep and a 1H
@@ -355,6 +407,15 @@ OOD_CORR_THRESHOLD = float(_os.environ.get("VINU_LIVE_OOD_CORR", "0.95"))
 OOD_VOL_THRESHOLD = float(_os.environ.get("VINU_LIVE_OOD_VOL", "0.08"))
 OOD_MOVE_THRESHOLD = float(_os.environ.get("VINU_LIVE_OOD_MOVE", "0.10"))
 OOD_MIN_SIGNALS = int(_os.environ.get("VINU_LIVE_OOD_MIN_SIGNALS", "2"))
+# Stage A (A10 -- FinRL's turbulence index, see other-repos-world/
+# comprison-other-vinu/08-finrl.md): a 4th OOD signal. Mahalanobis distance
+# of today's joint return vector from its recent distribution -- catches a
+# statistically extreme *joint configuration* of returns even when no
+# single symbol's vol and no single pairwise correlation looks abnormal on
+# its own. Under multivariate normality E[MD^2] = n (dimension count), so
+# the threshold is a multiple of the open-book size; default 5x only fires
+# on a genuinely extreme joint move.
+OOD_TURBULENCE_MULT = float(_os.environ.get("VINU_LIVE_OOD_TURBULENCE_MULT", "5.0"))
 
 
 def _signal_age_hours(created_at: Any) -> float | None:
@@ -414,9 +475,21 @@ async def turbulence_active(fetch_recent: Any, symbol: str) -> tuple[bool, str]:
 def trailing_stop_for(position: Any, price: float, closes: list[float]) -> float | None:
     """Trailing 2x ATR stop (15 step2): mean absolute daily move over last 14
     closes as ATR proxy. Long: price - mult*ATR. Short: price + mult*ATR.
-    Returns None when not enough data. Ratchet-only enforced by caller."""
+    Returns None when not enough data, or (Stage A / A7) when the position
+    has not yet gained TRAILING_ACTIVATION_PCT. Ratchet-only enforced by
+    caller."""
     if TRAILING_ATR_MULT <= 0 or len(closes) < 3 or price <= 0:
         return None
+    if TRAILING_ACTIVATION_PCT > 0:
+        entry = float(getattr(position, "avg_entry", 0.0) or 0.0)
+        _side = str(getattr(position, "side", getattr(position, "direction", "long"))).lower()
+        if entry > 0:
+            gain_pct = (
+                (entry - price) / entry if _side in ("short", "sell")
+                else (price - entry) / entry
+            )
+            if gain_pct < TRAILING_ACTIVATION_PCT:
+                return None
     window = closes[-15:]
     moves = [abs(window[i] - window[i - 1]) for i in range(1, len(window))]
     atr = sum(moves) / len(moves) if moves else 0.0
@@ -965,7 +1038,33 @@ class TradePlanOrchestrator:
 
         side = "buy" if direction == "long" else "sell"
         pre_signed = (await self._fetch_broker_positions()).get(symbol, 0.0)
-        order_result = await self._submit_order(symbol, side, qty)
+        # Stage 0 (G3): a real resting stop at the broker, not just a
+        # stop_loss field inside our own book -- so an open position stays
+        # protected even if this process is down. This is deliberately a
+        # static, one-time CATASTROPHIC BACKSTOP, not the plan's actual exit
+        # logic: the dynamic invalidation/contingency rules below (evaluated
+        # every cycle against live metrics) remain the primary, tighter exit
+        # mechanism and keep tightening/trailing the book's own stop_loss
+        # field independently of this broker order, which is never
+        # re-placed. There is no fixed stop/target price anywhere in
+        # RiskBand to forward -- one has to be derived. cvar_95_limit (the
+        # plan's frozen 95% daily tail-loss estimate) is the only field on
+        # the plan that represents "how bad could one day plausibly be", so
+        # it's what a catastrophic-only backstop should be sized from.
+        # Fails open (no bracket param, same as a plain market order) when
+        # it wasn't computed -- same posture as every other data-quality
+        # guard in this file (CVaR gate, vol-target scaling) rather than
+        # inventing an arbitrary distance.
+        backstop_stop_price: float | None = None
+        cvar_95_for_stop = risk_bands.get("cvar_95_limit", 0.0) or 0.0
+        if cvar_95_for_stop > 0:
+            backstop_stop_price = (
+                price * (1 - cvar_95_for_stop) if direction == "long"
+                else price * (1 + cvar_95_for_stop)
+            )
+        order_result = await self._submit_order(
+            symbol, side, qty, stop_loss_price=backstop_stop_price,
+        )
         if order_result.get("status") == "submitted":
             # how-to-make-it-live.md #15: book what actually filled, not the
             # intended qty -- a partial fill otherwise leaves every downstream
@@ -985,10 +1084,18 @@ class TradePlanOrchestrator:
                     symbol, qty, fill_qty,
                 )
             LOG.info("Entered %s %s %.4f @ %.2f", direction, symbol, fill_qty, price)
+            slippage_bps = await self._entry_slippage_bps(symbol, price, direction, pre_signed)
+            if slippage_bps is not None:
+                LOG.info(
+                    "Entry slippage %s: planned %.2f vs broker avg-entry -> %+.1f bps",
+                    symbol, price, slippage_bps,
+                )
             action = {
                 "symbol": symbol, "action": "entered", "direction": direction,
                 "qty": fill_qty, "price": price,
             }
+            if slippage_bps is not None:
+                action["slippage_bps"] = round(slippage_bps, 1)
             if partial:
                 action.update({"partial_fill": True, "intended_qty": qty})
             return action
@@ -1360,6 +1467,9 @@ class TradePlanOrchestrator:
             mv[p.symbol] = mv.get(p.symbol, 0.0) + abs(p.qty) * px
 
         now = time.monotonic()
+        threshold = runtime_corr_threshold()
+        reduce_pct = runtime_corr_reduce_pct()
+        cooldown_sec = runtime_corr_cooldown_sec()
         flagged: list[dict[str, Any]] = []
         reductions: list[dict[str, Any]] = []
         for a, b in ((symbols[i], symbols[j]) for i in range(len(symbols)) for j in range(i + 1, len(symbols))):
@@ -1368,17 +1478,27 @@ class TradePlanOrchestrator:
                 continue  # a symbol whose own positions net flat -- nothing to trim
             c = float(corr[idx[a], idx[b]])
             comovement = c * sa * sb  # co-movement in the direction we're exposed
-            if comovement < RUNTIME_CORR_THRESHOLD:
+            if comovement < threshold:
                 continue
             flagged.append({"pair": [a, b], "correlation": round(c, 3), "comovement": round(comovement, 3)})
 
             target = a if mv.get(a, 0.0) >= mv.get(b, 0.0) else b
-            if now - self._last_corr_reduce.get(target, 0.0) < RUNTIME_CORR_COOLDOWN_SEC:
+            # Bug found 2026-09-10: 0.0 as the "never reduced" sentinel
+            # assumed time.monotonic() starts near zero. It doesn't -- the
+            # reference point is implementation-defined (often process/
+            # system start), so on a freshly booted host `now` itself can
+            # be smaller than RUNTIME_CORR_COOLDOWN_SEC, making
+            # `now - 0.0 < COOLDOWN` true and silently blocking the very
+            # first reduction a process would ever make. None means "no
+            # prior record" unambiguously; only compare elapsed time when
+            # there actually is a prior record.
+            last_reduce = self._last_corr_reduce.get(target)
+            if last_reduce is not None and now - last_reduce < cooldown_sec:
                 continue
             pos = self._find_open_position(target)
             if pos is None:
                 continue
-            reduce_qty = pos.qty * RUNTIME_CORR_REDUCE_PCT
+            reduce_qty = pos.qty * reduce_pct
             if reduce_qty <= 0:
                 continue
             price = prices.get(target) or pos.avg_entry
@@ -1392,8 +1512,8 @@ class TradePlanOrchestrator:
                 LOG.warning(
                     "Runtime correlation: %s~%s corr %.2f (comovement %.2f >= %.2f) -- "
                     "reduced %s by %.0f%% (%.4f)",
-                    a, b, c, comovement, RUNTIME_CORR_THRESHOLD, target,
-                    RUNTIME_CORR_REDUCE_PCT * 100, reduce_qty,
+                    a, b, c, comovement, threshold, target,
+                    reduce_pct * 100, reduce_qty,
                 )
                 reductions.append({
                     "symbol": target, "pair": [a, b],
@@ -1464,6 +1584,28 @@ class TradePlanOrchestrator:
         detail["max_1d_move"] = round(max_move, 4)
         if max_move >= OOD_MOVE_THRESHOLD:
             signals.append(f"gap_move {max_move:.2f}>={OOD_MOVE_THRESHOLD:.2f}")
+
+        # 4. turbulence -- Mahalanobis distance of today's joint return
+        # vector from its recent trailing distribution, against the same
+        # `cov` signal 1 already built. Reuses the return series already
+        # fetched above; adds one small linear-algebra op, no extra I/O.
+        # `cov` is bound (to a matrix or None) whenever len(symbols) >= 2,
+        # since signal 1 above runs under that same condition.
+        if len(symbols) >= 2 and OOD_TURBULENCE_MULT > 0 and cov is not None:
+            _rows = [_simple_returns(c) for c in series]
+            if len(_rows) == len(symbols) and all(len(r) >= 15 for r in _rows):
+                _arr = np.array([r[-14:] for r in _rows])  # (n_symbols, 14)
+                _today = _arr[:, -1]
+                _hist_mean = _arr[:, :-1].mean(axis=1)
+                try:
+                    _diff = _today - _hist_mean
+                    _md2 = float(_diff @ np.linalg.pinv(cov) @ _diff)
+                    detail["turbulence_md2"] = round(_md2, 2)
+                    _thresh = OOD_TURBULENCE_MULT * len(symbols)
+                    if _md2 >= _thresh:
+                        signals.append(f"turbulence md2 {_md2:.1f}>={_thresh:.1f}")
+                except Exception as _e:  # noqa: BLE001 -- fail-open, same as every other OOD signal
+                    LOG.debug("turbulence signal skipped: %s", _e)
 
         triggered = len(signals) >= OOD_MIN_SIGNALS
         result: dict[str, Any] = {
@@ -1561,6 +1703,7 @@ class TradePlanOrchestrator:
 
     async def _submit_order(
         self, symbol: str, side: str, qty: float, artifact_id: str = "", reduce_only: bool = False,
+        stop_loss_price: float | None = None,
     ) -> dict[str, Any]:
         # Idempotency (16 step8): client_order_id = artifact+symbol+side+qty+minute bucket.
         # Retry within same minute dedupes on broker, no double fill.
@@ -1587,6 +1730,14 @@ class TradePlanOrchestrator:
             }
             if client_order_id:
                 payload["client_order_id"] = client_order_id
+            # Stage 0 (G3): a catastrophic-backstop stop price, when the caller
+            # supplied one (see _maybe_enter). AlpacaBroker.submit_order()
+            # attaches it as a real resting order_class="oto" stop leg -- never
+            # combined with a take-profit here, so it's always the "oto"
+            # single-leg case, not "bracket". reduce_only orders (exits) never
+            # pass this -- a stop on a stop would be nonsensical.
+            if stop_loss_price is not None:
+                payload["stop_loss_price"] = stop_loss_price
             resp = await self._http.post(
                 f"{self._config.agent_api_url}/agent/broker/order",
                 json=payload,
@@ -2014,6 +2165,36 @@ class TradePlanOrchestrator:
         except Exception as e:
             LOG.warning("Could not fetch broker positions: %s", e)
         return {}
+
+    async def _entry_slippage_bps(
+        self, symbol: str, planned_price: float, direction: str, pre_signed: float,
+    ) -> float | None:
+        """Stage A (A13 -- StockSharp's realized-slippage tracker, see
+        other-repos-world/comprison-other-vinu/10-stocksharp.md): observed
+        fill quality for a fresh entry. Positive bps = filled worse than the
+        mark the order was sized against. Best-effort, monitoring-only --
+        returns None (and never raises) on anything unexpected. Only
+        meaningful when entering from flat, since the broker's blended
+        avg-entry-price for an add is not this fill's price."""
+        if abs(pre_signed) > 1e-9 or planned_price <= 0:
+            return None
+        try:
+            resp = await self._http.get(f"{self._config.agent_api_url}/agent/broker/positions")
+            if resp.status_code != 200:
+                return None
+            for p in resp.json() or []:
+                if p.get("symbol") != symbol:
+                    continue
+                avg = float(p.get("avg_entry_price") or p.get("avg_entry") or 0.0)
+                if avg <= 0:
+                    return None
+                raw_bps = (avg - planned_price) / planned_price * 10_000.0
+                # For a short, filling *higher* than planned is favourable,
+                # so flip the sign to keep "positive = worse" consistent.
+                return raw_bps if direction == "long" else -raw_bps
+        except Exception:
+            return None
+        return None
 
     async def _confirm_fill(
         self, symbol: str, pre_signed: float, intended_delta: float,
