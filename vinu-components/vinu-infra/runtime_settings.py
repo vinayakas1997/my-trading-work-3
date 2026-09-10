@@ -136,12 +136,40 @@ class RuntimeSettings:
             }
 
 
-def build_admin_settings_router(settings: RuntimeSettings, *, prefix: str = "/admin/settings") -> APIRouter:
+def build_admin_settings_router(
+    settings: RuntimeSettings,
+    *,
+    prefix: str = "/admin/settings",
+    on_change: Callable[[str, dict[str, Any]], None] | None = None,
+) -> APIRouter:
     """GET/PATCH/reset over one RuntimeSettings instance. Mount it under
     the same router (or with the same `Depends(require_auth)`) the rest of
     the service uses -- this deliberately does not add its own auth, so it
-    never becomes a second credential to manage or a bypass of the first."""
+    never becomes a second credential to manage or a bypass of the first.
+
+    `on_change(action, changes)` -- if given -- is called after a
+    successful mutation: `action` is `"set"` or `"reset"`, `changes` maps
+    knob name to its new value. It's how a service records a runtime risk-
+    limit change into its own audit trail (NautilusTrader's
+    `set_max_notional_per_order()` emits an event the same way). Kept as an
+    injected callback rather than an import so this module stays free of
+    any service's logging/audit dependencies. Any exception it raises is
+    swallowed -- an audit-write hiccup must not fail the setting change
+    that already took effect, the same ordering every audit write in this
+    codebase follows."""
     router = APIRouter(prefix=prefix, tags=["admin"])
+
+    def _emit(action: str, changes: dict[str, Any]) -> None:
+        if on_change is None or not changes:
+            return
+        try:
+            on_change(action, changes)
+        except Exception:  # noqa: BLE001 -- audit write never blocks the real change
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "runtime-settings on_change callback failed for %s %s", action, changes,
+            )
 
     @router.get("")
     async def list_settings() -> dict[str, Any]:
@@ -162,6 +190,7 @@ def build_admin_settings_router(settings: RuntimeSettings, *, prefix: str = "/ad
                 errors[name] = str(exc)
         if errors and not updated:
             raise HTTPException(status_code=422, detail=errors)
+        _emit("set", updated)
         result: dict[str, Any] = {"updated": updated}
         if errors:
             result["errors"] = errors
@@ -173,6 +202,7 @@ def build_admin_settings_router(settings: RuntimeSettings, *, prefix: str = "/ad
             value = settings.reset(name)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        _emit("reset", {name: value})
         return {"name": name, "value": value}
 
     return router

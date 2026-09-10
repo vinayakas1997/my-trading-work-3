@@ -59,13 +59,24 @@ class OrderGuard:
         # which is exactly the bug this store closes (see
         # daily_limits.py's module docstring).
         self._daily_limit_store = daily_limit_store or DailyLimitStore(DEFAULT_DAILY_LIMIT_DB_PATH)
-        # In-process throttle window (B20): 10 orders/sec per symbol,
+        # In-process throttle window (B20): sliding-window order-rate limiter,
         # deque of monotonic timestamps. Fresh instance per execute() means
         # window is per-process burst, not persisted — sufficient to block
         # runaway loop (the #1 live blow-up per QuantMemo) without DB.
+        #
+        # Stage A (A15): rate + window are env-configurable so an operator
+        # can tighten the runaway-loop breaker without a code change, same
+        # posture as every other numeric limit in this file. Boot-time only
+        # (read once here), NOT a live RuntimeSettings knob — this is a hard
+        # safety ceiling, not a tuning dial, and belongs in the same
+        # "restart to change" category as the mandate's pass/fail switches.
         self._throttle_window: deque[float] = deque()
-        self._throttle_limit_per_sec = 10
-        self._throttle_window_sec = 1.0
+        self._throttle_limit_per_sec = int(
+            os.environ.get("VINU_AGENT_ORDER_THROTTLE_PER_SEC", "10")
+        )
+        self._throttle_window_sec = float(
+            os.environ.get("VINU_AGENT_ORDER_THROTTLE_WINDOW_SEC", "1.0")
+        )
 
     def _count_daily_orders(self, symbol: str) -> int:
         return self._daily_limit_store.count_today(symbol)
@@ -119,7 +130,21 @@ class OrderGuard:
         while self._throttle_window and now - self._throttle_window[0] > self._throttle_window_sec:
             self._throttle_window.popleft()
         if len(self._throttle_window) >= self._throttle_limit_per_sec:
-            return GuardResult(False, f"Order throttle: {self._throttle_limit_per_sec} orders/sec limit exceeded")
+            # A15: a tripped throttle means something upstream is submitting
+            # in a tight loop — the exact failure mode this breaker exists
+            # for. Log it at WARNING (the kill-switch path already does the
+            # same) so it surfaces in alerting instead of being a silent
+            # rejection buried in one caller's return value.
+            logger.warning(
+                "Order throttle tripped for %s (%s): >= %d orders in %.2fs — "
+                "possible runaway submission loop",
+                symbol, side, self._throttle_limit_per_sec, self._throttle_window_sec,
+            )
+            return GuardResult(
+                False,
+                f"Order throttle: {self._throttle_limit_per_sec} orders / "
+                f"{self._throttle_window_sec:g}s limit exceeded",
+            )
         self._throttle_window.append(now)
 
         mandate = self._mandate

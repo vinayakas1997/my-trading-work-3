@@ -142,6 +142,7 @@ class AuditLogger:
     GROUND_TRUTH_INJECTED = "GroundTruthInjected"
     AUDIT_VERDICT_FAIL = "AuditVerdictFail"
     AUDIT_VERDICT_STALE = "AuditVerdictStale"
+    RUNTIME_SETTING_CHANGED = "RuntimeSettingChanged"
     JOURNAL_ENTRY_CREATED = "JournalEntryCreated"
     JOURNAL_STATUS_CHANGED = "JournalStatusChanged"
     FACT_REGISTRY_WRITE = "FactRegistryWrite"

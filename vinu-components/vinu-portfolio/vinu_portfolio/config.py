@@ -47,6 +47,9 @@ class PortfolioConfig:
     target_volatility: float = 0.15
     drawdown_halt_threshold: float = -0.20
     drawdown_monitor_interval_sec: int = 300
+    # Stage A (A16): absolute session-loss halt, independent of the
+    # drawdown-from-peak breaker above. 0.0 = disabled (default).
+    abs_loss_halt_threshold: float = 0.0
     analysis_api_url: str = DEFAULT_ANALYSIS_API_URL
     stock_api_url: str = DEFAULT_STOCK_API_URL
     benchmark_symbol: str = DEFAULT_BENCHMARK_SYMBOL
@@ -83,6 +86,7 @@ class PortfolioConfig:
             max_per_sector_weight=float(os.getenv("VINU_PORTFOLIO_MAX_PER_SECTOR", "0.4")),
             drawdown_halt_threshold=float(os.getenv("VINU_PORTFOLIO_DRAWDOWN_HALT", "-0.20")),
             drawdown_monitor_interval_sec=int(os.getenv("VINU_PORTFOLIO_DRAWDOWN_INTERVAL_SEC", "300")),
+            abs_loss_halt_threshold=float(os.getenv("VINU_PORTFOLIO_ABS_LOSS_HALT", "0.0")),
             analysis_api_url=os.getenv("VINU_CORRELATION_API_URL", DEFAULT_ANALYSIS_API_URL),
             stock_api_url=os.getenv("VINU_STOCK_PRICE_API_URL", DEFAULT_STOCK_API_URL),
             benchmark_symbol=os.getenv("VINU_PORTFOLIO_BENCHMARK_SYMBOL", DEFAULT_BENCHMARK_SYMBOL),

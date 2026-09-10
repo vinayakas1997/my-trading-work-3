@@ -71,7 +71,22 @@ def create_app(service: Any = None) -> FastAPI:
     # Live-tunable mandate risk limits -- GET/PATCH under
     # /agent/admin/settings, gated by the same require_auth as every other
     # route on this router (wired in by vinu_infra.server.create_app below).
-    merged.include_router(build_admin_settings_router(MANDATE_SETTINGS), tags=["admin"])
+    # A15/A21: every runtime change to a risk limit (max_order_value,
+    # max_position_pct, ...) lands in the same trade_audit.log the kill
+    # switch and every order write to, so "who loosened the notional cap
+    # right before that loss" is answerable after the fact.
+    def _audit_settings_change(action: str, changes: dict[str, Any]) -> None:
+        from vinu_agent.broker.kill_switch import AuditLogger
+
+        AuditLogger.log(
+            AuditLogger.RUNTIME_SETTING_CHANGED,
+            {"action": action, "changes": changes},
+        )
+
+    merged.include_router(
+        build_admin_settings_router(MANDATE_SETTINGS, on_change=_audit_settings_change),
+        tags=["admin"],
+    )
 
     _channels: list[Any] = []
 

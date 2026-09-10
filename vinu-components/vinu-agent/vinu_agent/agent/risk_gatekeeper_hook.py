@@ -113,6 +113,43 @@ def apply_risk_gatekeeper_verdict(
     if formula_size is not None:
         approved_size = min(approved_size, formula_size) if approved_size > 0 else formula_size
 
+    # Stage A (A17): clamp the sized dollar amount down to the hard mandate
+    # ceiling as a final step, rather than letting OrderGuard reject the
+    # order outright at submission time. abu's sizing path does the same --
+    # a position that's merely too big should be trimmed to the limit and
+    # still taken, not dropped. OrderGuard still enforces the same ceilings
+    # as a fail-closed backstop; this just means the common "Kelly wants
+    # more than the mandate allows" case produces a smaller order instead
+    # of a rejected one. Best-effort: any problem loading the mandate leaves
+    # approved_size untouched (OrderGuard remains the real gate).
+    if approved_size > 0:
+        try:
+            equity = 0.0
+            if isinstance(sizing_inputs, dict):
+                equity = float(sizing_inputs.get("account_equity", 0.0) or 0.0)
+            from vinu_agent.broker.mandate import TradingMandate
+
+            _m = TradingMandate.load()
+            ceilings = []
+            if equity > 0 and _m.max_position_pct > 0:
+                ceilings.append(_m.max_position_pct * equity)
+            if _m.max_order_value > 0:
+                ceilings.append(_m.max_order_value)
+            if ceilings:
+                capped = min(approved_size, *ceilings)
+                if capped < approved_size:
+                    LOG.info(
+                        "risk_gatekeeper: clamping approved_size %.2f -> %.2f "
+                        "to the mandate ceiling for %s",
+                        approved_size, capped, artifact_id,
+                    )
+                    approved_size = capped
+        except Exception:
+            LOG.exception(
+                "failed to clamp approved_size to the mandate ceiling for %s, "
+                "leaving it to OrderGuard", artifact_id,
+            )
+
     try:
         artifact = strategy_store.mark_pend(artifact_id, approved_size=approved_size)
     except Exception:

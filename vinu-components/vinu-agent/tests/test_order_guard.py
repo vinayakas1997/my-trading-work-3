@@ -79,6 +79,40 @@ class TestKillSwitchScope:
         assert "halted" in msft_result.reason.lower()
 
 
+class TestOrderThrottle:
+    """Stage A (A15): the sub-second order-rate breaker (B20). Rate and
+    window are env-configurable now; a tripped throttle logs at WARNING."""
+
+    def test_trips_at_the_configured_rate(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False)
+        guard = _guard(mandate)
+        guard._throttle_limit_per_sec = 3
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            assert guard.check("AAPL", "buy", qty=1, price=10.0)
+            assert guard.check("AAPL", "buy", qty=1, price=10.0)
+            assert guard.check("AAPL", "buy", qty=1, price=10.0)
+            blocked = guard.check("AAPL", "buy", qty=1, price=10.0)
+        assert not blocked
+        assert "throttle" in blocked.reason.lower()
+
+    def test_rate_and_window_read_from_env(self, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_AGENT_ORDER_THROTTLE_PER_SEC", "42")
+        monkeypatch.setenv("VINU_AGENT_ORDER_THROTTLE_WINDOW_SEC", "2.5")
+        guard = _guard(TradingMandate(require_active_artifact=False))
+        assert guard._throttle_limit_per_sec == 42
+        assert guard._throttle_window_sec == 2.5
+
+    def test_tripped_throttle_logs_a_warning(self, caplog) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False)
+        guard = _guard(mandate)
+        guard._throttle_limit_per_sec = 1
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            guard.check("AAPL", "buy", qty=1, price=10.0)
+            with caplog.at_level("WARNING", logger="vinu_agent.broker.order_guard"):
+                guard.check("AAPL", "buy", qty=1, price=10.0)
+        assert any("throttle tripped" in r.message.lower() for r in caplog.records)
+
+
 class TestRequireActiveArtifact:
     """Since 0002 (see New-talk-agents/implementation/00-status.md), the
     active-artifact check reads vinu-research's real strategy_store.db

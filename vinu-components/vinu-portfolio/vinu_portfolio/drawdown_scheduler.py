@@ -55,10 +55,13 @@ def monitor_main_loop(config: PortfolioConfig | None = None) -> None:
     monitor = PortfolioDrawdownMonitor(
         drawdown_threshold=config.drawdown_halt_threshold,
         agent_api_url=config.agent_api_url,
+        abs_loss_threshold=config.abs_loss_halt_threshold or None,
     )
     LOG.info(
-        "Starting portfolio drawdown monitor — threshold=%.1f%%, interval=%ds, agent_api=%s",
-        config.drawdown_halt_threshold * 100, config.drawdown_monitor_interval_sec, config.agent_api_url,
+        "Starting portfolio drawdown monitor — threshold=%.1f%%, abs_loss_halt=%.1f%%, "
+        "interval=%ds, agent_api=%s",
+        config.drawdown_halt_threshold * 100, config.abs_loss_halt_threshold * 100,
+        config.drawdown_monitor_interval_sec, config.agent_api_url,
     )
     while True:
         result = run_once(monitor, config.agent_api_url)
