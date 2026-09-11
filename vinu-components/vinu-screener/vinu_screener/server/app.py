@@ -26,6 +26,12 @@ from vinu_infra.server import create_app as _create_app
 
 from ..audit.watch_history import WatchAuditStore
 from ..features.library import FeatureLibrary
+from ..pipeline.hard_filter import HardFilterConfig
+from ..pipeline.scorer import FactorSpec
+from ..rankers.config import RankerConfig
+from ..rankers.runner import RankerRunner
+from ..rankers.snapshot_store import RankedSnapshotStore
+from ..rankers.store import RankerStore
 from ..rules.store import RuleStore
 from ..scan.data_source import HttpStockDataSource, SymbolDataSource
 from ..scan.dry_run import run_dry_run
@@ -36,6 +42,10 @@ from ..serve.router import build_router
 DEFAULT_DATA_ROOT = Path(os.environ.get("VINU_SCREENER_DATA_ROOT", str(Path.home() / ".vinu")))
 DEFAULT_RULE_DB_PATH = os.environ.get("VINU_SCREENER_RULE_DB", str(DEFAULT_DATA_ROOT / "screener_rules.db"))
 DEFAULT_AUDIT_DB_PATH = os.environ.get("VINU_SCREENER_AUDIT_DB", str(DEFAULT_DATA_ROOT / "screener_audit.db"))
+DEFAULT_RANKER_DB_PATH = os.environ.get("VINU_SCREENER_RANKER_DB", str(DEFAULT_DATA_ROOT / "screener_rankers.db"))
+DEFAULT_RANKER_SNAPSHOT_DB_PATH = os.environ.get(
+    "VINU_SCREENER_RANKER_SNAPSHOT_DB", str(DEFAULT_DATA_ROOT / "screener_ranker_snapshots.db")
+)
 # VINU_STOCK_API_URL is the bare cross-service URL (e.g. http://stock-api:8081
 # in Docker Compose, matching every other vinu-* consumer's env-var
 # convention -- see .env-example's "Cross-service API URLs" section); each
@@ -69,23 +79,53 @@ class RuleUpsertRequest(BaseModel):
     active: bool = True
 
 
+class FactorSpecBody(BaseModel):
+    name: str
+    indicator: str
+    weight: float
+    params: dict = {}
+    output_field: str = "value"
+    offset: int = 0
+
+
+class RankerUpsertRequest(BaseModel):
+    universe: list[str]
+    factors: list[FactorSpecBody]
+    top_n: int = 20
+    hard_filter: dict = {}
+    # Default: once a day (RANKER_MIN_INTERVAL_SEC still floors this if a
+    # caller passes something too aggressive) -- rankers are the "set your
+    # own ranking, run it once at the start of the day" surface, unlike
+    # ScanRule's continuous condition polling.
+    interval_sec: float = 86400.0
+    active: bool = True
+
+
 def create_app(
     *,
     rule_store: RuleStore | None = None,
     audit_store: WatchAuditStore | None = None,
     data_source: SymbolDataSource | None = None,
+    ranker_store: RankerStore | None = None,
+    ranker_snapshot_store: RankedSnapshotStore | None = None,
 ):
     store = rule_store or RuleStore(DEFAULT_RULE_DB_PATH)
     audit = audit_store or WatchAuditStore(DEFAULT_AUDIT_DB_PATH)
     ds = data_source or HttpStockDataSource(httpx.Client(), base_url=DEFAULT_STOCK_API_URL)
     library = FeatureLibrary()
+    rankers = ranker_store or RankerStore(DEFAULT_RANKER_DB_PATH)
+    ranker_snapshots = ranker_snapshot_store or RankedSnapshotStore(DEFAULT_RANKER_SNAPSHOT_DB_PATH)
     owns_stores = rule_store is None and audit_store is None
+    owns_ranker_stores = ranker_store is None and ranker_snapshot_store is None
 
     def _monitor() -> ScanMonitor:
         # One shared FeatureLibrary, fresh cache cleared each cycle by
         # run_cycle() itself (B4's own cache-scoping rule) -- reused across
         # requests here is just avoiding a pointless object churn.
         return ScanMonitor(ds, library=library)
+
+    def _ranker_runner() -> RankerRunner:
+        return RankerRunner(ds, library=library)
 
     router = APIRouter()
 
@@ -161,6 +201,75 @@ def create_app(
 
         return {"rule_id": rule_id, "history": [asdict(h) for h in audit.history(rule_id=rule_id, limit=limit)]}
 
+    # --- Rankers (the "set the ranks" surface) ---
+
+    @router.get("/screener/rankers")
+    def list_rankers() -> dict:
+        return {"rankers": [s.to_dict() for s in rankers.all()]}
+
+    @router.get("/screener/rankers/{ranker_id}")
+    def get_ranker(ranker_id: str) -> dict:
+        stored = rankers.get(ranker_id)
+        if stored is None:
+            raise HTTPException(status_code=404, detail="ranker not found")
+        return stored.to_dict()
+
+    @router.put("/screener/rankers/{ranker_id}")
+    def upsert_ranker(ranker_id: str, body: RankerUpsertRequest) -> dict:
+        try:
+            cfg = RankerConfig(
+                ranker_id=ranker_id,
+                universe=tuple(body.universe),
+                factors=tuple(FactorSpec.from_dict(f.model_dump()) for f in body.factors),
+                top_n=body.top_n,
+                hard_filter=HardFilterConfig(**body.hard_filter),
+            )
+        except Exception as exc:  # noqa: BLE001 -- a malformed ranker body is a 422, not a 500
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        stored = rankers.upsert_ranker(cfg, interval_sec=body.interval_sec, active=body.active)
+        return stored.to_dict()
+
+    @router.delete("/screener/rankers/{ranker_id}")
+    def delete_ranker(ranker_id: str) -> dict:
+        return {"status": "ok", "deleted": rankers.delete(ranker_id)}
+
+    @router.post("/screener/rankers/{ranker_id}/enable")
+    def enable_ranker(ranker_id: str) -> dict:
+        if rankers.get(ranker_id) is None:
+            raise HTTPException(status_code=404, detail="ranker not found")
+        rankers.set_active(ranker_id, True)
+        return {"status": "ok", "ranker_id": ranker_id, "active": True}
+
+    @router.post("/screener/rankers/{ranker_id}/disable")
+    def disable_ranker(ranker_id: str) -> dict:
+        if rankers.get(ranker_id) is None:
+            raise HTTPException(status_code=404, detail="ranker not found")
+        rankers.set_active(ranker_id, False)
+        return {"status": "ok", "ranker_id": ranker_id, "active": False}
+
+    @router.post("/screener/rankers/{ranker_id}/rank")
+    def rank_now(ranker_id: str) -> dict:
+        """On-demand: run this ranker right now (bypasses its schedule
+        entirely -- does not touch `RankerScheduler`'s due-tracking, so it
+        won't delay or skip the next scheduled run) and persist the result
+        as its new latest snapshot."""
+        stored = rankers.get(ranker_id)
+        if stored is None:
+            raise HTTPException(status_code=404, detail="ranker not found")
+        result = _ranker_runner().run(stored.ranker)
+        snapshot = ranker_snapshots.set_latest(ranker_id, result)
+        return snapshot.to_dict()
+
+    @router.get("/screener/rankers/{ranker_id}/latest")
+    def latest_ranking(ranker_id: str) -> dict:
+        """The cheap read: whatever the most recent run (scheduled or
+        on-demand) produced, without re-running anything. 404 if this
+        ranker has never run yet."""
+        snapshot = ranker_snapshots.get_latest(ranker_id)
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="no ranking has run yet for this ranker")
+        return snapshot.to_dict()
+
     def _refresh_pairlist(rule_id: str) -> list[str]:
         stored = store.get(rule_id)
         if stored is None:
@@ -176,6 +285,9 @@ def create_app(
         if owns_stores:
             store.close()
             audit.close()
+        if owns_ranker_stores:
+            rankers.close()
+            ranker_snapshots.close()
 
     app = _create_app(
         service_name="vinu-screener",

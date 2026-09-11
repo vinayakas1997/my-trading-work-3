@@ -25,24 +25,47 @@ def serve_main(args: argparse.Namespace) -> None:
 
 
 def scan_main(args: argparse.Namespace) -> None:
+    """Runs BOTH loops in this one process: the condition-rule Scheduler
+    (foreground) and the RankerScheduler (background daemon thread). They
+    do genuinely different work on genuinely different cadences (a
+    condition check every 30s+ vs. a full-universe rank typically once a
+    day), but neither is expensive enough on its own to justify a third
+    OS process -- one shared `httpx.Client`/data source, two schedules."""
+    import threading
+
     import httpx
 
     from vinu_screener.audit.watch_history import WatchAuditStore
+    from vinu_screener.rankers.runner import RankerRunner
+    from vinu_screener.rankers.scheduler import RankerScheduler
+    from vinu_screener.rankers.snapshot_store import RankedSnapshotStore
+    from vinu_screener.rankers.store import RankerStore
     from vinu_screener.rules.store import RuleStore
     from vinu_screener.scan.data_source import HttpStockDataSource
     from vinu_screener.scan.monitor import ScanMonitor
     from vinu_screener.scheduler import Scheduler
     from vinu_screener.server.app import (
         DEFAULT_AUDIT_DB_PATH,
+        DEFAULT_RANKER_DB_PATH,
+        DEFAULT_RANKER_SNAPSHOT_DB_PATH,
         DEFAULT_RULE_DB_PATH,
         DEFAULT_STOCK_API_URL,
     )
 
+    data_source = HttpStockDataSource(httpx.Client(), base_url=args.stock_api_url or DEFAULT_STOCK_API_URL)
+
     rule_store = RuleStore(args.rule_db or DEFAULT_RULE_DB_PATH)
     audit_store = WatchAuditStore(args.audit_db or DEFAULT_AUDIT_DB_PATH)
-    data_source = HttpStockDataSource(httpx.Client(), base_url=args.stock_api_url or DEFAULT_STOCK_API_URL)
-    monitor = ScanMonitor(data_source)
-    scheduler = Scheduler(rule_store, monitor, audit_store=audit_store)
+    scheduler = Scheduler(rule_store, ScanMonitor(data_source), audit_store=audit_store)
+
+    ranker_store = RankerStore(args.ranker_db or DEFAULT_RANKER_DB_PATH)
+    ranker_snapshots = RankedSnapshotStore(args.ranker_snapshot_db or DEFAULT_RANKER_SNAPSHOT_DB_PATH)
+    ranker_scheduler = RankerScheduler(ranker_store, RankerRunner(data_source), snapshot_store=ranker_snapshots)
+    ranker_thread = threading.Thread(
+        target=ranker_scheduler.run_forever, kwargs={"poll_sec": args.ranker_poll_sec}, daemon=True,
+    )
+    ranker_thread.start()
+
     scheduler.run_forever(poll_sec=args.poll_sec)
 
 
@@ -59,6 +82,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     scan_p.add_argument("--poll-sec", type=float, default=5.0, help="How often to check for due rules")
     scan_p.add_argument("--rule-db", type=Path, default=None)
     scan_p.add_argument("--audit-db", type=Path, default=None)
+    scan_p.add_argument("--ranker-db", type=Path, default=None)
+    scan_p.add_argument("--ranker-snapshot-db", type=Path, default=None)
+    scan_p.add_argument("--ranker-poll-sec", type=float, default=30.0, help="How often to check for due rankers")
     scan_p.add_argument(
         "--stock-api-url", default=None,
         help="Full base URL INCLUDING the /stock route prefix, e.g. http://stock-api:8081/stock "

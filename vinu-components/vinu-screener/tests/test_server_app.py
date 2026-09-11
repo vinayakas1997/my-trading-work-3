@@ -8,6 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from vinu_screener.audit.watch_history import WatchAuditStore
+from vinu_screener.rankers.snapshot_store import RankedSnapshotStore
+from vinu_screener.rankers.store import RankerStore
 from vinu_screener.rules.store import RuleStore
 from vinu_screener.server.app import create_app
 
@@ -47,6 +49,8 @@ def client(data_source: FakeDataSource, tmp_path: Path) -> TestClient:
         rule_store=RuleStore(tmp_path / "rules.db"),
         audit_store=WatchAuditStore(tmp_path / "audit.db"),
         data_source=data_source,
+        ranker_store=RankerStore(tmp_path / "rankers.db"),
+        ranker_snapshot_store=RankedSnapshotStore(tmp_path / "ranker_snapshots.db"),
     )
     return TestClient(app)
 
@@ -161,3 +165,81 @@ class TestPairlistTokenDefaultsToTheSharedInternalKey:
             monkeypatch.delenv("VINU_SCREENER_PAIRLIST_TOKEN", raising=False)
             monkeypatch.setattr("vinu_infra.auth.VINU_API_KEY", "")
             importlib.reload(app_mod)
+
+
+_RANKER_BODY = {
+    "universe": ["AAPL"],
+    "factors": [{"name": "momentum", "indicator": "close", "weight": 1.0}],
+    "top_n": 10,
+}
+
+
+class TestRankerCrud:
+    def test_create_then_get(self, client: TestClient) -> None:
+        put = client.put("/screener/rankers/r1", json=_RANKER_BODY)
+        assert put.status_code == 200
+        get = client.get("/screener/rankers/r1")
+        assert get.status_code == 200
+        assert get.json()["ranker_id"] == "r1"
+        assert get.json()["universe"] == ["AAPL"]
+
+    def test_get_unknown_ranker_is_404(self, client: TestClient) -> None:
+        assert client.get("/screener/rankers/ghost").status_code == 404
+
+    def test_list_includes_every_created_ranker(self, client: TestClient) -> None:
+        client.put("/screener/rankers/r1", json=_RANKER_BODY)
+        client.put("/screener/rankers/r2", json=_RANKER_BODY)
+        rankers = client.get("/screener/rankers").json()["rankers"]
+        assert {r["ranker_id"] for r in rankers} == {"r1", "r2"}
+
+    def test_malformed_body_is_422(self, client: TestClient) -> None:
+        resp = client.put("/screener/rankers/r1", json={"universe": ["AAPL"], "factors": "not-a-list"})
+        assert resp.status_code == 422
+
+    def test_delete_removes_the_ranker(self, client: TestClient) -> None:
+        client.put("/screener/rankers/r1", json=_RANKER_BODY)
+        resp = client.delete("/screener/rankers/r1")
+        assert resp.json()["deleted"] is True
+        assert client.get("/screener/rankers/r1").status_code == 404
+
+    def test_interval_below_floor_is_raised(self, client: TestClient) -> None:
+        from vinu_screener.rankers.config import RANKER_MIN_INTERVAL_SEC
+
+        client.put("/screener/rankers/r1", json={**_RANKER_BODY, "interval_sec": 1.0})
+        assert client.get("/screener/rankers/r1").json()["interval_sec"] == RANKER_MIN_INTERVAL_SEC
+
+
+class TestRankerEnableDisable:
+    def test_disable_then_enable(self, client: TestClient) -> None:
+        client.put("/screener/rankers/r1", json=_RANKER_BODY)
+        d = client.post("/screener/rankers/r1/disable")
+        assert d.json()["active"] is False
+        e = client.post("/screener/rankers/r1/enable")
+        assert e.json()["active"] is True
+
+    def test_disable_unknown_ranker_is_404(self, client: TestClient) -> None:
+        assert client.post("/screener/rankers/ghost/disable").status_code == 404
+
+
+class TestRankOnDemand:
+    def test_rank_now_returns_a_ranked_top(self, client: TestClient) -> None:
+        client.put("/screener/rankers/r1", json=_RANKER_BODY)
+        resp = client.post("/screener/rankers/r1/rank")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ranker_id"] == "r1"
+        assert body["top"][0]["symbol"] == "AAPL"
+
+    def test_rank_now_on_unknown_ranker_is_404(self, client: TestClient) -> None:
+        assert client.post("/screener/rankers/ghost/rank").status_code == 404
+
+    def test_latest_is_404_before_any_run(self, client: TestClient) -> None:
+        client.put("/screener/rankers/r1", json=_RANKER_BODY)
+        assert client.get("/screener/rankers/r1/latest").status_code == 404
+
+    def test_latest_reflects_the_last_rank_now_call(self, client: TestClient) -> None:
+        client.put("/screener/rankers/r1", json=_RANKER_BODY)
+        client.post("/screener/rankers/r1/rank")
+        resp = client.get("/screener/rankers/r1/latest")
+        assert resp.status_code == 200
+        assert resp.json()["top"][0]["symbol"] == "AAPL"
