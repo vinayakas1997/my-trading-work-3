@@ -554,3 +554,112 @@ class TestScenarioBrokerOutageMidCycle:
 
         assert action["action"] == "invalidation_exit"
         assert list_open_positions(book, symbol="AAPL") == []
+
+
+# 40-bar deterministic price series for scenario 05 -- verified against the
+# REAL dynamic_covariance/correlation_from_covariance pipeline (not guessed)
+# before writing this scenario. AAA: trend + oscillation. BBB: exactly
+# 0.3 * AAA at every bar -> identical log returns by construction -> real
+# computed correlation ~0.99999996 (effectively 1.0). DDD: an independent,
+# differently-phased oscillation with no shared trend -> real computed
+# correlation ~-0.036 (genuinely uncorrelated, not just "not proven
+# correlated"). Also clears dynamic_covariance's own internal min_periods
+# gate (31 log-return periods, i.e. >=32 closes with the default window=63)
+# -- comfortably above _compute_covariance's weaker min_len<20 check, so
+# this lands nowhere near the dead zone between the two gates.
+_AAA_CLOSES = [100.000000, 102.432653, 103.956349, 104.089628, 103.004964, 101.447650, 100.385273, 100.552642, 102.106200, 104.550442, 106.970960, 108.464505, 108.563797, 107.457295, 105.900563, 104.860913, 105.062467, 106.645589, 109.100869, 111.508709, 112.971822, 113.037240, 111.909355, 110.353786, 109.337299, 109.573122, 111.185502, 113.651268, 116.045891, 117.478299, 117.509967, 116.361158, 114.807333, 113.814438, 114.084605, 115.725927, 118.201624, 120.582494, 121.983934, 121.981984]
+_BBB_CLOSES = [30.000000, 30.729796, 31.186905, 31.226888, 30.901489, 30.434295, 30.115582, 30.165793, 30.631860, 31.365133, 32.091288, 32.539351, 32.569139, 32.237189, 31.770169, 31.458274, 31.518740, 31.993677, 32.730261, 33.452613, 33.891547, 33.911172, 33.572807, 33.106136, 32.801190, 32.871937, 33.355650, 34.095380, 34.813767, 35.243490, 35.252990, 34.908347, 34.442200, 34.144331, 34.225381, 34.717778, 35.460487, 36.174748, 36.595180, 36.594595]
+_DDD_CLOSES = [81.782415, 80.277240, 78.045095, 80.973227, 81.345938, 78.129449, 79.897356, 81.896316, 78.923895, 78.745334, 81.948249, 79.927297, 78.173197, 81.172670, 81.156551, 77.984789, 80.247949, 81.746619, 78.737764, 78.947708, 82.071201, 79.577755, 78.343924, 81.344153, 80.942618, 77.883959, 80.594748, 81.555545, 78.582181, 79.171708, 82.149621, 79.235379, 78.554547, 81.482674, 80.710101, 77.828108, 80.931047, 81.326280, 78.461790, 79.411144]
+
+
+def _corr_cycle_routes(get_extra: dict, post_extra: dict):
+    base_get = {
+        "/broker/account": {"configured": True, "equity": 100000.0},
+        "/broker/status": {"halted": False},
+        "/broker/positions": [],
+    }
+    base_get.update(get_extra)
+    base_post = {"/broker/order": {"status": "submitted", "order_id": "corr-1"}}
+    base_post.update(post_extra)
+    return _router(get_routes=base_get, post_routes=base_post)
+
+
+class TestScenarioMultipleCorrelatedPositions:
+    """the-reasoning-inefficiency/scenarios-test/05-multiple-correlated-positions/
+    scenario.md -- TestRuntimeCorrelationMonitor (test_trade_plan_orchestrator.py)
+    already proves the decision logic given a correlation number, by mocking
+    _compute_covariance directly. This drives the REAL covariance/shrinkage
+    math (vinu_tools.compute.risk.covariance) from real price history, through
+    a real cycle() call -- the actual end-to-end pipeline has never been
+    exercised in this suite before."""
+
+    def test_real_correlation_math_flags_and_reduces_the_larger_side(self, book) -> None:
+        # Entry price == last close for both -> zero unrealized P&L, so
+        # nothing in _evaluate_open_position (invalidation/bracket-partial)
+        # fires and confuses the market-value comparison this test checks.
+        open_position(book, "AAA", "long", 10.0, _AAA_CLOSES[-1])
+        open_position(book, "BBB", "long", 10.0, _BBB_CLOSES[-1])
+        aaa_plan = _plan(symbol="AAA")
+        bbb_plan = _plan(symbol="BBB")
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _corr_cycle_routes(
+            get_extra={
+                "/research/artifacts": [
+                    {"artifact_id": "art_aaa", "status": "ACTIVE", "type": "trade_plan"},
+                    {"artifact_id": "art_bbb", "status": "ACTIVE", "type": "trade_plan"},
+                ],
+                "/research/trade-plan/art_aaa": {"artifact_id": "art_aaa", "trade_plan_data": json.dumps(aaa_plan)},
+                "/research/trade-plan/art_bbb": {"artifact_id": "art_bbb", "trade_plan_data": json.dumps(bbb_plan)},
+                "/candles/AAA": _bars(_AAA_CLOSES),
+                "/candles/BBB": _bars(_BBB_CLOSES),
+            },
+            post_extra={},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        result = asyncio.run(orch.cycle())
+
+        assert result["status"] == "ok"
+        corr_result = result["correlation_monitor"]
+        assert corr_result["checked"] is True
+        assert corr_result["n_flagged_pairs"] == 1
+        assert corr_result["flagged"][0]["correlation"] > 0.85
+        assert len(corr_result["reductions"]) == 1
+        assert corr_result["reductions"][0]["symbol"] == "AAA"  # larger market value
+
+        order_calls = [c for c in post_mock.await_args_list if "/broker/order" in c.args[0]]
+        assert any(c.kwargs["json"]["symbol"] == "AAA" and c.kwargs["json"]["reduce_only"] is True for c in order_calls)
+        remaining_aaa = list_open_positions(book, symbol="AAA")[0].qty
+        assert remaining_aaa < 10.0  # actually reduced
+        assert list_open_positions(book, symbol="BBB")[0].qty == 10.0  # untouched
+
+    def test_real_uncorrelated_prices_do_not_trip_it(self, book) -> None:
+        open_position(book, "AAA", "long", 10.0, _AAA_CLOSES[-1])
+        open_position(book, "DDD", "long", 10.0, _DDD_CLOSES[-1])
+        aaa_plan = _plan(symbol="AAA")
+        ddd_plan = _plan(symbol="DDD")
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _corr_cycle_routes(
+            get_extra={
+                "/research/artifacts": [
+                    {"artifact_id": "art_aaa", "status": "ACTIVE", "type": "trade_plan"},
+                    {"artifact_id": "art_ddd", "status": "ACTIVE", "type": "trade_plan"},
+                ],
+                "/research/trade-plan/art_aaa": {"artifact_id": "art_aaa", "trade_plan_data": json.dumps(aaa_plan)},
+                "/research/trade-plan/art_ddd": {"artifact_id": "art_ddd", "trade_plan_data": json.dumps(ddd_plan)},
+                "/candles/AAA": _bars(_AAA_CLOSES),
+                "/candles/DDD": _bars(_DDD_CLOSES),
+            },
+            post_extra={},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        result = asyncio.run(orch.cycle())
+
+        assert result["status"] == "ok"
+        corr_result = result["correlation_monitor"]
+        assert corr_result["checked"] is True  # covariance WAS computable -- this isn't the no-op path
+        assert corr_result["n_flagged_pairs"] == 0
+        assert corr_result["reductions"] == []
+        assert list_open_positions(book, symbol="AAA")[0].qty == 10.0
+        assert list_open_positions(book, symbol="DDD")[0].qty == 10.0
