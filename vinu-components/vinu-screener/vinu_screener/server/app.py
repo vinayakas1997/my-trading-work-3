@@ -14,6 +14,7 @@ scales independently, and can't wedge the HTTP API if the scan loop hangs.
 from __future__ import annotations
 
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from ..audit.watch_history import WatchAuditStore
 from ..features.library import FeatureLibrary
 from ..pipeline.hard_filter import HardFilterConfig
 from ..pipeline.scorer import FactorSpec
+from ..rankers.churn import RankerChurnStore, record_ranking
 from ..rankers.config import RankerConfig
 from ..rankers.runner import RankerRunner
 from ..rankers.snapshot_store import RankedSnapshotStore
@@ -45,6 +47,9 @@ DEFAULT_AUDIT_DB_PATH = os.environ.get("VINU_SCREENER_AUDIT_DB", str(DEFAULT_DAT
 DEFAULT_RANKER_DB_PATH = os.environ.get("VINU_SCREENER_RANKER_DB", str(DEFAULT_DATA_ROOT / "screener_rankers.db"))
 DEFAULT_RANKER_SNAPSHOT_DB_PATH = os.environ.get(
     "VINU_SCREENER_RANKER_SNAPSHOT_DB", str(DEFAULT_DATA_ROOT / "screener_ranker_snapshots.db")
+)
+DEFAULT_RANKER_CHURN_DB_PATH = os.environ.get(
+    "VINU_SCREENER_RANKER_CHURN_DB", str(DEFAULT_DATA_ROOT / "screener_ranker_churn.db")
 )
 # VINU_STOCK_API_URL is the bare cross-service URL (e.g. http://stock-api:8081
 # in Docker Compose, matching every other vinu-* consumer's env-var
@@ -108,6 +113,7 @@ def create_app(
     data_source: SymbolDataSource | None = None,
     ranker_store: RankerStore | None = None,
     ranker_snapshot_store: RankedSnapshotStore | None = None,
+    ranker_churn_store: RankerChurnStore | None = None,
 ):
     store = rule_store or RuleStore(DEFAULT_RULE_DB_PATH)
     audit = audit_store or WatchAuditStore(DEFAULT_AUDIT_DB_PATH)
@@ -115,8 +121,9 @@ def create_app(
     library = FeatureLibrary()
     rankers = ranker_store or RankerStore(DEFAULT_RANKER_DB_PATH)
     ranker_snapshots = ranker_snapshot_store or RankedSnapshotStore(DEFAULT_RANKER_SNAPSHOT_DB_PATH)
+    ranker_churn = ranker_churn_store or RankerChurnStore(DEFAULT_RANKER_CHURN_DB_PATH)
     owns_stores = rule_store is None and audit_store is None
-    owns_ranker_stores = ranker_store is None and ranker_snapshot_store is None
+    owns_ranker_stores = ranker_store is None and ranker_snapshot_store is None and ranker_churn_store is None
 
     def _monitor() -> ScanMonitor:
         # One shared FeatureLibrary, fresh cache cleared each cycle by
@@ -251,14 +258,21 @@ def create_app(
     def rank_now(ranker_id: str) -> dict:
         """On-demand: run this ranker right now (bypasses its schedule
         entirely -- does not touch `RankerScheduler`'s due-tracking, so it
-        won't delay or skip the next scheduled run) and persist the result
-        as its new latest snapshot."""
+        won't delay or skip the next scheduled run), persist the result as
+        its new latest snapshot, and diff against whatever the PREVIOUS
+        latest snapshot was -- an operator manually re-running a ranker
+        gets the same churn detection a scheduled tick would, using the
+        exact same shared path (`record_ranking`), so this can't create a
+        gap or a double-count in the churn history relative to the
+        scheduler."""
         stored = rankers.get(ranker_id)
         if stored is None:
             raise HTTPException(status_code=404, detail="ranker not found")
         result = _ranker_runner().run(stored.ranker)
-        snapshot = ranker_snapshots.set_latest(ranker_id, result)
-        return snapshot.to_dict()
+        snapshot, events = record_ranking(ranker_snapshots, ranker_churn, ranker_id, result, now=time.time())
+        body = snapshot.to_dict()
+        body["churn"] = [e.to_dict() for e in events]
+        return body
 
     @router.get("/screener/rankers/{ranker_id}/latest")
     def latest_ranking(ranker_id: str) -> dict:
@@ -269,6 +283,15 @@ def create_app(
         if snapshot is None:
             raise HTTPException(status_code=404, detail="no ranking has run yet for this ranker")
         return snapshot.to_dict()
+
+    @router.get("/screener/rankers/{ranker_id}/churn")
+    def ranker_churn_history(ranker_id: str, symbol: str | None = None, limit: int = 100) -> dict:
+        """The signal the ranker exists to surface: which symbols entered
+        or exited this ranker's top-N, and when -- "AAPL was in the top 20
+        for 3 days, then dropped out" is exactly this history, filterable
+        to one symbol if you only care about a specific ticker's story."""
+        events = ranker_churn.history(ranker_id, symbol=symbol, limit=limit)
+        return {"ranker_id": ranker_id, "events": [e.to_dict() for e in events]}
 
     def _refresh_pairlist(rule_id: str) -> list[str]:
         stored = store.get(rule_id)
@@ -288,6 +311,7 @@ def create_app(
         if owns_ranker_stores:
             rankers.close()
             ranker_snapshots.close()
+            ranker_churn.close()
 
     app = _create_app(
         service_name="vinu-screener",

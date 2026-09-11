@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from vinu_screener.pipeline.scorer import FactorSpec
+from vinu_screener.rankers.churn import RankerChurnStore
 from vinu_screener.rankers.config import RankerConfig
 from vinu_screener.rankers.runner import RankerRunner
 from vinu_screener.rankers.scheduler import RankerScheduler
@@ -103,3 +104,41 @@ class TestErrorIsolation:
 
         scheduler = RankerScheduler(ranker_store, BoomRunner(data_source))
         assert scheduler.tick(now=0.0) == ["good"]
+
+
+class TestChurnIntegration:
+    def test_second_tick_records_churn_against_the_first(self, ranker_store) -> None:
+        ds = FakeDataSource()
+        ds.frames["AAPL"] = _trend(100, 110)
+        cfg = RankerConfig(
+            ranker_id="r1", universe=("AAPL", "MSFT"),
+            factors=(FactorSpec("momentum", "pct_change", weight=1.0),), top_n=1,
+        )
+        ranker_store.upsert_ranker(cfg, interval_sec=300.0)
+        snapshots = RankedSnapshotStore(":memory:")
+        churn = RankerChurnStore(":memory:")
+        scheduler = RankerScheduler(ranker_store, RankerRunner(ds), snapshot_store=snapshots, churn_store=churn)
+
+        scheduler.tick(now=0.0)  # only AAPL has data -- AAPL ranks #1
+        ds.frames["MSFT"] = _trend(100, 130)  # MSFT now has stronger momentum than AAPL
+        scheduler.tick(now=300.0)
+
+        history = churn.history("r1")
+        assert {(h.symbol, h.kind) for h in history} == {("AAPL", "exited"), ("MSFT", "entered")}
+
+    def test_first_tick_ever_records_no_churn(self, ranker_store, data_source) -> None:
+        ranker_store.upsert_ranker(_cfg())
+        churn = RankerChurnStore(":memory:")
+        scheduler = RankerScheduler(
+            ranker_store, RankerRunner(data_source),
+            snapshot_store=RankedSnapshotStore(":memory:"), churn_store=churn,
+        )
+        scheduler.tick(now=0.0)
+        assert churn.history("r1") == []
+
+    def test_no_churn_store_does_not_break_the_tick(self, ranker_store, data_source) -> None:
+        ranker_store.upsert_ranker(_cfg())
+        scheduler = RankerScheduler(
+            ranker_store, RankerRunner(data_source), snapshot_store=RankedSnapshotStore(":memory:"),
+        )
+        assert scheduler.tick(now=0.0) == ["r1"]

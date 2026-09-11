@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from vinu_screener.audit.watch_history import WatchAuditStore
+from vinu_screener.rankers.churn import RankerChurnStore
 from vinu_screener.rankers.snapshot_store import RankedSnapshotStore
 from vinu_screener.rankers.store import RankerStore
 from vinu_screener.rules.store import RuleStore
@@ -51,6 +52,7 @@ def client(data_source: FakeDataSource, tmp_path: Path) -> TestClient:
         data_source=data_source,
         ranker_store=RankerStore(tmp_path / "rankers.db"),
         ranker_snapshot_store=RankedSnapshotStore(tmp_path / "ranker_snapshots.db"),
+        ranker_churn_store=RankerChurnStore(tmp_path / "ranker_churn.db"),
     )
     return TestClient(app)
 
@@ -243,3 +245,50 @@ class TestRankOnDemand:
         resp = client.get("/screener/rankers/r1/latest")
         assert resp.status_code == 200
         assert resp.json()["top"][0]["symbol"] == "AAPL"
+
+
+class TestRankerChurn:
+    def test_first_rank_now_reports_no_churn(self, client: TestClient) -> None:
+        client.put("/screener/rankers/r1", json=_RANKER_BODY)
+        resp = client.post("/screener/rankers/r1/rank")
+        assert resp.json()["churn"] == []
+
+    def test_churn_endpoint_is_empty_before_any_run(self, client: TestClient) -> None:
+        client.put("/screener/rankers/r1", json=_RANKER_BODY)
+        resp = client.get("/screener/rankers/r1/churn")
+        assert resp.status_code == 200
+        assert resp.json()["events"] == []
+
+    def test_second_rank_now_reports_churn_when_the_top_changes(
+        self, client: TestClient, data_source: FakeDataSource,
+    ) -> None:
+        data_source.frames["MSFT"] = _ohlcv([10, 10, 10])  # flat -- weaker than AAPL initially
+        body = {**_RANKER_BODY, "universe": ["AAPL", "MSFT"], "top_n": 1}
+        client.put("/screener/rankers/r1", json=body)
+
+        first = client.post("/screener/rankers/r1/rank")
+        assert first.json()["top"][0]["symbol"] == "AAPL"
+        assert first.json()["churn"] == []
+
+        # Now MSFT overtakes AAPL for the #1 (only) spot.
+        data_source.frames["MSFT"] = _ohlcv([100, 200, 300])
+        second = client.post("/screener/rankers/r1/rank")
+        assert second.json()["top"][0]["symbol"] == "MSFT"
+        churn_events = {(e["symbol"], e["kind"]) for e in second.json()["churn"]}
+        assert churn_events == {("AAPL", "exited"), ("MSFT", "entered")}
+
+        history = client.get("/screener/rankers/r1/churn").json()["events"]
+        assert {(e["symbol"], e["kind"]) for e in history} == {("AAPL", "exited"), ("MSFT", "entered")}
+
+    def test_churn_filtered_by_symbol(self, client: TestClient, data_source: FakeDataSource) -> None:
+        data_source.frames["MSFT"] = _ohlcv([10, 10, 10])
+        body = {**_RANKER_BODY, "universe": ["AAPL", "MSFT"], "top_n": 1}
+        client.put("/screener/rankers/r1", json=body)
+        client.post("/screener/rankers/r1/rank")
+        data_source.frames["MSFT"] = _ohlcv([100, 200, 300])
+        client.post("/screener/rankers/r1/rank")
+
+        resp = client.get("/screener/rankers/r1/churn", params={"symbol": "MSFT"})
+        events = resp.json()["events"]
+        assert all(e["symbol"] == "MSFT" for e in events)
+        assert len(events) == 1

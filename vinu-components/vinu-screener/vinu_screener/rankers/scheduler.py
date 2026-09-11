@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import time
 
+from .churn import RankerChurnStore, record_ranking
 from .runner import RankerRunner
 from .snapshot_store import RankedSnapshotStore
 from .store import RankerStore, StoredRanker
@@ -27,10 +28,12 @@ class RankerScheduler:
         runner: RankerRunner,
         *,
         snapshot_store: RankedSnapshotStore | None = None,
+        churn_store: RankerChurnStore | None = None,
     ) -> None:
         self._ranker_store = ranker_store
         self._runner = runner
         self._snapshots = snapshot_store
+        self._churn = churn_store
         self._last_run_at: dict[str, float] = {}
 
     def _due(self, stored: StoredRanker, now: float) -> bool:
@@ -53,9 +56,14 @@ class RankerScheduler:
                 continue
             if self._snapshots is not None:
                 try:
-                    self._snapshots.set_latest(stored.ranker.ranker_id, result, now=now)
-                except Exception:  # noqa: BLE001 -- a snapshot-write failure must not crash the scheduler
-                    LOG.exception("ranker scheduler: failed to persist snapshot for %s", stored.ranker.ranker_id)
+                    # record_ranking reads the PREVIOUS latest snapshot before
+                    # overwriting it, diffs against the new top-N, and persists
+                    # any entered/exited events -- the same shared path the
+                    # on-demand /rank route uses, so a manual re-run can't
+                    # create a gap or a double-count in the churn history.
+                    record_ranking(self._snapshots, self._churn, stored.ranker.ranker_id, result, now=now)
+                except Exception:  # noqa: BLE001 -- a snapshot/churn-write failure must not crash the scheduler
+                    LOG.exception("ranker scheduler: failed to persist snapshot/churn for %s", stored.ranker.ranker_id)
             ran.append(stored.ranker.ranker_id)
         return ran
 

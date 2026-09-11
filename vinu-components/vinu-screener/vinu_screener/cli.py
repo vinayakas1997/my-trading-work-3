@@ -36,6 +36,7 @@ def scan_main(args: argparse.Namespace) -> None:
     import httpx
 
     from vinu_screener.audit.watch_history import WatchAuditStore
+    from vinu_screener.rankers.churn import RankerChurnStore
     from vinu_screener.rankers.runner import RankerRunner
     from vinu_screener.rankers.scheduler import RankerScheduler
     from vinu_screener.rankers.snapshot_store import RankedSnapshotStore
@@ -46,6 +47,7 @@ def scan_main(args: argparse.Namespace) -> None:
     from vinu_screener.scheduler import Scheduler
     from vinu_screener.server.app import (
         DEFAULT_AUDIT_DB_PATH,
+        DEFAULT_RANKER_CHURN_DB_PATH,
         DEFAULT_RANKER_DB_PATH,
         DEFAULT_RANKER_SNAPSHOT_DB_PATH,
         DEFAULT_RULE_DB_PATH,
@@ -60,7 +62,10 @@ def scan_main(args: argparse.Namespace) -> None:
 
     ranker_store = RankerStore(args.ranker_db or DEFAULT_RANKER_DB_PATH)
     ranker_snapshots = RankedSnapshotStore(args.ranker_snapshot_db or DEFAULT_RANKER_SNAPSHOT_DB_PATH)
-    ranker_scheduler = RankerScheduler(ranker_store, RankerRunner(data_source), snapshot_store=ranker_snapshots)
+    ranker_churn = RankerChurnStore(args.ranker_churn_db or DEFAULT_RANKER_CHURN_DB_PATH)
+    ranker_scheduler = RankerScheduler(
+        ranker_store, RankerRunner(data_source), snapshot_store=ranker_snapshots, churn_store=ranker_churn,
+    )
     ranker_thread = threading.Thread(
         target=ranker_scheduler.run_forever, kwargs={"poll_sec": args.ranker_poll_sec}, daemon=True,
     )
@@ -84,6 +89,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     scan_p.add_argument("--audit-db", type=Path, default=None)
     scan_p.add_argument("--ranker-db", type=Path, default=None)
     scan_p.add_argument("--ranker-snapshot-db", type=Path, default=None)
+    scan_p.add_argument("--ranker-churn-db", type=Path, default=None)
     scan_p.add_argument("--ranker-poll-sec", type=float, default=30.0, help="How often to check for due rankers")
     scan_p.add_argument(
         "--stock-api-url", default=None,
