@@ -12,7 +12,7 @@ record.
 |---|---|---|---|
 | 01 | [Gap-down crash](01-gap-down-crash/scenario.md) | Does the invalidation exit react correctly to a single-bar -25% crash, not just a gradual move? | **done** -- confirmed correct, no fix needed |
 | 02 | [Kill switch engaged mid-cycle](02-kill-switch-mid-cycle/scenario.md) | Blocks a would-be entry, still lets a reduce-only exit through -- in the same cycle | **done** -- confirmed correct, no fix needed |
-| 03 | Sideways chop | Proves the system does nothing -- no phantom entries on noise | pending |
+| 03 | [Sideways chop](03-sideways-chop/scenario.md) | Proves the system holds through tight noise -- no spurious full exit or whipsaw | **done** -- confirmed correct, no fix needed |
 | 04 | Broker outage mid-cycle | Entries pause, but does an exit still fire correctly? | pending |
 | 05 | Multiple correlated positions moving together | Does the correlation/concentration overlay actually kick in? | pending |
 | 06 | Broker-side stop already closed the position overnight | Does `_reconcile_book_with_broker` recover correctly when the real resting stop fired before the next cycle even runs? (Flagged while building scenario 01, not started.) | pending |

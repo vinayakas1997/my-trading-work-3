@@ -402,3 +402,48 @@ class TestScenarioKillSwitchMidCycle:
         assert order_calls[0].kwargs["json"]["symbol"] == "AAPL"
         assert order_calls[0].kwargs["json"]["reduce_only"] is True
         assert list_open_positions(book, symbol="AAPL") == []
+
+
+class TestScenarioSidewaysChop:
+    """the-reasoning-inefficiency/scenarios-test/03-sideways-chop/
+    scenario.md -- entry is structurally unreachable once a position is
+    open (_maybe_enter only ever runs when there's no open position), so
+    the meaningful claim here isn't "no phantom entries" but "no phantom
+    full exits / whipsaw on noise that never approaches the plan's real
+    invalidation threshold." bracket_partial is accepted as a legitimate
+    non-exit outcome (same as the original trailing-stop scenario) since
+    whether the self-generated trailing stop's 1R gets crossed by this
+    exact chop pattern depends on a computed ATR, not something to
+    predict by reading the code."""
+
+    def test_tight_chop_never_produces_a_spurious_full_exit(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 100.0)
+        plan = _plan(invalidation_conditions=[
+            {"metric": "unrealized_pnl_pct", "operator": "<=", "threshold": -0.08, "action": "exit", "action_params": {}},
+        ])
+        orch = _make_orchestrator(book)
+
+        # +/-2% chop, never approaching the -8% invalidation threshold.
+        closes = [100.0, 102.0, 98.0, 101.0, 99.0, 102.0, 98.0, 101.0, 99.0, 102.0, 98.0, 101.0, 99.0]
+        seen_actions: list[str] = []
+        for i in range(1, len(closes) + 1):
+            window = closes[:i]
+            get_mock, post_mock = _router(
+                get_routes={"/candles/AAPL": _bars(window)},
+                post_routes={"/broker/order": {"status": "submitted", "order_id": f"chop-{i}"}},
+            )
+            orch._http.get, orch._http.post = get_mock, post_mock
+            open_positions = list_open_positions(book, symbol="AAPL")
+            assert open_positions, f"bar {i}: position closed early, chop should never fully exit it"
+            position = open_positions[0]
+
+            action = asyncio.run(orch._evaluate_open_position(plan, position, window[-1], 100000.0))
+            seen_actions.append(action["action"])
+
+            assert action["action"] not in (
+                "invalidation_exit", "exit_not_filled", "exit_blocked_by_breaker",
+                "rebalance_declined", "rebalance_honored", "rebalance_blocked_by_breaker",
+            ), f"bar {i}: unexpected action {action} on tight chop that never crossed the threshold"
+
+        assert list_open_positions(book, symbol="AAPL"), "chop must never fully close the position"
+        assert set(seen_actions) <= {"hold", "bracket_partial"}
