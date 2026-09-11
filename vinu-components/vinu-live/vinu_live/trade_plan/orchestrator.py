@@ -42,6 +42,7 @@ from vinu_live.reconciliation import ReconciliationEngine
 from vinu_live.trade_plan.condition_evaluator import find_triggered_rules
 from vinu_live.trade_plan.live_metrics import compute_live_metrics
 from vinu_live.trade_plan.rebalance_intake import RebalanceRequestQueue
+from vinu_infra.calibration_log import record as record_calibration
 from vinu_infra.runtime_settings import RuntimeSettings
 
 LOG = logging.getLogger(__name__)
@@ -565,6 +566,14 @@ class TradePlanOrchestrator:
         # down/stale. Exits and reduces are never gated on it.
         self._broker_ok_at: float = 0.0
         self._broker_degraded: bool = False
+        # 2026-09-11 reasoning-audit follow-up (the-reasoning-inefficiency/
+        # 00-audit.md): whether the last broker-health probe found a real
+        # account actually configured (not just reachable) -- refreshed
+        # every cycle by _check_broker_health(). Gates calibration_log
+        # writes at the rebalance-protect and bracket-partial checkpoints so
+        # that data only ever reflects real trading circumstances, never a
+        # synthetic/test run with no broker behind it.
+        self._broker_account_configured: bool = False
         # how-to-make-it-live.md #33 (Stage 4): mirror of the agent's global
         # kill switch, refreshed once per cycle. True => _maybe_enter refuses
         # new entries with entry_blocked_by_emergency_halt. The authoritative
@@ -1217,10 +1226,29 @@ class TradePlanOrchestrator:
         except Exception as e:
             LOG.debug("Trailing ratchet failed for %s: %s", symbol, e)
 
-        # Bracket 50% at 1R (15 step3): risk = |entry - stop|, gain at least
-        # 1R and no partial taken yet -> reduce half. Needs a real stop;
-        # without one there is no R to measure against, so skip (honest).
-        # Risk-reducing, allowed on HALT entries-only.
+        # Bracket at 1R+ (15 step3): risk = |entry - stop|, gain at least 1R
+        # and no partial taken yet -> reduce. Needs a real stop; without one
+        # there is no R to measure against, so skip (honest). Risk-reducing,
+        # allowed on HALT entries-only.
+        #
+        # 2026-09-11 reasoning-audit fix (the-reasoning-inefficiency/
+        # 00-audit.md, found while writing vinu-live/tests/
+        # test_pre_live_scenarios.py's trailing-stop scenario -- a flat 50%
+        # bracket fired mid-rally regardless of how far past 1R the move
+        # already was): the take-fraction now scales with the R-multiple
+        # actually achieved (1R -> 25%, 2R -> 50%, capped at 75% so this
+        # mechanism alone can never fully close a genuine runner -- that's
+        # what the trailing stop / invalidation rules above are for), using
+        # `_risk`/`_gain` this function already computes -- no new fetch.
+        # Same "scale a position parameter by a real measured quantity
+        # instead of a fixed constant" pattern this audit's other fix
+        # (_REBALANCE_PROTECT_VOL_MULTIPLE) already used, and the same idiom
+        # other repos use for exactly this: abu.py's ABuAtrPosition scales
+        # size inversely by ATR, and Hummingbot's TripleBarrierConfig.
+        # new_instance_with_volatility_adjustment() rescales its stop/
+        # target/trailing barriers by realized volatility rather than
+        # shipping one fixed number for every position (see
+        # comprison-other-vinu/07-abu.md, 06-hummingbot.md).
         try:
             _stop = getattr(position, "stop_loss", None)
             _taken = bool(getattr(position, "partial_taken", False))
@@ -1229,7 +1257,16 @@ class TradePlanOrchestrator:
                 _risk = abs(position.avg_entry - _stop)
                 _gain = (price - position.avg_entry) if _is_long else (position.avg_entry - price)
                 if _risk > 0 and _gain >= _risk:
-                    _bracket_qty = position.qty * 0.5
+                    _r_multiple = _gain / _risk
+                    _take_fraction = min(
+                        self._BRACKET_MAX_TAKE_FRACTION, self._BRACKET_BASE_TAKE_FRACTION * _r_multiple,
+                    )
+                    _bracket_qty = position.qty * _take_fraction
+                    if self._broker_account_configured:
+                        record_calibration("bracket_partial", {
+                            "symbol": symbol, "r_multiple": _r_multiple, "take_fraction": _take_fraction,
+                            "capped": _take_fraction >= self._BRACKET_MAX_TAKE_FRACTION,
+                        })
                     _bracket_side = "sell" if _is_long else "buy"
                     _bracket_res = await self._submit_order(symbol, _bracket_side, _bracket_qty, reduce_only=True)
                     if _bracket_res.get("status") == "submitted":
@@ -1261,6 +1298,12 @@ class TradePlanOrchestrator:
     _REBALANCE_PROTECT_VOL_MULTIPLE = 2.0
     _REBALANCE_PROTECT_MIN_RETURNS = 5
 
+    # Bracket 1R+ partial take-fraction scaling (see the reasoning-audit
+    # comment above _bracket_qty's computation for the full rationale and
+    # the other-repos precedent this follows).
+    _BRACKET_BASE_TAKE_FRACTION = 0.25
+    _BRACKET_MAX_TAKE_FRACTION = 0.75
+
     async def _evaluate_rebalance_request(
         self, position: Position, price: float, portfolio_value: float, request: Any,
         *, recent_returns: list[float] | None = None,
@@ -1281,14 +1324,22 @@ class TradePlanOrchestrator:
         ) if position.avg_entry > 0 else 0.0
 
         protect_threshold = self._REBALANCE_PROTECT_GAIN_PCT
+        used_volatility = False
         if recent_returns and len(recent_returns) >= self._REBALANCE_PROTECT_MIN_RETURNS:
             import statistics as _st
 
             realized_vol = _st.pstdev(recent_returns[-14:])
             if realized_vol > 0:
                 protect_threshold = self._REBALANCE_PROTECT_VOL_MULTIPLE * realized_vol
+                used_volatility = True
 
         is_critical = getattr(request, "critical", False)
+        if self._broker_account_configured:
+            record_calibration("rebalance_protect", {
+                "symbol": symbol, "favorable_move_pct": favorable_move_pct,
+                "protect_threshold_pct": protect_threshold, "used_volatility": used_volatility,
+                "will_protect": favorable_move_pct > protect_threshold, "critical": is_critical,
+            })
         if favorable_move_pct > protect_threshold and not is_critical:
             LOG.info(
                 "Declining rebalance request for %s -- unrealized gain %.2f%% protects the "
@@ -1994,6 +2045,7 @@ class TradePlanOrchestrator:
         opening -- but a single blip inside the grace window does not pause."""
         if BROKER_STALE_SEC <= 0:
             self._broker_degraded = False
+            self._broker_account_configured = False  # guard disabled -> never probed, don't assume
             return {"enabled": False, "degraded": False}
 
         ok = False
@@ -2007,10 +2059,13 @@ class TradePlanOrchestrator:
                 # healthy probe here.
                 ok = True
                 detail = "configured" if body.get("configured") else "reachable_unconfigured"
+                self._broker_account_configured = detail == "configured"
             else:
                 detail = f"http {getattr(resp, 'status_code', '?')}"
+                self._broker_account_configured = False
         except Exception as e:  # noqa: BLE001 -- any transport error = not healthy
             detail = f"error: {e}"
+            self._broker_account_configured = False
 
         now = time.monotonic()
         if ok:

@@ -1954,6 +1954,185 @@ class TestRebalanceRequestIntake:
         assert "No rule triggered" in caplog.text
 
 
+class TestCalibrationLogGating:
+    """2026-09-11 reasoning-audit follow-up: the rebalance-protect and
+    bracket-partial checkpoints write to calibration_log.record() so their
+    threshold/take-fraction choices can eventually be checked against what
+    actually happened -- but ONLY when a real broker account is confirmed
+    configured (_broker_account_configured), never for a synthetic/test
+    run with no broker behind it."""
+
+    def test_no_write_when_broker_not_confirmed_configured(self, book, tmp_path, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as orch_mod
+        from vinu_infra.calibration_log import read_all
+
+        log_path = tmp_path / "calibration_log.jsonl"
+        monkeypatch.setattr(orch_mod, "DEFAULT_LOG_PATH", str(log_path), raising=False)
+        monkeypatch.setattr("vinu_infra.calibration_log.DEFAULT_LOG_PATH", str(log_path))
+
+        open_position(book, "AAPL", "long", 10.0, 100.0)
+        from vinu_live.book.positions import update_stop_loss
+
+        position = list_open_positions(book, symbol="AAPL")[0]
+        update_stop_loss(book, position.position_id, 95.0)
+        position = list_open_positions(book, symbol="AAPL")[0]
+
+        orch = _make_orchestrator(book)
+        assert orch._broker_account_configured is False  # never probed in this test
+        get_mock, post_mock = _router(
+            get_routes={"/candles/AAPL": {"data": []}, "/angle/shock_clustering/AAPL": {"data": []}},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "cal1"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 105.0, 100000.0))  # 1R bracket fires
+
+        assert read_all("bracket_partial", log_path=log_path) == []
+
+    def test_writes_when_broker_confirmed_configured(self, book, tmp_path, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as orch_mod
+        from vinu_infra.calibration_log import read_all
+
+        log_path = tmp_path / "calibration_log.jsonl"
+        monkeypatch.setattr("vinu_infra.calibration_log.DEFAULT_LOG_PATH", str(log_path))
+
+        open_position(book, "AAPL", "long", 10.0, 100.0)
+        from vinu_live.book.positions import update_stop_loss
+
+        position = list_open_positions(book, symbol="AAPL")[0]
+        update_stop_loss(book, position.position_id, 95.0)
+        position = list_open_positions(book, symbol="AAPL")[0]
+
+        orch = _make_orchestrator(book)
+        orch._broker_account_configured = True  # simulates a real confirmed probe
+        get_mock, post_mock = _router(
+            get_routes={"/candles/AAPL": {"data": []}, "/angle/shock_clustering/AAPL": {"data": []}},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "cal2"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 105.0, 100000.0))
+
+        entries = read_all("bracket_partial", log_path=log_path)
+        assert len(entries) == 1
+        assert entries[0]["symbol"] == "AAPL"
+        assert entries[0]["r_multiple"] == pytest.approx(1.0)
+
+    def test_check_broker_health_sets_the_flag_from_a_real_probe(self, book) -> None:
+        orch = _make_orchestrator(book)
+        get_mock, _ = _router(get_routes={"/broker/account": {"configured": True, "equity": 100000.0}})
+        orch._http.get = get_mock
+
+        asyncio.run(orch._check_broker_health())
+
+        assert orch._broker_account_configured is True
+
+    def test_check_broker_health_clears_the_flag_when_unconfigured(self, book) -> None:
+        orch = _make_orchestrator(book)
+        get_mock, _ = _router(get_routes={"/broker/account": {"configured": False}})
+        orch._http.get = get_mock
+
+        asyncio.run(orch._check_broker_health())
+
+        assert orch._broker_account_configured is False
+
+
+class TestBracketPartialScalesWithRMultiple:
+    """2026-09-11 reasoning-audit fix (the-reasoning-inefficiency/
+    00-audit.md): the 1R bracket used to take a flat 50% regardless of how
+    far past 1R the move already was -- found while writing
+    test_pre_live_scenarios.py's trailing-stop scenario, where it fired
+    mid-rally. Now the take-fraction scales with the R-multiple actually
+    achieved (1R -> 25%, 2R -> 50%, capped at 75%). No existing test
+    covered this mechanism at all before this fix."""
+
+    def _open_with_stop(self, book, entry: float, stop: float, qty: float = 10.0):
+        from vinu_live.book.positions import update_stop_loss
+
+        open_position(book, "AAPL", "long", qty, entry)
+        position = list_open_positions(book, symbol="AAPL")[0]
+        update_stop_loss(book, position.position_id, stop)
+        return list_open_positions(book, symbol="AAPL")[0]
+
+    def test_exactly_1R_takes_the_base_fraction(self, book) -> None:
+        # entry 100, stop 95 -> risk = 5. Price 105 -> gain = 5 -> 1R exactly.
+        position = self._open_with_stop(book, entry=100.0, stop=95.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/candles/AAPL": {"data": []}, "/angle/shock_clustering/AAPL": {"data": []}},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "b1"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 105.0, 100000.0))
+
+        assert action["action"] == "bracket_partial"
+        assert action["qty"] == pytest.approx(10.0 * 0.25)
+
+    def test_2R_takes_double_the_base_fraction(self, book) -> None:
+        # entry 100, stop 95 -> risk = 5. Price 110 -> gain = 10 -> 2R.
+        position = self._open_with_stop(book, entry=100.0, stop=95.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/candles/AAPL": {"data": []}, "/angle/shock_clustering/AAPL": {"data": []}},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "b2"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 110.0, 100000.0))
+
+        assert action["action"] == "bracket_partial"
+        assert action["qty"] == pytest.approx(10.0 * 0.5)
+
+    def test_far_past_1R_is_capped_not_unbounded(self, book) -> None:
+        # entry 100, stop 95 -> risk = 5. Price 130 -> gain = 30 -> 6R, which
+        # would be 150% of the position under a naive linear scale -- must
+        # be capped at _BRACKET_MAX_TAKE_FRACTION instead.
+        position = self._open_with_stop(book, entry=100.0, stop=95.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/candles/AAPL": {"data": []}, "/angle/shock_clustering/AAPL": {"data": []}},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "b3"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 130.0, 100000.0))
+
+        assert action["action"] == "bracket_partial"
+        assert action["qty"] == pytest.approx(10.0 * 0.75)
+
+    def test_below_1R_does_not_fire_at_all(self, book) -> None:
+        position = self._open_with_stop(book, entry=100.0, stop=95.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/candles/AAPL": {"data": []}, "/angle/shock_clustering/AAPL": {"data": []}},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "b4"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        # Price 102 -> gain = 2, risk = 5 -> 0.4R, below the 1R trigger.
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 102.0, 100000.0))
+
+        assert action["action"] != "bracket_partial"
+
+    def test_only_fires_once_per_position(self, book) -> None:
+        position = self._open_with_stop(book, entry=100.0, stop=95.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/candles/AAPL": {"data": []}, "/angle/shock_clustering/AAPL": {"data": []}},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "b5"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        first = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 105.0, 100000.0))
+        assert first["action"] == "bracket_partial"
+
+        position = list_open_positions(book, symbol="AAPL")[0]
+        assert position.partial_taken is True
+        second = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 120.0, 100000.0))
+        assert second["action"] != "bracket_partial"
+
+
 class TestRebalanceProtectThresholdScalesWithVolatility:
     """2026-09-11 reasoning-audit fix (the-reasoning-inefficiency/00-audit.md
     item C1a): the flat 5% gain-protect threshold treated a "5% gain" as
