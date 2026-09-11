@@ -92,6 +92,7 @@ class OrderGuard:
         portfolio_api_url: str | None = None,
         daily_limit_store: DailyLimitStore | None = None,
         override_store=None,
+        limit_store=None,
     ) -> None:
         self._mandate = mandate or TradingMandate.load()
         self._broker = broker or get_live_broker()
@@ -101,6 +102,11 @@ class OrderGuard:
         # feature nobody has used.
         self._override_store = override_store
         self._override_store_explicit = override_store is not None
+        # C7: per-symbol *limit-value* overrides (tighter max_order_value /
+        # max_position_pct / max_capital_utilization_pct than the mandate's
+        # global defaults) -- same lazy-singleton posture as override_store.
+        self._limit_store = limit_store
+        self._limit_store_explicit = limit_store is not None
         # No research_api_url anymore -- the active-artifact check reads
         # vinu-research's strategy_store.db directly, in-process (see
         # _check_active_artifact / .research_link).
@@ -248,21 +254,24 @@ class OrderGuard:
                 "Supply a limit price (or estimated_value) so the notional cap can be enforced.",
                 code=ReasonCode.ORDER_VALUE_UNKNOWN,
             )
-        if value > mandate.max_order_value:
+        # C7: a per-symbol max_order_value override, if one is set, replaces
+        # the mandate's global default for every check below.
+        max_order_value = self._effective_limit(symbol, "max_order_value", mandate.max_order_value)
+        if value > max_order_value:
             return GuardResult(
                 False,
-                f"Order value {value:.2f} exceeds max_order_value {mandate.max_order_value:.2f}",
+                f"Order value {value:.2f} exceeds max_order_value {max_order_value:.2f}",
                 code=ReasonCode.MAX_ORDER_VALUE,
             )
         # C17: within the top band below the hard cap -> hold for confirmation.
         if (
             not reduce_only
             and REAUTH_BAND_FRACTION < 1.0
-            and value > mandate.max_order_value * REAUTH_BAND_FRACTION
+            and value > max_order_value * REAUTH_BAND_FRACTION
         ):
             return _reauth(
                 f"Order value {value:.2f} is within {(1 - REAUTH_BAND_FRACTION):.0%} of the hard "
-                f"max_order_value {mandate.max_order_value:.2f} — confirm to proceed",
+                f"max_order_value {max_order_value:.2f} — confirm to proceed",
                 ReasonCode.NEAR_MAX_ORDER_VALUE,
             )
 
@@ -290,34 +299,41 @@ class OrderGuard:
                     code=ReasonCode.MAX_DAILY_ORDERS_PORTFOLIO,
                 )
 
-        if mandate.max_position_pct < 1.0:
+        # C7: per-symbol overrides for the remaining two soft limits, same
+        # "override replaces the mandate default wherever it's read" rule.
+        max_position_pct = self._effective_limit(symbol, "max_position_pct", mandate.max_position_pct)
+        max_capital_utilization_pct = self._effective_limit(
+            symbol, "max_capital_utilization_pct", mandate.max_capital_utilization_pct
+        )
+
+        if max_position_pct < 1.0:
             try:
                 account = self._broker.get_account()
                 equity = float(account.equity)
                 if equity > 0:
                     frac = value / equity
-                    if frac > mandate.max_position_pct:
+                    if frac > max_position_pct:
                         return GuardResult(
                             False,
                             f"Position {value:.2f} would be {frac:.1%} of equity "
-                            f"({equity:.2f}), exceeding max_position_pct {mandate.max_position_pct:.0%}",
+                            f"({equity:.2f}), exceeding max_position_pct {max_position_pct:.0%}",
                             code=ReasonCode.MAX_POSITION_PCT,
                         )
                     if (
                         not reduce_only
                         and REAUTH_BAND_FRACTION < 1.0
-                        and frac > mandate.max_position_pct * REAUTH_BAND_FRACTION
+                        and frac > max_position_pct * REAUTH_BAND_FRACTION
                     ):
                         return _reauth(
                             f"Position would be {frac:.1%} of equity — within "
                             f"{(1 - REAUTH_BAND_FRACTION):.0%} of the hard max_position_pct "
-                            f"{mandate.max_position_pct:.0%} — confirm to proceed",
+                            f"{max_position_pct:.0%} — confirm to proceed",
                             ReasonCode.NEAR_MAX_POSITION_PCT,
                         )
             except Exception as e:
                 logger.warning("Could not check max_position_pct: %s", e)
 
-        if mandate.max_capital_utilization_pct < 1.0:
+        if max_capital_utilization_pct < 1.0:
             try:
                 account = self._broker.get_account()
                 equity = float(account.equity)
@@ -326,12 +342,12 @@ class OrderGuard:
                 deployed = equity - float(account.cash)
                 if equity > 0:
                     projected_utilization = (deployed + value) / equity
-                    if projected_utilization > mandate.max_capital_utilization_pct:
+                    if projected_utilization > max_capital_utilization_pct:
                         return GuardResult(
                             False,
                             f"This order would bring total deployed capital to "
                             f"{projected_utilization:.1%} of equity ({equity:.2f}), exceeding "
-                            f"max_capital_utilization_pct {mandate.max_capital_utilization_pct:.0%}",
+                            f"max_capital_utilization_pct {max_capital_utilization_pct:.0%}",
                             code=ReasonCode.MAX_CAPITAL_UTILIZATION,
                         )
             except Exception as e:
@@ -368,6 +384,37 @@ class OrderGuard:
                 )
 
         return GuardResult(True)
+
+    def _get_limit_store(self):
+        if self._limit_store is None and not self._limit_store_explicit:
+            try:
+                from .symbol_limits import get_limit_store
+
+                self._limit_store = get_limit_store()
+            except Exception as e:  # noqa: BLE001 -- limit overrides are optional
+                logger.warning("Could not load the symbol-limit store: %s", e)
+                self._limit_store_explicit = True  # don't retry every call
+        return self._limit_store
+
+    def _effective_limit(self, symbol: str, field: str, default: float) -> float:
+        """C7: a per-symbol override for `field` (one of `max_order_value`,
+        `max_position_pct`, `max_capital_utilization_pct`), else the
+        mandate's global `default`. Fails open to `default` on any store
+        error -- same posture as `_check_symbol_override`: a limit-store
+        hiccup must not change trading behaviour, it just means no
+        per-symbol tightening is applied for this check."""
+        try:
+            store = self._get_limit_store()
+            if store is None:
+                return default
+            rec = store.get(symbol)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Could not check symbol limit override for %s.%s: %s", symbol, field, e)
+            return default
+        if rec is None:
+            return default
+        value = getattr(rec, field, None)
+        return value if value is not None else default
 
     def _get_override_store(self):
         if self._override_store is None and not self._override_store_explicit:
@@ -443,22 +490,32 @@ class OrderGuard:
         mandate = self._mandate
         value = max(estimated_value or 0.0, qty * (price or 0.0))
 
-        if mandate.max_order_value > 0 and value > 0:
-            comps["max_order_value"] = min(1.0, mandate.max_order_value / value)
+        # C7: same per-symbol override lookup `check()` uses -- a tighter
+        # symbol-specific limit must shrink the suggested size the same way
+        # the hard mandate limit would, or C4/C7 and C8 would silently
+        # disagree about how big an order for this symbol is allowed to be.
+        max_order_value = self._effective_limit(symbol, "max_order_value", mandate.max_order_value)
+        max_position_pct = self._effective_limit(symbol, "max_position_pct", mandate.max_position_pct)
+        max_capital_utilization_pct = self._effective_limit(
+            symbol, "max_capital_utilization_pct", mandate.max_capital_utilization_pct
+        )
 
-        if value > 0 and (mandate.max_position_pct < 1.0 or mandate.max_capital_utilization_pct < 1.0):
+        if max_order_value > 0 and value > 0:
+            comps["max_order_value"] = min(1.0, max_order_value / value)
+
+        if value > 0 and (max_position_pct < 1.0 or max_capital_utilization_pct < 1.0):
             try:
                 account = self._broker.get_account()
                 equity = float(account.equity)
                 cash = float(account.cash)
                 if equity > 0:
-                    if mandate.max_position_pct < 1.0:
+                    if max_position_pct < 1.0:
                         frac = value / equity
                         if frac > 0:
-                            comps["max_position_pct"] = min(1.0, mandate.max_position_pct / frac)
-                    if mandate.max_capital_utilization_pct < 1.0:
+                            comps["max_position_pct"] = min(1.0, max_position_pct / frac)
+                    if max_capital_utilization_pct < 1.0:
                         deployed = equity - cash
-                        headroom = mandate.max_capital_utilization_pct * equity - deployed
+                        headroom = max_capital_utilization_pct * equity - deployed
                         comps["max_capital_utilization"] = max(0.0, min(1.0, headroom / value))
             except Exception as e:
                 logger.warning("Could not compute equity-based size multipliers for %s: %s", symbol, e)

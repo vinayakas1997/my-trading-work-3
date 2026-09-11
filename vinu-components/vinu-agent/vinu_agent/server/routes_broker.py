@@ -142,6 +142,67 @@ async def broker_clear_override(symbol: str) -> dict[str, Any]:
     return {"status": "ok", "cleared": cleared, "symbol": symbol.upper()}
 
 
+class SymbolLimitRequest(BaseModel):
+    max_order_value: float | None = None
+    max_position_pct: float | None = None
+    max_capital_utilization_pct: float | None = None
+    reason: str = ""
+    set_by: str = ""
+
+
+@router.get("/broker/limits")
+async def broker_list_limits() -> dict[str, Any]:
+    """C7: every symbol with at least one limit-value override currently set."""
+    from ..broker.symbol_limits import get_limit_store
+
+    return {"limits": [r.to_dict() for r in get_limit_store().all()]}
+
+
+@router.get("/broker/limits/{symbol}")
+async def broker_get_limit(symbol: str) -> dict[str, Any]:
+    from ..broker.symbol_limits import get_limit_store
+
+    rec = get_limit_store().get(symbol)
+    return {"symbol": symbol.upper(), "limit": rec.to_dict() if rec else None}
+
+
+@router.put("/broker/limits/{symbol}")
+async def broker_set_limit(symbol: str, body: SymbolLimitRequest) -> dict[str, Any]:
+    """Merge semantics: an omitted field leaves that symbol's existing
+    override (if any) untouched — same as `SymbolLimitStore.set()`."""
+    from ..broker.symbol_limits import get_limit_store
+
+    rec = get_limit_store().set(
+        symbol,
+        max_order_value=body.max_order_value,
+        max_position_pct=body.max_position_pct,
+        max_capital_utilization_pct=body.max_capital_utilization_pct,
+        reason=body.reason,
+        set_by=body.set_by,
+    )
+    return {"status": "ok", "limit": rec.to_dict()}
+
+
+@router.delete("/broker/limits/{symbol}")
+async def broker_clear_limit(symbol: str) -> dict[str, Any]:
+    """Independently resettable — clears every override for this symbol
+    (back to 100% mandate-derived limits), leaving every other symbol's
+    overrides untouched."""
+    from ..broker.symbol_limits import get_limit_store
+
+    cleared = get_limit_store().clear(symbol)
+    return {"status": "ok", "cleared": cleared, "symbol": symbol.upper()}
+
+
+@router.get("/broker/limits/{symbol}/history")
+async def broker_limit_history(symbol: str, limit: int = 100) -> dict[str, Any]:
+    """The queryable audit trail C7 asks for: every change to this
+    symbol's limit overrides, most recent first."""
+    from ..broker.symbol_limits import get_limit_store
+
+    return {"symbol": symbol.upper(), "history": [asdict(h) for h in get_limit_store().history(symbol, limit=limit)]}
+
+
 @router.get("/broker/safety-ledger")
 async def broker_safety_ledger(limit: int = 100) -> dict[str, Any]:
     """A37: the tamper-evident halt/resume record + a chain-integrity check.

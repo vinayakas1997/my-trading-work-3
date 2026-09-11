@@ -24,6 +24,17 @@ def _isolated_override_store():
     reset_override_store(None)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_limit_store():
+    # C7: same reasoning as _isolated_override_store above, for the
+    # per-symbol limit-value store `_effective_limit()` now consults.
+    from vinu_agent.broker.symbol_limits import SymbolLimitStore, reset_limit_store
+
+    reset_limit_store(SymbolLimitStore(":memory:"))
+    yield
+    reset_limit_store(None)
+
+
 def _account(equity: float = 100_000.0, cash: float = 100_000.0) -> Account:
     return Account(
         account_id="test",
@@ -386,6 +397,94 @@ class TestSymbolOverrides:
         guard = self._guard_with_overrides(broken)
         with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
             assert guard.check("AAPL", "buy", qty=1, price=10.0)  # allowed despite the store error
+
+
+class TestSymbolLimitOverrides:
+    """Stage C (C7): per-symbol *limit-value* override, replacing the
+    mandate's global default wherever check()/position_size_multiplier()
+    reads it."""
+
+    def _guard_with_limits(self, store, mandate=None):
+        mandate = mandate or TradingMandate(max_position_pct=1.0, require_active_artifact=False, max_order_value=50_000.0)
+        broker = MagicMock()
+        broker.get_account.return_value = _account()
+        return OrderGuard(
+            mandate=mandate, broker=broker,
+            daily_limit_store=DailyLimitStore(":memory:"), limit_store=store,
+        )
+
+    def test_tighter_symbol_override_rejects_where_the_mandate_default_would_pass(self) -> None:
+        from vinu_agent.broker.guard_codes import ReasonCode
+        from vinu_agent.broker.symbol_limits import SymbolLimitStore
+
+        store = SymbolLimitStore(":memory:")
+        store.set("AAPL", max_order_value=1_000.0, reason="volatile small-cap")
+        guard = self._guard_with_limits(store)
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            # 10 * 800 = 8000 -- under the mandate's 50k default, over AAPL's 1k override.
+            result = guard.check("AAPL", "buy", qty=10, price=800.0)
+        assert not result
+        assert result.code == ReasonCode.MAX_ORDER_VALUE
+        assert "1000.00" in result.reason
+
+    def test_override_is_per_symbol_not_global(self) -> None:
+        from vinu_agent.broker.symbol_limits import SymbolLimitStore
+
+        store = SymbolLimitStore(":memory:")
+        store.set("AAPL", max_order_value=1_000.0)
+        guard = self._guard_with_limits(store)
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            # MSFT has no override -- falls back to the mandate's 50k default.
+            assert guard.check("MSFT", "buy", qty=10, price=800.0)
+
+    def test_no_override_falls_back_to_mandate_default(self) -> None:
+        from vinu_agent.broker.symbol_limits import SymbolLimitStore
+
+        guard = self._guard_with_limits(SymbolLimitStore(":memory:"))
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            assert guard.check("AAPL", "buy", qty=10, price=800.0)
+
+    def test_limit_store_failure_fails_open_to_mandate_default(self) -> None:
+        broken = MagicMock()
+        broken.get.side_effect = RuntimeError("db gone")
+        guard = self._guard_with_limits(broken)
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            assert guard.check("AAPL", "buy", qty=10, price=800.0)  # mandate default (50k) still applies, order passes
+
+    def test_position_size_multiplier_uses_the_tighter_symbol_override(self) -> None:
+        from vinu_agent.broker.symbol_limits import SymbolLimitStore
+
+        store = SymbolLimitStore(":memory:")
+        store.set("AAPL", max_order_value=500.0)
+        guard = self._guard_with_limits(store)
+        # value = 10 * 100 = 1000 -- above the 500 override, so it should scale down.
+        m = guard.position_size_multiplier("AAPL", "buy", qty=10, price=100.0)
+        assert m.multiplier == pytest.approx(0.5)
+        assert m.binding == "max_order_value"
+
+    def test_max_position_pct_override_is_effective(self) -> None:
+        from vinu_agent.broker.guard_codes import ReasonCode
+        from vinu_agent.broker.symbol_limits import SymbolLimitStore
+
+        store = SymbolLimitStore(":memory:")
+        store.set("AAPL", max_position_pct=0.01)  # 1% of equity
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, max_order_value=1_000_000.0)
+        guard = self._guard_with_limits(store, mandate=mandate)
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            # 10 * 800 = 8000 on 100k equity = 8% > AAPL's 1% override.
+            result = guard.check("AAPL", "buy", qty=10, price=800.0)
+        assert not result
+        assert result.code == ReasonCode.MAX_POSITION_PCT
+
+    def test_clear_removes_the_override(self) -> None:
+        from vinu_agent.broker.symbol_limits import SymbolLimitStore
+
+        store = SymbolLimitStore(":memory:")
+        store.set("AAPL", max_order_value=1_000.0)
+        store.clear("AAPL")
+        guard = self._guard_with_limits(store)
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            assert guard.check("AAPL", "buy", qty=10, price=800.0)  # back to mandate's 50k default
 
 
 class TestRequireActiveArtifact:
