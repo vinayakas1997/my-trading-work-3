@@ -64,6 +64,36 @@ class TestAllocateRiskParity:
         assert weights["steady"] > weights["volatile"]
         assert weights["steady"] + weights["volatile"] == pytest.approx(1.0)
 
+    def test_hrp_mode_uses_hierarchical_risk_parity_when_enough_history(self) -> None:
+        # Stage C (C11): allocation_mode="hrp" -> the low-variance cluster
+        # gets more weight than a naive per-name inverse-vol split would give.
+        svc = _service(allocation_mode="hrp", max_per_strategy_weight=1.0)
+        strategies = [{"name": n, "kind": "yaml"} for n in ("A", "B", "C", "D")]
+        rng = np.random.default_rng(0)
+        n = 250
+        a = rng.normal(0, 0.01, n)
+        b = a * 0.9 + rng.normal(0, 0.004, n)
+        c = rng.normal(0, 0.02, n)
+        d = c * 0.8 + rng.normal(0, 0.01, n)
+        returns_df = pd.DataFrame({"A": a, "B": b, "C": c, "D": d},
+                                  index=pd.date_range("2024-01-01", periods=n))
+        weights = {r["name"]: r["target_weight"] for r in svc.allocate_risk_parity(strategies, returns_df)}
+        assert weights["A"] + weights["B"] > weights["C"] + weights["D"]
+        assert sum(weights.values()) == pytest.approx(1.0, abs=1e-3)
+
+    def test_hrp_mode_falls_back_to_inverse_vol_on_short_history(self) -> None:
+        svc = _service(allocation_mode="hrp", max_per_strategy_weight=1.0)
+        strategies = [{"name": "steady", "kind": "yaml"}, {"name": "volatile", "kind": "yaml"}]
+        rng = np.random.default_rng(0)
+        returns_df = pd.DataFrame(
+            {"steady": rng.normal(0, 0.001, 8), "volatile": rng.normal(0, 0.05, 8)},
+            index=pd.date_range("2024-01-01", periods=8),
+        )
+        weights = {r["name"]: r["target_weight"] for r in svc.allocate_risk_parity(strategies, returns_df)}
+        # inverse-vol fallback still favours the steady one, sums to 1
+        assert weights["steady"] > weights["volatile"]
+        assert sum(weights.values()) == pytest.approx(1.0, abs=1e-3)
+
     def test_per_strategy_cap_actually_binds_after_normalization(self) -> None:
         # Stage A (A4): the old `min(w, cap)` ran BEFORE the normalize step,
         # which renormalization then undid. With one very-low-vol strategy

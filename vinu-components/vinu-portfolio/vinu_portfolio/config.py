@@ -43,6 +43,12 @@ class PortfolioConfig:
     port: int = DEFAULT_PORT
     max_per_strategy_weight: float = 0.3
     max_per_sector_weight: float = 0.4
+    # Stage C (C11): "inverse_vol" (default — 1/vol, correlation-blind, always
+    # well-defined) or "hrp" (Hierarchical Risk Parity — correlation-aware,
+    # inversion-free, degrades gracefully on an ill-conditioned matrix;
+    # falls back to inverse_vol when there isn't enough return history to
+    # cluster). Env: VINU_PORTFOLIO_ALLOCATION_MODE.
+    allocation_mode: str = "inverse_vol"
     risk_free_rate: float = 0.05
     target_volatility: float = 0.15
     drawdown_halt_threshold: float = -0.20
@@ -84,6 +90,7 @@ class PortfolioConfig:
             port=int(os.getenv("VINU_PORTFOLIO_PORT", str(DEFAULT_PORT))),
             max_per_strategy_weight=float(os.getenv("VINU_PORTFOLIO_MAX_PER_STRATEGY", "0.3")),
             max_per_sector_weight=float(os.getenv("VINU_PORTFOLIO_MAX_PER_SECTOR", "0.4")),
+            allocation_mode=os.getenv("VINU_PORTFOLIO_ALLOCATION_MODE", "inverse_vol"),
             drawdown_halt_threshold=float(os.getenv("VINU_PORTFOLIO_DRAWDOWN_HALT", "-0.20")),
             drawdown_monitor_interval_sec=int(os.getenv("VINU_PORTFOLIO_DRAWDOWN_INTERVAL_SEC", "300")),
             abs_loss_halt_threshold=float(os.getenv("VINU_PORTFOLIO_ABS_LOSS_HALT", "0.0")),

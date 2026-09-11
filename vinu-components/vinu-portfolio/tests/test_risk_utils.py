@@ -12,6 +12,7 @@ import pytest
 from vinu_portfolio.risk_utils import (
     cap_concentration,
     fix_nonpositive_semidefinite,
+    hrp_weights,
     robust_correlation_matrix,
 )
 
@@ -127,3 +128,40 @@ class TestCapConcentration:
     def test_cap_of_one_or_more_is_a_noop(self) -> None:
         w = {"a": 0.9, "b": 0.1}
         assert cap_concentration(w, 1.0) == w
+
+
+class TestHRPWeights:
+    def _corr_returns(self, seed: int = 0, n: int = 250) -> pd.DataFrame:
+        rng = np.random.default_rng(seed)
+        a = rng.normal(0, 0.01, n)
+        b = a * 0.9 + rng.normal(0, 0.004, n)      # tightly correlated with a
+        c = rng.normal(0, 0.02, n)                  # higher vol, independent
+        d = c * 0.8 + rng.normal(0, 0.01, n)        # correlated with c
+        return pd.DataFrame({"A": a, "B": b, "C": c, "D": d})
+
+    def test_returns_weights_that_sum_to_one(self) -> None:
+        w = hrp_weights(self._corr_returns())
+        assert w is not None
+        assert set(w) == {"A", "B", "C", "D"}
+        assert sum(w.values()) == pytest.approx(1.0)
+        assert all(v >= 0 for v in w.values())
+
+    def test_lower_variance_cluster_gets_more_weight(self) -> None:
+        # {A,B} is the low-vol cluster, {C,D} the high-vol one
+        w = hrp_weights(self._corr_returns())
+        assert w["A"] + w["B"] > w["C"] + w["D"]
+
+    def test_none_when_too_little_history_to_cluster(self) -> None:
+        assert hrp_weights(self._corr_returns(n=6)) is None
+
+    def test_none_for_single_column_or_none(self) -> None:
+        assert hrp_weights(None) is None
+        assert hrp_weights(self._corr_returns()[["A"]]) is None
+
+    def test_degenerate_matrix_does_not_raise(self) -> None:
+        # two perfectly identical columns -> corr has a zero eigenvalue;
+        # HRP must still return something or None, never blow up
+        df = self._corr_returns()
+        df["B"] = df["A"]
+        w = hrp_weights(df)
+        assert w is None or sum(w.values()) == pytest.approx(1.0)

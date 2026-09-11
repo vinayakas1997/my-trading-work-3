@@ -15,7 +15,7 @@ from vinu_portfolio.config import PortfolioConfig, load_config
 from vinu_portfolio.game_plan import DailyGamePlan, SymbolPlan
 from vinu_portfolio.regime import classify_current_regime
 from vinu_portfolio.risk_budget import compute_risk_budget, DailyPositionTracker
-from vinu_portfolio.risk_utils import cap_concentration, robust_correlation_matrix
+from vinu_portfolio.risk_utils import cap_concentration, hrp_weights, robust_correlation_matrix
 from vinu_portfolio.shock_correlation import dcc_shock_correlation
 from vinu_portfolio.sizing import apply_position_sizing
 
@@ -266,7 +266,16 @@ class PortfolioService:
             return []
 
         weights: dict[str, float] = {}
-        if returns_df is not None and len(returns_df.columns) >= 1:
+        # Stage C (C11): HRP mode — correlation-aware, inversion-free. Falls
+        # back to inverse-vol below when there isn't enough history to
+        # cluster (hrp_weights returns None).
+        if getattr(self._config, "allocation_mode", "inverse_vol") == "hrp":
+            hrp = hrp_weights(returns_df)
+            if hrp is not None:
+                for s in strategies:
+                    weights[s["name"]] = hrp.get(s["name"], 1.0 / len(strategies))
+
+        if not weights and returns_df is not None and len(returns_df.columns) >= 1:
             vols = returns_df.std() * np.sqrt(252)
             inv_vols = 1.0 / vols.clip(lower=1e-6)
             total = inv_vols.sum()
@@ -277,7 +286,7 @@ class PortfolioService:
             else:
                 for s in strategies:
                     weights[s["name"]] = 1.0 / len(strategies)
-        else:
+        elif not weights:
             for s in strategies:
                 weights[s["name"]] = 1.0 / len(strategies)
 

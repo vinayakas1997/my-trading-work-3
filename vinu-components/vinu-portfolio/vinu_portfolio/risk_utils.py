@@ -78,6 +78,91 @@ def _shrunk_correlation(returns_df: pd.DataFrame) -> pd.DataFrame | None:
         return None
 
 
+def hrp_weights(returns_df: "pd.DataFrame | None") -> dict[str, float] | None:
+    """Stage C (C11): Hierarchical Risk Parity (López de Prado 2016).
+
+    Correlation-aware allocation that -- unlike mean-variance or full
+    risk-parity -- never inverts the covariance matrix, so an
+    ill-conditioned correlation estimate (short history, tiny universe)
+    degrades to a flatter dendrogram rather than a blow-up. Uses the same
+    A1/A2-hardened `robust_correlation_matrix` for the distance metric.
+
+    Returns a name -> weight dict summing to 1.0, or None if there isn't
+    enough data to cluster (caller falls back to inverse-vol).
+    """
+    if returns_df is None or returns_df.shape[1] < 2:
+        return None
+    clean = returns_df.dropna(axis=1, how="all").dropna(axis=0, how="any")
+    n = clean.shape[1]
+    if n < 2 or clean.shape[0] < n + 5:
+        return None
+    try:
+        from scipy.cluster.hierarchy import linkage, to_tree
+        from scipy.spatial.distance import squareform
+
+        cov = clean.cov()
+        corr = robust_correlation_matrix(clean)
+        if corr is None:
+            return None
+        corr = corr.reindex(index=clean.columns, columns=clean.columns)
+        dist = np.sqrt(np.clip((1.0 - corr.to_numpy()) / 2.0, 0.0, 1.0))
+        np.fill_diagonal(dist, 0.0)
+        link = linkage(squareform(dist, checks=False), method="single")
+
+        # quasi-diagonalisation: leaf order of the dendrogram
+        order = _leaf_order(to_tree(link), n)
+        cols = list(clean.columns)
+        ordered = [cols[i] for i in order]
+
+        w = _hrp_bisect(cov.to_numpy(), order)
+        raw = {cols[i]: float(w[k]) for k, i in enumerate(order)}
+        total = sum(raw.values())
+        if total <= 0:
+            return None
+        return {name: raw.get(name, 0.0) / total for name in cols}
+    except Exception as exc:  # noqa: BLE001 -- fail-open to inverse-vol
+        LOG.warning("HRP allocation failed (%s), caller should fall back", exc)
+        return None
+
+
+def _leaf_order(node, n: int) -> list[int]:
+    if node is None:
+        return []
+    if node.is_leaf():
+        return [node.id]
+    return _leaf_order(node.get_left(), n) + _leaf_order(node.get_right(), n)
+
+
+def _hrp_bisect(cov: np.ndarray, order: list[int]) -> np.ndarray:
+    """Recursive bisection over the quasi-diagonalised covariance."""
+    w = np.ones(len(order))
+    clusters = [list(range(len(order)))]
+    while clusters:
+        clusters = [
+            c[j:k]
+            for c in clusters
+            for j, k in ((0, len(c) // 2), (len(c) // 2, len(c)))
+            if len(c) > 1
+        ]
+        for i in range(0, len(clusters), 2):
+            left, right = clusters[i], clusters[i + 1]
+            l_var = _cluster_var(cov, [order[t] for t in left])
+            r_var = _cluster_var(cov, [order[t] for t in right])
+            alpha = 1.0 - l_var / (l_var + r_var) if (l_var + r_var) > 0 else 0.5
+            for t in left:
+                w[t] *= alpha
+            for t in right:
+                w[t] *= 1.0 - alpha
+    return w
+
+
+def _cluster_var(cov: np.ndarray, idx: list[int]) -> float:
+    sub = cov[np.ix_(idx, idx)]
+    ivp = 1.0 / np.clip(np.diag(sub), 1e-12, None)
+    ivp /= ivp.sum()
+    return float(ivp @ sub @ ivp)
+
+
 def cap_concentration(weights: dict[str, float], cap: float, *, max_iter: int = 50) -> dict[str, float]:
     """Stage A (A4 — daily_stock_analysis's concentration-overlay pattern,
     see other-repos-world/comprison-other-vinu/04-daily_stock_analysis.md):
