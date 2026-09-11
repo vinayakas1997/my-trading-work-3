@@ -349,3 +349,56 @@ class TestScenarioGapDownCrash:
 
         # Must be the real, filled exit -- not exit_blocked_by_breaker.
         assert action["action"] == "invalidation_exit"
+
+
+class TestScenarioKillSwitchMidCycle:
+    """the-reasoning-inefficiency/scenarios-test/02-kill-switch-mid-cycle/
+    scenario.md -- proves the combination, not either half alone: within
+    ONE real cycle() call with the kill switch reporting halted, a
+    would-be entry (MSFT, no open position) is blocked while an existing
+    open position's invalidation exit (AAPL) still fires. Existing tests
+    already cover each half in isolation
+    (test_halted_flag_blocks_new_entries,
+    test_cycle_blocks_entry_when_agent_reports_halt in
+    test_trade_plan_orchestrator.py) -- this is the first test proving
+    they coexist correctly in the same cycle."""
+
+    def test_entry_blocked_and_exit_still_fires_in_the_same_cycle(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 100.0)
+        aapl_plan = _plan(symbol="AAPL", invalidation_conditions=[
+            {"metric": "unrealized_pnl_pct", "operator": "<=", "threshold": -0.08, "action": "exit", "action_params": {}},
+        ])
+        msft_plan = _plan(symbol="MSFT")
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={
+                "/research/artifacts": [
+                    {"artifact_id": "art_aapl", "status": "ACTIVE", "type": "trade_plan"},
+                    {"artifact_id": "art_msft", "status": "ACTIVE", "type": "trade_plan"},
+                ],
+                "/research/trade-plan/art_aapl": {"artifact_id": "art_aapl", "trade_plan_data": json.dumps(aapl_plan)},
+                "/research/trade-plan/art_msft": {"artifact_id": "art_msft", "trade_plan_data": json.dumps(msft_plan)},
+                # -10% on AAPL (past the -8% threshold); MSFT price is irrelevant
+                # since the halt must block its entry before price even matters.
+                "/candles/AAPL": _bars([100.0, 98.0, 95.0, 90.0]),
+                "/candles/MSFT": _bars([50.0]),
+                "/broker/account": {"configured": True, "equity": 100000.0},
+                "/broker/status": {"halted": True},
+                "/broker/positions": [],
+            },
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "kill-switch-exit-1"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        result = asyncio.run(orch.cycle())
+
+        assert result["trading_halted"] is True
+        actions_by_symbol = {a["symbol"]: a for a in result["actions"]}
+        assert actions_by_symbol["MSFT"]["action"] == "entry_blocked_by_emergency_halt"
+        assert actions_by_symbol["AAPL"]["action"] == "invalidation_exit"
+
+        order_calls = [c for c in post_mock.await_args_list if "/broker/order" in c.args[0]]
+        assert len(order_calls) == 1  # only AAPL's exit, never a MSFT entry
+        assert order_calls[0].kwargs["json"]["symbol"] == "AAPL"
+        assert order_calls[0].kwargs["json"]["reduce_only"] is True
+        assert list_open_positions(book, symbol="AAPL") == []
