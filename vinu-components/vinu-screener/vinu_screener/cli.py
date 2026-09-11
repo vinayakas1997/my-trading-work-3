@@ -59,7 +59,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     scan_p.add_argument("--poll-sec", type=float, default=5.0, help="How often to check for due rules")
     scan_p.add_argument("--rule-db", type=Path, default=None)
     scan_p.add_argument("--audit-db", type=Path, default=None)
-    scan_p.add_argument("--stock-api-url", default=None)
+    scan_p.add_argument(
+        "--stock-api-url", default=None,
+        help="Full base URL INCLUDING the /stock route prefix, e.g. http://stock-api:8081/stock "
+             "-- overriding DEFAULT_STOCK_API_URL's own VINU_STOCK_API_URL + /stock composition, "
+             "not just the bare host:port.",
+    )
     scan_p.set_defaults(func=scan_main)
 
     return parser.parse_args(argv)

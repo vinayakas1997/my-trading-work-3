@@ -122,3 +122,42 @@ class TestFiredHistory:
         client.put("/screener/rules/r1", json=_RULE_BODY)
         resp = client.get("/screener/rules/r1/history")
         assert resp.json()["history"] == []
+
+
+class TestPairlistTokenDefaultsToTheSharedInternalKey:
+    """The pairlist route is mounted inside the same app `create_app()`
+    wraps in `Depends(require_auth)` (VINU_API_KEY) for the whole router --
+    if the pairlist route's OWN bearer check used a different default
+    token, the same Authorization header could never satisfy both checks
+    at once, and every pairlist request would 401 whenever VINU_API_KEY is
+    set. DEFAULT_PAIRLIST_TOKEN must fall back to VINU_API_KEY itself so
+    the common single-shared-token deployment just works."""
+
+    def test_falls_back_to_vinu_api_key_when_unset(self, monkeypatch) -> None:
+        import importlib
+
+        monkeypatch.delenv("VINU_SCREENER_PAIRLIST_TOKEN", raising=False)
+        monkeypatch.setattr("vinu_infra.auth.VINU_API_KEY", "shared-secret")
+        import vinu_screener.server.app as app_mod
+
+        importlib.reload(app_mod)
+        try:
+            assert app_mod.DEFAULT_PAIRLIST_TOKEN == "shared-secret"
+        finally:
+            monkeypatch.setattr("vinu_infra.auth.VINU_API_KEY", "")
+            importlib.reload(app_mod)
+
+    def test_explicit_override_wins_over_vinu_api_key(self, monkeypatch) -> None:
+        import importlib
+
+        monkeypatch.setenv("VINU_SCREENER_PAIRLIST_TOKEN", "screener-only-token")
+        monkeypatch.setattr("vinu_infra.auth.VINU_API_KEY", "shared-secret")
+        import vinu_screener.server.app as app_mod
+
+        importlib.reload(app_mod)
+        try:
+            assert app_mod.DEFAULT_PAIRLIST_TOKEN == "screener-only-token"
+        finally:
+            monkeypatch.delenv("VINU_SCREENER_PAIRLIST_TOKEN", raising=False)
+            monkeypatch.setattr("vinu_infra.auth.VINU_API_KEY", "")
+            importlib.reload(app_mod)

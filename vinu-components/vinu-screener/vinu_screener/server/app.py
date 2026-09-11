@@ -21,6 +21,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from vinu_infra.auth import VINU_API_KEY
 from vinu_infra.server import create_app as _create_app
 
 from ..audit.watch_history import WatchAuditStore
@@ -35,8 +36,25 @@ from ..serve.router import build_router
 DEFAULT_DATA_ROOT = Path(os.environ.get("VINU_SCREENER_DATA_ROOT", str(Path.home() / ".vinu")))
 DEFAULT_RULE_DB_PATH = os.environ.get("VINU_SCREENER_RULE_DB", str(DEFAULT_DATA_ROOT / "screener_rules.db"))
 DEFAULT_AUDIT_DB_PATH = os.environ.get("VINU_SCREENER_AUDIT_DB", str(DEFAULT_DATA_ROOT / "screener_audit.db"))
-DEFAULT_STOCK_API_URL = os.environ.get("VINU_STOCK_API_URL", "http://localhost:8081/stock")
-DEFAULT_PAIRLIST_TOKEN = os.environ.get("VINU_SCREENER_PAIRLIST_TOKEN", "")
+# VINU_STOCK_API_URL is the bare cross-service URL (e.g. http://stock-api:8081
+# in Docker Compose, matching every other vinu-* consumer's env-var
+# convention -- see .env-example's "Cross-service API URLs" section); each
+# consumer appends its own service's route prefix, same as
+# vinu_research.tools.ResearchTools does for this same upstream.
+DEFAULT_STOCK_API_URL = os.environ.get("VINU_STOCK_API_URL", "http://localhost:8081").rstrip("/") + "/stock"
+# The pairlist route (B20) is mounted inside this same app's `router`, which
+# `vinu_infra.server.create_app` wraps in `Depends(require_auth)` for the
+# WHOLE app whenever VINU_API_KEY is set -- so the same `Authorization`
+# header has to satisfy that outer check AND this route's own bearer check
+# below. Defaulting to VINU_API_KEY itself (rather than an empty string)
+# means the common case (one shared internal token, VINU_API_KEY set,
+# VINU_SCREENER_PAIRLIST_TOKEN left unset) just works with one token, not
+# two that would otherwise silently conflict and 401 every request. An
+# operator who genuinely wants a distinct pairlist-only token still can --
+# they'd need VINU_API_KEY unset (open API, pairlist-gated only) for it to
+# actually take effect, since a double-gate on the same header can't pass
+# two different token values.
+DEFAULT_PAIRLIST_TOKEN = os.environ.get("VINU_SCREENER_PAIRLIST_TOKEN") or VINU_API_KEY
 DEFAULT_PAIRLIST_TTL_SEC = float(os.environ.get("VINU_SCREENER_PAIRLIST_TTL_SEC", "60.0"))
 
 
