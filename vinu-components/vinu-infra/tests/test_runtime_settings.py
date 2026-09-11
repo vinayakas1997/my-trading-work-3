@@ -8,9 +8,9 @@ from vinu_infra.runtime_settings import RuntimeSettings, build_admin_settings_ro
 def _settings() -> RuntimeSettings:
     s = RuntimeSettings()
     s.register("max_order_value", default=50000.0, minimum=0.0,
-               description="Max notional value of a single order.")
+               description="Max notional value of a single order.", category="risk-limits")
     s.register("max_daily_orders", default=10, caster=int, minimum=0,
-               description="Max orders per symbol per day.")
+               description="Max orders per symbol per day.", category="risk-limits")
     return s
 
 
@@ -148,3 +148,40 @@ class TestOnChangeAudit:
         router = build_admin_settings_router(_settings())
         resp = _client(router).patch("/admin/settings", json={"max_order_value": 20000})
         assert resp.status_code == 200
+
+
+class TestSchemaC16:
+    """Stage C (C16): field-metadata registry — one declaration feeds
+    validation, snapshot, and the schema/docs export."""
+
+    def test_schema_reports_type_range_default_and_category(self) -> None:
+        sch = _settings().schema()
+        assert sch["max_order_value"] == {
+            "type": "float", "default": 50000.0, "min": 0.0, "max": None,
+            "description": "Max notional value of a single order.", "category": "risk-limits",
+        }
+        assert sch["max_daily_orders"]["type"] == "int"
+
+    def test_categories_are_deduped_and_sorted(self) -> None:
+        s = RuntimeSettings()
+        s.register("a", 1.0, category="z-group")
+        s.register("b", 2.0, category="a-group")
+        s.register("c", 3.0, category="a-group")
+        s.register("d", 4.0)  # ungrouped -> not listed
+        assert s.categories() == ["a-group", "z-group"]
+
+    def test_snapshot_carries_category_and_type(self) -> None:
+        snap = _settings().snapshot()
+        assert snap["max_order_value"]["category"] == "risk-limits"
+        assert snap["max_order_value"]["type"] == "float"
+
+    def test_schema_endpoint(self) -> None:
+        router = build_admin_settings_router(_settings())
+        body = _client(router).get("/admin/settings/schema").json()
+        assert body["categories"] == ["risk-limits"]
+        assert body["fields"]["max_daily_orders"]["type"] == "int"
+
+    def test_bool_type_is_inferred_from_default_when_caster_is_generic(self) -> None:
+        s = RuntimeSettings()
+        s.register("flag", default=True, caster=lambda v: str(v).lower() in ("1", "true"))
+        assert s.schema()["flag"]["type"] == "bool"

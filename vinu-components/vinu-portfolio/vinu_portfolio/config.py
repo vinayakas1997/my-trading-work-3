@@ -49,6 +49,12 @@ class PortfolioConfig:
     # falls back to inverse_vol when there isn't enough return history to
     # cluster). Env: VINU_PORTFOLIO_ALLOCATION_MODE.
     allocation_mode: str = "inverse_vol"
+    # Stage C (C12): post-construction rescaling — cap the *combined* target
+    # weight of any cluster of names whose pairwise correlation is >=
+    # cluster_corr_threshold. 1.0 (default) = off. Env:
+    # VINU_PORTFOLIO_MAX_CORRELATED_CLUSTER_WEIGHT / _CLUSTER_CORR_THRESHOLD.
+    max_correlated_cluster_weight: float = 1.0
+    cluster_corr_threshold: float = 0.8
     risk_free_rate: float = 0.05
     target_volatility: float = 0.15
     drawdown_halt_threshold: float = -0.20
@@ -91,6 +97,8 @@ class PortfolioConfig:
             max_per_strategy_weight=float(os.getenv("VINU_PORTFOLIO_MAX_PER_STRATEGY", "0.3")),
             max_per_sector_weight=float(os.getenv("VINU_PORTFOLIO_MAX_PER_SECTOR", "0.4")),
             allocation_mode=os.getenv("VINU_PORTFOLIO_ALLOCATION_MODE", "inverse_vol"),
+            max_correlated_cluster_weight=float(os.getenv("VINU_PORTFOLIO_MAX_CORRELATED_CLUSTER_WEIGHT", "1.0")),
+            cluster_corr_threshold=float(os.getenv("VINU_PORTFOLIO_CLUSTER_CORR_THRESHOLD", "0.8")),
             drawdown_halt_threshold=float(os.getenv("VINU_PORTFOLIO_DRAWDOWN_HALT", "-0.20")),
             drawdown_monitor_interval_sec=int(os.getenv("VINU_PORTFOLIO_DRAWDOWN_INTERVAL_SEC", "300")),
             abs_loss_halt_threshold=float(os.getenv("VINU_PORTFOLIO_ABS_LOSS_HALT", "0.0")),

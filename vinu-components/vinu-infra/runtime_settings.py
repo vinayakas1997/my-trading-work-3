@@ -53,6 +53,24 @@ class _Knob:
     minimum: float | None
     maximum: float | None
     description: str
+    # Stage C (C16): a group name for the UI / docs (e.g. "risk-limits",
+    # "correlation-monitor"). Free-form; "" = ungrouped.
+    category: str = ""
+
+    @property
+    def type_name(self) -> str:
+        """String name of the value type, for a UI to pick the right input
+        control and for docs. Derived from the caster."""
+        c = getattr(self.caster, "__name__", "")
+        if c in ("int", "float", "bool", "str"):
+            return c
+        if isinstance(self.default, bool):
+            return "bool"
+        if isinstance(self.default, int):
+            return "int"
+        if isinstance(self.default, float):
+            return "float"
+        return "str"
 
 
 class RuntimeSettings:
@@ -85,11 +103,37 @@ class RuntimeSettings:
         minimum: float | None = None,
         maximum: float | None = None,
         description: str = "",
+        category: str = "",
     ) -> None:
         """Whitelist one knob. Call this at module import time (alongside
-        the `.env` read that produces `default`), before any `.get()`."""
+        the `.env` read that produces `default`), before any `.get()`.
+
+        `category` (C16) groups the knob for the admin UI / generated docs;
+        the same single declaration feeds validation, `snapshot()`, and
+        `schema()`."""
         with self._lock:
-            self._knobs[name] = _Knob(default, caster, minimum, maximum, description)
+            self._knobs[name] = _Knob(default, caster, minimum, maximum, description, category)
+
+    def schema(self) -> dict[str, dict[str, Any]]:
+        """C16: the field-metadata registry — one authoritative description
+        of every knob (type, range, default, description, category) for a UI
+        or docs generator, independent of current values."""
+        with self._lock:
+            return {
+                name: {
+                    "type": knob.type_name,
+                    "default": knob.default,
+                    "min": knob.minimum,
+                    "max": knob.maximum,
+                    "description": knob.description,
+                    "category": knob.category,
+                }
+                for name, knob in self._knobs.items()
+            }
+
+    def categories(self) -> list[str]:
+        with self._lock:
+            return sorted({knob.category for knob in self._knobs.values() if knob.category})
 
     def get(self, name: str) -> Any:
         with self._lock:
@@ -158,6 +202,8 @@ class RuntimeSettings:
                     "min": knob.minimum,
                     "max": knob.maximum,
                     "description": knob.description,
+                    "category": knob.category,
+                    "type": knob.type_name,
                 }
                 for name, knob in self._knobs.items()
             }
@@ -204,6 +250,12 @@ def build_admin_settings_router(
         # PATCH to get optimistic-concurrency protection. `settings` keeps the
         # per-knob shape callers already expect.
         return {"version": settings.version, "settings": settings.snapshot()}
+
+    @router.get("/schema")
+    async def settings_schema() -> dict[str, Any]:
+        # C16: the single field-metadata registry — type / range / default /
+        # description / category per knob, for a UI or docs generator.
+        return {"categories": settings.categories(), "fields": settings.schema()}
 
     def _require_match(if_match: str | None) -> None:
         if if_match is None or if_match == "*":

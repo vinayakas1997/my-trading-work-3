@@ -155,6 +155,12 @@ class ResearchConfig:
     # deliberately lenient: crisis windows are *expected* to hurt, this is
     # meant to catch catastrophic/leveraged blowups, not ordinary drawdown.
     stress_test_max_drawdown_threshold: float = -0.50
+    # Stage C (C13): in addition to the fixed windows above, derive extra
+    # stress windows from *this symbol's* own price path over the researched
+    # range — its deepest drawdown, sharpest run-up, steepest decline — and
+    # replay the winning strategy through those too. Additive, opt-in (the
+    # fixed windows are unchanged). Env: VINU_RESEARCH_STRESS_DERIVE_REGIME_WINDOWS.
+    stress_test_derive_regime_windows: bool = False
 
     # Researcher Role d — paper-trade rehearsal (04:245). Runs the winning
     # sweep candidate through a trailing historical window bar-by-bar (same
@@ -293,6 +299,9 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         stress_test_max_drawdown_threshold=float(
             os.environ.get("VINU_RESEARCH_STRESS_TEST_MAX_DD", "-0.50")
         ),
+        stress_test_derive_regime_windows=os.environ.get(
+            "VINU_RESEARCH_STRESS_DERIVE_REGIME_WINDOWS", "false"
+        ).lower() in ("1", "true", "yes"),
         paper_rehearsal_enabled=os.environ.get(
             "VINU_RESEARCH_PAPER_REHEARSAL_ENABLED", "true"
         ).lower() in ("1", "true", "yes"),

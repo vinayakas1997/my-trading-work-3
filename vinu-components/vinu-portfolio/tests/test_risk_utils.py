@@ -13,6 +13,7 @@ from vinu_portfolio.risk_utils import (
     cap_concentration,
     fix_nonpositive_semidefinite,
     hrp_weights,
+    rescale_correlated_clusters,
     robust_correlation_matrix,
 )
 
@@ -165,3 +166,44 @@ class TestHRPWeights:
         df["B"] = df["A"]
         w = hrp_weights(df)
         assert w is None or sum(w.values()) == pytest.approx(1.0)
+
+
+class TestRescaleCorrelatedClusters:
+    def _corr(self, groups: dict[str, float]) -> pd.DataFrame:
+        names = list(groups)
+        c = pd.DataFrame(np.eye(len(names)), index=names, columns=names)
+        for a in names:
+            for b in names:
+                if a != b and groups[a] == groups[b]:
+                    c.loc[a, b] = 0.95
+        return c
+
+    def test_noop_when_cap_is_one(self) -> None:
+        w = {"A": 0.5, "B": 0.5}
+        corr = self._corr({"A": 0, "B": 0})
+        assert rescale_correlated_clusters(w, corr, max_cluster_weight=1.0) == w
+
+    def test_over_weight_cluster_is_scaled_down_and_freed_weight_redistributed(self) -> None:
+        w = {"A": 0.25, "B": 0.25, "C": 0.20, "D": 0.15, "E": 0.15}
+        corr = self._corr({"A": 1, "B": 1, "C": 1, "D": 2, "E": 3})  # ABC one cluster
+        out = rescale_correlated_clusters(w, corr, corr_threshold=0.8, max_cluster_weight=0.5)
+        assert out["A"] + out["B"] + out["C"] == pytest.approx(0.5, abs=1e-6)
+        assert out["D"] > w["D"] and out["E"] > w["E"]      # got the freed weight
+        assert sum(out.values()) == pytest.approx(1.0)
+
+    def test_uncorrelated_book_is_untouched(self) -> None:
+        w = {"A": 0.4, "B": 0.3, "C": 0.3}
+        corr = self._corr({"A": 1, "B": 2, "C": 3})  # all independent
+        out = rescale_correlated_clusters(w, corr, max_cluster_weight=0.5)
+        assert out == pytest.approx(w)
+
+    def test_no_uncorrelated_receiver_just_renormalises(self) -> None:
+        # entire book is one cluster -> scale down, then renormalise back to 1
+        w = {"A": 0.34, "B": 0.33, "C": 0.33}
+        corr = self._corr({"A": 1, "B": 1, "C": 1})
+        out = rescale_correlated_clusters(w, corr, max_cluster_weight=0.5)
+        assert sum(out.values()) == pytest.approx(1.0)
+
+    def test_none_corr_or_empty_weights_is_safe(self) -> None:
+        assert rescale_correlated_clusters({}, None, max_cluster_weight=0.5) == {}
+        assert rescale_correlated_clusters({"A": 1.0}, None, max_cluster_weight=0.5) == {"A": 1.0}

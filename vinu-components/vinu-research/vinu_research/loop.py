@@ -644,6 +644,8 @@ class StrategyResearchLoop:
                 indicators=indicators,
                 initial_capital=initial_capital,
                 symbols=backtest_symbols,
+                research_from=from_date,
+                research_to=to_date,
             )
 
         equity_rets = None
@@ -1066,18 +1068,44 @@ class StrategyResearchLoop:
         indicators: list[str] | None = None,
         initial_capital: float | None = None,
         symbols: list[str] | None = None,
+        research_from: str | None = None,
+        research_to: str | None = None,
     ) -> StressTestResult | None:
         """Replay the winning strategy through fixed historical crisis windows.
 
         Unlike walk-forward/holdout, these windows are never used to pick or
         tune the strategy — they're only ever run once, after refinement is
         already done, purely to answer "what does this do in a known shock."
+
+        Stage C (C13): when `stress_test_derive_regime_windows` is on, also
+        replays it through windows *derived from this symbol's own price path*
+        over the researched range (deepest drawdown / sharpest run-up /
+        steepest decline). Additive — the fixed windows above are unchanged.
         """
         if not self._config.stress_test_enabled or not self._config.stress_test_windows:
             return None
 
+        windows = list(self._config.stress_test_windows)
+        if (
+            self._config.stress_test_derive_regime_windows
+            and research_from and research_to
+        ):
+            try:
+                from vinu_research.regime_windows import derive_regime_windows
+
+                rets = await self._tools.get_benchmark_data(symbol, research_from, research_to)
+                if rets is not None and len(rets) >= 20:
+                    path = (1.0 + rets).cumprod()
+                    derived = derive_regime_windows(path)
+                    if derived:
+                        LOG.info("stress test: derived %d regime windows for %s: %s",
+                                 len(derived), symbol, [d[0] for d in derived])
+                    windows = windows + derived
+            except Exception as e:
+                LOG.warning("could not derive regime stress windows for %s: %s", symbol, e)
+
         results: list[StressWindowResult] = []
-        for name, w_from, w_to in self._config.stress_test_windows:
+        for name, w_from, w_to in windows:
             try:
                 bt = await self._run_backtest(
                     strategy_code, symbol, w_from, w_to,

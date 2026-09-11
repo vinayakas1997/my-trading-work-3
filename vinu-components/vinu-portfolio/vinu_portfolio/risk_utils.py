@@ -163,6 +163,85 @@ def _cluster_var(cov: np.ndarray, idx: list[int]) -> float:
     return float(ivp @ sub @ ivp)
 
 
+def rescale_correlated_clusters(
+    weights: dict[str, float],
+    corr: "pd.DataFrame | None",
+    *,
+    corr_threshold: float = 0.8,
+    max_cluster_weight: float = 1.0,
+) -> dict[str, float]:
+    """Stage C (C12): a post-construction rescaling pass over the *whole*
+    target-weight set. The per-strategy cap (`cap_concentration`) and
+    OrderGuard's per-order checks each only reason about one name at a
+    time; a book of five names that all move together is a concentrated
+    bet no single-name check catches. This groups names whose pairwise
+    correlation is >= `corr_threshold` and, if a cluster's combined weight
+    exceeds `max_cluster_weight`, scales that cluster down and redistributes
+    the freed weight to names outside any over-weight cluster.
+
+    `max_cluster_weight >= 1.0` (default) is a no-op. Fail-open: any error
+    returns the weights unchanged.
+    """
+    if not weights or corr is None or max_cluster_weight >= 1.0:
+        return dict(weights)
+    try:
+        names = [n for n in weights if n in corr.columns]
+        if len(names) < 2:
+            return dict(weights)
+
+        # union-find over strongly-correlated pairs
+        parent = {n: n for n in names}
+
+        def find(x: str) -> str:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for i, a in enumerate(names):
+            for b in names[i + 1:]:
+                try:
+                    if abs(float(corr.loc[a, b])) >= corr_threshold:
+                        parent[find(a)] = find(b)
+                except (KeyError, TypeError, ValueError):
+                    continue
+
+        clusters: dict[str, list[str]] = {}
+        for n in names:
+            clusters.setdefault(find(n), []).append(n)
+
+        out = dict(weights)
+        freed = 0.0
+        over = set()
+        for members in clusters.values():
+            total = sum(out.get(m, 0.0) for m in members)
+            if len(members) >= 2 and total > max_cluster_weight and total > 0:
+                scale = max_cluster_weight / total
+                for m in members:
+                    new = out.get(m, 0.0) * scale
+                    freed += out.get(m, 0.0) - new
+                    out[m] = new
+                over.update(members)
+
+        if freed <= 1e-12:
+            return out
+
+        receivers = [n for n in out if n not in over]
+        recv_total = sum(out[n] for n in receivers)
+        if receivers and recv_total > 0:
+            for n in receivers:
+                out[n] += freed * (out[n] / recv_total)
+        # else: nothing uncorrelated to move it to -- renormalise below
+
+        s = sum(out.values())
+        if s > 0:
+            out = {k: v / s for k, v in out.items()}
+        return out
+    except Exception as exc:  # noqa: BLE001 -- fail-open
+        LOG.warning("cluster rescaling failed (%s), leaving weights unchanged", exc)
+        return dict(weights)
+
+
 def cap_concentration(weights: dict[str, float], cap: float, *, max_iter: int = 50) -> dict[str, float]:
     """Stage A (A4 — daily_stock_analysis's concentration-overlay pattern,
     see other-repos-world/comprison-other-vinu/04-daily_stock_analysis.md):

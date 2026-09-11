@@ -15,7 +15,12 @@ from vinu_portfolio.config import PortfolioConfig, load_config
 from vinu_portfolio.game_plan import DailyGamePlan, SymbolPlan
 from vinu_portfolio.regime import classify_current_regime
 from vinu_portfolio.risk_budget import compute_risk_budget, DailyPositionTracker
-from vinu_portfolio.risk_utils import cap_concentration, hrp_weights, robust_correlation_matrix
+from vinu_portfolio.risk_utils import (
+    cap_concentration,
+    hrp_weights,
+    rescale_correlated_clusters,
+    robust_correlation_matrix,
+)
 from vinu_portfolio.shock_correlation import dcc_shock_correlation
 from vinu_portfolio.sizing import apply_position_sizing
 
@@ -367,6 +372,20 @@ class PortfolioService:
         corr_matrix = robust_correlation_matrix(returns_df)
 
         weights = self.allocate_risk_parity(strategies, returns_df)
+
+        # Stage C (C12): post-construction rescaling over the whole target
+        # set -- cap the combined weight of any correlated cluster no
+        # single-name check would catch. Opt-in (max_correlated_cluster_weight
+        # < 1.0); no-op otherwise. Runs on the same hardened corr matrix.
+        if getattr(self._config, "max_correlated_cluster_weight", 1.0) < 1.0 and corr_matrix is not None:
+            wmap = {w["name"]: w["target_weight"] for w in weights}
+            rescaled = rescale_correlated_clusters(
+                wmap, corr_matrix,
+                corr_threshold=getattr(self._config, "cluster_corr_threshold", 0.8),
+                max_cluster_weight=self._config.max_correlated_cluster_weight,
+            )
+            for w in weights:
+                w["target_weight"] = round(rescaled.get(w["name"], w["target_weight"]), 4)
 
         matrix_dict: dict[str, Any] | None = None
         if corr_matrix is not None:

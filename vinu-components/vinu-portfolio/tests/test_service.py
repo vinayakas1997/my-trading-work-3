@@ -81,6 +81,31 @@ class TestAllocateRiskParity:
         assert weights["A"] + weights["B"] > weights["C"] + weights["D"]
         assert sum(weights.values()) == pytest.approx(1.0, abs=1e-3)
 
+    def test_c12_cluster_rescaling_runs_in_build_portfolio(self) -> None:
+        # Stage C (C12): with max_correlated_cluster_weight < 1.0, build_portfolio
+        # caps the combined weight of a correlated cluster post-construction.
+        svc = _service(max_correlated_cluster_weight=0.5, max_per_strategy_weight=1.0)
+        strategies = [{"name": n, "kind": "yaml", "symbol": n} for n in ("A", "B", "C", "D")]
+        n = 260
+        rng = np.random.default_rng(1)
+        base = rng.normal(0, 0.01, n)
+        # A,B,C move together; D independent
+        df = pd.DataFrame(
+            {
+                "A": base + rng.normal(0, 0.001, n),
+                "B": base + rng.normal(0, 0.001, n),
+                "C": base + rng.normal(0, 0.001, n),
+                "D": rng.normal(0, 0.01, n),
+            },
+            index=pd.date_range("2024-01-01", periods=n),
+        )
+        with patch.object(svc, "_build_returns_df", AsyncMock(return_value=df)), \
+             patch.object(svc, "list_active_strategies", AsyncMock(return_value=strategies)):
+            out = asyncio.run(svc.build_portfolio())
+        w = {x["name"]: x["target_weight"] for x in out["weights"]}
+        assert w["A"] + w["B"] + w["C"] <= 0.5 + 1e-3
+        assert sum(w.values()) == pytest.approx(1.0, abs=2e-3)
+
     def test_hrp_mode_falls_back_to_inverse_vol_on_short_history(self) -> None:
         svc = _service(allocation_mode="hrp", max_per_strategy_weight=1.0)
         strategies = [{"name": "steady", "kind": "yaml"}, {"name": "volatile", "kind": "yaml"}]
