@@ -53,6 +53,66 @@ async def broker_status(scope: str | None = None) -> dict[str, Any]:
     return {"halted": is_trading_halted(scope=scope), "scope": scope}
 
 
+class SymbolOverrideRequest(BaseModel):
+    state: str  # "untradeable" | "reduce_only" | "ignored"
+    reason: str = ""
+    set_by: str = ""
+
+
+@router.get("/broker/overrides")
+async def broker_list_overrides() -> dict[str, Any]:
+    from ..broker.symbol_overrides import get_override_store
+
+    return {"overrides": [r.to_dict() for r in get_override_store().all()]}
+
+
+@router.put("/broker/overrides/{symbol}")
+async def broker_set_override(symbol: str, body: SymbolOverrideRequest) -> dict[str, Any]:
+    from fastapi import HTTPException
+
+    from ..broker.guard_codes import OverrideState
+    from ..broker.symbol_overrides import InvalidOverrideTransition, get_override_store
+
+    try:
+        state = OverrideState(body.state)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"unknown override state {body.state!r}")
+    try:
+        rec = get_override_store().set(symbol, state, reason=body.reason, set_by=body.set_by)
+    except InvalidOverrideTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "ok", "override": rec.to_dict()}
+
+
+@router.delete("/broker/overrides/{symbol}")
+async def broker_clear_override(symbol: str) -> dict[str, Any]:
+    from ..broker.symbol_overrides import get_override_store
+
+    cleared = get_override_store().clear(symbol)
+    return {"status": "ok", "cleared": cleared, "symbol": symbol.upper()}
+
+
+@router.get("/broker/safety-ledger")
+async def broker_safety_ledger(limit: int = 100) -> dict[str, Any]:
+    """A37: the tamper-evident halt/resume record + a chain-integrity check.
+    `verified.ok` is False (with `broken_at`) if any past entry was altered,
+    reordered, or deleted."""
+    from ..broker.audit_ledger import get_safety_ledger
+
+    ledger = get_safety_ledger()
+    verification = ledger.verify()
+    entries = ledger.entries()
+    return {
+        "verified": {
+            "ok": verification.ok,
+            "entries": verification.entries,
+            "broken_at": verification.broken_at,
+            "reason": verification.reason,
+        },
+        "entries": entries[-limit:] if limit and limit > 0 else entries,
+    }
+
+
 @router.get("/broker/account")
 async def broker_account() -> dict[str, Any]:
     """Current account equity — the one place other services (e.g. vinu-portfolio's

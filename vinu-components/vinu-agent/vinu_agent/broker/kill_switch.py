@@ -71,6 +71,17 @@ def kill_switch_lock() -> Iterator[None]:
         f.close()
 
 
+def _ledger_append(event_type: str, payload: dict) -> None:
+    """A37: mirror every halt/resume into the tamper-evident safety ledger.
+    Best-effort -- a ledger hiccup must never block the halt itself."""
+    try:
+        from .audit_ledger import get_safety_ledger
+
+        get_safety_ledger().append(event_type, payload)
+    except Exception:
+        logger.exception("failed to record %s in the safety ledger", event_type)
+
+
 def halt_trading(scope: str | None = None) -> None:
     """Halt trading globally or for a specific scope (strategy name or symbol)."""
     with kill_switch_lock():
@@ -81,6 +92,7 @@ def halt_trading(scope: str | None = None) -> None:
             KILL_SWITCH_DIR.mkdir(parents=True, exist_ok=True)
             (KILL_SWITCH_DIR / f"{scope}.halt").touch(exist_ok=True)
             logger.warning("TRADING HALTED for %s via %s/%s.halt", scope, KILL_SWITCH_DIR, scope)
+        _ledger_append("halt", {"scope": scope or "global"})
 
 
 def resume_trading(scope: str | None = None) -> None:
@@ -95,6 +107,7 @@ def resume_trading(scope: str | None = None) -> None:
             if path.exists():
                 path.unlink()
                 logger.info("Trading resumed for %s — %s removed", scope, path)
+        _ledger_append("resume", {"scope": scope or "global"})
 
 
 def is_trading_halted(scope: str | None = None) -> bool:

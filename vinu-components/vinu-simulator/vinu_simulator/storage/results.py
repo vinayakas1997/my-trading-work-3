@@ -26,6 +26,7 @@ TRADE_SCHEMA = pa.schema([
     pa.field("cost", pa.float64()),
     pa.field("weight_before", pa.float64()),
     pa.field("weight_after", pa.float64()),
+    pa.field("volume_capped", pa.bool_()),
 ])
 
 
@@ -70,6 +71,7 @@ class ResultStorage:
                     "cost": t.cost,
                     "weight_before": t.weight_before,
                     "weight_after": t.weight_after,
+                    "volume_capped": bool(getattr(t, "volume_capped", False)),
                 }
                 for t in result.trades
             ]
@@ -110,6 +112,7 @@ class ResultStorage:
                 cost=row.cost,
                 weight_before=row.weight_before,
                 weight_after=row.weight_after,
+                volume_capped=bool(getattr(row, "volume_capped", False)),
             )
             for row in df.itertuples()
         ]

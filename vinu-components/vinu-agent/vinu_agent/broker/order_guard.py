@@ -13,10 +13,18 @@ import requests
 from .base import Broker
 from .daily_limits import DEFAULT_DAILY_LIMIT_DB_PATH, DailyLimitStore
 from .factory import get_live_broker
+from .guard_codes import GuardOutcome, ReasonCode
 from .kill_switch import is_trading_halted
 from .mandate import TradingMandate
 
 logger = logging.getLogger(__name__)
+
+# C17: an order whose value / position size lands in the top
+# (1 - fraction) band below a hard mandate limit is held for explicit human
+# confirmation rather than allowed straight through. 1.0 (default) disables
+# the band -- nothing is "near" a limit -- so this is opt-in, same posture
+# as every other new numeric knob in this file.
+REAUTH_BAND_FRACTION = float(os.environ.get("VINU_AGENT_GUARD_REAUTH_FRACTION", "1.0"))
 
 
 def _halt_policy_allows_reduce_only() -> bool:
@@ -32,9 +40,32 @@ def _halt_policy_allows_reduce_only() -> bool:
 class GuardResult:
     allowed: bool
     reason: str = ""
+    # C9/C17: a stable machine code for the decision cause, and a
+    # three-valued outcome. Both are optional and default consistently with
+    # `allowed`, so every existing `GuardResult(True)` / `GuardResult(False,
+    # "...")` call site keeps working unchanged.
+    code: ReasonCode | None = None
+    outcome: GuardOutcome | None = None
+
+    def __post_init__(self) -> None:
+        if self.outcome is None:
+            self.outcome = GuardOutcome.ALLOW if self.allowed else GuardOutcome.REJECT
+        if self.code is None:
+            self.code = ReasonCode.OK if self.allowed else None
 
     def __bool__(self) -> bool:
         return self.allowed
+
+    @property
+    def needs_reauth(self) -> bool:
+        """True when the order isn't a flat reject but must be held for an
+        explicit human confirmation (C17). `allowed` is False for these, so
+        a caller that only checks the bool still fails safe."""
+        return self.outcome == GuardOutcome.PAUSE_FOR_REAUTH
+
+
+def _reauth(reason: str, code: ReasonCode) -> GuardResult:
+    return GuardResult(False, reason, code=code, outcome=GuardOutcome.PAUSE_FOR_REAUTH)
 
 
 class OrderGuard:
@@ -44,9 +75,16 @@ class OrderGuard:
         broker: Broker | None = None,
         portfolio_api_url: str | None = None,
         daily_limit_store: DailyLimitStore | None = None,
+        override_store=None,
     ) -> None:
         self._mandate = mandate or TradingMandate.load()
         self._broker = broker or get_live_broker()
+        # C4: per-symbol operator overrides (untradeable / reduce_only /
+        # ignored). Consulted before any mandate check. Lazy import + lazy
+        # singleton so constructing an OrderGuard never touches disk for a
+        # feature nobody has used.
+        self._override_store = override_store
+        self._override_store_explicit = override_store is not None
         # No research_api_url anymore -- the active-artifact check reads
         # vinu-research's strategy_store.db directly, in-process (see
         # _check_active_artifact / .research_link).
@@ -123,7 +161,7 @@ class OrderGuard:
                     symbol, side, qty,
                 )
             else:
-                return GuardResult(False, "Trading is halted by kill switch")
+                return GuardResult(False, "Trading is halted by kill switch", code=ReasonCode.KILL_SWITCH_HALT)
 
         # B20 — message throttle (10 orders/sec per instance)
         now = time.monotonic()
@@ -144,25 +182,59 @@ class OrderGuard:
                 False,
                 f"Order throttle: {self._throttle_limit_per_sec} orders / "
                 f"{self._throttle_window_sec:g}s limit exceeded",
+                code=ReasonCode.ORDER_THROTTLE,
             )
         self._throttle_window.append(now)
+
+        # C4: per-symbol operator override, ahead of any mandate check.
+        override_result = self._check_symbol_override(symbol, reduce_only)
+        if not override_result:
+            return override_result
 
         mandate = self._mandate
 
         if symbol in mandate.blocked_tickers:
-            return GuardResult(False, f"{symbol} is in the blocked tickers list")
+            return GuardResult(False, f"{symbol} is in the blocked tickers list", code=ReasonCode.BLOCKED_TICKER)
 
         if "*" not in mandate.allowed_tickers and symbol not in mandate.allowed_tickers:
-            return GuardResult(False, f"{symbol} is not in the allowed tickers list")
+            return GuardResult(False, f"{symbol} is not in the allowed tickers list", code=ReasonCode.TICKER_NOT_ALLOWED)
 
         if side == "sell" and not mandate.allow_short:
-            return GuardResult(False, "Short selling is not permitted by mandate")
+            return GuardResult(False, "Short selling is not permitted by mandate", code=ReasonCode.SHORT_NOT_PERMITTED)
 
-        value = estimated_value or (qty * (price or 0.0))
+        # Stage A (A36, Vibe-Trading `order_guard.py`): take the LARGER of the
+        # caller's explicit notional and qty*price, never just whichever was
+        # passed -- an under-stated `estimated_value` must not be able to slip
+        # a too-big order past the cap. And fail CLOSED when neither yields a
+        # usable number: a blind `estimated_value or qty*(price or 0)` used to
+        # collapse to 0.0 for an unpriceable order, which then trivially
+        # cleared `value > max_order_value`. reduce_only is exempt -- a
+        # risk-reducing order should still go through even if we can't price
+        # it, same posture as the kill-switch / risk-budget exemptions below.
+        value = max(estimated_value or 0.0, qty * (price or 0.0))
+        if value <= 0.0 and not reduce_only:
+            return GuardResult(
+                False,
+                "Cannot determine order value — no usable price or estimated_value. "
+                "Supply a limit price (or estimated_value) so the notional cap can be enforced.",
+                code=ReasonCode.ORDER_VALUE_UNKNOWN,
+            )
         if value > mandate.max_order_value:
             return GuardResult(
                 False,
                 f"Order value {value:.2f} exceeds max_order_value {mandate.max_order_value:.2f}",
+                code=ReasonCode.MAX_ORDER_VALUE,
+            )
+        # C17: within the top band below the hard cap -> hold for confirmation.
+        if (
+            not reduce_only
+            and REAUTH_BAND_FRACTION < 1.0
+            and value > mandate.max_order_value * REAUTH_BAND_FRACTION
+        ):
+            return _reauth(
+                f"Order value {value:.2f} is within {(1 - REAUTH_BAND_FRACTION):.0%} of the hard "
+                f"max_order_value {mandate.max_order_value:.2f} — confirm to proceed",
+                ReasonCode.NEAR_MAX_ORDER_VALUE,
             )
 
         daily_count = self._count_daily_orders(symbol)
@@ -170,6 +242,7 @@ class OrderGuard:
             return GuardResult(
                 False,
                 f"Daily order limit ({mandate.max_daily_orders}) reached for {symbol}",
+                code=ReasonCode.MAX_DAILY_ORDERS,
             )
 
         # Stage 2 (how-to-make-it-live.md #8): max_daily_orders above is
@@ -185,18 +258,33 @@ class OrderGuard:
                     False,
                     f"Portfolio-wide daily order limit ({mandate.max_daily_orders_portfolio}) "
                     f"reached across all symbols",
+                    code=ReasonCode.MAX_DAILY_ORDERS_PORTFOLIO,
                 )
 
         if mandate.max_position_pct < 1.0:
             try:
                 account = self._broker.get_account()
                 equity = float(account.equity)
-                if equity > 0 and (value / equity) > mandate.max_position_pct:
-                    return GuardResult(
-                        False,
-                        f"Position {value:.2f} would be {(value / equity):.1%} of equity "
-                        f"({equity:.2f}), exceeding max_position_pct {mandate.max_position_pct:.0%}",
-                    )
+                if equity > 0:
+                    frac = value / equity
+                    if frac > mandate.max_position_pct:
+                        return GuardResult(
+                            False,
+                            f"Position {value:.2f} would be {frac:.1%} of equity "
+                            f"({equity:.2f}), exceeding max_position_pct {mandate.max_position_pct:.0%}",
+                            code=ReasonCode.MAX_POSITION_PCT,
+                        )
+                    if (
+                        not reduce_only
+                        and REAUTH_BAND_FRACTION < 1.0
+                        and frac > mandate.max_position_pct * REAUTH_BAND_FRACTION
+                    ):
+                        return _reauth(
+                            f"Position would be {frac:.1%} of equity — within "
+                            f"{(1 - REAUTH_BAND_FRACTION):.0%} of the hard max_position_pct "
+                            f"{mandate.max_position_pct:.0%} — confirm to proceed",
+                            ReasonCode.NEAR_MAX_POSITION_PCT,
+                        )
             except Exception as e:
                 logger.warning("Could not check max_position_pct: %s", e)
 
@@ -215,6 +303,7 @@ class OrderGuard:
                             f"This order would bring total deployed capital to "
                             f"{projected_utilization:.1%} of equity ({equity:.2f}), exceeding "
                             f"max_capital_utilization_pct {mandate.max_capital_utilization_pct:.0%}",
+                            code=ReasonCode.MAX_CAPITAL_UTILIZATION,
                         )
             except Exception as e:
                 logger.warning("Could not check max_capital_utilization_pct: %s", e)
@@ -246,8 +335,61 @@ class OrderGuard:
                     False,
                     f"Daily trade volume {daily_total + value:.2f} would exceed "
                     f"max_daily_trade_volume {mandate.max_daily_trade_volume:.2f}",
+                    code=ReasonCode.MAX_DAILY_TRADE_VOLUME,
                 )
 
+        return GuardResult(True)
+
+    def _get_override_store(self):
+        if self._override_store is None and not self._override_store_explicit:
+            try:
+                from .symbol_overrides import get_override_store
+
+                self._override_store = get_override_store()
+            except Exception as e:  # noqa: BLE001 -- overrides are optional
+                logger.warning("Could not load the symbol-override store: %s", e)
+                self._override_store_explicit = True  # don't retry every call
+        return self._override_store
+
+    def _check_symbol_override(self, symbol: str, reduce_only: bool) -> GuardResult:
+        """C4: honour a per-symbol operator override. Fails OPEN (allows the
+        order) if the store can't be read -- an override store hiccup must
+        not halt all trading; the mandate + kill switch are still in force."""
+        try:
+            store = self._get_override_store()
+            if store is None:
+                return GuardResult(True)
+            rec = store.get(symbol)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Could not check symbol override for %s: %s", symbol, e)
+            return GuardResult(True)
+
+        if rec is None:
+            return GuardResult(True)
+
+        from .guard_codes import OverrideState
+
+        note = f" (set by {rec.set_by})" if rec.set_by else ""
+        if rec.state is OverrideState.IGNORED:
+            return GuardResult(
+                False,
+                f"{symbol} is IGNORED by operator override{note}: {rec.reason or 'no reason given'}",
+                code=ReasonCode.OVERRIDE_UNTRADEABLE,
+            )
+        if rec.state is OverrideState.UNTRADEABLE:
+            return GuardResult(
+                False,
+                f"{symbol} is marked UNTRADEABLE by operator override{note}: "
+                f"{rec.reason or 'no reason given'}",
+                code=ReasonCode.OVERRIDE_UNTRADEABLE,
+            )
+        if rec.state is OverrideState.REDUCE_ONLY and not reduce_only:
+            return GuardResult(
+                False,
+                f"{symbol} is REDUCE-ONLY by operator override{note}: "
+                f"{rec.reason or 'no reason given'} — only risk-reducing orders are allowed",
+                code=ReasonCode.OVERRIDE_REDUCE_ONLY,
+            )
         return GuardResult(True)
 
     def _check_active_artifact(self, symbol: str) -> GuardResult:
@@ -280,6 +422,7 @@ class OrderGuard:
             f"{symbol} has no ACTIVE strategy artifact — it has not cleared the "
             f"research promotion gate (deflated Sharpe / holdout / stress test). "
             f"Set require_active_artifact: false in the mandate to override.",
+            code=ReasonCode.NO_ACTIVE_ARTIFACT,
         )
 
     def _check_market_open(self) -> GuardResult:
@@ -299,6 +442,7 @@ class OrderGuard:
                 False,
                 f"Market is closed (next open: {clock.get('next_open', 'unknown')}). "
                 f"Set require_market_open: false in the mandate to allow orders that queue for open.",
+                code=ReasonCode.MARKET_CLOSED,
             )
         return GuardResult(True)
 
@@ -342,6 +486,7 @@ class OrderGuard:
                     f"target weight, exceeding max_symbol_concentration_pct "
                     f"{mandate.max_symbol_concentration_pct:.0%} — vinu-portfolio and execution "
                     f"may have drifted out of sync.",
+                    code=ReasonCode.SYMBOL_CONCENTRATION,
                 )
 
         if mandate.max_pairwise_correlation < 1.0:
@@ -375,6 +520,7 @@ class OrderGuard:
                                 f"{symbol} has {corr:.2f} correlation with {other_symbol}, which "
                                 f"already has portfolio weight — exceeds max_pairwise_correlation "
                                 f"{mandate.max_pairwise_correlation:.2f}",
+                                code=ReasonCode.PAIRWISE_CORRELATION,
                             )
 
         return GuardResult(True)
@@ -417,6 +563,7 @@ class OrderGuard:
                     f"{s.get('daily_pnl_pct', 0):.2f}% of equity) — new/increasing "
                     f"orders blocked until the next trading day; risk-reducing "
                     f"orders are still allowed.",
+                    code=ReasonCode.RISK_BUDGET_HALT,
                 )
             break
 

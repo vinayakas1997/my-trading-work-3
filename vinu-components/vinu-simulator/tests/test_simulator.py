@@ -257,3 +257,101 @@ class TestSimulatorEnv:
         metrics = env.metrics()
         for key in ["total_return", "cagr", "sharpe_ratio", "max_drawdown"]:
             assert key in metrics
+
+
+class TestExecutionRealism:
+    """Stage A (A28/A30): volume-cap visibility + broker-reject probability."""
+
+    def _daily(self, n: int = 12):
+        dates = pd.date_range("2023-01-02", periods=n, freq="D")
+        prices = pd.DataFrame(
+            {"X": np.linspace(100.0, 110.0, n), "Y": np.linspace(50.0, 55.0, n)},
+            index=dates,
+        )
+        # one rebalance signal on day 0, forward-filled
+        weights = pd.DataFrame({"X": [0.5], "Y": [0.5]}, index=[dates[0]])
+        return dates, prices, weights
+
+    def _config(self, **kw) -> SimulationConfig:
+        base = dict(
+            strategy_name="exec_realism",
+            start_date="2023-01-02",
+            end_date="2023-01-31",
+            initial_capital=1_000_000.0,
+            transaction_cost_pct=0.0,
+            slippage_pct=0.0,
+            slippage_model="flat",
+            allow_short=False,
+            deviation_threshold=0.0,
+        )
+        base.update(kw)
+        return SimulationConfig(**base)
+
+    def test_volume_cap_is_flagged_on_the_trade_and_counted(self):
+        dates, prices, weights = self._daily()
+        # Y has almost no volume -> its buy gets clipped hard; X has plenty.
+        volume = pd.DataFrame({"X": [1e9] * len(dates), "Y": [1.0] * len(dates)}, index=dates)
+        config = self._config(max_pct_of_volume=0.1)
+        inp = SimulationInput("exec_realism", weights, prices, config, volume_data=volume)
+        result = WeightSimulator(config).run(inp)
+
+        capped = [t for t in result.trades if t.volume_capped]
+        assert capped, "expected at least one volume-capped fill"
+        assert all(t.symbol == "Y" for t in capped)
+        assert result.metrics["volume_capped_fills"] == float(len(capped))
+
+    def test_no_volume_cap_when_limit_is_one(self):
+        dates, prices, weights = self._daily()
+        volume = pd.DataFrame({"X": [1.0], "Y": [1.0]}, index=[dates[0]]).reindex(dates).ffill()
+        config = self._config(max_pct_of_volume=1.0)
+        inp = SimulationInput("exec_realism", weights, prices, config, volume_data=volume)
+        result = WeightSimulator(config).run(inp)
+        assert result.metrics["volume_capped_fills"] == 0.0
+        assert all(not t.volume_capped for t in result.trades)
+
+    def test_reject_prob_one_drops_every_fill(self):
+        dates, prices, weights = self._daily()
+        config = self._config(execution_reject_prob=1.0)
+        inp = SimulationInput("exec_realism", weights, prices, config)
+        result = WeightSimulator(config).run(inp)
+        assert result.trades == []
+        assert result.metrics["rejected_fills"] > 0.0
+
+    def test_reject_prob_zero_is_unchanged_and_deterministic(self):
+        dates, prices, weights = self._daily()
+        a = WeightSimulator(self._config()).run(
+            SimulationInput("exec_realism", weights, prices, self._config())
+        )
+        b = WeightSimulator(self._config()).run(
+            SimulationInput("exec_realism", weights, prices, self._config())
+        )
+        assert a.metrics["rejected_fills"] == 0.0
+        assert len(a.trades) == len(b.trades)
+        assert a.metrics["total_return"] == b.metrics["total_return"]
+
+    def test_same_seed_reproduces_partial_rejects(self):
+        n = 40
+        dates = pd.date_range("2023-01-02", periods=n, freq="D")
+        rng = np.random.default_rng(3)
+        # volatile prices so the portfolio drifts off target every bar and each
+        # rebalance actually trades -> many reject opportunities for a 50% rate
+        px = 100.0 * np.cumprod(1 + rng.normal(0, 0.03, n))
+        py = 50.0 * np.cumprod(1 + rng.normal(0, 0.03, n))
+        prices = pd.DataFrame({"X": px, "Y": py}, index=dates)
+        wk = pd.date_range(dates[0], dates[-1], freq="2D")
+        weights = pd.DataFrame({"X": [0.5] * len(wk), "Y": [0.5] * len(wk)}, index=wk)
+
+        def run(seed: int):
+            cfg = self._config(execution_reject_prob=0.5, random_seed=seed,
+                               deviation_threshold=0.001)
+            return WeightSimulator(cfg).run(SimulationInput("exec_realism", weights, prices, cfg))
+
+        r1, r1b, r2 = run(1), run(1), run(2)
+        # same seed -> byte-identical outcome
+        assert r1.metrics["rejected_fills"] == r1b.metrics["rejected_fills"]
+        assert r1.metrics["total_return"] == r1b.metrics["total_return"]
+        # a 50% reject rate over many bars does drop fills
+        assert r1.metrics["rejected_fills"] > 0.0
+        # different seed -> a different reject pattern -> a different equity path
+        # (the reject counts can collide; the realized return won't)
+        assert r2.metrics["total_return"] != r1.metrics["total_return"]

@@ -267,20 +267,37 @@ def bootstrap_new_tickers(service: Any, seed_tickers: list[str]) -> list[str]:
     return bootstrapped
 
 
-def build_channel_targets(config: Any) -> list[ChannelTarget]:
+def build_channel_targets(config: Any, *, urgent: bool = False) -> list[ChannelTarget]:
     """Each channel is independently gated on its own token+id being set
     -- Telegram and Discord can be turned on one at a time, and a future
     channel (e.g. WhatsApp) is one more independently-gated append here,
     never a redesign. An unconfigured channel is silently omitted, not an
     error -- same "skip, don't guess" fail-closed direction as every other
-    cost-only gate in this build."""
+    cost-only gate in this build.
+
+    Stage A (A34): with ``urgent=True``, a high-severity notification
+    (kill-switch, system error) is routed to ``*_urgent_*`` chat/channel
+    ids when those are configured, so it doesn't land in the same feed as
+    routine flags. When they're not configured it falls back to the normal
+    admin id -- so ``urgent=True`` is a no-op unless an operator set up the
+    separate destination."""
+    def _tg_id() -> str:
+        if urgent and getattr(config, "telegram_urgent_chat_id", ""):
+            return config.telegram_urgent_chat_id
+        return config.telegram_admin_chat_id
+
+    def _dc_id() -> str:
+        if urgent and getattr(config, "discord_urgent_channel_id", ""):
+            return config.discord_urgent_channel_id
+        return config.discord_admin_channel_id
+
     targets: list[ChannelTarget] = []
-    if config.telegram_token and config.telegram_admin_chat_id:
-        targets.append(ChannelTarget(HttpTelegramChannel(config.telegram_token), config.telegram_admin_chat_id))
+    if config.telegram_token and _tg_id():
+        targets.append(ChannelTarget(HttpTelegramChannel(config.telegram_token), _tg_id()))
     else:
         LOG.info("Telegram not configured (TELEGRAM_TOKEN / VINU_AGENT_TELEGRAM_ADMIN_CHAT_ID), skipping")
-    if config.discord_token and config.discord_admin_channel_id:
-        targets.append(ChannelTarget(HttpDiscordChannel(config.discord_token), config.discord_admin_channel_id))
+    if config.discord_token and _dc_id():
+        targets.append(ChannelTarget(HttpDiscordChannel(config.discord_token), _dc_id()))
     else:
         LOG.info("Discord not configured (DISCORD_TOKEN / VINU_AGENT_DISCORD_ADMIN_CHANNEL_ID), skipping")
     return targets

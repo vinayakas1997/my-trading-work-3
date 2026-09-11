@@ -10,6 +10,17 @@ from vinu_agent.config import AgentConfig
 from vinu_agent.server.routes_notify import router
 
 
+@pytest.fixture(autouse=True)
+def _fresh_noise_gate():
+    # A33: the noise gate is a process-global singleton; give every test a
+    # clean one so reservations / dedup state don't leak between tests.
+    from vinu_agent.agent.notification_noise import NoiseConfig, NotificationNoiseGate, reset_noise_gate
+
+    reset_noise_gate(NotificationNoiseGate(NoiseConfig()))
+    yield
+    reset_noise_gate(None)
+
+
 @pytest.fixture
 def client():
     app = FastAPI()
@@ -76,3 +87,36 @@ def test_never_raises_back_to_caller_on_total_delivery_failure(client) -> None:
 
     assert resp.status_code == 200
     assert resp.json()["delivered"] == 0
+
+
+def test_repeat_notice_for_same_plan_is_suppressed_by_dedup_window(client) -> None:
+    # A33: a plan that keeps failing the gate shouldn't re-notify every worker cycle.
+    from vinu_agent.agent.notification_noise import NoiseConfig, NotificationNoiseGate, reset_noise_gate
+
+    reset_noise_gate(NotificationNoiseGate(NoiseConfig(dedup_window_sec=3600.0)))
+    config = AgentConfig(telegram_token="tok", telegram_admin_chat_id="chat1")
+    with patch("vinu_agent.server.routes_notify.load_config", return_value=config):
+        with patch("vinu_agent.agent.notify_channels.HttpTelegramChannel.send_message", new_callable=AsyncMock) as tg_send:
+            first = client.post("/notify/trade-plan-pending", json=_body(artifact_id="tp-dedup"))
+            second = client.post("/notify/trade-plan-pending", json=_body(artifact_id="tp-dedup"))
+
+    assert first.json()["status"] == "ok"
+    assert first.json()["delivered"] == 1
+    assert second.json()["status"] == "suppressed"
+    assert second.json()["delivered"] == 0
+    tg_send.assert_awaited_once()  # only the first call actually sent
+
+
+def test_distinct_plans_do_not_suppress_each_other(client) -> None:
+    from vinu_agent.agent.notification_noise import NoiseConfig, NotificationNoiseGate, reset_noise_gate
+
+    reset_noise_gate(NotificationNoiseGate(NoiseConfig(dedup_window_sec=3600.0)))
+    config = AgentConfig(telegram_token="tok", telegram_admin_chat_id="chat1")
+    with patch("vinu_agent.server.routes_notify.load_config", return_value=config):
+        with patch("vinu_agent.agent.notify_channels.HttpTelegramChannel.send_message", new_callable=AsyncMock) as tg_send:
+            a = client.post("/notify/trade-plan-pending", json=_body(artifact_id="tp-a"))
+            b = client.post("/notify/trade-plan-pending", json=_body(artifact_id="tp-b"))
+
+    assert a.json()["delivered"] == 1
+    assert b.json()["delivered"] == 1
+    assert tg_send.await_count == 2

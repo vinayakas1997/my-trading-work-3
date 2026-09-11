@@ -43,7 +43,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 
 
 @dataclass(frozen=True)
@@ -67,6 +67,14 @@ class RuntimeSettings:
         self._lock = threading.Lock()
         self._knobs: dict[str, _Knob] = {}
         self._overrides: dict[str, Any] = {}
+        # Stage A (A32): monotonic counter, bumped on every effective set()/
+        # reset(). An admin client can read it (snapshot / the router's GET),
+        # then pass it back as `expected_version` on a PATCH to get a 409
+        # instead of silently clobbering a change another operator made in
+        # between. In-memory only, like the overrides themselves -- there's
+        # no file to write atomically here (that half of daily_stock_analysis's
+        # pattern doesn't apply to a process-local registry).
+        self._version = 0
 
     def register(
         self,
@@ -102,7 +110,10 @@ class RuntimeSettings:
                 raise ValueError(f"{name} must be >= {knob.minimum} (got {cast})")
             if knob.maximum is not None and cast > knob.maximum:
                 raise ValueError(f"{name} must be <= {knob.maximum} (got {cast})")
+            changed = self._overrides.get(name, knob.default) != cast
             self._overrides[name] = cast
+            if changed:
+                self._version += 1
             return cast
 
     def reset(self, name: str) -> Any:
@@ -110,8 +121,24 @@ class RuntimeSettings:
         with self._lock:
             if name not in self._knobs:
                 raise KeyError(f"Unknown setting: {name!r}")
-            self._overrides.pop(name, None)
+            if self._overrides.pop(name, None) is not None:
+                self._version += 1
             return self._knobs[name].default
+
+    @property
+    def version(self) -> int:
+        with self._lock:
+            return self._version
+
+    def check_version(self, expected: int) -> None:
+        """Raise ValueError if `expected` doesn't match the current version --
+        the optimistic-concurrency guard for a multi-operator admin API."""
+        with self._lock:
+            if expected != self._version:
+                raise ValueError(
+                    f"version mismatch: expected {expected}, current {self._version} "
+                    f"-- settings changed since you last read them"
+                )
 
     def overrides(self) -> dict[str, Any]:
         """Only the knobs an admin call has actually changed -- for a
@@ -173,12 +200,30 @@ def build_admin_settings_router(
 
     @router.get("")
     async def list_settings() -> dict[str, Any]:
-        return settings.snapshot()
+        # A32: `version` is the token a client echoes back as `If-Match` on a
+        # PATCH to get optimistic-concurrency protection. `settings` keeps the
+        # per-knob shape callers already expect.
+        return {"version": settings.version, "settings": settings.snapshot()}
+
+    def _require_match(if_match: str | None) -> None:
+        if if_match is None or if_match == "*":
+            return
+        try:
+            expected = int(if_match.strip().strip('"'))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"If-Match must be an integer version, got {if_match!r}")
+        try:
+            settings.check_version(expected)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.patch("")
-    async def update_settings(body: dict[str, Any]) -> dict[str, Any]:
+    async def update_settings(
+        body: dict[str, Any], if_match: str | None = Header(default=None),
+    ) -> dict[str, Any]:
         if not body:
             raise HTTPException(status_code=422, detail="No settings given")
+        _require_match(if_match)
         updated: dict[str, Any] = {}
         errors: dict[str, str] = {}
         for name, value in body.items():
@@ -191,18 +236,19 @@ def build_admin_settings_router(
         if errors and not updated:
             raise HTTPException(status_code=422, detail=errors)
         _emit("set", updated)
-        result: dict[str, Any] = {"updated": updated}
+        result: dict[str, Any] = {"updated": updated, "version": settings.version}
         if errors:
             result["errors"] = errors
         return result
 
     @router.post("/{name}/reset")
-    async def reset_setting(name: str) -> dict[str, Any]:
+    async def reset_setting(name: str, if_match: str | None = Header(default=None)) -> dict[str, Any]:
+        _require_match(if_match)
         try:
             value = settings.reset(name)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         _emit("reset", {name: value})
-        return {"name": name, "value": value}
+        return {"name": name, "value": value, "version": settings.version}
 
     return router

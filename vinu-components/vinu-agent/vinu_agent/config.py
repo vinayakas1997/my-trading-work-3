@@ -84,6 +84,12 @@ class AgentConfig:
     telegram_admin_chat_id: str = ""
     discord_token: str = ""
     discord_admin_channel_id: str = ""
+    # Stage A (A34): optional separate destination for high-severity
+    # notifications (kill-switch, system errors) so they don't sit in the
+    # same feed as routine flags. Empty -> high-severity goes to the normal
+    # admin chat/channel, i.e. no behaviour change unless configured.
+    telegram_urgent_chat_id: str = ""
+    discord_urgent_channel_id: str = ""
     significance_worker_interval_sec: int = 900
     # G1 (ats-status-and-next-steps.md:92): risk_gatekeeper had no worker --
     # a real research PASS parked at BENCHING forever because nothing ever
@@ -235,8 +241,10 @@ def load_config() -> AgentConfig:
         summary_parallelism=int(os.environ.get("VINU_AGENT_SUMMARY_PARALLELISM", "3")),
         telegram_token=load_secret("telegram_token", "TELEGRAM_TOKEN") or "",
         telegram_admin_chat_id=os.environ.get("VINU_AGENT_TELEGRAM_ADMIN_CHAT_ID", ""),
+        telegram_urgent_chat_id=os.environ.get("VINU_AGENT_TELEGRAM_URGENT_CHAT_ID", ""),
         discord_token=load_secret("discord_token", "DISCORD_TOKEN") or "",
         discord_admin_channel_id=os.environ.get("VINU_AGENT_DISCORD_ADMIN_CHANNEL_ID", ""),
+        discord_urgent_channel_id=os.environ.get("VINU_AGENT_DISCORD_URGENT_CHANNEL_ID", ""),
         significance_worker_interval_sec=int(os.environ.get("VINU_AGENT_SIGNIFICANCE_INTERVAL", "900")),
         risk_gatekeeper_worker_interval_sec=int(os.environ.get("VINU_AGENT_RISK_GATEKEEPER_INTERVAL", "900")),
         capital_allocator_worker_interval_sec=int(os.environ.get("VINU_AGENT_CAPITAL_ALLOCATOR_INTERVAL", "900")),

@@ -20,6 +20,18 @@ from vinu_agent.broker.kill_switch import (
 
 
 @pytest.fixture(autouse=True)
+def _isolated_safety_ledger(tmp_path):
+    # A37: halt_trading()/resume_trading() now also append to the safety
+    # ledger -- point it at a tmp file so these tests don't write to the
+    # real ~/.vinu/safety_ledger.jsonl.
+    from vinu_agent.broker.audit_ledger import HashChainedLedger, reset_safety_ledger
+
+    reset_safety_ledger(HashChainedLedger(tmp_path / "safety_ledger.jsonl"))
+    yield
+    reset_safety_ledger(None)
+
+
+@pytest.fixture(autouse=True)
 def _clean_kill_switch_state():
     resume_trading()
     resume_trading(scope="TESTSYM")

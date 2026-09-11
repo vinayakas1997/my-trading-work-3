@@ -12,6 +12,18 @@ from vinu_research.models import Artifact, ArtifactStatus
 from vinu_research.storage.strategy_store import SqliteStrategyStore
 
 
+@pytest.fixture(autouse=True)
+def _isolated_override_store():
+    # C4: OrderGuard.check() now consults the per-symbol override store
+    # (lazy singleton at ~/.vinu). Point it at an in-memory DB so these
+    # tests neither touch the real file nor leak state between tests.
+    from vinu_agent.broker.symbol_overrides import SymbolOverrideStore, reset_override_store
+
+    reset_override_store(SymbolOverrideStore(":memory:"))
+    yield
+    reset_override_store(None)
+
+
 def _account(equity: float = 100_000.0, cash: float = 100_000.0) -> Account:
     return Account(
         account_id="test",
@@ -111,6 +123,162 @@ class TestOrderThrottle:
             with caplog.at_level("WARNING", logger="vinu_agent.broker.order_guard"):
                 guard.check("AAPL", "buy", qty=1, price=10.0)
         assert any("throttle tripped" in r.message.lower() for r in caplog.records)
+
+
+class TestOrderValueDetermination:
+    """Stage A (A36): notional cap uses max(estimated_value, qty*price) and
+    fails closed when neither yields a usable number (Vibe-Trading)."""
+
+    def test_takes_the_larger_of_estimated_value_and_qty_price(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, max_order_value=5_000.0)
+        guard = _guard(mandate)
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            # estimated_value understates it (1000) but qty*price is 10*800=8000 > cap
+            result = guard.check("AAPL", "buy", qty=10, price=800.0, estimated_value=1_000.0)
+        assert not result
+        assert "exceeds max_order_value" in result.reason
+
+    def test_unpriceable_entry_is_rejected(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False)
+        guard = _guard(mandate)
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            result = guard.check("AAPL", "buy", qty=10)  # no price, no estimated_value
+        assert not result
+        assert "Cannot determine order value" in result.reason
+
+    def test_unpriceable_reduce_only_is_allowed_through(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, allow_short=True)
+        guard = _guard(mandate)
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            result = guard.check("AAPL", "sell", qty=10, reduce_only=True)
+        assert result  # risk-reducing orders are exempt, same as the other gates
+
+    def test_priced_entry_within_cap_passes(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, max_order_value=50_000.0)
+        guard = _guard(mandate)
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            assert guard.check("AAPL", "buy", qty=10, price=100.0)
+
+
+class TestReasonCodesAndReauth:
+    """Stage C (C9/C17): every rejection carries a machine `code`, and a
+    near-limit order gets a PAUSE_FOR_REAUTH outcome, not a flat reject."""
+
+    def test_rejection_carries_a_reason_code(self) -> None:
+        from vinu_agent.broker.guard_codes import GuardOutcome, ReasonCode
+
+        mandate = TradingMandate(require_active_artifact=False, allowed_tickers={"MSFT"})
+        guard = _guard(mandate)
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            r = guard.check("AAPL", "buy", qty=1, price=10.0)
+        assert not r
+        assert r.code == ReasonCode.TICKER_NOT_ALLOWED
+        assert r.outcome == GuardOutcome.REJECT
+        assert r.needs_reauth is False
+
+    def test_allow_result_has_ok_code(self) -> None:
+        from vinu_agent.broker.guard_codes import GuardOutcome, ReasonCode
+
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False)
+        guard = _guard(mandate)
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            r = guard.check("AAPL", "buy", qty=1, price=10.0)
+        assert r
+        assert r.code == ReasonCode.OK
+        assert r.outcome == GuardOutcome.ALLOW
+
+    def test_near_max_order_value_pauses_for_reauth(self, monkeypatch) -> None:
+        from vinu_agent.broker import order_guard as og
+        from vinu_agent.broker.guard_codes import GuardOutcome, ReasonCode
+
+        monkeypatch.setattr(og, "REAUTH_BAND_FRACTION", 0.9)
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, max_order_value=10_000.0)
+        guard = og.OrderGuard(mandate=mandate, broker=_guard(mandate)._broker,
+                              daily_limit_store=DailyLimitStore(":memory:"))
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            # 9_500 is inside [9_000, 10_000] -> pause, not allow, not reject
+            r = guard.check("AAPL", "buy", qty=95, price=100.0)
+        assert r.outcome == GuardOutcome.PAUSE_FOR_REAUTH
+        assert r.code == ReasonCode.NEAR_MAX_ORDER_VALUE
+        assert bool(r) is False           # a bool-only caller still fails safe
+        assert r.needs_reauth is True
+
+    def test_over_the_hard_limit_still_hard_rejects(self, monkeypatch) -> None:
+        from vinu_agent.broker import order_guard as og
+        from vinu_agent.broker.guard_codes import GuardOutcome, ReasonCode
+
+        monkeypatch.setattr(og, "REAUTH_BAND_FRACTION", 0.9)
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, max_order_value=10_000.0)
+        guard = og.OrderGuard(mandate=mandate, broker=_guard(mandate)._broker,
+                              daily_limit_store=DailyLimitStore(":memory:"))
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            r = guard.check("AAPL", "buy", qty=200, price=100.0)  # 20_000 > 10_000
+        assert r.outcome == GuardOutcome.REJECT
+        assert r.code == ReasonCode.MAX_ORDER_VALUE
+
+    def test_reauth_band_disabled_by_default(self) -> None:
+        from vinu_agent.broker import order_guard as og
+        from vinu_agent.broker.guard_codes import GuardOutcome
+
+        assert og.REAUTH_BAND_FRACTION == 1.0
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, max_order_value=10_000.0)
+        guard = _guard(mandate)
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            r = guard.check("AAPL", "buy", qty=99, price=100.0)  # 9_900, just under
+        assert r.outcome == GuardOutcome.ALLOW
+
+
+class TestSymbolOverrides:
+    """Stage C (C4): per-symbol operator override, ahead of the mandate."""
+
+    def _guard_with_overrides(self, store):
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, allow_short=True)
+        broker = MagicMock()
+        broker.get_account.return_value = _account()
+        return OrderGuard(
+            mandate=mandate, broker=broker,
+            daily_limit_store=DailyLimitStore(":memory:"), override_store=store,
+        )
+
+    def test_untradeable_blocks_every_order_with_the_operator_reason(self) -> None:
+        from vinu_agent.broker.guard_codes import OverrideState, ReasonCode
+        from vinu_agent.broker.symbol_overrides import SymbolOverrideStore
+
+        store = SymbolOverrideStore(":memory:")
+        store.set("AAPL", OverrideState.UNTRADEABLE, reason="pending 8-K", set_by="alice")
+        guard = self._guard_with_overrides(store)
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            r = guard.check("AAPL", "buy", qty=1, price=10.0)
+        assert not r
+        assert r.code == ReasonCode.OVERRIDE_UNTRADEABLE
+        assert "pending 8-K" in r.reason and "alice" in r.reason
+
+    def test_reduce_only_override_blocks_entries_but_allows_exits(self) -> None:
+        from vinu_agent.broker.guard_codes import OverrideState, ReasonCode
+        from vinu_agent.broker.symbol_overrides import SymbolOverrideStore
+
+        store = SymbolOverrideStore(":memory:")
+        store.set("AAPL", OverrideState.REDUCE_ONLY, reason="de-risking")
+        guard = self._guard_with_overrides(store)
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            entry = guard.check("AAPL", "buy", qty=1, price=10.0)
+            exit_ = guard.check("AAPL", "sell", qty=1, price=10.0, reduce_only=True)
+        assert not entry and entry.code == ReasonCode.OVERRIDE_REDUCE_ONLY
+        assert exit_  # risk-reducing order clears
+
+    def test_no_override_is_a_pass_through(self) -> None:
+        from vinu_agent.broker.symbol_overrides import SymbolOverrideStore
+
+        guard = self._guard_with_overrides(SymbolOverrideStore(":memory:"))
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            assert guard.check("AAPL", "buy", qty=1, price=10.0)
+
+    def test_override_store_failure_fails_open(self) -> None:
+        broken = MagicMock()
+        broken.get.side_effect = RuntimeError("db gone")
+        guard = self._guard_with_overrides(broken)
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            assert guard.check("AAPL", "buy", qty=1, price=10.0)  # allowed despite the store error
 
 
 class TestRequireActiveArtifact:

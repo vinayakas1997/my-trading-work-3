@@ -47,6 +47,16 @@ class SimulationConfig:
     # in the cost alone.
     max_pct_of_volume: float = 1.0
 
+    # Stage A (A30): probability that any single symbol's rebalance fill is
+    # rejected outright on a given bar (broker-unreliability / partial-outage
+    # simulation, VectorBT's `order.reject_prob`). The unfilled delta is
+    # retried on the next rebalance, exactly as a real dropped order would be.
+    # 0.0 (default) preserves prior behavior. `random_seed` makes a run with
+    # a non-zero reject probability fully reproducible — the engine is
+    # otherwise deterministic, so this is the only source of randomness.
+    execution_reject_prob: float = 0.0
+    random_seed: int = 0
+
     # Compute extended metrics (VaR, CVaR, drawdown duration, win/loss ratios,
     # benchmark metrics, Sharpe CI, turnover). When False, only basic metrics
     # (total_return, cagr, sharpe, sortino, max_drawdown, calmar, win_rate,
@@ -64,6 +74,12 @@ class TradeRecord:
     cost: float
     weight_before: float
     weight_after: float
+    # Stage A (A28): True when this fill's size was clipped by
+    # `max_pct_of_volume` — i.e. the strategy wanted to trade more of this
+    # name on this bar than the ADV cap allows. Previously the clip was
+    # silent (only visible as a lower realized return); now a consumer can
+    # see directly how volume-constrained a backtest was.
+    volume_capped: bool = False
 
 
 @dataclass

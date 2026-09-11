@@ -142,28 +142,63 @@ class TradeTool(BaseTool):
         mandate = TradingMandate.load()
         guard = OrderGuard(mandate=mandate, broker=broker)
 
-        estimated_value = qty * (limit_price or 0.0) if limit_price else qty * 100.0
+        # A36: a market order carries no limit price, and the old fallback here
+        # was a hardcoded `qty * 100.0` -- a fictional $100/share that made the
+        # OrderGuard notional cap meaningless for any market order. Use a real
+        # reference price when the symbol is already held (broker reports
+        # current_price on the position); otherwise pass 0 and let OrderGuard
+        # fail closed (Vibe-Trading's "DENY when unpriceable"). A market entry
+        # into a fresh name now needs a limit_price to clear the cap.
+        if limit_price:
+            estimated_value = qty * limit_price
+        else:
+            ref_price = 0.0
+            try:
+                for _p in broker.get_positions():
+                    if _p.symbol == symbol and float(getattr(_p, "current_price", 0.0)) > 0:
+                        ref_price = float(_p.current_price)
+                        break
+            except Exception:
+                ref_price = 0.0
+            estimated_value = qty * ref_price
 
-        result = guard.check(symbol, side, qty, estimated_value=estimated_value, reduce_only=reduce_only)
-        if not result:
+        result = guard.check(
+            symbol, side, qty, price=(limit_price or None),
+            estimated_value=estimated_value, reduce_only=reduce_only,
+        )
+        # C17: a PAUSE_FOR_REAUTH result is not a flat reject -- the order is
+        # quantitatively near a hard limit but not over it. Route it to the
+        # same confirmation flow as `require_confirmation`, but with a
+        # message that says *why* it's being held, and a distinct
+        # `reason_code` so the caller/audit can tell it apart from an
+        # unconditional confirmation pause.
+        needs_reauth = getattr(result, "needs_reauth", False)
+        if not result and not needs_reauth:
             AuditLogger.log("order_rejected", {
                 "symbol": symbol, "side": side, "qty": qty,
                 "reason": result.reason,
+                "reason_code": getattr(getattr(result, "code", None), "value", None),
             })
             return json.dumps({
                 "status": "rejected",
                 "reason": result.reason,
+                "reason_code": getattr(getattr(result, "code", None), "value", None),
                 "mandate": mandate.to_dict(),
             })
 
-        if mandate.require_confirmation:
+        if needs_reauth or mandate.require_confirmation:
             AuditLogger.log("order_pending_confirmation", {
                 "symbol": symbol, "side": side, "qty": qty,
                 "order_type": order_type, "estimated_value": estimated_value,
+                "reason_code": getattr(getattr(result, "code", None), "value", None) if needs_reauth else None,
             })
             return json.dumps({
                 "status": "pending_confirmation",
-                "message": "Awaiting user confirmation before executing order",
+                "message": (
+                    result.reason if needs_reauth
+                    else "Awaiting user confirmation before executing order"
+                ),
+                "reason_code": getattr(getattr(result, "code", None), "value", None) if needs_reauth else None,
                 "proposal": {
                     "symbol": symbol,
                     "side": side,

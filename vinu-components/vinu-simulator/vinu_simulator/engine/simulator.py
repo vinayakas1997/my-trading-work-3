@@ -114,6 +114,10 @@ class WeightSimulator:
         rebalance_positions = {p + 1 for p in signal_positions if p + 1 < len(total_calendar)}
 
         config = inp.config
+        # A30: the only source of randomness in the engine — seeded so a run
+        # with execution_reject_prob > 0 is still fully reproducible.
+        rng = np.random.default_rng(config.random_seed)
+        rejected_fills = 0
         n = len(common_tickers)
         cash = config.initial_capital
         holdings = np.zeros(n, dtype=np.float64)
@@ -185,9 +189,16 @@ class WeightSimulator:
                             continue
                         if shares_to_sell <= 1e-12:
                             continue
+                        if config.execution_reject_prob > 0.0 and rng.random() < config.execution_reject_prob:
+                            rejected_fills += 1
+                            continue
                         vol = float(volumes[idx]) if volumes is not None else None
+                        sell_capped = False
                         if vol is not None and vol > 0 and config.max_pct_of_volume < 1.0:
-                            shares_to_sell = min(shares_to_sell, vol * config.max_pct_of_volume)
+                            _cap = vol * config.max_pct_of_volume
+                            if shares_to_sell > _cap:
+                                shares_to_sell = _cap
+                                sell_capped = True
                         proceeds = self._cost_model.sell_proceeds(
                             float(prices[idx]), float(shares_to_sell), volume=vol
                         )
@@ -203,6 +214,7 @@ class WeightSimulator:
                             cost=float(shares_to_sell * prices[idx] - proceeds),
                             weight_before=float(current_weights[idx]),
                             weight_after=float(rebalance_weights[idx]),
+                            volume_capped=sell_capped,
                         ))
 
                     nav_after_sells = cash + np.sum(holdings * prices)
@@ -221,9 +233,16 @@ class WeightSimulator:
                             continue
                         if shares_to_buy <= 1e-12:
                             continue
+                        if config.execution_reject_prob > 0.0 and rng.random() < config.execution_reject_prob:
+                            rejected_fills += 1
+                            continue
                         vol = float(volumes[idx]) if volumes is not None else None
+                        buy_capped = False
                         if vol is not None and vol > 0 and config.max_pct_of_volume < 1.0:
-                            shares_to_buy = min(shares_to_buy, vol * config.max_pct_of_volume)
+                            _cap = vol * config.max_pct_of_volume
+                            if shares_to_buy > _cap:
+                                shares_to_buy = _cap
+                                buy_capped = True
                         cost = self._cost_model.buy_cost(
                             float(prices[idx]), float(shares_to_buy), volume=vol
                         )
@@ -251,6 +270,7 @@ class WeightSimulator:
                                 cost=float(cost - shares_to_buy * prices[idx]),
                                 weight_before=float(current_weights[idx]),
                                 weight_after=float(rebalance_weights[idx]),
+                                volume_capped=buy_capped,
                             ))
 
             nav_after = cash + np.sum(holdings * prices)
@@ -281,6 +301,10 @@ class WeightSimulator:
             periods_per_year=periods_per_year_for_interval(config.interval),
             full=config.full_metrics,
         )
+        # A28/A30: execution-realism diagnostics — how volume-constrained the
+        # run was, and how many fills the reject-probability model dropped.
+        metrics["volume_capped_fills"] = float(sum(1 for t in trades if t.volume_capped))
+        metrics["rejected_fills"] = float(rejected_fills)
 
         run_id = str(uuid.uuid4())
 
