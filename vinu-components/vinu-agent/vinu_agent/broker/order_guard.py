@@ -68,6 +68,22 @@ def _reauth(reason: str, code: ReasonCode) -> GuardResult:
     return GuardResult(False, reason, code=code, outcome=GuardOutcome.PAUSE_FOR_REAUTH)
 
 
+# C8: soft-limit sizing. Opt-in -- when off (default), the quantitative
+# mandate limits hard-reject as before. When on, a caller asks
+# `OrderGuard.position_size_multiplier(...)` for a [0, 1] scalar first,
+# shrinks the order by it, then submits the smaller order through the
+# still-fail-closed `check()`. Mirrors pysystemtrade's "min of N independent
+# risk multipliers" instead of "first failing check rejects".
+SOFT_LIMITS_ENABLED = os.environ.get("VINU_AGENT_GUARD_SOFT_LIMITS", "false").lower() in ("1", "true", "yes")
+
+
+@dataclass
+class MultiplierResult:
+    multiplier: float            # min of every component, clamped to [0, 1]
+    components: dict             # {check_name: its own [0,1] multiplier}
+    binding: str | None          # the check that produced the min (None if multiplier == 1.0)
+
+
 class OrderGuard:
     def __init__(
         self,
@@ -192,6 +208,19 @@ class OrderGuard:
             return override_result
 
         mandate = self._mandate
+
+        # C18: a stale mandate is not a mandate. Block new/increasing
+        # positions once operator consent has expired -- reduce_only orders
+        # (de-risking) are always exempt, same posture as the kill switch.
+        if not reduce_only and mandate.consent_expired():
+            return GuardResult(
+                False,
+                f"Trading mandate consent expired at {mandate.consent_expires_at} — "
+                f"renew it (edit consent_expires_at in mandate.yaml, or "
+                f"POST /agent/broker/mandate/renew) before opening or increasing positions. "
+                f"Risk-reducing orders are still allowed.",
+                code=ReasonCode.MANDATE_EXPIRED,
+            )
 
         if symbol in mandate.blocked_tickers:
             return GuardResult(False, f"{symbol} is in the blocked tickers list", code=ReasonCode.BLOCKED_TICKER)
@@ -391,6 +420,83 @@ class OrderGuard:
                 code=ReasonCode.OVERRIDE_REDUCE_ONLY,
             )
         return GuardResult(True)
+
+    def position_size_multiplier(
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        price: float | None = None,
+        estimated_value: float | None = None,
+    ) -> MultiplierResult:
+        """C8: a [0, 1] scalar to shrink an order so it *fits* the soft
+        quantitative limits, instead of the order being hard-rejected for
+        breaching one. Only the limits where "trade smaller" is a sensible
+        response contribute -- `max_order_value`, `max_position_pct`,
+        `max_capital_utilization_pct`, and vinu-portfolio's per-symbol
+        risk-budget `suggested_size_multiplier`. Hard gates (kill switch,
+        blocked ticker, market closed, operator override, ...) are NOT here
+        -- `check()` still enforces those unconditionally. Every lookup
+        failure contributes 1.0 (no constraint), same fail-open posture as
+        the individual checks."""
+        comps: dict[str, float] = {}
+        mandate = self._mandate
+        value = max(estimated_value or 0.0, qty * (price or 0.0))
+
+        if mandate.max_order_value > 0 and value > 0:
+            comps["max_order_value"] = min(1.0, mandate.max_order_value / value)
+
+        if value > 0 and (mandate.max_position_pct < 1.0 or mandate.max_capital_utilization_pct < 1.0):
+            try:
+                account = self._broker.get_account()
+                equity = float(account.equity)
+                cash = float(account.cash)
+                if equity > 0:
+                    if mandate.max_position_pct < 1.0:
+                        frac = value / equity
+                        if frac > 0:
+                            comps["max_position_pct"] = min(1.0, mandate.max_position_pct / frac)
+                    if mandate.max_capital_utilization_pct < 1.0:
+                        deployed = equity - cash
+                        headroom = mandate.max_capital_utilization_pct * equity - deployed
+                        comps["max_capital_utilization"] = max(0.0, min(1.0, headroom / value))
+            except Exception as e:
+                logger.warning("Could not compute equity-based size multipliers for %s: %s", symbol, e)
+
+        rb = self._risk_budget_multiplier(symbol)
+        if rb is not None:
+            comps["risk_budget"] = max(0.0, min(1.0, rb))
+
+        if not comps:
+            return MultiplierResult(1.0, {}, None)
+        m = max(0.0, min(1.0, min(comps.values())))
+        binding = min(comps, key=lambda k: comps[k]) if m < 1.0 else None
+        return MultiplierResult(m, comps, binding)
+
+    def _risk_budget_multiplier(self, symbol: str) -> float | None:
+        """vinu-portfolio's per-symbol `suggested_size_multiplier` for the
+        warning/reduce tiers (the halt tier is handled as a hard reject in
+        `_check_risk_budget`). None on any lookup problem."""
+        try:
+            try:
+                from vinu_infra.auth import internal_auth_headers as _iah
+                _h = _iah() or None
+            except Exception:
+                _h = None
+            resp = requests.get(f"{self._portfolio_api_url}/portfolio/risk/status", headers=_h, timeout=10.0)
+            resp.raise_for_status()
+            budget = resp.json()
+        except Exception as e:
+            logger.warning("Could not fetch risk budget multiplier for %s: %s", symbol, e)
+            return None
+        for s in budget.get("symbols", []):
+            if s.get("symbol") == symbol:
+                mult = s.get("suggested_size_multiplier")
+                try:
+                    return float(mult) if mult is not None else None
+                except (TypeError, ValueError):
+                    return None
+        return None
 
     def _check_active_artifact(self, symbol: str) -> GuardResult:
         """Reject orders for symbols with no strategy artifact that cleared the

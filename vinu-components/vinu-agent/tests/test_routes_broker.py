@@ -14,9 +14,46 @@ import vinu_agent.server.routes_broker as routes_broker
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(kill_switch, "KILL_SWITCH_PATH", tmp_path / "vinu-trading-halt")
     monkeypatch.setattr(kill_switch, "KILL_SWITCH_DIR", tmp_path / "vinu-trading-halt.d")
+    # C18: /broker/mandate/renew writes mandate.yaml -- point it at a tmp file
+    import vinu_agent.broker.mandate as _mandate
+    monkeypatch.setattr(_mandate, "DEFAULT_MANDATE_PATH", tmp_path / "mandate.yaml")
     app = FastAPI()
     app.include_router(routes_broker.router)
     return TestClient(app)
+
+
+class TestMandateConsentRenewal:
+    def test_renew_by_days_writes_future_expiry(self, client) -> None:
+        from datetime import datetime, timezone
+
+        resp = client.post("/broker/mandate/renew", json={"days": 14})
+        assert resp.status_code == 200
+        exp = datetime.fromisoformat(resp.json()["consent_expires_at"])
+        assert exp > datetime.now(timezone.utc)
+
+    def test_renew_with_explicit_until(self, client) -> None:
+        resp = client.post("/broker/mandate/renew", json={"until": "2099-01-01T00:00:00+00:00"})
+        assert resp.status_code == 200
+        assert resp.json()["consent_expires_at"].startswith("2099-01-01")
+
+    def test_renew_rejects_a_bad_timestamp(self, client) -> None:
+        resp = client.post("/broker/mandate/renew", json={"until": "soon"})
+        assert resp.status_code == 422
+
+    def test_get_mandate_reflects_the_renewal(self, client) -> None:
+        client.post("/broker/mandate/renew", json={"until": "2099-01-01T00:00:00+00:00"})
+        body = client.get("/broker/mandate").json()["mandate"]
+        assert body["consent_expires_at"].startswith("2099-01-01")
+        assert body["consent_expired"] is False
+
+    def test_renew_preserves_other_mandate_keys(self, client, tmp_path) -> None:
+        (tmp_path / "mandate.yaml").write_text("max_order_value: 12345.0\nallow_short: true\n")
+        client.post("/broker/mandate/renew", json={"days": 7})
+        import yaml
+        raw = yaml.safe_load((tmp_path / "mandate.yaml").read_text())
+        assert raw["max_order_value"] == 12345.0
+        assert raw["allow_short"] is True
+        assert "consent_expires_at" in raw
 
 
 class TestBrokerRoutes:

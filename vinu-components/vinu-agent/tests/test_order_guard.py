@@ -228,6 +228,113 @@ class TestReasonCodesAndReauth:
         assert r.outcome == GuardOutcome.ALLOW
 
 
+class TestMandateConsentExpiry:
+    """Stage C (C18): a stale mandate stops permitting new/increasing positions."""
+
+    def _mandate(self, expires_at: str) -> TradingMandate:
+        return TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False, allow_short=True,
+            consent_expires_at=expires_at,
+        )
+
+    def test_consent_expired_helper(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        assert self._mandate(past).consent_expired() is True
+        assert self._mandate(future).consent_expired() is False
+        assert self._mandate("").consent_expired() is False
+        assert self._mandate("not-a-date").consent_expired() is False  # ignored, not crash
+
+    def test_expired_mandate_blocks_an_entry(self) -> None:
+        from datetime import datetime, timedelta, timezone
+        from vinu_agent.broker.guard_codes import ReasonCode
+
+        past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        guard = _guard(self._mandate(past))
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            r = guard.check("AAPL", "buy", qty=1, price=10.0)
+        assert not r
+        assert r.code == ReasonCode.MANDATE_EXPIRED
+
+    def test_expired_mandate_still_allows_reduce_only(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        guard = _guard(self._mandate(past))
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            r = guard.check("AAPL", "sell", qty=1, price=10.0, reduce_only=True)
+        assert r  # de-risking is never blocked by expiry
+
+    def test_unexpired_mandate_is_a_pass_through(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        future = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+        guard = _guard(self._mandate(future))
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+            assert guard.check("AAPL", "buy", qty=1, price=10.0)
+
+
+class TestPositionSizeMultiplier:
+    """Stage C (C8): a [0,1] scalar that shrinks an order to fit the soft
+    quantitative limits, instead of a hard reject."""
+
+    def _guard(self, mandate, *, equity=100_000.0, cash=100_000.0):
+        broker = MagicMock()
+        broker.get_account.return_value = _account(equity=equity, cash=cash)
+        g = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=DailyLimitStore(":memory:"))
+        # no risk-budget service in these tests
+        g._risk_budget_multiplier = lambda symbol: None
+        return g
+
+    def test_no_binding_limit_gives_multiplier_one(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, max_order_value=1_000_000.0)
+        g = self._guard(mandate)
+        m = g.position_size_multiplier("AAPL", "buy", qty=10, price=100.0)
+        assert m.multiplier == 1.0
+        assert m.binding is None
+
+    def test_max_order_value_scales_the_order_down(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, max_order_value=5_000.0)
+        g = self._guard(mandate)
+        m = g.position_size_multiplier("AAPL", "buy", qty=100, price=100.0)  # value 10_000, cap 5_000
+        assert m.multiplier == pytest.approx(0.5)
+        assert m.binding == "max_order_value"
+
+    def test_min_of_several_limits_wins(self) -> None:
+        # max_order_value -> 0.5 ; max_position_pct 0.10 of 100k equity on a
+        # 10_000 order -> frac 0.10, cap 0.10 -> 1.0 ; so 0.5 binds.
+        mandate = TradingMandate(max_position_pct=0.10, max_order_value=5_000.0)
+        g = self._guard(mandate)
+        m = g.position_size_multiplier("AAPL", "buy", qty=100, price=100.0)
+        assert m.multiplier == pytest.approx(0.5)
+        assert set(m.components) >= {"max_order_value", "max_position_pct"}
+
+    def test_capital_utilization_headroom_limits_size(self) -> None:
+        # 60% cap, 55% already deployed -> 5% of 100k = 5_000 headroom for a
+        # 10_000 order -> 0.5
+        mandate = TradingMandate(max_position_pct=1.0, max_order_value=1e9,
+                                 max_capital_utilization_pct=0.60)
+        g = self._guard(mandate, equity=100_000.0, cash=45_000.0)  # deployed = 55_000
+        m = g.position_size_multiplier("AAPL", "buy", qty=100, price=100.0)
+        assert m.multiplier == pytest.approx(0.5)
+        assert m.binding == "max_capital_utilization"
+
+    def test_risk_budget_multiplier_is_folded_in(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, max_order_value=1e9)
+        g = self._guard(mandate)
+        g._risk_budget_multiplier = lambda symbol: 0.25
+        m = g.position_size_multiplier("AAPL", "buy", qty=10, price=100.0)
+        assert m.multiplier == pytest.approx(0.25)
+        assert m.binding == "risk_budget"
+
+    def test_soft_limits_disabled_by_default(self) -> None:
+        from vinu_agent.broker import order_guard as og
+
+        assert og.SOFT_LIMITS_ENABLED is False
+
+
 class TestSymbolOverrides:
     """Stage C (C4): per-symbol operator override, ahead of the mandate."""
 

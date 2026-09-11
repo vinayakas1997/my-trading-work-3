@@ -162,6 +162,44 @@ class TradeTool(BaseTool):
                 ref_price = 0.0
             estimated_value = qty * ref_price
 
+        # C8: soft-limit sizing (opt-in via VINU_AGENT_GUARD_SOFT_LIMITS).
+        # Ask for a [0,1] scalar that shrinks the order to *fit* the soft
+        # quantitative limits, apply it, and submit the smaller order --
+        # instead of the order being hard-rejected for breaching one. The
+        # hard gates still run in guard.check() below on the scaled qty.
+        size_scaled = None
+        from ..broker.order_guard import SOFT_LIMITS_ENABLED
+
+        if SOFT_LIMITS_ENABLED and not reduce_only and qty > 0:
+            mult = guard.position_size_multiplier(
+                symbol, side, qty, price=(limit_price or None), estimated_value=estimated_value,
+            )
+            if mult.multiplier < 1.0:
+                new_qty = int(qty * mult.multiplier)
+                if new_qty <= 0:
+                    AuditLogger.log("order_rejected", {
+                        "symbol": symbol, "side": side, "qty": qty,
+                        "reason": f"risk multiplier {mult.multiplier:.3f} ({mult.binding}) scales the order to zero",
+                        "reason_code": "risk_multiplier_zero",
+                    })
+                    return json.dumps({
+                        "status": "rejected",
+                        "reason": f"risk size multiplier {mult.multiplier:.3f} (binding: {mult.binding}) "
+                                  f"would scale this order below one share",
+                        "reason_code": "risk_multiplier_zero",
+                        "multipliers": mult.components,
+                    })
+                size_scaled = {
+                    "from_qty": qty, "to_qty": new_qty,
+                    "multiplier": round(mult.multiplier, 4), "binding": mult.binding,
+                    "components": {k: round(v, 4) for k, v in mult.components.items()},
+                }
+                AuditLogger.log("order_size_scaled", size_scaled | {"symbol": symbol, "side": side})
+                qty = new_qty
+                estimated_value = (qty * limit_price) if limit_price else (
+                    estimated_value * (new_qty / size_scaled["from_qty"]) if size_scaled["from_qty"] else estimated_value
+                )
+
         result = guard.check(
             symbol, side, qty, price=(limit_price or None),
             estimated_value=estimated_value, reduce_only=reduce_only,
@@ -210,6 +248,7 @@ class TradeTool(BaseTool):
                     "stop_loss_price": stop_loss_price,
                     "estimated_value": estimated_value,
                 },
+                "size_scaled": size_scaled,
                 "mandate": mandate.to_dict(),
             })
 
@@ -262,6 +301,7 @@ class TradeTool(BaseTool):
                 "symbol": symbol,
                 "side": side,
                 "qty": qty,
+                "size_scaled": size_scaled,
                 "type": order_type,
                 # Was a duplicate "status" key before this fix -- silently
                 # overwrote "submitted" with the broker's raw order status

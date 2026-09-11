@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +98,26 @@ class TradingMandate:
     require_confirmation: bool = True
     allow_short: bool = False
     allow_margin: bool = False
+    # Stage C (C18, Vibe-Trading): the operator's consent to trade under this
+    # mandate is not open-ended. An ISO-8601 timestamp (any offset; naive is
+    # treated as UTC) past which the mandate is considered stale and
+    # `OrderGuard` stops permitting new/increasing positions until it's
+    # renewed (edit `consent_expires_at` in mandate.yaml, or POST
+    # /agent/broker/mandate/renew). Empty string = no expiry (prior
+    # behaviour). Risk-reducing orders are never blocked by expiry.
+    consent_expires_at: str = ""
+
+    def consent_expired(self, now: datetime | None = None) -> bool:
+        if not self.consent_expires_at:
+            return False
+        try:
+            exp = datetime.fromisoformat(self.consent_expires_at.replace("Z", "+00:00"))
+        except ValueError:
+            logger.warning("mandate consent_expires_at %r is not a valid ISO timestamp — ignoring", self.consent_expires_at)
+            return False
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        return (now or datetime.now(timezone.utc)) >= exp
 
     @classmethod
     def load(cls, path: Path | None = None) -> TradingMandate:
@@ -124,6 +145,7 @@ class TradingMandate:
                 require_confirmation=bool(raw.get("require_confirmation", True)),
                 allow_short=bool(raw.get("allow_short", False)),
                 allow_margin=bool(raw.get("allow_margin", False)),
+                consent_expires_at=str(raw.get("consent_expires_at", "") or ""),
             )
             # Live admin overrides (POST /agent/admin/settings) win over
             # mandate.yaml -- an operator tightening/loosening a numeric
@@ -131,7 +153,14 @@ class TradingMandate:
             # the file without editing it; a restart drops back to the
             # file's own value (see SETTINGS' module docstring above).
             kwargs.update(SETTINGS.overrides())
-            return cls(**kwargs)
+            mandate = cls(**kwargs)
+            if mandate.consent_expired():
+                logger.warning(
+                    "Loaded mandate from %s whose consent EXPIRED at %s — new/increasing "
+                    "orders will be blocked until it's renewed",
+                    path, mandate.consent_expires_at,
+                )
+            return mandate
         except Exception as exc:
             logger.warning("Failed to load mandate from %s: %s — using defaults", path, exc)
             return cls(**SETTINGS.overrides())
@@ -153,4 +182,6 @@ class TradingMandate:
             "require_confirmation": self.require_confirmation,
             "allow_short": self.allow_short,
             "allow_margin": self.allow_margin,
+            "consent_expires_at": self.consent_expires_at,
+            "consent_expired": self.consent_expired(),
         }

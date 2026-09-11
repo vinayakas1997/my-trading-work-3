@@ -53,6 +53,56 @@ async def broker_status(scope: str | None = None) -> dict[str, Any]:
     return {"halted": is_trading_halted(scope=scope), "scope": scope}
 
 
+class MandateRenewRequest(BaseModel):
+    days: float | None = None       # renew consent for this many days from now
+    until: str | None = None        # ...or set an explicit ISO-8601 expiry
+
+
+@router.get("/broker/mandate")
+async def broker_get_mandate() -> dict[str, Any]:
+    from ..broker.mandate import TradingMandate
+
+    return {"mandate": TradingMandate.load().to_dict()}
+
+
+@router.post("/broker/mandate/renew")
+async def broker_renew_mandate(body: MandateRenewRequest = MandateRenewRequest()) -> dict[str, Any]:
+    """C18: bump the mandate's consent expiry without a restart. Writes only
+    the `consent_expires_at` key back into mandate.yaml, preserving the rest;
+    every subsequent `TradingMandate.load()` (OrderGuard builds one per
+    order) picks it up."""
+    from datetime import datetime, timedelta, timezone
+
+    import yaml as _yaml
+    from fastapi import HTTPException
+
+    from ..broker.kill_switch import AuditLogger
+    from ..broker.mandate import DEFAULT_MANDATE_PATH
+
+    if body.until:
+        try:
+            expiry = datetime.fromisoformat(body.until.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"`until` is not a valid ISO timestamp: {body.until!r}")
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+    else:
+        days = body.days if body.days and body.days > 0 else 30.0
+        expiry = datetime.now(timezone.utc) + timedelta(days=days)
+
+    path = DEFAULT_MANDATE_PATH
+    try:
+        raw = _yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except Exception:
+        raw = {}
+    raw = raw or {}
+    raw["consent_expires_at"] = expiry.isoformat()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_yaml.safe_dump(raw, sort_keys=True), encoding="utf-8")
+    AuditLogger.log("mandate_consent_renewed", {"consent_expires_at": raw["consent_expires_at"]})
+    return {"status": "ok", "consent_expires_at": raw["consent_expires_at"]}
+
+
 class SymbolOverrideRequest(BaseModel):
     state: str  # "untradeable" | "reduce_only" | "ignored"
     reason: str = ""

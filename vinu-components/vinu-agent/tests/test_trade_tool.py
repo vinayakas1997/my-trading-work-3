@@ -82,6 +82,70 @@ class TestTradeToolPreApproveResultChecked:
         assert result["reason"] == "Trading is halted by kill switch"
         broker.submit_order.assert_not_called()
 
+    def test_soft_limit_scales_the_order_down_instead_of_rejecting(self) -> None:
+        # Stage C (C8): with VINU_AGENT_GUARD_SOFT_LIMITS on, a 100-share order
+        # that a soft limit would only allow at 40% is submitted as 40 shares.
+        from vinu_agent.broker.order_guard import MultiplierResult
+
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(True)
+        guard.pre_approve.return_value = GuardResult(True)
+        guard.position_size_multiplier.return_value = MultiplierResult(
+            0.4, {"max_order_value": 0.4}, "max_order_value",
+        )
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.broker.order_guard.SOFT_LIMITS_ENABLED", True), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            result = json.loads(_tool().execute(symbol="AAPL", qty=100, side="buy", limit_price=100.0))
+
+        assert result["status"] == "submitted"
+        assert result["qty"] == 40
+        assert result["size_scaled"]["from_qty"] == 100
+        assert result["size_scaled"]["to_qty"] == 40
+        assert result["size_scaled"]["binding"] == "max_order_value"
+        # the order that reached check()/submit was the scaled one
+        assert guard.check.call_args.args[2] == 40
+
+    def test_soft_limit_that_scales_below_one_share_is_rejected(self) -> None:
+        from vinu_agent.broker.order_guard import MultiplierResult
+
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.position_size_multiplier.return_value = MultiplierResult(
+            0.004, {"risk_budget": 0.004}, "risk_budget",
+        )
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.broker.order_guard.SOFT_LIMITS_ENABLED", True), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            result = json.loads(_tool().execute(symbol="AAPL", qty=100, side="buy", limit_price=100.0))
+
+        assert result["status"] == "rejected"
+        assert "multiplier" in result["reason"]
+        broker.submit_order.assert_not_called()
+
+    def test_soft_limits_off_by_default_leaves_qty_untouched(self) -> None:
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(True)
+        guard.pre_approve.return_value = GuardResult(True)
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            result = json.loads(_tool().execute(symbol="AAPL", qty=100, side="buy", limit_price=100.0))
+
+        assert result["qty"] == 100
+        assert result["size_scaled"] is None
+        guard.position_size_multiplier.assert_not_called()
+
     def test_pre_approve_and_submit_order_both_run_inside_the_kill_switch_lock(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
