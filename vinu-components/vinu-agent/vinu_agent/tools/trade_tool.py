@@ -181,7 +181,7 @@ class TradeTool(BaseTool):
                         "symbol": symbol, "side": side, "qty": qty,
                         "reason": f"risk multiplier {mult.multiplier:.3f} ({mult.binding}) scales the order to zero",
                         "reason_code": "risk_multiplier_zero",
-                    })
+                    }, session_id=session_id, symbol=symbol)
                     return json.dumps({
                         "status": "rejected",
                         "reason": f"risk size multiplier {mult.multiplier:.3f} (binding: {mult.binding}) "
@@ -194,7 +194,10 @@ class TradeTool(BaseTool):
                     "multiplier": round(mult.multiplier, 4), "binding": mult.binding,
                     "components": {k: round(v, 4) for k, v in mult.components.items()},
                 }
-                AuditLogger.log("order_size_scaled", size_scaled | {"symbol": symbol, "side": side})
+                AuditLogger.log(
+                    "order_size_scaled", size_scaled | {"symbol": symbol, "side": side},
+                    session_id=session_id, symbol=symbol,
+                )
                 qty = new_qty
                 estimated_value = (qty * limit_price) if limit_price else (
                     estimated_value * (new_qty / size_scaled["from_qty"]) if size_scaled["from_qty"] else estimated_value
@@ -216,7 +219,7 @@ class TradeTool(BaseTool):
                 "symbol": symbol, "side": side, "qty": qty,
                 "reason": result.reason,
                 "reason_code": getattr(getattr(result, "code", None), "value", None),
-            })
+            }, session_id=session_id, symbol=symbol)
             return json.dumps({
                 "status": "rejected",
                 "reason": result.reason,
@@ -229,7 +232,7 @@ class TradeTool(BaseTool):
                 "symbol": symbol, "side": side, "qty": qty,
                 "order_type": order_type, "estimated_value": estimated_value,
                 "reason_code": getattr(getattr(result, "code", None), "value", None) if needs_reauth else None,
-            })
+            }, session_id=session_id, symbol=symbol)
             return json.dumps({
                 "status": "pending_confirmation",
                 "message": (
@@ -257,7 +260,8 @@ class TradeTool(BaseTool):
                 "symbol": symbol, "side": side, "qty": qty,
                 "order_type": order_type, "estimated_value": estimated_value,
                 "take_profit_price": take_profit_price, "stop_loss_price": stop_loss_price,
-            })
+                "client_order_id": client_order_id,
+            }, session_id=session_id, symbol=symbol)
 
             from ..broker.kill_switch import kill_switch_lock
 
@@ -276,7 +280,7 @@ class TradeTool(BaseTool):
                     AuditLogger.log("order_rejected", {
                         "symbol": symbol, "side": side, "qty": qty,
                         "reason": pre_result.reason,
-                    })
+                    }, session_id=session_id, symbol=symbol)
                     return json.dumps({
                         "status": "rejected",
                         "reason": pre_result.reason,
@@ -295,6 +299,16 @@ class TradeTool(BaseTool):
                     stop_loss_limit_price=stop_loss_limit_price,
                     client_order_id=client_order_id,
                 )
+            # The one entry that actually answers "what order did this
+            # session/symbol produce" -- before this, "order_executing" was
+            # logged pre-submission but the broker's real order id (the id
+            # a fill/cancel/position would later reference) was never
+            # written anywhere in the audit trail at all.
+            AuditLogger.log("order_placed", {
+                "symbol": symbol, "side": side, "qty": qty,
+                "order_id": order.get("id", ""), "client_order_id": client_order_id,
+                "broker_status": order.get("status", ""),
+            }, session_id=session_id, symbol=symbol)
             return json.dumps({
                 "status": "submitted",
                 "order_id": order.get("id", ""),
@@ -316,7 +330,7 @@ class TradeTool(BaseTool):
         except Exception as exc:
             AuditLogger.log("order_error", {
                 "symbol": symbol, "side": side, "qty": qty, "error": str(exc),
-            })
+            }, session_id=session_id, symbol=symbol)
             logger.error("Order submission failed: %s", exc)
             return json.dumps({"status": "error", "error": str(exc)})
 

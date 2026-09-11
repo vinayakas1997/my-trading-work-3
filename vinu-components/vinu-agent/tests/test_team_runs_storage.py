@@ -122,6 +122,23 @@ class TestRelatedArtifactId:
         store.create_run("research")
         assert store.list_by_artifact_id("art_nonexistent") == []
 
+
+class TestListBySessionId:
+    """Symmetric with TestRelatedArtifactId's list_by_artifact_id -- the
+    other half of Pillar 7's traceability query (2026-09-11)."""
+
+    def test_finds_every_run_a_session_triggered(self, store: TeamRunStore) -> None:
+        r1 = store.create_run("research", triggered_by_session_id="sess-1")
+        r2 = store.create_run("risk_gatekeeper", triggered_by_session_id="sess-1")
+        store.create_run("research", triggered_by_session_id="sess-2")  # unrelated session
+
+        found = store.list_by_session_id("sess-1")
+        assert {r.run_id for r in found} == {r1.run_id, r2.run_id}
+
+    def test_empty_when_none_match(self, store: TeamRunStore) -> None:
+        store.create_run("research", triggered_by_session_id="sess-1")
+        assert store.list_by_session_id("sess-nonexistent") == []
+
     def test_migrates_a_pre_existing_database_without_the_column(self) -> None:
         """Simulates a real team_runs.db from before this column existed --
         the ALTER TABLE migration must actually run on connect, not just

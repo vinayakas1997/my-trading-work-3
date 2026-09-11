@@ -220,6 +220,17 @@ class TeamRunStore(SQLiteBackend):
         ).fetchall()
         return [TeamRun.from_row(dict(r)) for r in rows]
 
+    def list_by_session_id(self, session_id: str) -> list[TeamRun]:
+        """Symmetric with `list_by_artifact_id` -- the other half of Pillar
+        7's traceability query: every team run a given Telegram/chat session
+        ever triggered, in one query."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM team_runs WHERE triggered_by_session_id = ? ORDER BY created_at ASC",
+            (session_id,),
+        ).fetchall()
+        return [TeamRun.from_row(dict(r)) for r in rows]
+
     def get_run(self, run_id: str) -> Optional[TeamRun]:
         conn = self._get_conn()
         row = conn.execute("SELECT * FROM team_runs WHERE run_id = ?", (run_id,)).fetchone()

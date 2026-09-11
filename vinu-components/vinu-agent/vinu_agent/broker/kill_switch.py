@@ -189,3 +189,30 @@ class AuditLogger:
         with cls.LOG_PATH.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, default=str) + "\n")
         logger.info("AUDIT: %s %s", action, json.dumps(details or {}))
+
+    @classmethod
+    def search(cls, ref_id: str, *, limit: int = 200) -> list[dict]:
+        """The read side of the traceability gap: every entry `log()` ever
+        wrote is queryable by session_id, symbol, or anything inside
+        `details`/`metadata` (an order id, an artifact id, ...) -- a plain
+        substring match on the serialized line rather than a fixed set of
+        indexed fields, since which id shape a caller will ask about isn't
+        known in advance and every entry is already a small JSON blob, not
+        a high-volume stream. Newest-first, capped at `limit` so a very
+        long-lived deployment's audit log can't turn one lookup into an
+        unbounded scan-and-return. Missing log file (nothing written yet)
+        returns an empty list, not an error -- same fail-open-on-read
+        posture as everything else that reads this log."""
+        if not ref_id or not cls.LOG_PATH.exists():
+            return []
+        matches: list[dict] = []
+        with cls.LOG_PATH.open("r", encoding="utf-8") as f:
+            for line in f:
+                if ref_id not in line:
+                    continue
+                try:
+                    matches.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        matches.reverse()
+        return matches[:limit]

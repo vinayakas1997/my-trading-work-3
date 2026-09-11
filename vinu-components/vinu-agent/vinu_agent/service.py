@@ -117,6 +117,14 @@ class AgentService:
         return self._ticker_ledger_store
 
     @property
+    def team_run_store(self) -> TeamRunStore:
+        return self._team_run_store
+
+    @property
+    def strategy_store(self):
+        return self._strategy_store
+
+    @property
     def ticker_summary_store(self) -> TickerSummaryStore:
         return self._ticker_summary_store
 

@@ -60,6 +60,7 @@ def create_app(service: Any = None) -> FastAPI:
     import vinu_agent.server.routes_swarm as rw
     import vinu_agent.server.routes_system as rsys
     import vinu_agent.server.routes_ticker_ledger as rtl
+    import vinu_agent.server.routes_trace as rtr
     from vinu_agent.broker.mandate import SETTINGS as MANDATE_SETTINGS
     from vinu_infra.runtime_settings import build_admin_settings_router
 
@@ -67,6 +68,7 @@ def create_app(service: Any = None) -> FastAPI:
     rw._get_service = lambda: app_service
     rsys._get_service = lambda: app_service
     rtl._get_service = lambda: app_service
+    rtr._get_service = lambda: app_service
 
     merged = APIRouter()
     merged.include_router(rs.router, tags=["sessions"])
@@ -75,6 +77,7 @@ def create_app(service: Any = None) -> FastAPI:
     merged.include_router(rb.router, tags=["broker"])
     merged.include_router(rtl.router, tags=["ticker-ledger"])
     merged.include_router(rn.router, tags=["notify"])
+    merged.include_router(rtr.router, tags=["trace"])
     # Live-tunable mandate risk limits -- GET/PATCH under
     # /agent/admin/settings, gated by the same require_auth as every other
     # route on this router (wired in by vinu_infra.server.create_app below).
