@@ -79,7 +79,8 @@ paper) trades happen.
 
 | # | Constant | Value | Where | What it decides |
 |---|---|---|---|---|
-| C1a | `_REBALANCE_PROTECT_GAIN_PCT` | 0.05 (flat) | `vinu-live/vinu_live/trade_plan/orchestrator.py:1247` | Whether a real open position with an unrealized gain is protected from being unwound to satisfy a portfolio rebalance request. **Directly decides whether a real winning position gets closed.** |
+| C1a | `_REBALANCE_PROTECT_GAIN_PCT` | 0.05 (flat) | `vinu-live/vinu_live/trade_plan/orchestrator.py` | Whether a real open position with an unrealized gain is protected from being unwound to satisfy a portfolio rebalance request. **Directly decides whether a real winning position gets closed.** |
+| C1c | Bracket 1R take-fraction | 0.5 (flat) | `vinu-live/vinu_live/trade_plan/orchestrator.py` | How much of a position gets sold once it hits 1R gain. Found while writing `test_pre_live_scenarios.py`'s trailing-stop scenario, not in the original grep sweep — a flat 50% fired mid-rally regardless of how far past 1R the move already was. |
 | C1b | `NEAR_DUPLICATE_THRESHOLD` | 0.5 | `vinu-agent/vinu_agent/agent/thesis_intake_gate.py:19` | Whether a new trade idea is similar enough to an existing one to be treated as a duplicate (and dropped before it ever reaches an LLM call). |
 | C2a | `K_CAP_DEFAULT` | 3 | `vinu-agent/vinu_agent/agent/thesis_intake_gate.py:21` | Max new candidate ideas allowed through per cycle. |
 | C2b | `DEFAULT_MAGNITUDE_TOLERANCE` | 0.15 | `vinu-agent/vinu_agent/agent/angle_consensus.py:26` | How much two independent forecasting "angles" can disagree in predicted magnitude and still count as "agreeing" — feeds a confidence/consensus signal. |
@@ -108,6 +109,47 @@ volatility data was already being computed and discarded.
 
 *(Implemented separately — see the matching entry in
 `complete-plan/05-progress-log.md`.)*
+
+### C1c — fixed now: bracket 1R take-fraction (vinu-live)
+
+**The problem with the flat 50%:** found only while writing the pre-live
+mechanical scenario test, not in the original grep sweep — a rising-price
+scenario expected a plain `hold` at every bar and instead got
+`bracket_partial` mid-sequence, because the flat 50% partial-take fires the
+instant price crosses 1R, taking the same half-the-position bite whether
+the move is *just* at 1R or has already run to 4R or 6R past it.
+
+**The fix, same idiom as C1a**: the take-fraction now scales with the
+R-multiple actually achieved (`_gain / _risk`, which this function already
+computes) — 1R takes 25%, 2R takes 50%, capped at 75% so the mechanism can
+never fully close a genuine runner on its own (the trailing stop /
+invalidation rules remain responsible for that). Confirmed against how
+other repos handle exactly this instead of inventing the pattern from
+scratch: `comprison-other-vinu/07-abu.md` — `abupy/BetaBu/ABuAtrPosition.py`
+scales position size inversely by ATR rather than shipping one fixed
+number; `comprison-other-vinu/06-hummingbot.md` —
+`TripleBarrierConfig.new_instance_with_volatility_adjustment()` rescales a
+position's stop/target/trailing barriers by realized volatility for the
+same reason. Both repos treat "one fixed number regardless of how the
+position is actually behaving" as the thing to avoid — this fix follows
+that same, already-battle-tested pattern.
+
+*(Implemented separately — see the matching entry in
+`complete-plan/05-progress-log.md`.)*
+
+### Calibration observation log — started, not a fix by itself
+
+Per the user's own framing: these Category C checkpoints ARE the places in
+the system that need to be *observed*, not guessed at further. New
+`vinu-infra/calibration_log.py` — a plain append-only JSONL log, gated to
+only write once a real broker account is confirmed configured (never for a
+synthetic/test run), wired into the `rebalance_protect` and
+`bracket_partial` checkpoints so far (the two already touched in this
+pass). This does not calibrate anything by itself — it starts the clock on
+collecting the real data every other Category C item (C1b, C2a–C2g) is
+still waiting on. Extending it to the remaining `vinu-agent` checkpoints
+(thesis-dedup, angle-consensus tolerance, significance-triage windows) is
+the natural next step, not yet done.
 
 ### C1b, C2a–C2g — flagged, not fixed: need real data, not better guessing
 
