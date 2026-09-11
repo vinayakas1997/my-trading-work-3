@@ -229,6 +229,47 @@ class StockService:
             connection=self._duckdb_conn,
         )
 
+    # A full-market scanner (vinu-screener) polling ~8000 symbols with no
+    # bulk endpoint means one HTTP round-trip per symbol per cycle -- found
+    # while building vinu-screener's data-source adapter, and mitigated
+    # there (timeout guard, coarse pre-filter, a rate-limit-floored poll
+    # interval) but never actually fixed at the source. This is the fix:
+    # collapse N round-trips into 1. Capped so one request can't block the
+    # event loop indefinitely on a pathologically large symbol list.
+    MAX_BATCH_SYMBOLS = 500
+
+    def get_candles_batch(
+        self,
+        symbols: list[str],
+        *,
+        interval: str = "1m",
+        from_ts: int | None = None,
+        to_ts: int | None = None,
+        days: int | None = None,
+        provider: str | None = None,
+        limit: int = 5000,
+        indicators: list[str] | None = None,
+        adjusted: bool = True,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Same per-symbol semantics as `get_candles()`, called once per
+        symbol under the hood (the per-symbol storage layer isn't changed
+        by this -- `_load_symbol_frame` is still one file per symbol) --
+        the win is entirely on the network side: a caller that used to make
+        len(symbols) HTTP calls now makes one. One bad symbol (unknown,
+        empty history, a storage read error) yields an empty list for that
+        symbol only; it never fails the whole batch."""
+        out: dict[str, list[dict[str, Any]]] = {}
+        for symbol in symbols:
+            try:
+                out[symbol.upper()] = self.get_candles(
+                    symbol, interval=interval, from_ts=from_ts, to_ts=to_ts, days=days,
+                    provider=provider, limit=limit, indicators=indicators, adjusted=adjusted,
+                )
+            except Exception:
+                LOG.exception("candles batch: %s failed, returning empty for this symbol only", symbol.upper())
+                out[symbol.upper()] = []
+        return out
+
     _QUOTE_TTL_SEC = 5.0
 
     def get_quote(self, symbol: str) -> dict[str, Any]:

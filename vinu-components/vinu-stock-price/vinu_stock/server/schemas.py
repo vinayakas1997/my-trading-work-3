@@ -12,6 +12,24 @@ class DataResponse(BaseModel):
     data: list[dict[str, Any]]
 
 
+class CandlesBatchRequest(BaseModel):
+    symbols: list[str] = Field(min_length=1)
+    interval: str = "1m"
+    from_ts: int | None = Field(default=None, alias="from")
+    to_ts: int | None = Field(default=None, alias="to")
+    days: int | None = Field(default=None, ge=1, le=3650)
+    provider: str | None = None
+    limit: int = Field(default=5000, ge=1, le=50000)
+    indicators: list[str] | None = None
+    adjusted: bool = True
+
+    model_config = {"populate_by_name": True}
+
+
+class CandlesBatchResponse(BaseModel):
+    results: dict[str, DataResponse]
+
+
 class SettingsResponse(BaseModel):
     poll_interval_sec: int
     default_provider: str

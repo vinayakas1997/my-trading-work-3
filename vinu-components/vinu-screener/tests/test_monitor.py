@@ -34,6 +34,24 @@ class FakeDataSource:
         return self.snapshots.get(symbol)
 
 
+class FakeBatchDataSource(FakeDataSource):
+    """Same as FakeDataSource, plus get_ohlcv_batch -- exercises
+    ScanMonitor's batch-prefetch path (used when a real HttpStockDataSource
+    talks to vinu-stock-price's POST /candles/batch)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.batch_calls: list[list[str]] = []
+        self.batch_hangs: bool = False
+
+    def get_ohlcv_batch(self, symbols: list[str]) -> dict[str, pd.DataFrame | None]:
+        self.batch_calls.append(list(symbols))
+        if self.batch_hangs:
+            import time
+            time.sleep(0.3)
+        return {s: self.frames.get(s) for s in symbols}
+
+
 def _above_100_rule(universe, cooldown_min=0.0, coarse_filter=None) -> ScanRule:
     return ScanRule(
         rule_id="r-above-100",
@@ -200,3 +218,64 @@ class TestScanRuleFromDict:
         rule = ScanRule.from_dict(raw)
         assert rule.cooldown_min == 0.0
         assert rule.coarse_filter == CoarseFilter()
+
+
+class TestBatchFetch:
+    """ScanMonitor prefers a data source's get_ohlcv_batch() when it has
+    one -- one call for the whole cycle's universe instead of one per
+    symbol -- and falls back cleanly when it doesn't, or when the batch
+    call itself fails/times out."""
+
+    def test_uses_one_batch_call_instead_of_per_symbol_calls(self) -> None:
+        ds = FakeBatchDataSource()
+        ds.frames["AAPL"] = _ohlcv([90, 95, 105])
+        ds.frames["MSFT"] = _ohlcv([50, 55, 60])
+        monitor = ScanMonitor(ds)
+        rule = _above_100_rule(["AAPL", "MSFT"])
+        result = monitor.run_cycle(rule)
+        assert result.fired == ["AAPL"]
+        assert len(ds.batch_calls) == 1
+        assert set(ds.batch_calls[0]) == {"AAPL", "MSFT"}
+
+    def test_coarse_filtered_symbols_are_excluded_from_the_batch_call(self) -> None:
+        ds = FakeBatchDataSource()
+        ds.snapshots["PENNY"] = {"price": 0.50, "volume": 100.0, "dollar_volume": 50.0}
+        ds.snapshots["AAPL"] = {"price": 150.0, "volume": 1_000_000.0, "dollar_volume": 150_000_000.0}
+        ds.frames["AAPL"] = _ohlcv([90, 95, 105])
+        ds.frames["PENNY"] = _ohlcv([90, 95, 105])
+        monitor = ScanMonitor(ds)
+        rule = _above_100_rule(["AAPL", "PENNY"], coarse_filter=CoarseFilter(min_price=1.0))
+        monitor.run_cycle(rule)
+        assert ds.batch_calls == [["AAPL"]]
+
+    def test_missing_symbol_in_batch_result_is_insufficient_history(self) -> None:
+        ds = FakeBatchDataSource()  # GHOST never added to ds.frames
+        monitor = ScanMonitor(ds)
+        rule = _above_100_rule(["GHOST"])
+        result = monitor.run_cycle(rule)
+        assert result.outcomes[0].status == "insufficient_history"
+
+    def test_a_hanging_batch_call_times_out_and_falls_back_per_symbol(self) -> None:
+        ds = FakeBatchDataSource()
+        ds.batch_hangs = True
+        ds.frames["AAPL"] = _ohlcv([90, 95, 105])
+        monitor = ScanMonitor(ds, batch_fetch_timeout_sec=0.05)
+        rule = _above_100_rule(["AAPL"])
+        result = monitor.run_cycle(rule)
+        # The batch call timed out, but the per-symbol fallback still finds it.
+        assert result.fired == ["AAPL"]
+
+    def test_data_source_without_batch_support_is_unaffected(self) -> None:
+        ds = FakeDataSource()  # no get_ohlcv_batch at all
+        ds.frames["AAPL"] = _ohlcv([90, 95, 105])
+        monitor = ScanMonitor(ds)
+        rule = _above_100_rule(["AAPL"])
+        result = monitor.run_cycle(rule)
+        assert result.fired == ["AAPL"]
+
+    def test_empty_universe_never_calls_batch(self) -> None:
+        ds = FakeBatchDataSource()
+        monitor = ScanMonitor(ds)
+        rule = _above_100_rule([])
+        monitor.run_cycle(rule)
+        assert ds.batch_calls == []

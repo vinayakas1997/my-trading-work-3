@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query, Response
 
 from vinu_stock.query.indicators import parse_indicator_names
-from vinu_stock.server.schemas import DataResponse
+from vinu_stock.server.schemas import CandlesBatchRequest, CandlesBatchResponse, DataResponse
 from vinu_stock.service import StockService
 
 router = APIRouter(tags=["prices"])
@@ -98,3 +98,47 @@ def candles(
             symbol.upper(), interval, from_ts, to_ts, days,
         )
     return DataResponse(count=len(rows), data=rows)
+
+
+@router.post("/candles/batch", response_model=CandlesBatchResponse)
+def candles_batch(body: CandlesBatchRequest) -> CandlesBatchResponse:
+    """One round-trip for many symbols' candles, instead of one call per
+    symbol -- built for `vinu-screener`'s ~8000-symbol poll cycle, which
+    had no bulk endpoint to call (confirmed while building its data-source
+    adapter; the timeout guard + coarse filter + rate-limit floor there are
+    mitigations for this gap, not a fix for it). POST, not GET, because a
+    few thousand symbols in a query string doesn't fit; capped at
+    `StockService.MAX_BATCH_SYMBOLS` per call so one request can't stall
+    the event loop indefinitely."""
+    service = get_service()
+    if len(body.symbols) > service.MAX_BATCH_SYMBOLS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"at most {service.MAX_BATCH_SYMBOLS} symbols per batch call, got {len(body.symbols)}",
+        )
+    try:
+        indicator_list = parse_indicator_names(",".join(body.indicators)) if body.indicators else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    raw = service.get_candles_batch(
+        body.symbols,
+        interval=body.interval,
+        from_ts=body.from_ts,
+        to_ts=body.to_ts,
+        days=body.days,
+        provider=body.provider,
+        limit=body.limit,
+        indicators=indicator_list,
+        adjusted=body.adjusted,
+    )
+    results = {symbol: DataResponse(count=len(rows), data=rows) for symbol, rows in raw.items()}
+    empty = sorted(sym for sym, rows in raw.items() if not rows)
+    if empty:
+        # Same "don't let an empty result silently look like success" concern
+        # candles()'s X-Data-Empty header addresses -- a batch call has no
+        # single header to carry that per-symbol, so it's logged instead;
+        # results[symbol].count == 0 is the per-symbol signal callers read.
+        LOG.warning("candles batch: %d/%d symbols empty (%s)", len(empty), len(body.symbols),
+                    ", ".join(empty[:20]) + ("..." if len(empty) > 20 else ""))
+    return CandlesBatchResponse(results=results)

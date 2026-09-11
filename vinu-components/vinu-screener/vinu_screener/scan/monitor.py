@@ -47,6 +47,12 @@ LOG = logging.getLogger(__name__)
 # symbols x however-many-seconds-too-fast.
 MIN_INTERVAL_SEC = 30.0
 DEFAULT_FETCH_TIMEOUT_SEC = 5.0
+# `vinu-stock-price` grew a `POST /candles/batch` endpoint (the bulk-fetch
+# gap this package's own data_source.py docstring used to flag) -- a batch
+# covering the whole coarse-filtered universe is one round-trip instead of
+# one per symbol, but it's still a single call that must not be allowed to
+# hang the cycle, hence its own (larger) timeout floor.
+DEFAULT_BATCH_FETCH_TIMEOUT_SEC = 30.0
 
 
 #: Stage B (B18): a `persistent` rule keeps scanning cycle after cycle,
@@ -117,11 +123,13 @@ class ScanMonitor:
         cooldown_gate: CooldownGate | None = None,
         fetch_timeout_sec: float = DEFAULT_FETCH_TIMEOUT_SEC,
         interval_sec: float = 60.0,
+        batch_fetch_timeout_sec: float = DEFAULT_BATCH_FETCH_TIMEOUT_SEC,
     ) -> None:
         self._data_source = data_source
         self._library = library or FeatureLibrary()
         self._cooldown = cooldown_gate or CooldownGate()
         self._fetch_timeout_sec = fetch_timeout_sec
+        self._batch_fetch_timeout_sec = batch_fetch_timeout_sec
         # Rate-limit floor -- see MIN_INTERVAL_SEC's docstring.
         self.interval_sec = max(interval_sec, MIN_INTERVAL_SEC)
 
@@ -140,8 +148,30 @@ class ScanMonitor:
         skipped = set(rule.universe) - set(universe)
         outcomes.extend(SymbolOutcome(s, "coarse_filtered") for s in skipped)
 
+        # Prefetch the whole survivor list in one call when the data source
+        # supports it (duck-typed -- `FakeDataSource` and any other minimal
+        # SymbolDataSource without this method are unaffected, they just
+        # fall back to the original one-call-per-symbol path below). `None`
+        # here means either the data source doesn't support batching, or the
+        # one batch call itself timed out/errored -- either way, every
+        # symbol falls back to its own per-symbol fetch rather than the
+        # whole cycle failing.
+        prefetched: dict[str, object] | None = None
+        if universe and hasattr(self._data_source, "get_ohlcv_batch"):
+            batch_result = call_with_timeout(
+                self._data_source.get_ohlcv_batch, universe, timeout_sec=self._batch_fetch_timeout_sec,
+            )
+            if batch_result.ok and not batch_result.timed_out:
+                prefetched = batch_result.value
+            elif batch_result.timed_out:
+                LOG.warning(
+                    "scan %s: batch fetch for %d symbols timed out after %.1fs, "
+                    "falling back to per-symbol fetch",
+                    rule.rule_id, len(universe), self._batch_fetch_timeout_sec,
+                )
+
         for symbol in universe:
-            outcome = self._evaluate_symbol(rule, symbol, min_bars)
+            outcome = self._evaluate_symbol(rule, symbol, min_bars, prefetched=prefetched)
             outcomes.append(outcome)
             if outcome.status != "fired":
                 continue
@@ -175,16 +205,23 @@ class ScanMonitor:
                 snapshots[symbol] = snap
         return coarse_select(snapshots, rule.coarse_filter)
 
-    def _evaluate_symbol(self, rule: ScanRule, symbol: str, min_bars: int) -> SymbolOutcome:
-        result = call_with_timeout(
-            self._data_source.get_ohlcv, symbol, timeout_sec=self._fetch_timeout_sec,
-        )
-        if result.timed_out:
-            LOG.warning("scan %s: fetch for %s timed out after %.1fs", rule.rule_id, symbol, self._fetch_timeout_sec)
-            return SymbolOutcome(symbol, "timeout", result.error or "")
-        if not result.ok:
-            return SymbolOutcome(symbol, "fetch_error", result.error or "")
-        ohlcv = result.value
+    def _evaluate_symbol(
+        self, rule: ScanRule, symbol: str, min_bars: int, *, prefetched: dict[str, object] | None = None,
+    ) -> SymbolOutcome:
+        if prefetched is not None:
+            # Already fetched (and already timeout-guarded, once, for the
+            # whole batch) in run_cycle -- no second per-symbol network call.
+            ohlcv = prefetched.get(symbol)
+        else:
+            result = call_with_timeout(
+                self._data_source.get_ohlcv, symbol, timeout_sec=self._fetch_timeout_sec,
+            )
+            if result.timed_out:
+                LOG.warning("scan %s: fetch for %s timed out after %.1fs", rule.rule_id, symbol, self._fetch_timeout_sec)
+                return SymbolOutcome(symbol, "timeout", result.error or "")
+            if not result.ok:
+                return SymbolOutcome(symbol, "fetch_error", result.error or "")
+            ohlcv = result.value
         if ohlcv is None or len(ohlcv) < min_bars:
             got = 0 if ohlcv is None else len(ohlcv)
             return SymbolOutcome(symbol, "insufficient_history", f"have {got} bars, need {min_bars}")
