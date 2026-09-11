@@ -32,6 +32,7 @@ from ..conditions.evaluator import evaluate
 from ..conditions.lookback import required_bars
 from ..conditions.schema import ConditionNode, parse_condition
 from ..features.library import FeatureLibrary
+from ..rules.actions import ActionsConfig
 from .cooldown import CooldownGate
 from .data_source import SymbolDataSource
 from .timeout_guard import call_with_timeout
@@ -48,6 +49,17 @@ MIN_INTERVAL_SEC = 30.0
 DEFAULT_FETCH_TIMEOUT_SEC = 5.0
 
 
+#: Stage B (B18): a `persistent` rule keeps scanning cycle after cycle,
+#: re-firing whenever cooldown allows (the default, and the only mode
+#: Phase B-2 knew about). A `one_shot` rule is meant to surface a
+#: candidate once and then deactivate -- `ScanMonitor` never deactivates
+#: anything itself (rule storage/lifecycle is outside this package's scope,
+#: same B15 decoupling as everywhere else), it only *signals* the intent
+#: via `CycleResult.deactivate_rule` for whatever owns the rule's active
+#: flag to act on.
+RULE_MODES = ("persistent", "one_shot")
+
+
 @dataclass(frozen=True)
 class ScanRule:
     rule_id: str
@@ -55,6 +67,12 @@ class ScanRule:
     universe: tuple[str, ...]
     cooldown_min: float = 0.0
     coarse_filter: CoarseFilter = field(default_factory=CoarseFilter)
+    actions: ActionsConfig = field(default_factory=ActionsConfig)   # B16
+    mode: str = "persistent"                                        # B18
+
+    def __post_init__(self) -> None:
+        if self.mode not in RULE_MODES:
+            raise ValueError(f"mode must be one of {RULE_MODES}, got {self.mode!r}")
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ScanRule":
@@ -64,6 +82,8 @@ class ScanRule:
             universe=tuple(raw["universe"]),
             cooldown_min=float(raw.get("cooldown_min", 0.0)),
             coarse_filter=CoarseFilter(**raw.get("coarse_filter", {})),
+            actions=ActionsConfig.from_dict(raw.get("actions")),
+            mode=raw.get("mode", "persistent"),
         )
 
 
@@ -81,6 +101,7 @@ class CycleResult:
     duration_sec: float
     fired: list[str]
     outcomes: list[SymbolOutcome]
+    deactivate_rule: bool = False   # B18: True when a one_shot rule fired this cycle
 
     @property
     def evaluated_count(self) -> int:
@@ -141,6 +162,7 @@ class ScanMonitor:
             rule_id=rule.rule_id, started_at=now,
             duration_sec=time.monotonic() - started,
             fired=fired, outcomes=outcomes,
+            deactivate_rule=(rule.mode == "one_shot" and bool(fired)),
         )
 
     def _coarse_filtered(self, rule: ScanRule) -> list[str]:
