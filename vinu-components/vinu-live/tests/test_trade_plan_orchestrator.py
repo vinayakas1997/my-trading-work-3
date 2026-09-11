@@ -1954,6 +1954,89 @@ class TestRebalanceRequestIntake:
         assert "No rule triggered" in caplog.text
 
 
+class TestRebalanceProtectThresholdScalesWithVolatility:
+    """2026-09-11 reasoning-audit fix (the-reasoning-inefficiency/00-audit.md
+    item C1a): the flat 5% gain-protect threshold treated a "5% gain" as
+    equally meaningful on a calm name and a volatile one. Now scaled by the
+    position's own realized daily volatility, with the flat 5% kept only as
+    the fail-open floor when there isn't enough price history to compute a
+    real figure -- which is exactly what every OTHER test in
+    TestRebalanceRequestIntake exercises (empty candle data -> falls back
+    to the unchanged flat threshold, still passing unmodified above)."""
+
+    def _bars(self, closes: list[float]) -> dict:
+        return {"data": [{"close": c} for c in closes]}
+
+    def test_high_volatility_name_needs_a_bigger_move_to_be_protected(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._rebalance_queue.submit("AAPL", "free capital for candidate Y")
+        # A noisy name: ~3%+ daily swings. 2x that realized vol is well
+        # above the flat 5% floor this scenario would have used before.
+        noisy_closes = [150, 155, 148, 154, 146, 153, 145, 152, 144, 151, 143, 150, 142, 149, 141]
+        get_mock, post_mock = _router(
+            get_routes={
+                "/candles/AAPL": self._bars(noisy_closes),
+                "/angle/shock_clustering/AAPL": {"data": []},
+                "/broker/positions": [],
+            },
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o-vol-1"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        position = list_open_positions(book, symbol="AAPL")[0]
+        # +6.67% -- would have been rebalance_declined under the old flat
+        # 5% threshold, but is smaller than 2x this name's real volatility.
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 160.0, 100000.0))
+
+        assert action["action"] == "rebalance_honored"
+
+    def test_low_volatility_name_is_protected_at_a_smaller_gain(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._rebalance_queue.submit("AAPL", "free capital for candidate Y")
+        # A calm name: closes barely move day to day.
+        calm_closes = [150.0, 150.1, 149.9, 150.2, 149.8, 150.1, 149.9, 150.0, 150.1, 149.9, 150.0, 150.1, 149.9, 150.0, 150.1]
+        get_mock, post_mock = _router(
+            get_routes={
+                "/candles/AAPL": self._bars(calm_closes),
+                "/angle/shock_clustering/AAPL": {"data": []},
+                "/broker/positions": [],
+            },
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        position = list_open_positions(book, symbol="AAPL")[0]
+        # +2% -- would NOT have protected under the old flat 5% threshold,
+        # but is a real, many-sigma move for this name's tiny volatility.
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 153.0, 100000.0))
+
+        assert action["action"] == "rebalance_declined"
+        assert action["protect_threshold_pct"] < 0.05
+
+    def test_insufficient_price_history_falls_back_to_the_flat_floor(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._rebalance_queue.submit("AAPL", "free capital for candidate Y")
+        # Only 3 closes -- below _REBALANCE_PROTECT_MIN_RETURNS (needs >= 5
+        # returns, i.e. >= 6 closes). Must behave exactly like the
+        # no-data case (flat 5%), not silently use a thin/noisy estimate.
+        get_mock, post_mock = _router(
+            get_routes={
+                "/candles/AAPL": self._bars([150.0, 151.0, 150.5]),
+                "/angle/shock_clustering/AAPL": {"data": []},
+                "/broker/positions": [],
+            },
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        position = list_open_positions(book, symbol="AAPL")[0]
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 160.0, 100000.0))  # +6.67%
+
+        assert action["action"] == "rebalance_declined"
+        assert action["protect_threshold_pct"] == pytest.approx(0.05)
+
+
 class TestShockTrigger:
     """Phase 5 (New-talk-agents/new-thinking/new-restructure/phases/
     phase-5-monitor-extend/): an off-cycle check invoked when a shock

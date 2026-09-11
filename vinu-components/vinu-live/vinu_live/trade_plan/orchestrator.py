@@ -1195,7 +1195,7 @@ class TradePlanOrchestrator:
         rebalance_request = self._rebalance_queue.pending_for(symbol)
         if rebalance_request is not None:
             return await self._evaluate_rebalance_request(
-                position, price, portfolio_value, rebalance_request,
+                position, price, portfolio_value, rebalance_request, recent_returns=recent_returns,
             )
 
         # Trailing 2x ATR (15 step2): ratchet stop up for longs (down for
@@ -1244,23 +1244,34 @@ class TradePlanOrchestrator:
         LOG.info("No rule triggered for %s -- holding unchanged", symbol)
         return {"symbol": symbol, "action": "hold", "reason": "no_rule_triggered"}
 
-    # Provisional threshold, not tuned -- same "flag it, don't pretend
-    # it's settled" discipline as this build's other not-yet-tuned
-    # constants (N/K caps, completeness tolerance, PBO bands). Protects a
-    # real winner from being unwound just to satisfy a reallocation ask;
-    # a position within this band has little cost to giving up now.
+    # 2026-09-11 reasoning-audit fix (the-reasoning-inefficiency/00-audit.md
+    # item C1a): a FLAT gain-protect percent meant "5%" was treated as an
+    # equally real, equally protect-worthy move on a name that swings 1%/day
+    # and one that swings 8%/day -- the exact "number disconnected from what
+    # it's supposed to represent" gap that audit exists to close. Now scaled
+    # by the position's own realized daily volatility (the same
+    # pstdev-of-recent-returns measure turbulence_active() already uses,
+    # data the caller already computed for this exact cycle -- no new fetch,
+    # no live trading history needed to derive this). `_REBALANCE_PROTECT_GAIN_PCT`
+    # remains as the documented fail-open floor for when there isn't enough
+    # price history to compute a real volatility figure -- an unmeasurable
+    # move still needs *some* protection, and a fixed conservative floor
+    # beats treating "no data" as "protect nothing."
     _REBALANCE_PROTECT_GAIN_PCT = 0.05
+    _REBALANCE_PROTECT_VOL_MULTIPLE = 2.0
+    _REBALANCE_PROTECT_MIN_RETURNS = 5
 
     async def _evaluate_rebalance_request(
         self, position: Position, price: float, portfolio_value: float, request: Any,
+        *, recent_returns: list[float] | None = None,
     ) -> dict[str, Any]:
         """The rebalance request is advisory input ONLY -- this method is
         reached exclusively when the plan's own real invalidation/
         contingency rules found nothing to act on (see
         _evaluate_open_position above). It can still decline: a real
-        unrealized gain beyond _REBALANCE_PROTECT_GAIN_PCT is a real
-        reason to hold, not honor the request, matching 02-guard-rail.md's
-        'orchestrator retains final say.'"""
+        unrealized gain beyond the (volatility-scaled) protect threshold is
+        a real reason to hold, not honor the request, matching
+        02-guard-rail.md's 'orchestrator retains final say.'"""
         symbol = position.symbol
         self._rebalance_queue.consume(symbol)  # considered once, either way
 
@@ -1269,20 +1280,29 @@ class TradePlanOrchestrator:
             else (position.avg_entry - price) / position.avg_entry
         ) if position.avg_entry > 0 else 0.0
 
+        protect_threshold = self._REBALANCE_PROTECT_GAIN_PCT
+        if recent_returns and len(recent_returns) >= self._REBALANCE_PROTECT_MIN_RETURNS:
+            import statistics as _st
+
+            realized_vol = _st.pstdev(recent_returns[-14:])
+            if realized_vol > 0:
+                protect_threshold = self._REBALANCE_PROTECT_VOL_MULTIPLE * realized_vol
+
         is_critical = getattr(request, "critical", False)
-        if favorable_move_pct > self._REBALANCE_PROTECT_GAIN_PCT and not is_critical:
+        if favorable_move_pct > protect_threshold and not is_critical:
             LOG.info(
-                "Declining rebalance request for %s -- unrealized gain %.2f%% protects the position",
-                symbol, favorable_move_pct * 100,
+                "Declining rebalance request for %s -- unrealized gain %.2f%% protects the "
+                "position (threshold %.2f%%)", symbol, favorable_move_pct * 100, protect_threshold * 100,
             )
             return {
                 "symbol": symbol, "action": "rebalance_declined",
                 "reason": request.reason, "unrealized_gain_pct": favorable_move_pct,
+                "protect_threshold_pct": protect_threshold,
             }
-        if is_critical and favorable_move_pct > self._REBALANCE_PROTECT_GAIN_PCT:
+        if is_critical and favorable_move_pct > protect_threshold:
             LOG.warning(
-                "Rebalance request for %s is CRITICAL -- overriding the %.0f%% gain-protect "
-                "(unrealized gain %.2f%%)", symbol, self._REBALANCE_PROTECT_GAIN_PCT * 100,
+                "Rebalance request for %s is CRITICAL -- overriding the %.2f%% gain-protect "
+                "(unrealized gain %.2f%%)", symbol, protect_threshold * 100,
                 favorable_move_pct * 100,
             )
 
