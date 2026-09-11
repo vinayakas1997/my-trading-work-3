@@ -447,3 +447,110 @@ class TestScenarioSidewaysChop:
 
         assert list_open_positions(book, symbol="AAPL"), "chop must never fully close the position"
         assert set(seen_actions) <= {"hold", "bracket_partial"}
+
+
+def _router_with_errors(get_routes: dict, get_errors: set[str], post_routes: dict, post_errors: set[str]):
+    """Same shape as `_router`, but a prefix listed in `get_errors` /
+    `post_errors` raises a transport error instead of returning a response --
+    for scenarios that need to simulate the broker actually being
+    unreachable, not just a flag being set."""
+
+    async def _get(url, params=None, **kwargs):
+        for prefix in get_errors:
+            if prefix in url:
+                raise ConnectionError(f"simulated broker outage: {prefix}")
+        for prefix, body in get_routes.items():
+            if prefix in url:
+                return _resp(json_body=body)
+        return _resp(status_code=404)
+
+    async def _post(url, json=None, **kwargs):
+        for prefix in post_errors:
+            if prefix in url:
+                raise ConnectionError(f"simulated broker outage: {prefix}")
+        for prefix, body in post_routes.items():
+            if prefix in url:
+                return _resp(json_body=body)
+        return _resp(status_code=404)
+
+    return AsyncMock(side_effect=_get), AsyncMock(side_effect=_post)
+
+
+class TestScenarioBrokerOutageMidCycle:
+    """the-reasoning-inefficiency/scenarios-test/04-broker-outage-mid-cycle/
+    scenario.md -- a materially different question from scenario 02's kill
+    switch: a kill switch is a logical halt (the broker itself is still
+    reachable, reduce_only is exempted downstream); a real broker outage
+    means /agent/broker/order -- the exit's OWN order call -- is likely
+    unreachable too, since it's the same connectivity. So the honest
+    expectation here is NOT "the exit always fires despite the outage" --
+    it's "the exit is still attempted, fails truthfully (exit_not_filled,
+    not a false invalidation_exit), leaves the book position open, and
+    correctly retries once the broker actually recovers." Existing test
+    test_exit_never_gated_while_broker_degraded (test_trade_plan_orchestrator.py)
+    already proves the flag itself doesn't gate the exit path, but with the
+    order POST mocked to always succeed -- it doesn't cover what happens
+    when the outage is real enough to also break the exit's own call."""
+
+    def test_entry_paused_and_exit_fails_truthfully_then_recovers(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 100.0)
+        aapl_plan = _plan(symbol="AAPL", invalidation_conditions=[
+            {"metric": "unrealized_pnl_pct", "operator": "<=", "threshold": -0.08, "action": "exit", "action_params": {}},
+        ])
+        msft_plan = _plan(symbol="MSFT")
+        orch = _make_orchestrator(book)
+        common_get_routes = {
+            "/research/artifacts": [
+                {"artifact_id": "art_aapl", "status": "ACTIVE", "type": "trade_plan"},
+                {"artifact_id": "art_msft", "status": "ACTIVE", "type": "trade_plan"},
+            ],
+            "/research/trade-plan/art_aapl": {"artifact_id": "art_aapl", "trade_plan_data": json.dumps(aapl_plan)},
+            "/research/trade-plan/art_msft": {"artifact_id": "art_msft", "trade_plan_data": json.dumps(msft_plan)},
+            # -13.3% on AAPL (past the -8% threshold); MSFT price is irrelevant
+            # since the outage must block its entry before price even matters.
+            "/candles/AAPL": _bars([100.0, 98.0, 95.0, 87.0]),
+            "/candles/MSFT": _bars([50.0]),
+        }
+
+        # Pass 1: full outage. /agent/broker/account (health probe),
+        # /agent/broker/positions (reconciliation + _broker_close_plan), and
+        # /agent/broker/order (the exit's own submit call) all unreachable --
+        # a real outage, not just a degraded flag.
+        get_mock, post_mock = _router_with_errors(
+            get_routes=common_get_routes,
+            get_errors={"/broker/account", "/broker/positions"},
+            post_routes={},
+            post_errors={"/broker/order"},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        result = asyncio.run(orch.cycle())
+
+        assert result["status"] == "ok"  # no unhandled exception anywhere in the cycle
+        assert result["broker_health"]["degraded"] is True
+        assert orch._broker_degraded is True
+
+        actions_by_symbol = {a["symbol"]: a for a in result["actions"]}
+        assert actions_by_symbol["MSFT"]["action"] == "entry_blocked_by_broker_outage"
+        assert actions_by_symbol["AAPL"]["action"] == "exit_not_filled"
+
+        order_calls = [c for c in post_mock.await_args_list if "/broker/order" in c.args[0]]
+        assert order_calls, "the exit must still be attempted -- _broker_degraded only gates entries"
+        assert list_open_positions(book, symbol="AAPL"), "no confirmed fill -- position must stay open"
+
+        # Pass 2: broker recovers. Same still-open AAPL position, same
+        # breached threshold -- the exit must now actually complete, proving
+        # the earlier failure didn't corrupt state or permanently drop it.
+        get_mock2, post_mock2 = _router(
+            get_routes={
+                "/candles/AAPL": _bars([100.0, 98.0, 95.0, 87.0]),
+                "/broker/positions": [],
+            },
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "outage-recovered-1"}},
+        )
+        orch._http.get, orch._http.post = get_mock2, post_mock2
+        position = list_open_positions(book, symbol="AAPL")[0]
+        action = asyncio.run(orch._evaluate_open_position(aapl_plan, position, 87.0, 100000.0))
+
+        assert action["action"] == "invalidation_exit"
+        assert list_open_positions(book, symbol="AAPL") == []
