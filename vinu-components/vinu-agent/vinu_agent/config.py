@@ -148,6 +148,10 @@ class AgentConfig:
         "vinu_research": os.environ.get("VINU_RESEARCH_API_URL", "http://localhost:8087"),
         "vinu_portfolio": os.environ.get("VINU_PORTFOLIO_API_URL", "http://localhost:8090"),
         "vinu_live": os.environ.get("VINU_LIVE_API_URL", "http://localhost:8091"),
+        # Telegram /rank and /track (channels/telegram.py) read the ranked
+        # list from here and push a picked ticker onto vinu_news +
+        # vinu_stock_price's watchlists -- see that module's docstring.
+        "vinu_screener": os.environ.get("VINU_SCREENER_API_URL", "http://localhost:8095"),
     })
 
 

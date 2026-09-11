@@ -27,7 +27,14 @@ def _start_channels(app_service: AgentService) -> list[Any]:
     # service already reads from config.services["vinu_research"].
     research_api_url = config.services.get("vinu_research", "http://localhost:8087")
 
-    tg_config = {**channel_configs.get("telegram", {}), "research_api_url": research_api_url}
+    # /rank and /track (channels/telegram.py) need the screener, news, and
+    # stock-price base URLs -- passed through the same "services" dict every
+    # agent tool already reads (config.services), not new env plumbing.
+    tg_config = {
+        **channel_configs.get("telegram", {}),
+        "research_api_url": research_api_url,
+        "services": config.services,
+    }
     if tg_config.get("token"):
         tg = TelegramChannel(tg_config, app_service)
         asyncio.create_task(tg.start())
