@@ -67,3 +67,5 @@ The honest boundary, same as scenario 01: this only proves the orchestrator's ow
 **No fix needed** — the real behavior matched the known-correct answer on the first run.
 
 **Flagged for later, not this scenario's scope**: a `vinu-agent`-side test confirming `OrderGuard`'s real kill-switch check actually allows a `reduce_only=True` order through while a halt is engaged (the actual authoritative enforcement this orchestrator-level scenario can't reach). Candidate for `llm-scenarios-test` or a new `vinu-agent`-side scenarios folder, not `vinu-live`'s.
+
+**2026-09-11 addendum, from scenario 06**: this scenario's `/broker/positions` mock was a `[]` convenience default that, after scenario 06's fix, would have resolved to `broker_flat` (book-only close, no order) instead of a real order — not what this scenario was testing (whether the halt blocks the entry while letting the exit through, regardless of the broker-flat mechanism). The mock was updated to show a broker that actually holds the AAPL position, so the test keeps proving exactly what it always did. This scenario's documented conclusion is unchanged.

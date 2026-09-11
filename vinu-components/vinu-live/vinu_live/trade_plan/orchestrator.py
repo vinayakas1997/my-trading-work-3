@@ -1046,7 +1046,10 @@ class TradePlanOrchestrator:
                 LOG.debug("Borrow check failed for %s, failing open: %s", symbol, e)
 
         side = "buy" if direction == "long" else "sell"
-        pre_signed = (await self._fetch_broker_positions()).get(symbol, 0.0)
+        # scenario-06 fix: _fetch_broker_positions() can now return None for
+        # a genuinely unknown state -- `or {}` keeps this fail-open (assume
+        # no pre-existing signed exposure) rather than crashing on .get().
+        pre_signed = (await self._fetch_broker_positions() or {}).get(symbol, 0.0)
         # Stage 0 (G3): a real resting stop at the broker, not just a
         # stop_loss field inside our own book -- so an open position stays
         # protected even if this process is down. This is deliberately a
@@ -1756,13 +1759,20 @@ class TradePlanOrchestrator:
           "broker_flat"    -> broker holds nothing; send nothing, just fix book
           "side_conflict"  -> broker holds the OTHER side; send nothing, alert
           "no_broker_view" -> broker unreadable; fall back to the book qty
+
+        2026-09-11 scenario-06 fix: branches on `broker is None` (a
+        genuinely unknown state) rather than falsiness -- a confirmed-flat
+        account (`{}` from a real 200 response) now correctly falls through
+        to the broker_flat branch below instead of no_broker_view, which
+        used to send a real reduce_only order against an account with
+        nothing to reduce. See _fetch_broker_positions' own docstring.
         """
         try:
             broker = await self._fetch_broker_positions()
         except Exception:  # noqa: BLE001
-            broker = {}
+            broker = None
         fallback_side = "sell" if book_side == "long" else "buy"
-        if not broker:
+        if broker is None:
             return float(book_qty), fallback_side, "no_broker_view"
         bq = float(broker.get(symbol, 0.0))
         if abs(bq) <= 1e-9:
@@ -2124,7 +2134,7 @@ class TradePlanOrchestrator:
             open_positions = list_open_positions(self._book)
             expected = {p.symbol: (p.qty if p.side == "long" else -p.qty) for p in open_positions}
             portfolio_value = sum(abs(q) * prices.get(sym, 0.0) for sym, q in expected.items()) or 1.0
-            report = self._reconciler.reconcile(expected, actual, portfolio_value)
+            report = self._reconciler.reconcile(expected, actual or {}, portfolio_value)
             if report.drift_detected:
                 LOG.warning(
                     "Book/broker drift detected: %d symbol(s), %.2f%% total",
@@ -2133,10 +2143,16 @@ class TradePlanOrchestrator:
                 # how-to-make-it-live.md #15: don't just warn -- pull the book
                 # back to broker truth. The broker is ground truth for what the
                 # account actually holds (a partial fill, or a bracket leg that
-                # fired between cycles). Skipped entirely when the broker
-                # snapshot is empty (can't tell a real flat account from a
-                # failed fetch).
-                if RECONCILE_AUTOCORRECT and actual:
+                # fired between cycles).
+                #
+                # 2026-09-11 scenario-06 fix: gated on `actual is not None`
+                # (a genuinely unknown fetch), not truthiness -- a confirmed
+                # 200-with-empty-list response (e.g. the account's only
+                # position was closed overnight by its resting stop) now
+                # correctly auto-corrects instead of being silently
+                # indistinguishable from a failed fetch forever. Only a real
+                # transport error / non-200 (actual is None) still skips.
+                if RECONCILE_AUTOCORRECT and actual is not None:
                     by_symbol = {p.symbol: p for p in open_positions}
                     for d in report.symbol_drifts:
                         sym = d["symbol"]
@@ -2227,7 +2243,27 @@ class TradePlanOrchestrator:
         )
         return {"symbol": symbol, "action": "increased_to_match_broker", "from_qty": book_abs, "to_qty": broker_abs}
 
-    async def _fetch_broker_positions(self) -> dict[str, float]:
+    async def _fetch_broker_positions(self) -> dict[str, float] | None:
+        """Returns None only for a genuinely unknown state (transport
+        error, non-200, or an unexpected body shape) -- never for a
+        confirmed-flat account. A 200 response with an empty list IS a
+        trustworthy "the broker successfully told us there's nothing here"
+        signal, not the same as "we don't know."
+
+        2026-09-11 scenario-06 fix (the-reasoning-inefficiency/
+        scenarios-test/06-broker-stop-closed-overnight/scenario.md): this
+        used to return {} for both cases, which meant a single-position
+        account whose only holding was closed by the broker-side resting
+        stop overnight (a confirmed, real flat) was indistinguishable from
+        a broker outage to every caller -- _reconcile_book_with_broker
+        would never auto-close the resulting stale book position, and
+        _broker_close_plan would fall back to no_broker_view and send a
+        real reduce_only order against an account with nothing to reduce
+        -- exactly the "reduce_only SELL on an already-flat account opened
+        a short" failure mode _broker_close_plan's own docstring says it
+        exists to prevent, reachable again through this exact ambiguity.
+        Callers now branch on `is None` (unknown) vs a dict, possibly
+        empty (confirmed)."""
         try:
             resp = await self._http.get(f"{self._config.agent_api_url}/agent/broker/positions")
             if resp.status_code == 200:
@@ -2237,9 +2273,11 @@ class TradePlanOrchestrator:
                         p.get("symbol", ""): float(p.get("qty", 0))
                         for p in data if p.get("symbol")
                     }
+                return None  # unexpected body shape -- can't trust it
+            return None
         except Exception as e:
             LOG.warning("Could not fetch broker positions: %s", e)
-        return {}
+            return None
 
     async def _entry_slippage_bps(
         self, symbol: str, planned_price: float, direction: str, pre_signed: float,

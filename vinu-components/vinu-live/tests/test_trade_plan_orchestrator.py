@@ -588,7 +588,11 @@ class TestDataFreshnessGuard:
             get_routes={
                 "/candles/AAPL": {"data": []},
                 "/angle/shock_clustering/AAPL": {"data": []},
-                "/broker/positions": [],
+                # scenario-06 fix: a confirmed-flat 200-with-[] now means
+                # something real (broker_flat, book-only close) -- this
+                # test is about the staleness guard, not that, so give it
+                # a broker view that actually matches the book.
+                "/broker/positions": [{"symbol": "AAPL", "qty": 10.0}],
             },
             post_routes={"/broker/order": {"status": "submitted", "order_id": "o2"}},
         )
@@ -750,15 +754,38 @@ class TestPartialFillHandling:
         assert list_open_positions(book, symbol="AAPL") == []
         assert len(list_open_positions(book, symbol="MSFT")) == 1
 
-    def test_reconcile_skips_when_broker_snapshot_empty(self, book) -> None:
+    def test_reconcile_auto_corrects_on_a_confirmed_flat_broker_snapshot(self, book) -> None:
+        """2026-09-11 scenario-06 fix (the-reasoning-inefficiency/
+        scenarios-test/06-broker-stop-closed-overnight/scenario.md): a 200
+        response with an empty list IS a confirmed-flat account (the
+        broker successfully answered "nothing here") -- distinguishable
+        from a genuine fetch failure, which now returns None instead of
+        the same {} this used to collapse both cases to. This is exactly
+        the realistic "the account's only position was closed overnight
+        by its resting stop" case -- it must now auto-correct the stale
+        book position, not skip it forever. See
+        test_reconcile_skips_on_a_genuine_broker_fetch_failure below for
+        the still-correctly-skipped unknown-state case."""
         open_position(book, "AAPL", "long", 100.0, 150.0)
         orch = _make_orchestrator(book)
         orch._http.get = _router({"/broker/positions": []})[0]
 
         recon = asyncio.run(orch._reconcile_book_with_broker({"AAPL": 150.0}))
 
-        # drift is detected (book 100 vs broker 0) but NOT auto-corrected --
-        # an empty snapshot can't be told apart from a failed fetch.
+        assert recon["drift_detected"] is True
+        assert recon["corrections"][0]["action"] == "closed_to_match_broker"
+        assert list_open_positions(book, symbol="AAPL") == []
+
+    def test_reconcile_skips_on_a_genuine_broker_fetch_failure(self, book) -> None:
+        """The still-correct half of the scenario-06 fix: an actual
+        transport error is a genuinely unknown state (not a confirmed
+        flat), and must still be skipped rather than auto-corrected."""
+        open_position(book, "AAPL", "long", 100.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._http.get = AsyncMock(side_effect=ConnectionError("broker unreachable"))
+
+        recon = asyncio.run(orch._reconcile_book_with_broker({"AAPL": 150.0}))
+
         assert recon["drift_detected"] is True
         assert recon["corrections"] == []
         assert list_open_positions(book, symbol="AAPL")[0].qty == qty_float(100.0)
@@ -1058,7 +1085,7 @@ class TestSpreadGate:
             get_routes={
                 "/candles/AAPL": {"data": []},
                 "/angle/shock_clustering/AAPL": {"data": []},
-                "/broker/positions": [],
+                "/broker/positions": [{"symbol": "AAPL", "qty": 10.0}],
                 "/stock/quote": self._quote(5000.0),
             },
             post_routes={"/broker/order": {"status": "submitted", "order_id": "o2"}},
@@ -1140,7 +1167,7 @@ class TestBrokerOutagePause:
             get_routes={
                 "/candles/AAPL": {"data": []},
                 "/angle/shock_clustering/AAPL": {"data": []},
-                "/broker/positions": [],
+                "/broker/positions": [{"symbol": "AAPL", "qty": 10.0}],
             },
             post_routes={"/broker/order": {"status": "submitted", "order_id": "o2"}},
         )
@@ -1208,7 +1235,19 @@ class TestEmergencyFlatten:
     @staticmethod
     def _mocks(order_status="submitted", halt_ok=True, resume_ok=True, halted_status=False):
         get_routes = {
-            "/broker/positions": [],
+            # scenario-06 fix: a confirmed-flat 200-with-[] now correctly
+            # means broker_flat (book-only close, no order) instead of the
+            # old no_broker_view fallback -- these tests are about
+            # emergency_flatten actually placing/confirming real orders, so
+            # the broker view needs to match what the book holds (AAPL
+            # long 10, MSFT short 5 -- the two symbols opened across this
+            # class's tests; a symbol not open in a given test is simply
+            # unused). The broker-flat-specific case is covered separately
+            # by test_emergency_flatten_book_only_when_broker_flat, which
+            # overrides this with its own explicit mock.
+            "/broker/positions": [
+                {"symbol": "AAPL", "qty": 10.0}, {"symbol": "MSFT", "qty": -5.0},
+            ],
             "/broker/status": {"halted": halted_status},
             "/candles/": {"data": [{"close": 100.0}]},
         }
@@ -1652,7 +1691,7 @@ class TestEventBlackoutGuard:
             get_routes={
                 "/candles/AAPL": {"data": []},
                 "/angle/shock_clustering/AAPL": {"data": []},
-                "/broker/positions": [],
+                "/broker/positions": [{"symbol": "AAPL", "qty": 10.0}],
                 "/stock/events": self._blackout(),
             },
             post_routes={"/broker/order": {"status": "submitted", "order_id": "o2"}},
@@ -1675,7 +1714,7 @@ class TestEvaluateOpenPosition:
             get_routes={
                 "/candles/AAPL": {"data": []},
                 "/angle/shock_clustering/AAPL": {"data": []},
-                "/broker/positions": [],
+                "/broker/positions": [{"symbol": "AAPL", "qty": 10.0}],
             },
             post_routes={"/broker/order": {"status": "submitted", "order_id": "o2"}},
         )
@@ -1695,7 +1734,7 @@ class TestEvaluateOpenPosition:
             get_routes={
                 "/candles/AAPL": {"data": []},
                 "/angle/shock_clustering/AAPL": {"data": []},
-                "/broker/positions": [],
+                "/broker/positions": [{"symbol": "AAPL", "qty": 10.0}],
             },
             post_routes={"/broker/order": {"status": "submitted", "order_id": "o3"}},
         )
@@ -1775,8 +1814,10 @@ class TestEvaluateOpenPosition:
         position = list_open_positions(book, symbol="AAPL")[0]
         action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 130.0, 100000.0))
 
-        assert action["action"] in ("invalidation_exit", "exit_not_filled")
-        # Risk-reducing exit attempted even on HALT entries-only.
+        # Risk-reducing exit attempted even on HALT entries-only -- the
+        # broker-flat book-only close (scenario-06 fix) is an equally
+        # valid way for that exit to actually complete as a real order.
+        assert action["action"] in ("invalidation_exit", "exit_not_filled", "invalidation_exit_book_only")
 
 
 class TestRebalanceRequestIntake:
@@ -1796,7 +1837,7 @@ class TestRebalanceRequestIntake:
             get_routes={
                 "/candles/AAPL": {"data": []},
                 "/angle/shock_clustering/AAPL": {"data": []},
-                "/broker/positions": [],
+                "/broker/positions": [{"symbol": "AAPL", "qty": 10.0}],
             },
             post_routes={"/broker/order": {"status": "submitted", "order_id": "o4"}},
         )
@@ -2421,10 +2462,28 @@ class TestReconcileRobustness:
         assert (qty, note) == (0.0, "side_conflict")
 
     def test_broker_close_plan_no_view_falls_back_to_book(self, book) -> None:
+        # 2026-09-11 scenario-06 fix: None is the genuinely-unknown state
+        # (a real fetch failure) that falls back to no_broker_view --
+        # a confirmed-flat {} now resolves to broker_flat instead, see
+        # test_broker_close_plan_confirmed_flat_account_is_broker_flat below.
+        orch = _make_orchestrator(book)
+        orch._fetch_broker_positions = AsyncMock(return_value=None)
+        qty, side, note = asyncio.run(orch._broker_close_plan("AAPL", "short", 6.0))
+        assert (qty, side, note) == (6.0, "buy", "no_broker_view")
+
+    def test_broker_close_plan_confirmed_flat_account_is_broker_flat(self, book) -> None:
+        """2026-09-11 scenario-06 fix: a confirmed-flat account (a real
+        200 response reporting no positions at all -- e.g. this symbol
+        was the account's only holding and its resting stop already
+        closed it) must resolve to broker_flat (book-only close, no
+        order), not no_broker_view (which used to send a real reduce_only
+        order against an account with nothing to reduce -- exactly the
+        "opened a short on an already-flat account" failure mode this
+        function's own docstring says it exists to prevent)."""
         orch = _make_orchestrator(book)
         orch._fetch_broker_positions = AsyncMock(return_value={})
         qty, side, note = asyncio.run(orch._broker_close_plan("AAPL", "short", 6.0))
-        assert (qty, side, note) == (6.0, "buy", "no_broker_view")
+        assert (qty, note) == (0.0, "broker_flat")
 
     # -- #4: exit never opens an unintended position -------------------------
 

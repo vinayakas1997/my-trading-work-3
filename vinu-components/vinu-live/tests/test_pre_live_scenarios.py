@@ -251,11 +251,15 @@ class TestScenarioInvalidationFiresTheRealExit:
             {"metric": "unrealized_pnl_pct", "operator": "<=", "threshold": -0.08, "action": "exit", "action_params": {}},
         ])
         orch = _make_orchestrator(book)
-        # -10% move -- past the -8% threshold.
+        # -10% move -- past the -8% threshold. Broker confirms it actually
+        # holds the matching AAPL position (scenario-06 fix: a 200-with-[]
+        # response now means confirmed-flat, not "unreadable" -- this test
+        # is about the invalidation threshold firing, not broker-flat
+        # recovery, so it needs a broker view that matches the book).
         get_mock, post_mock = _router(
             get_routes={
                 "/candles/AAPL": _bars([100.0, 98.0, 95.0, 90.0]),
-                "/broker/positions": [],
+                "/broker/positions": [{"symbol": "AAPL", "qty": 10.0}],
             },
             post_routes={"/broker/order": {"status": "submitted", "order_id": "exit-1"}},
         )
@@ -309,12 +313,15 @@ class TestScenarioGapDownCrash:
         orch = _make_orchestrator(book)
         # A single gap-down bar straight to $75 (-25%) -- no gradual slide,
         # this is the only price data point the crash gives the system.
-        get_mock, post_mock = _router(
-            get_routes={
-                "/candles/AAPL": _bars([100.0, 75.0]),
-                "/broker/positions": [],
-            },
+        # Broker view is genuinely unreachable here (a real transport
+        # error, not a confirmed-flat 200-with-[] -- scenario-06's fix
+        # made those two distinguishable) -- this test is specifically
+        # about the no_broker_view fallback closing the full book qty.
+        get_mock, post_mock = _router_with_errors(
+            get_routes={"/candles/AAPL": _bars([100.0, 75.0])},
+            get_errors={"/broker/positions"},
             post_routes={"/broker/order": {"status": "submitted", "order_id": "crash-exit-1"}},
+            post_errors=set(),
         )
         orch._http.get, orch._http.post = get_mock, post_mock
         position = list_open_positions(book, symbol="AAPL")[0]
@@ -335,12 +342,11 @@ class TestScenarioGapDownCrash:
         ])
         orch = _make_orchestrator(book)
         assert orch._breaker_state.halted is False  # fresh, nothing tripped it yet
-        get_mock, post_mock = _router(
-            get_routes={
-                "/candles/AAPL": _bars([100.0, 75.0]),
-                "/broker/positions": [],
-            },
+        get_mock, post_mock = _router_with_errors(
+            get_routes={"/candles/AAPL": _bars([100.0, 75.0])},
+            get_errors={"/broker/positions"},
             post_routes={"/broker/order": {"status": "submitted", "order_id": "crash-exit-2"}},
+            post_errors=set(),
         )
         orch._http.get, orch._http.post = get_mock, post_mock
         position = list_open_positions(book, symbol="AAPL")[0]
@@ -384,7 +390,11 @@ class TestScenarioKillSwitchMidCycle:
                 "/candles/MSFT": _bars([50.0]),
                 "/broker/account": {"configured": True, "equity": 100000.0},
                 "/broker/status": {"halted": True},
-                "/broker/positions": [],
+                # Broker confirms it holds the matching AAPL position --
+                # this scenario is about the halt not blocking the exit,
+                # not about broker-flat recovery (scenario-06's fix made
+                # a confirmed-flat 200-with-[] behave differently now).
+                "/broker/positions": [{"symbol": "AAPL", "qty": 10.0}],
             },
             post_routes={"/broker/order": {"status": "submitted", "order_id": "kill-switch-exit-1"}},
         )
@@ -541,10 +551,14 @@ class TestScenarioBrokerOutageMidCycle:
         # Pass 2: broker recovers. Same still-open AAPL position, same
         # breached threshold -- the exit must now actually complete, proving
         # the earlier failure didn't corrupt state or permanently drop it.
+        # Broker confirms it holds the matching AAPL position now that
+        # connectivity is back -- distinct from scenario 01's genuine
+        # no_broker_view case, this pass is specifically about the exit
+        # actually completing once the broker answers again.
         get_mock2, post_mock2 = _router(
             get_routes={
                 "/candles/AAPL": _bars([100.0, 98.0, 95.0, 87.0]),
-                "/broker/positions": [],
+                "/broker/positions": [{"symbol": "AAPL", "qty": 10.0}],
             },
             post_routes={"/broker/order": {"status": "submitted", "order_id": "outage-recovered-1"}},
         )
@@ -612,6 +626,14 @@ class TestScenarioMultipleCorrelatedPositions:
                 "/research/trade-plan/art_bbb": {"artifact_id": "art_bbb", "trade_plan_data": json.dumps(bbb_plan)},
                 "/candles/AAA": _bars(_AAA_CLOSES),
                 "/candles/BBB": _bars(_BBB_CLOSES),
+                # Broker confirms it holds both matching positions --
+                # reconciliation runs before the correlation check each
+                # cycle, and scenario-06's fix means a confirmed-flat
+                # 200-with-[] now correctly auto-closes stale positions,
+                # which would wipe these out before correlation ever ran.
+                "/broker/positions": [
+                    {"symbol": "AAA", "qty": 10.0}, {"symbol": "BBB", "qty": 10.0},
+                ],
             },
             post_extra={},
         )
@@ -649,6 +671,9 @@ class TestScenarioMultipleCorrelatedPositions:
                 "/research/trade-plan/art_ddd": {"artifact_id": "art_ddd", "trade_plan_data": json.dumps(ddd_plan)},
                 "/candles/AAA": _bars(_AAA_CLOSES),
                 "/candles/DDD": _bars(_DDD_CLOSES),
+                "/broker/positions": [
+                    {"symbol": "AAA", "qty": 10.0}, {"symbol": "DDD", "qty": 10.0},
+                ],
             },
             post_extra={},
         )
@@ -663,3 +688,90 @@ class TestScenarioMultipleCorrelatedPositions:
         assert corr_result["reductions"] == []
         assert list_open_positions(book, symbol="AAA")[0].qty == 10.0
         assert list_open_positions(book, symbol="DDD")[0].qty == 10.0
+
+
+class TestScenarioBrokerStopClosedOvernight:
+    """the-reasoning-inefficiency/scenarios-test/06-broker-stop-closed-overnight/
+    scenario.md -- the flagged gap from scenario 01: does the system
+    correctly recover when the broker-side resting stop (the catastrophic
+    backstop) has already closed the account's only position before the
+    next cycle even runs? Found while designing this: _fetch_broker_positions
+    used to return {} for both a confirmed-flat account (a real 200 with an
+    empty list) and a genuine fetch failure, making them indistinguishable
+    to every caller -- so a single-position account whose only holding was
+    closed overnight was never auto-corrected, and a later invalidation
+    exit on that stale position would fall back to no_broker_view and send
+    a real reduce_only order against nothing to reduce (the exact "opened a
+    short on an already-flat account" bug _broker_close_plan's own
+    docstring says it exists to prevent). Fixed in orchestrator.py:
+    _fetch_broker_positions now returns None only for a genuinely unknown
+    state; a confirmed 200 response (even an empty one) is a dict."""
+
+    def test_reconciliation_auto_closes_the_stale_position_when_broker_confirms_flat(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 100.0)
+        orch = _make_orchestrator(book)
+        # A mild move that does NOT trip invalidation this cycle -- the
+        # realistic case where nothing but end-of-cycle reconciliation
+        # would ever notice the broker-side stop already fired overnight.
+        get_mock, post_mock = _router(
+            get_routes={"/candles/AAPL": _bars([100.0, 101.0]), "/broker/positions": []},
+            post_routes={},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        recon = asyncio.run(orch._reconcile_book_with_broker({"AAPL": 101.0}))
+
+        assert recon["drift_detected"] is True
+        assert recon["corrections"][0]["action"] == "closed_to_match_broker"
+        assert list_open_positions(book, symbol="AAPL") == []
+
+    def test_invalidation_exit_on_the_same_stale_position_never_sends_a_phantom_order(self, book) -> None:
+        """If invalidation ALSO happens to fire the same cycle reconciliation
+        would have caught this on (before reconciliation runs -- it's later
+        in cycle()), _broker_close_plan must independently reach the same
+        safe conclusion: broker_flat, book-only close, no order sent --
+        not no_broker_view, which used to send a real sell into nothing."""
+        open_position(book, "AAPL", "long", 10.0, 100.0)
+        plan = _plan(invalidation_conditions=[
+            {"metric": "unrealized_pnl_pct", "operator": "<=", "threshold": -0.08, "action": "exit", "action_params": {}},
+        ])
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/candles/AAPL": _bars([100.0, 90.0]), "/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "should-never-be-called"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+        position = list_open_positions(book, symbol="AAPL")[0]
+
+        action = asyncio.run(orch._evaluate_open_position(plan, position, 90.0, 100000.0))
+
+        assert action["action"] == "invalidation_exit_book_only"
+        post_mock.assert_not_awaited()  # no phantom order against a flat account
+        assert list_open_positions(book, symbol="AAPL") == []
+
+    def test_genuine_broker_failure_still_falls_back_to_no_broker_view(self, book) -> None:
+        """The still-correct half: a real transport error is genuinely
+        unknown (not a confirmed flat), and must still fall back to
+        closing the full book qty via a real order -- scenario 01's
+        already-proven behavior, now reached only by an actual failure
+        instead of being conflated with the confirmed-flat case above."""
+        open_position(book, "AAPL", "long", 10.0, 100.0)
+        plan = _plan(invalidation_conditions=[
+            {"metric": "unrealized_pnl_pct", "operator": "<=", "threshold": -0.08, "action": "exit", "action_params": {}},
+        ])
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router_with_errors(
+            get_routes={"/candles/AAPL": _bars([100.0, 90.0])},
+            get_errors={"/broker/positions"},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "no-view-exit"}},
+            post_errors=set(),
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+        position = list_open_positions(book, symbol="AAPL")[0]
+
+        action = asyncio.run(orch._evaluate_open_position(plan, position, 90.0, 100000.0))
+
+        assert action["action"] == "invalidation_exit"
+        order_call = post_mock.await_args_list[0]
+        assert order_call.kwargs["json"]["reduce_only"] is True
+        assert list_open_positions(book, symbol="AAPL") == []
