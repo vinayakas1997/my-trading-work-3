@@ -1,17 +1,35 @@
 # scenarios-test
 
 Expanded pre-live mechanical scenarios (no LLM) -- the follow-on to
-`tests/test_pre_live_scenarios.py`'s original 3. Patterns discussed,
-not yet built:
+`vinu-live/tests/test_pre_live_scenarios.py`'s original 3. One scenario
+closed out fully (plan -> build -> run -> fix if needed -> retest) before
+moving to the next -- see each subfolder's `scenario.md` for the full
+record.
 
-- Gap-down crash (does the catastrophic backstop actually catch it, not
-  just the invalidation rule?)
-- Sideways chop (proves the system does nothing -- no phantom entries on
-  noise)
-- Multiple correlated positions moving together (does the
-  correlation/concentration overlay actually kick in?)
-- Broker outage mid-cycle (entries pause, but does an exit still fire?)
-- Kill switch engaged mid-cycle (blocks a would-be entry, still lets a
-  reduce-only exit through?)
+## Status
 
-Awaiting direction on which to build first.
+| # | Scenario | What it checks | Status |
+|---|---|---|---|
+| 01 | [Gap-down crash](01-gap-down-crash/scenario.md) | Does the invalidation exit react correctly to a single-bar -25% crash, not just a gradual move? | **done** -- confirmed correct, no fix needed |
+| 02 | Kill switch engaged mid-cycle | Blocks a would-be entry, still lets a reduce-only exit through? | pending |
+| 03 | Sideways chop | Proves the system does nothing -- no phantom entries on noise | pending |
+| 04 | Broker outage mid-cycle | Entries pause, but does an exit still fire correctly? | pending |
+| 05 | Multiple correlated positions moving together | Does the correlation/concentration overlay actually kick in? | pending |
+| 06 | Broker-side stop already closed the position overnight | Does `_reconcile_book_with_broker` recover correctly when the real resting stop fired before the next cycle even runs? (Flagged while building scenario 01, not started.) | pending |
+
+## Format
+
+Each subfolder's `scenario.md` has five sections, written in this order:
+
+1. **Plan** -- the exact synthetic setup (prices, plan config, broker
+   state), written before anything is run.
+2. **Expected Result** -- the known-correct answer, also written before
+   running anything (so a bad result can't get quietly rationalized after
+   the fact).
+3. **Execution Result** -- what the real orchestrator code actually did,
+   pasted from a real test run.
+4. **Reasoning** -- why the result matched or didn't, and what it reveals
+   about the real code.
+5. **Action Taken** -- fixed / no fix needed / flagged for later, with the
+   commit if something was fixed. A scenario is closed only once this
+   section is filled in.

@@ -289,3 +289,63 @@ class TestScenarioInvalidationFiresTheRealExit:
         assert action["action"] != "invalidation_exit"
         post_mock.assert_not_awaited()
         assert len(list_open_positions(book, symbol="AAPL")) == 1
+
+
+class TestScenarioGapDownCrash:
+    """the-reasoning-inefficiency/scenarios-test/01-gap-down-crash/
+    scenario.md -- a realistic crash shape: one single bar gapping -25%,
+    not a gradual multi-bar slide (the existing invalidation scenario
+    above only ever tested a modest, gradual -10% move). Proves the
+    invalidation check has no hidden assumption that a bad move arrives
+    gradually over several bars, and that an unrealized-only loss (no
+    realized daily loss yet) doesn't get spuriously blocked by the
+    breaker's daily-loss check."""
+
+    def test_single_bar_25pct_crash_exits_on_the_very_first_cycle_that_sees_it(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 100.0)
+        plan = _plan(invalidation_conditions=[
+            {"metric": "unrealized_pnl_pct", "operator": "<=", "threshold": -0.08, "action": "exit", "action_params": {}},
+        ])
+        orch = _make_orchestrator(book)
+        # A single gap-down bar straight to $75 (-25%) -- no gradual slide,
+        # this is the only price data point the crash gives the system.
+        get_mock, post_mock = _router(
+            get_routes={
+                "/candles/AAPL": _bars([100.0, 75.0]),
+                "/broker/positions": [],
+            },
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "crash-exit-1"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+        position = list_open_positions(book, symbol="AAPL")[0]
+
+        action = asyncio.run(orch._evaluate_open_position(plan, position, 75.0, 100000.0))
+
+        assert action["action"] == "invalidation_exit"
+        order_call = post_mock.await_args_list[0]
+        assert order_call.kwargs["json"]["side"] == "sell"
+        assert order_call.kwargs["json"]["reduce_only"] is True
+        assert order_call.kwargs["json"]["qty"] == pytest.approx(10.0)
+        assert list_open_positions(book, symbol="AAPL") == []
+
+    def test_no_realized_daily_loss_means_the_breaker_does_not_block_the_exit(self, book) -> None:
+        open_position(book, "AAPL", "long", 10.0, 100.0)
+        plan = _plan(invalidation_conditions=[
+            {"metric": "unrealized_pnl_pct", "operator": "<=", "threshold": -0.08, "action": "exit", "action_params": {}},
+        ])
+        orch = _make_orchestrator(book)
+        assert orch._breaker_state.halted is False  # fresh, nothing tripped it yet
+        get_mock, post_mock = _router(
+            get_routes={
+                "/candles/AAPL": _bars([100.0, 75.0]),
+                "/broker/positions": [],
+            },
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "crash-exit-2"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+        position = list_open_positions(book, symbol="AAPL")[0]
+
+        action = asyncio.run(orch._evaluate_open_position(plan, position, 75.0, 100000.0))
+
+        # Must be the real, filled exit -- not exit_blocked_by_breaker.
+        assert action["action"] == "invalidation_exit"
