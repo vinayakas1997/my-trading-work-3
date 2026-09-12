@@ -59,6 +59,22 @@ class PortfolioService:
         # (build_portfolio + allocate_risk_parity both called _build_returns_df)
         self._returns_cache: dict[str, tuple[float, pd.Series]] = {}
         self._returns_cache_ttl = 60.0
+        # Perf: build_portfolio()'s own derived output (corr matrix, HRP/
+        # risk-parity weights, DCC shock correlation) was recomputed from
+        # scratch on every call -- even when the underlying returns are
+        # still the fresh ones sitting in _returns_cache above. vinu-live
+        # polls /portfolio/state every cycle, and compute_risk_status's own
+        # call chain (-> compute_daily_game_plan -> compute_daily_allocation)
+        # calls build_portfolio() again on top of that, so the same
+        # correlation/HRP/DCC pipeline ran multiple times per second for
+        # identical inputs. Keyed on the resolved strategy set (name +
+        # artifact_id + is_candidate for every strategy/candidate actually
+        # passed into the pipeline) so a different evaluate-batch candidate
+        # set, or a strategy activating/deactivating, gets a fresh
+        # computation; same TTL as the returns cache above since a cached
+        # entry can never outlive the returns data it was built from.
+        self._portfolio_cache: dict[tuple, tuple[float, dict[str, Any]]] = {}
+        self._portfolio_cache_ttl = 60.0
         # Hysteresis (19 step3): last tilted weights, no flip-flop on noise.
         self._last_weights: dict[str, float] = {}
         # Stage 2 (how-to-make-it-live.md #22): DailyPositionTracker must live
@@ -361,6 +377,16 @@ class PortfolioService:
         if not strategies:
             return {"status": "empty", "strategies": [], "weights": [], "matrix": None}
 
+        import time as _time
+
+        cache_key = tuple(sorted(
+            (s.get("name", ""), s.get("artifact_id", ""), bool(s.get("is_candidate", False)))
+            for s in strategies
+        ))
+        cached = self._portfolio_cache.get(cache_key)
+        if cached and _time.time() - cached[0] < self._portfolio_cache_ttl:
+            return cached[1]
+
         returns_df = await self._build_returns_df(strategies)
         # Stage A (A1/A2): same hardened path as compute_correlation_matrix
         # -- this was previously its own separate raw returns_df.corr()
@@ -398,7 +424,7 @@ class PortfolioService:
 
         composition = self._check_composition_gaps(weights, returns_df, corr_matrix)
 
-        return {
+        result = {
             "status": "ok",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "n_strategies": len(strategies),
@@ -408,6 +434,8 @@ class PortfolioService:
             "shock_correlation": shock,
             "composition_view": composition,
         }
+        self._portfolio_cache[cache_key] = (_time.time(), result)
+        return result
 
     def _check_composition_gaps(
         self,
