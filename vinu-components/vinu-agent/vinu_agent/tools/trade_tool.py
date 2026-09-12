@@ -184,6 +184,9 @@ class TradeTool(BaseTool):
                     }, session_id=session_id, symbol=symbol)
                     return json.dumps({
                         "status": "rejected",
+                        "symbol": symbol,
+                        "side": side,
+                        "qty": qty,
                         "reason": f"risk size multiplier {mult.multiplier:.3f} (binding: {mult.binding}) "
                                   f"would scale this order below one share",
                         "reason_code": "risk_multiplier_zero",
@@ -222,6 +225,9 @@ class TradeTool(BaseTool):
             }, session_id=session_id, symbol=symbol)
             return json.dumps({
                 "status": "rejected",
+                "symbol": symbol,
+                "side": side,
+                "qty": qty,
                 "reason": result.reason,
                 "reason_code": getattr(getattr(result, "code", None), "value", None),
                 "mandate": mandate.to_dict(),
@@ -283,6 +289,9 @@ class TradeTool(BaseTool):
                     }, session_id=session_id, symbol=symbol)
                     return json.dumps({
                         "status": "rejected",
+                        "symbol": symbol,
+                        "side": side,
+                        "qty": qty,
                         "reason": pre_result.reason,
                         "mandate": mandate.to_dict(),
                     })

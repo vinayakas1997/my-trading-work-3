@@ -173,3 +173,36 @@ class TestTradeToolPreApproveResultChecked:
             _tool().execute(symbol="AAPL", qty=1, side="buy")
 
         assert events == ["lock_acquired", "pre_approve", "submit_order", "lock_released"]
+
+
+class TestRejectedPayloadCarriesOrderIdentity:
+    """Rejected payloads must echo symbol/side/qty like the submitted path
+    does -- otherwise the post-hoc FactAuditor flags any "N shares"
+    summary of a rejected order as Fail (false-positive
+    AUDIT_VERDICT_FAIL noise)."""
+
+    def _rejected(self, **kwargs) -> dict:
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(False, "Trading is halted by kill switch")
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            return json.loads(_tool().execute(symbol="AAPL", qty=10, side="buy", **kwargs))
+
+    def test_guard_reject_echoes_symbol_side_qty(self) -> None:
+        result = self._rejected()
+        assert result["status"] == "rejected"
+        assert result["symbol"] == "AAPL"
+        assert result["side"] == "buy"
+        assert result["qty"] == 10
+
+    def test_shares_claim_after_reject_verifies(self) -> None:
+        from vinu_agent.audit.fact_audit import FactAuditor
+
+        result = self._rejected()
+        history = [{"role": "tool", "name": "submit_order", "content": json.dumps(result)}]
+        findings = FactAuditor().audit("Order for 10 shares of AAPL was rejected.", history)
+        assert findings, "expected a shares claim to be extracted"
+        assert all(f["verdict"] == "Verified" for f in findings)
