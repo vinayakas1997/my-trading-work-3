@@ -98,11 +98,11 @@ class NewsService:
         return self._stock_client_instance
 
     def _enrich_with_price_reaction(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        from vinu_news.analysis.post_enrichment.price_reaction import enrich_article_with_reaction
+        from vinu_news.analysis.post_enrichment.price_reaction import enrich_articles_with_reaction
 
         client = self._stock_client()
         conn = self._storage.repo.conn
-        return [enrich_article_with_reaction(conn, row, client) for row in rows]
+        return enrich_articles_with_reaction(conn, rows, client)
 
     @property
     def storage(self) -> StorageBackend:

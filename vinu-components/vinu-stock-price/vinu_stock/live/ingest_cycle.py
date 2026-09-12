@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from vinu_stock.providers.base import FetchBarsResult
 from vinu_stock.providers.registry import ProviderRegistry
 from vinu_stock.storage import parquet
 from vinu_stock.storage.models import BarRecord
@@ -43,24 +44,20 @@ def _filter_closed_bars(bars: list[BarRecord], now_ts: int) -> list[BarRecord]:
     return [b for b in bars if b.bar_ts + 60 <= now_ts]
 
 
-def _ingest_symbol(
+def _finish_ingest_symbol(
     sym: str,
     *,
+    result: FetchBarsResult,
+    start_ts: int,
+    last_ts: int | None,
     data_root: Path,
     backend,
-    registry: ProviderRegistry,
-    all_entries: dict,
     now_ts: int,
     current_year: int,
     summary_lock: threading.Lock,
     summary: LiveIngestSummary,
 ) -> None:
     catalog = backend.catalog
-    entry = all_entries.get(sym)
-    last_ts = entry.last_bar_ts if entry and entry.last_bar_ts else None
-    start_ts = (last_ts - OVERLAP_SEC) if last_ts else now_ts - 24 * 3600
-
-    result = registry.fetch_bars_with_fallback(sym, start_ts, now_ts, role="live")
     if not result.success:
         with summary_lock:
             summary.symbols_failed += 1
@@ -71,6 +68,13 @@ def _ingest_symbol(
     new_bars = result.bars
     if last_ts is not None:
         new_bars = [b for b in new_bars if b.bar_ts > last_ts - OVERLAP_SEC]
+    else:
+        # The fetch behind `result` may be a batched call sharing one (often
+        # earlier) start bound across several symbols -- a symbol with no
+        # prior watermark still needs its own start_ts lower bound applied
+        # here, since that bound is no longer guaranteed to have been the
+        # provider request's own `start` param for this specific symbol.
+        new_bars = [b for b in new_bars if b.bar_ts >= start_ts]
     new_bars = _filter_closed_bars(new_bars, now_ts)
 
     if not new_bars:
@@ -111,18 +115,40 @@ def run_live_cycle(
     if not clean_symbols:
         return summary
 
+    # Per-symbol watermark and lookback bound, exactly as before -- computed
+    # up front so a single batched fetch can replace one HTTP call per
+    # symbol (registry.fetch_bars_with_fallback used to be called once per
+    # symbol here; providers like Alpaca natively accept many symbols in one
+    # request). The batch fetch uses the earliest bound across all symbols
+    # as a shared start_ts; _finish_ingest_symbol re-applies each symbol's
+    # own start_ts/last_ts bound afterward so the output is identical to the
+    # old one-call-per-symbol behavior.
+    last_ts_by_symbol: dict[str, int | None] = {}
+    start_ts_by_symbol: dict[str, int] = {}
+    for sym in clean_symbols:
+        entry = all_entries.get(sym)
+        last_ts = entry.last_bar_ts if entry and entry.last_bar_ts else None
+        last_ts_by_symbol[sym] = last_ts
+        start_ts_by_symbol[sym] = (last_ts - OVERLAP_SEC) if last_ts else now_ts - 24 * 3600
+
+    batch_start_ts = min(start_ts_by_symbol.values())
+    fetch_results = registry.fetch_bars_multi_with_fallback(
+        clean_symbols, batch_start_ts, now_ts, role="live"
+    )
+
     max_workers = min(len(clean_symbols), 4)
     summary_lock = threading.Lock()
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
             pool.submit(
-                _ingest_symbol,
+                _finish_ingest_symbol,
                 sym,
+                result=fetch_results.get(sym) or FetchBarsResult(False, [], "no result"),
+                start_ts=start_ts_by_symbol[sym],
+                last_ts=last_ts_by_symbol[sym],
                 data_root=data_root,
                 backend=backend,
-                registry=registry,
-                all_entries=all_entries,
                 now_ts=now_ts,
                 current_year=current_year,
                 summary_lock=summary_lock,

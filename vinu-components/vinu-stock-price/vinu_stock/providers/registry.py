@@ -145,6 +145,69 @@ class ProviderRegistry:
                 errors.append(f"{provider.provider_id}: {result.error or 'empty'}")
         return FetchBarsResult(False, [], "; ".join(errors))
 
+    def fetch_bars_multi_with_fallback(
+        self,
+        symbols: list[str],
+        start_ts: int,
+        end_ts: int,
+        *,
+        role: ProviderRole = "backfill",
+    ) -> dict[str, FetchBarsResult]:
+        """Batched equivalent of calling fetch_bars_with_fallback() once per
+        symbol, with the same per-symbol provider fallback semantics.
+
+        A provider that exposes fetch_bars_multi() (currently only
+        AlpacaProvider) is asked for every symbol still unresolved in one
+        call instead of one call each -- detected via hasattr(), the same
+        duck-typed "optional batch capability" pattern vinu-screener's
+        HttpStockDataSource.get_ohlcv_batch uses. Providers without it (or
+        symbols they didn't return data for) fall through to one fetch_bars()
+        call per remaining symbol, exactly like fetch_bars_with_fallback.
+        """
+        remaining = list(dict.fromkeys(s.strip().upper() for s in symbols if s.strip()))
+        results: dict[str, FetchBarsResult] = {}
+        errors: dict[str, list[str]] = {s: [] for s in remaining}
+
+        def _try_chain(chain_role: ProviderRole) -> None:
+            nonlocal remaining
+            for provider in self.for_role(chain_role):
+                if not remaining:
+                    return
+                if not provider.is_configured() and provider.provider_id != "yahoo":
+                    for s in remaining:
+                        errors[s].append(f"{provider.provider_id}: not configured")
+                    continue
+                if hasattr(provider, "fetch_bars_multi"):
+                    batch = provider.fetch_bars_multi(remaining, start_ts, end_ts)
+                    still_missing = []
+                    for s in remaining:
+                        result = batch.get(s)
+                        if result is not None and result.success and result.bars:
+                            results[s] = result
+                        else:
+                            err = result.error if result is not None else "empty"
+                            errors[s].append(f"{provider.provider_id}: {err or 'empty'}")
+                            still_missing.append(s)
+                    remaining = still_missing
+                else:
+                    still_missing = []
+                    for s in remaining:
+                        result = provider.fetch_bars(s, start_ts, end_ts)
+                        if result.success and result.bars:
+                            results[s] = result
+                        else:
+                            errors[s].append(f"{provider.provider_id}: {result.error or 'empty'}")
+                            still_missing.append(s)
+                    remaining = still_missing
+
+        _try_chain(role)
+        if remaining and role != "fallback":
+            _try_chain("fallback")
+
+        for s in remaining:
+            results[s] = FetchBarsResult(False, [], "; ".join(errors[s]))
+        return results
+
     def fetch_for_market(
         self,
         market: str,
