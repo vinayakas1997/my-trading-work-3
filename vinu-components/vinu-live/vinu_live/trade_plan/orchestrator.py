@@ -43,12 +43,19 @@ from vinu_live.trade_plan.condition_evaluator import find_triggered_rules
 from vinu_live.trade_plan.live_metrics import compute_live_metrics
 from vinu_live.trade_plan.rebalance_intake import RebalanceRequestQueue
 from vinu_infra.calibration_log import record as record_calibration
+from vinu_infra.risk_math import forecast_confidence_scale as _forecast_confidence_scale
+from vinu_infra.risk_math import vol_target_scale as _vol_target_scale
 from vinu_infra.runtime_settings import RuntimeSettings
 
 LOG = logging.getLogger(__name__)
 
 _COVARIANCE_WINDOW = 63
 _RETURNS_LOOKBACK_DAYS = 90
+
+# Sentinel distinguishing "no cached shock-cluster-correlation was passed"
+# from "a value was passed and it happens to be None" -- see
+# _evaluate_open_position's `cluster_corr` parameter.
+_NOT_FETCHED = object()
 
 # Monitor safety (15 steps 1-2): HALT entries-only + time-stop + cooldown.
 # entries_only = block entries, allow risk-reducing exits/reduces.
@@ -175,21 +182,6 @@ VOL_TARGET_ENABLED = _os.environ.get(
 VOL_TARGET = float(_os.environ.get("VINU_RISK_VOL_TARGET", "0.15"))
 
 
-def _vol_target_scale(current_vol: Any, target_vol: float = VOL_TARGET) -> float:
-    """target_vol / current_vol, so size halves when realized vol doubles.
-    current_vol here is the plan's frozen *daily* vol; target_vol is annual
-    (0.15), so it is converted to a daily figure (/ sqrt(252)) before the
-    ratio -- same units on both sides. Non-positive / unparseable current_vol
-    = 1.0 (no scaling, fail-open). Never scales size *up* past 1.0 -- a calm
-    market does not license extra leverage here."""
-    try:
-        cur = float(current_vol)
-    except (TypeError, ValueError):
-        return 1.0
-    if cur <= 0.0 or target_vol <= 0.0:
-        return 1.0
-    target_daily = target_vol / (252.0 ** 0.5)
-    return min(1.0, target_daily / cur)
 
 
 # how-to-make-it-live.md #16 (Stage 3): data-freshness guard. The live cycle
@@ -440,19 +432,6 @@ def _signal_age_hours(created_at: Any) -> float | None:
         return None
 
 
-def _forecast_confidence_scale(confidence: Any, floor: float = FORECAST_SCALING_FLOOR) -> float:
-    """confidence as a direct fraction of the plan's own max size, floored
-    so a real forecast is dampened, never zeroed, by conviction alone.
-    None/non-positive confidence = 1.0 (no scaling, fail-open)."""
-    try:
-        c = float(confidence)
-    except (TypeError, ValueError):
-        return 1.0
-    if c <= 0.0:
-        return 1.0
-    return max(float(floor), min(1.0, c))
-
-
 async def turbulence_active(fetch_recent: Any, symbol: str) -> tuple[bool, str]:
     """Turbulence VIX pause (15 step3): 14d realized vol above threshold ->
     pause entries (exits never blocked). Fail-open on missing data."""
@@ -585,6 +564,26 @@ class TradePlanOrchestrator:
         # acts at most once per process lifetime (until emergency_resume /
         # restart).
         self._ood_acted: bool = False
+        # Perf: _compute_covariance() (90-day candle fetch + shrinkage calc)
+        # was rebuilt from scratch on every _check_breaker call -- once per
+        # entry/invalidation/contingency/rebalance check -- plus again for
+        # _check_runtime_correlation and _check_ood, all against the SAME
+        # open-position set within one cycle(). Keyed on the resolved
+        # symbol set (not just "this cycle") rather than blindly computed
+        # once upfront and threaded through as a parameter: an invalidation
+        # or contingency exit earlier in the same cycle's plan loop can
+        # close a position before a LATER call in that same loop, changing
+        # the open-symbol set _check_breaker resolves next -- a stale
+        # upfront matrix would then be silently misaligned with
+        # check_limits' own (freshly re-sorted) symbol indexing. Keying on
+        # the symbol set makes a same-set call within the cache window a
+        # pure cache hit (the actual redundant-work case this fixes) while
+        # a genuinely different symbol set still recomputes correctly.
+        # Cleared at the top of every cycle() so nothing outlives one
+        # cycle; the short TTL bounds staleness for the off-cycle callers
+        # (on_shock_event / cycle_shock_batch) that don't go through cycle().
+        self._covariance_cache: dict[tuple[str, ...], tuple[float, np.ndarray | None]] = {}
+        self._covariance_cache_ttl = 30.0
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -708,6 +707,9 @@ class TradePlanOrchestrator:
         self._cycle_count += 1
         cycle_id = f"tp_cycle_{self._cycle_count}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         LOG.info("[%s] Starting trade-plan cycle", cycle_id)
+        # Perf: bound the covariance cache to this cycle -- see
+        # _covariance_cache's docstring in __init__.
+        self._covariance_cache = {}
 
         result: dict[str, Any] = {
             "cycle_id": cycle_id,
@@ -740,10 +742,20 @@ class TradePlanOrchestrator:
             # G: auto-wire prioritized shock batch — sort plans by shock score descending
             # so highest-risk open position evaluated first in same cycle (not just via
             # explicit cycle_shock_batch caller). Threshold 0.5 filters low scores.
+            #
+            # Perf: cluster_corr_by_symbol keeps the raw cluster-correlation
+            # fetched here so the main loop below (_evaluate_open_position)
+            # can reuse it instead of hitting the same
+            # /analysis/angle/shock_clustering/<symbol> endpoint a second
+            # time for the same symbol later in this same cycle. Declared
+            # before the try block so it's always defined (possibly
+            # partially populated) even if prioritization fails partway.
+            cluster_corr_by_symbol: dict[str, float | None] = {}
             try:
                 shock_scores: dict[str, float] = {}
                 for sym in symbols:
                     corr = await self._fetch_shock_cluster_correlation(sym)
+                    cluster_corr_by_symbol[sym] = corr
                     pers = await self._fetch_shock_personality_score(sym)
                     score = 0.0
                     if corr is not None:
@@ -770,7 +782,10 @@ class TradePlanOrchestrator:
                 if position is None:
                     action = await self._maybe_enter(plan, symbol, price, portfolio_value, all_plans=plans)
                 else:
-                    action = await self._evaluate_open_position(plan, position, price, portfolio_value)
+                    action = await self._evaluate_open_position(
+                        plan, position, price, portfolio_value,
+                        cluster_corr=cluster_corr_by_symbol.get(symbol, _NOT_FETCHED),
+                    )
                 if action:
                     actions.append(action)
 
@@ -990,7 +1005,7 @@ class TradePlanOrchestrator:
 
         if FORECAST_SCALING_ENABLED:
             confidence = (plan.get("forecast") or {}).get("confidence")
-            scale = _forecast_confidence_scale(confidence)
+            scale = _forecast_confidence_scale(confidence, FORECAST_SCALING_FLOOR)
             if scale < 1.0:
                 LOG.info(
                     "Trade plan for %s: forecast confidence %s scales size %.1f%% -> %.1f%%",
@@ -1003,7 +1018,7 @@ class TradePlanOrchestrator:
         # (0.15). daily_vol 0.0 = not computed -> no scaling.
         if VOL_TARGET_ENABLED:
             daily_vol = risk_bands.get("daily_vol", 0.0) or 0.0
-            vscale = _vol_target_scale(daily_vol)
+            vscale = _vol_target_scale(daily_vol, VOL_TARGET)
             if vscale < 1.0:
                 LOG.info(
                     "Trade plan for %s: daily vol %.4f vs target -- scaling size %.1f%% -> %.1f%%",
@@ -1139,6 +1154,7 @@ class TradePlanOrchestrator:
 
     async def _evaluate_open_position(
         self, plan: dict[str, Any], position: Position, price: float, portfolio_value: float,
+        *, cluster_corr: float | None = _NOT_FETCHED,
     ) -> dict[str, Any] | None:
         symbol = position.symbol
         # how-to-make-it-live.md #16: a stale feed does NOT block managing an
@@ -1155,7 +1171,13 @@ class TradePlanOrchestrator:
         previous_close = self._last_prices.get(symbol)
         recent_prices = await self._fetch_recent_prices(symbol)
         recent_returns = _simple_returns(recent_prices)
-        cluster_corr = await self._fetch_shock_cluster_correlation(symbol)
+        # Perf: reuse the value cycle()'s shock-prioritization pass already
+        # fetched for this symbol earlier in the same cycle, instead of
+        # hitting /analysis/angle/shock_clustering/<symbol> again. Callers
+        # outside that pass (on_shock_event, direct calls) leave the
+        # sentinel default and get the original fetch-every-time behavior.
+        if cluster_corr is _NOT_FETCHED:
+            cluster_corr = await self._fetch_shock_cluster_correlation(symbol)
 
         artifact_id = plan.get("_artifact_id", "")
         calibration_accuracy = await self._fetch_calibration_accuracy(artifact_id) if artifact_id else None
@@ -1499,17 +1521,26 @@ class TradePlanOrchestrator:
         )
 
     async def _compute_covariance(self, symbols: list[str]) -> np.ndarray | None:
+        # See _covariance_cache's docstring in __init__ for why this is
+        # keyed on the symbol set rather than computed once and passed
+        # through as a plain parameter.
+        cache_key = tuple(sorted(symbols))
+        cached = self._covariance_cache.get(cache_key)
+        if cached is not None and time.monotonic() - cached[0] < self._covariance_cache_ttl:
+            return cached[1]
+
         from vinu_tools.compute.risk.covariance import dynamic_covariance
 
         price_series = await asyncio.gather(*(self._fetch_recent_prices(s) for s in symbols))
         min_len = min((len(p) for p in price_series), default=0)
         if min_len < 20:
-            return None
-        aligned = np.array([p[-min_len:] for p in price_series])
-        cov = dynamic_covariance(aligned, window=_COVARIANCE_WINDOW, use_shrinkage=True)
-        if np.any(np.isnan(cov)):
-            return None
-        return cov
+            result = None
+        else:
+            aligned = np.array([p[-min_len:] for p in price_series])
+            cov = dynamic_covariance(aligned, window=_COVARIANCE_WINDOW, use_shrinkage=True)
+            result = None if np.any(np.isnan(cov)) else cov
+        self._covariance_cache[cache_key] = (time.monotonic(), result)
+        return result
 
     async def _check_runtime_correlation(self, prices: dict[str, float]) -> dict[str, Any]:
         """how-to-make-it-live.md #12: once per cycle, look at the DCC/shrinkage
@@ -1831,8 +1862,14 @@ class TradePlanOrchestrator:
             return {"status": "error", "error": str(e)}
 
     async def _fetch_prices(self, symbols: list[str]) -> dict[str, float]:
-        prices: dict[str, float] = {}
-        for symbol in symbols:
+        # Perf: was a sequential per-symbol await loop -- N symbols meant N
+        # round-trips back to back every cycle. _compute_covariance right
+        # below already fetches per-symbol data the same way via
+        # asyncio.gather; this now matches that pattern instead of being the
+        # one odd-one-out serial fetch in the file. Per-symbol side effects
+        # (self._last_price_ts) are keyed by symbol and asyncio is single
+        # threaded, so concurrent awaits here cannot race each other.
+        async def _fetch_one(symbol: str) -> tuple[str, float | None]:
             try:
                 resp = await self._http.get(
                     f"{self._config.stock_price_api_url}/stock/candles/{symbol}",
@@ -1841,7 +1878,7 @@ class TradePlanOrchestrator:
                 if resp.status_code == 200:
                     bars = resp.json().get("data", [])
                     if bars:
-                        prices[symbol] = float(bars[-1].get("close", 0.0))
+                        price = float(bars[-1].get("close", 0.0))
                         _parsed_ts: float | None = None
                         _bt = bars[-1].get("bar_ts")
                         if _bt is not None:
@@ -1856,9 +1893,13 @@ class TradePlanOrchestrator:
                             # prior ts so the freshness guard fails open rather
                             # than blocking on a lingering old value.
                             self._last_price_ts.pop(symbol, None)
+                        return symbol, price
             except Exception as e:
                 LOG.warning("Could not fetch price for %s: %s", symbol, e)
-        return prices
+            return symbol, None
+
+        results = await asyncio.gather(*(_fetch_one(symbol) for symbol in symbols))
+        return {symbol: price for symbol, price in results if price is not None}
 
     async def _fetch_recent_prices(self, symbol: str, days: int = _RETURNS_LOOKBACK_DAYS) -> list[float]:
         try:
