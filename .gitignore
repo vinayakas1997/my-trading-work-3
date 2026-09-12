@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 *.egg-info/
 .venv/
+.venv_new/
 venv/
 .pytest_cache/
 .mypy_cache/
@@ -57,13 +58,18 @@ secrets/
 *.jsonl
 *.lock
 *.csv
-data/simulator/simulations/
-data/models/
+# Anchored with a leading ** since these live under vinu-components/, not
+# the repo root -- a bare "data/models/" only matches <root>/data/models/
+# and was silently not matching, letting multi-GB model downloads and
+# throwaway venvs show up as untracked instead of being ignored.
+**/data/simulator/simulations/
+**/data/models/
 
 # --- Logs / generated output ---
 logs/
 output/
 catboost_info/
+.writetest
 
 # --- Kilo ---
 .kilo
