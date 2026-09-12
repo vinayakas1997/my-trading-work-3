@@ -137,6 +137,15 @@ class OrderGuard:
         self._throttle_window_sec = float(
             os.environ.get("VINU_AGENT_ORDER_THROTTLE_WINDOW_SEC", "1.0")
         )
+        # _risk_budget_multiplier (called from position_size_multiplier, when
+        # soft-limits are on) and _check_risk_budget (called from check())
+        # used to each independently GET /portfolio/risk/status -- both run
+        # against the same OrderGuard instance for the one symbol a single
+        # trade_tool.py execute() call is ever about, so a per-instance
+        # memo here is exactly enough to turn two network round-trips per
+        # order into one, with no cross-order staleness risk (the instance
+        # doesn't outlive one execute() call).
+        self._risk_budget_cache: dict[str, dict | None] = {}
 
     def _count_daily_orders(self, symbol: str) -> int:
         return self._daily_limit_store.count_today(symbol)
@@ -306,9 +315,20 @@ class OrderGuard:
             symbol, "max_capital_utilization_pct", mandate.max_capital_utilization_pct
         )
 
-        if max_position_pct < 1.0:
+        # Fetch the account once and reuse it for both percentage checks
+        # below, instead of each independently calling get_account() --
+        # also means both checks reason about the same point-in-time
+        # snapshot rather than two calls microseconds apart that could
+        # observe a fill landing in between.
+        account = None
+        if max_position_pct < 1.0 or max_capital_utilization_pct < 1.0:
             try:
                 account = self._broker.get_account()
+            except Exception as e:
+                logger.warning("Could not fetch account for position/utilization checks: %s", e)
+
+        if max_position_pct < 1.0 and account is not None:
+            try:
                 equity = float(account.equity)
                 if equity > 0:
                     frac = value / equity
@@ -333,9 +353,8 @@ class OrderGuard:
             except Exception as e:
                 logger.warning("Could not check max_position_pct: %s", e)
 
-        if max_capital_utilization_pct < 1.0:
+        if max_capital_utilization_pct < 1.0 and account is not None:
             try:
-                account = self._broker.get_account()
                 equity = float(account.equity)
                 # equity - cash = current market value of everything already
                 # held, i.e. capital already deployed before this order.
@@ -530,10 +549,14 @@ class OrderGuard:
         binding = min(comps, key=lambda k: comps[k]) if m < 1.0 else None
         return MultiplierResult(m, comps, binding)
 
-    def _risk_budget_multiplier(self, symbol: str) -> float | None:
-        """vinu-portfolio's per-symbol `suggested_size_multiplier` for the
-        warning/reduce tiers (the halt tier is handled as a hard reject in
-        `_check_risk_budget`). None on any lookup problem."""
+    def _fetch_risk_budget(self, symbol: str) -> dict | None:
+        """GET /portfolio/risk/status, memoized per instance (see __init__)
+        so _risk_budget_multiplier and _check_risk_budget -- both of which
+        may run for the same symbol within one order's check -- only ever
+        hit the network once. None on any lookup problem (fail-open;
+        callers already treat None as "no data")."""
+        if symbol in self._risk_budget_cache:
+            return self._risk_budget_cache[symbol]
         try:
             try:
                 from vinu_infra.auth import internal_auth_headers as _iah
@@ -544,7 +567,18 @@ class OrderGuard:
             resp.raise_for_status()
             budget = resp.json()
         except Exception as e:
-            logger.warning("Could not fetch risk budget multiplier for %s: %s", symbol, e)
+            logger.warning("Could not fetch risk budget for %s: %s", symbol, e)
+            self._risk_budget_cache[symbol] = None
+            return None
+        self._risk_budget_cache[symbol] = budget
+        return budget
+
+    def _risk_budget_multiplier(self, symbol: str) -> float | None:
+        """vinu-portfolio's per-symbol `suggested_size_multiplier` for the
+        warning/reduce tiers (the halt tier is handled as a hard reject in
+        `_check_risk_budget`). None on any lookup problem."""
+        budget = self._fetch_risk_budget(symbol)
+        if budget is None:
             return None
         for s in budget.get("symbols", []):
             if s.get("symbol") == symbol:
@@ -703,17 +737,8 @@ class OrderGuard:
         be allowed). Fails open on any lookup problem, same posture as
         _check_portfolio_concentration.
         """
-        try:
-            try:
-                from vinu_infra.auth import internal_auth_headers as _iah
-                _h = _iah() or None
-            except Exception:
-                _h = None
-            resp = requests.get(f"{self._portfolio_api_url}/portfolio/risk/status", headers=_h, timeout=10.0)
-            resp.raise_for_status()
-            budget = resp.json()
-        except Exception as e:
-            logger.warning("Could not check risk budget for %s: %s", symbol, e)
+        budget = self._fetch_risk_budget(symbol)
+        if budget is None:
             return GuardResult(True)
 
         for s in budget.get("symbols", []):

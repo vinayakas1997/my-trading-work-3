@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from vinu_infra.risk_math import cvar_exceeds, forecast_confidence_scale, vol_target_scale
+
 # Fraction of the full Kelly stake actually deployed. The design doc's own
 # "Open questions" leaves Kelly-vs-fixed-fractional undecided; the
 # reference analysis (02-reference-repos-core-logic.md) recommends 25-50%.
@@ -69,44 +71,6 @@ DEFAULT_FORECAST_SCALING_ENABLED = _os.environ.get(
 DEFAULT_FORECAST_SCALING_FLOOR = float(_os.environ.get("VINU_RISK_FORECAST_SCALING_FLOOR", "0.5"))
 
 _METHODS = ("fractional_kelly", "fixed_fractional", "atr_stop")
-
-
-def cvar_exceeds(cvar_95: float, threshold: float = DEFAULT_CVAR_THRESHOLD) -> bool:
-    """True if tail risk blocks sizing. cvar_95 as positive loss fraction (0.04 = 4% daily)."""
-    try:
-        return float(cvar_95) > float(threshold)
-    except (TypeError, ValueError):
-        return False
-
-
-def vol_target_scale(current_vol: float, target_vol: float = DEFAULT_VOL_TARGET) -> float:
-    """position = target / current, capped 0.25x to 1x. High vol halves size auto.
-    Non-positive current_vol = 1.0 (no scaling, fail-open)."""
-    try:
-        cur = float(current_vol)
-        tgt = float(target_vol)
-    except (TypeError, ValueError):
-        return 1.0
-    if cur <= 0.0 or tgt <= 0.0:
-        return 1.0
-    scale = tgt / cur
-    return max(0.25, min(1.0, scale))
-
-
-def forecast_confidence_scale(
-    confidence: float | None, floor: float = DEFAULT_FORECAST_SCALING_FLOOR,
-) -> float:
-    """confidence as a direct fraction of the caller's requested size,
-    floored so a real forecast is dampened, never zeroed, by conviction
-    alone. None/non-positive confidence = 1.0 (no scaling, fail-open --
-    the caller didn't supply a forecast, not evidence the forecast is bad)."""
-    try:
-        c = float(confidence)
-    except (TypeError, ValueError):
-        return 1.0
-    if c <= 0.0:
-        return 1.0
-    return max(float(floor), min(1.0, c))
 
 
 def full_kelly_fraction(win_rate: float, payoff_ratio: float) -> float:

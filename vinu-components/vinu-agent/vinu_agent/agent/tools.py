@@ -34,15 +34,26 @@ class BaseTool(ABC):
 class ToolRegistry:
     def __init__(self) -> None:
         self._tools: Dict[str, BaseTool] = {}
+        # Tool schemas are static once registered; AgentLoop calls
+        # get_definitions() on every LLM turn (_call_llm), so rebuilding the
+        # list from scratch each time is pure repeated work over the life of
+        # a run. Invalidated on register() -- the only thing that can change
+        # the schema list.
+        self._definitions_cache: Optional[List[Dict[str, Any]]] = None
 
     def register(self, tool: BaseTool) -> None:
         self._tools[tool.name] = tool
+        self._definitions_cache = None
 
     def get(self, name: str) -> Optional[BaseTool]:
         return self._tools.get(name)
 
     def get_definitions(self) -> List[Dict[str, Any]]:
-        return [t.to_openai_schema() for t in self._tools.values()]
+        if self._definitions_cache is None:
+            self._definitions_cache = [t.to_openai_schema() for t in self._tools.values()]
+        # A fresh list per call (same schema dicts, cheap to copy) so a
+        # caller that mutates the list it gets back can't corrupt the cache.
+        return list(self._definitions_cache)
 
     def execute(self, name: str, params: Dict[str, Any]) -> str:
         tool = self._tools.get(name)

@@ -800,6 +800,27 @@ class TestRiskBudget:
             result = guard.check("AAPL", "buy", qty=10, price=100.0)
         assert result
 
+    def test_position_size_multiplier_then_check_fetch_risk_budget_once(self) -> None:
+        """position_size_multiplier() (soft-limits path) and check() both
+        need the risk budget for the same symbol on the same OrderGuard
+        instance -- same real-world sequence trade_tool.py's execute()
+        drives when soft limits are on. They must share one fetch, not
+        each hit /portfolio/risk/status independently."""
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, require_market_open=False)
+        guard = _guard(mandate)
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {
+            "symbols": [{"symbol": "AAPL", "halted": False, "daily_pnl_pct": -0.5, "suggested_size_multiplier": 0.6}],
+        }
+        with patch("vinu_agent.broker.order_guard.requests.get", return_value=resp) as mock_get:
+            mult = guard.position_size_multiplier("AAPL", "buy", qty=10, price=100.0)
+            result = guard.check("AAPL", "buy", qty=10, price=100.0)
+        risk_status_calls = [c for c in mock_get.call_args_list if "/portfolio/risk/status" in c.args[0]]
+        assert len(risk_status_calls) == 1
+        assert mult.components.get("risk_budget") == pytest.approx(0.6)
+        assert result
+
 
 class TestDailyLimits:
     """The real bug found and fixed while evaluating OrderGuard's other

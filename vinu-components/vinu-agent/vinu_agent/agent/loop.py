@@ -42,6 +42,17 @@ def _estimate_tokens(text: str) -> int:
     return int(len(text) / _ESTIMATED_CHARS_PER_TOKEN) + 1
 
 
+def _estimate_tokens_for_messages(messages: List[Dict]) -> int:
+    """Same chars/4 heuristic as _estimate_tokens, but built from a plain
+    concatenation of message content instead of `str([...])` over the whole
+    list -- the latter runs every content string through repr() (quoting,
+    escaping quotes/newlines) plus list brackets/commas, which is both
+    slower and no more accurate for a rough chars/4 estimate than just
+    summing the raw content length."""
+    total_chars = sum(len(str(m.get("content", ""))) for m in messages)
+    return int(total_chars / _ESTIMATED_CHARS_PER_TOKEN) + 1
+
+
 class AgentLoop:
     def __init__(
         self,
@@ -158,9 +169,7 @@ class AgentLoop:
                 completion_tokens = usage.get("completion_tokens", 0)
                 token_count_source = "provider"
             else:
-                prompt_tokens = _estimate_tokens(
-                    str([m["content"] for m in compressed])
-                )
+                prompt_tokens = _estimate_tokens_for_messages(compressed)
                 completion_tokens = _estimate_tokens(response.get("content", ""))
                 token_count_source = "estimated"
             token_usage.prompt += prompt_tokens
@@ -379,8 +388,7 @@ class AgentLoop:
             result = self._auto_compact(messages)
             return self._fix_tool_pairs(result)
 
-        total_text = str([m.get("content", "") for m in messages])
-        estimated_tokens = _estimate_tokens(total_text)
+        estimated_tokens = _estimate_tokens_for_messages(messages)
         # Real context window (resolved by create_llm() from the backing
         # model's own /models endpoint, or an explicit config override) —
         # not a hardcoded guess. See __init__'s max_context_tokens.

@@ -9,6 +9,13 @@ from ..config import AgentConfig, LLMConfig
 
 LOG = logging.getLogger(__name__)
 
+# Kept in sync by convention with loop.py's _DEFAULT_MAX_CONTEXT_TOKENS --
+# both are "assume this small a context window when we can't resolve the
+# real one" fallbacks (this one when a provider's own context_window can't
+# be determined; loop.py's is the fallback-of-a-fallback for when even this
+# value isn't available on the llm object). If you change one, check the
+# other -- they're not imported from a shared constant because that would
+# make agent/llm.py and agent/loop.py depend on each other for a single int.
 _DEFAULT_CONTEXT_WINDOW = 8000
 _CONTEXT_WINDOW_FIELDS = ("n_ctx", "context_length", "context_window", "max_context_length")
 
