@@ -967,7 +967,6 @@ class StrategyResearchLoop:
             test_pct=self._config.walk_forward_test_pct,
             n_windows=self._config.walk_forward_windows,
             min_train_days=self._config.walk_forward_min_train_days,
-            step_size_days=self._config.walk_forward_step_size_days,
             gap_days=self._config.walk_forward_gap_days,
         )
         splitter = WindowSplitter(wf_config)

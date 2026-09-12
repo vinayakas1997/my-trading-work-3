@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,6 +29,15 @@ from vinu_simulator.storage.results import ResultStorage
 
 LOG = logging.getLogger(__name__)
 
+# Sweep-grid callers (vinu-research's run_sweep_grid) fire up to
+# MAX_GRID_POINTS candidates at the *same* symbol/date-range/interval/
+# indicators per round -- only strategy code/params differ between them --
+# so a short-TTL cache in front of get_ohclv avoids re-downloading and
+# re-parsing identical OHLCV+indicator data for every grid point. Short TTL
+# because this is only meant to de-duplicate work within one sweep round,
+# not to serve stale data across unrelated requests.
+_OHCLV_CACHE_TTL_SECONDS = float(os.environ.get("VINU_SIMULATOR_OHCLV_CACHE_TTL_SEC", "120"))
+
 
 class SimulatorService:
     def __init__(self, config: Any | None = None):
@@ -41,6 +53,55 @@ class SimulatorService:
         self._strategy_client = StrategyClient(f"{self._config.strategy_api_url}/strategy")
         self._price_client = PriceClient(f"{self._config.stock_api_url}/stock")
         self._features_client = FeaturesClient(f"{self._config.features_api_url}/features")
+        self._ohclv_cache: dict[tuple[Any, ...], tuple[float, dict[str, pd.DataFrame]]] = {}
+        self._ohclv_cache_lock = threading.Lock()
+
+    def _get_ohclv_cached(
+        self,
+        symbols: list[str],
+        start_date: str,
+        end_date: str,
+        resolution: str,
+        indicators: list[str] | None,
+    ) -> dict[str, pd.DataFrame]:
+        """Same contract as PriceClient.get_ohclv, fronted by a short-TTL
+        in-process cache keyed on the full call signature. Sweep-grid runs
+        request the exact same symbols/date-range/interval/indicators for
+        every candidate in a round (only strategy code/params differ), so
+        this avoids re-fetching and re-parsing identical data per point.
+        Never mutated by callers (only reindexed/column-selected, which
+        return new frames), so sharing the cached DataFrames is safe."""
+        key = (
+            tuple(sorted(symbols)),
+            start_date,
+            end_date,
+            resolution,
+            tuple(sorted(indicators)) if indicators else None,
+        )
+        now = time.monotonic()
+        with self._ohclv_cache_lock:
+            entry = self._ohclv_cache.get(key)
+            if entry is not None and (now - entry[0]) < _OHCLV_CACHE_TTL_SECONDS:
+                return entry[1]
+
+        data = self._price_client.get_ohclv(
+            symbols, start_date, end_date, resolution=resolution, indicators=indicators,
+        )
+
+        with self._ohclv_cache_lock:
+            self._ohclv_cache[key] = (now, data)
+            if len(self._ohclv_cache) > 64:
+                # Bounded, simple eviction: drop expired entries first; this
+                # cache only needs to live long enough to de-duplicate one
+                # sweep round, not to grow without bound across a long-lived
+                # service process.
+                stale = [
+                    k for k, (ts, _) in self._ohclv_cache.items()
+                    if (now - ts) >= _OHCLV_CACHE_TTL_SECONDS
+                ]
+                for k in stale:
+                    self._ohclv_cache.pop(k, None)
+        return data
 
     @staticmethod
     def _compute_config_hash(params: dict[str, Any]) -> str:
@@ -276,7 +337,7 @@ class SimulatorService:
         # single latest-value snapshot, not a historical series, so it can't
         # supply what generate_weights() needs across the backtest window.
         requested_indicators = req.indicators or ["sma_20", "sma_50", "rsi_14"]
-        ohclv_data = self._price_client.get_ohclv(
+        ohclv_data = self._get_ohclv_cached(
             req.symbols, start_date, end_date,
             resolution=req.interval, indicators=requested_indicators,
         )

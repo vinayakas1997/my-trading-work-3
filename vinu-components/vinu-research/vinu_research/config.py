@@ -84,7 +84,6 @@ class ResearchConfig:
     walk_forward_test_pct: float = 0.2
     walk_forward_gap_days: int = 5
     walk_forward_min_train_days: int = 252
-    walk_forward_step_size_days: int = 63
     walk_forward_stability_threshold: float = 0.5
     walk_forward_min_completed_windows: int = 2
     stock_price_api_url: str = DEFAULT_STOCK_PRICE_API_URL
@@ -252,7 +251,6 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         walk_forward_test_pct=float(os.environ.get("VINU_RESEARCH_WF_TEST_PCT", "0.2")),
         walk_forward_gap_days=int(os.environ.get("VINU_RESEARCH_WF_GAP_DAYS", "5")),
         walk_forward_min_train_days=int(os.environ.get("VINU_RESEARCH_WF_MIN_TRAIN_DAYS", "252")),
-        walk_forward_step_size_days=int(os.environ.get("VINU_RESEARCH_WF_STEP_DAYS", "63")),
         walk_forward_stability_threshold=float(os.environ.get("VINU_RESEARCH_WF_STABILITY_THRESHOLD", "0.5")),
         walk_forward_min_completed_windows=int(os.environ.get("VINU_RESEARCH_WF_MIN_COMPLETED_WINDOWS", "2")),
         stock_price_api_url=os.environ.get("VINU_STOCK_PRICE_API_URL", DEFAULT_STOCK_PRICE_API_URL),

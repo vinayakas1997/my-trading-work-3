@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from statistics import NormalDist
@@ -10,6 +11,16 @@ import numpy as np
 import pandas as pd
 
 LOG = logging.getLogger(__name__)
+
+# Windows are independent train/test slices (each re-optimizes its own grid
+# on its own train slice and backtests on its own test slice) -- nothing
+# depends on a prior window's outcome, so they can run concurrently the same
+# way sweep_grid.py bounds its own grid-point concurrency with a semaphore.
+# Kept modest (well below sweep_grid's own per-window grid concurrency)
+# since each window here itself fans out into its own bounded grid of
+# concurrent sweep candidates -- this just avoids window-level runs queuing
+# one at a time behind each other on top of that.
+WALK_FORWARD_MAX_CONCURRENCY = int(os.environ.get("VINU_WALK_FORWARD_MAX_CONCURRENCY", "3"))
 
 from vinu_simulator.engine.inference import (
     deflated_sharpe_ratio as _deflated_sharpe_ratio,
@@ -27,7 +38,6 @@ class WalkForwardConfig:
     test_pct: float = 0.2
     n_windows: int = 3
     min_train_days: int = 252
-    step_size_days: int = 63
     gap_days: int = 5
 
 
@@ -319,7 +329,6 @@ async def run_walk_forward(
         test_pct=cfg.walk_forward_test_pct,
         n_windows=cfg.walk_forward_windows,
         min_train_days=cfg.walk_forward_min_train_days,
-        step_size_days=cfg.walk_forward_step_size_days,
         gap_days=cfg.walk_forward_gap_days,
     )
     splitter = WindowSplitter(wf_config)
@@ -330,12 +339,12 @@ async def run_walk_forward(
 
     # Inner window grids must not recursively trigger their own walk-
     # forward -- run_sweep_grid gates it on config.walk_forward_enabled.
+    import asyncio
     import dataclasses
 
     inner_config = dataclasses.replace(cfg, walk_forward_enabled=False)
 
-    completed: list[WalkForwardRunWindow] = []
-    for w in windows:
+    async def _run_window(w: WalkForwardWindow) -> WalkForwardRunWindow | None:
         try:
             grid = await run_sweep_grid(
                 symbol=symbol, from_date=w.train_start, to_date=w.train_end,
@@ -349,7 +358,7 @@ async def run_walk_forward(
                     "walk-forward window %d: no candidate succeeded on the train slice, window incomplete",
                     w.window_id,
                 )
-                continue
+                return None
             best = grid.ranked[0]
             best_params = best.params
             if recipe is not None:
@@ -361,7 +370,7 @@ async def run_walk_forward(
                 )
             else:
                 if param_name is None or param_name not in best_params:
-                    continue
+                    return None
                 test_result = await run_sweep_candidate(
                     symbol=symbol, from_date=w.test_start, to_date=w.test_end,
                     base_code=base_code, param_name=param_name,
@@ -369,7 +378,7 @@ async def run_walk_forward(
                     indicators=indicators, initial_capital=initial_capital,
                     tools=resolved_tools,
                 )
-            completed.append(WalkForwardRunWindow(
+            return WalkForwardRunWindow(
                 window_id=w.window_id,
                 train_start=w.train_start,
                 train_end=w.train_end,
@@ -378,11 +387,25 @@ async def run_walk_forward(
                 best_params=best_params,
                 in_sample_metrics=best.sweep_result.metrics,
                 out_of_sample_metrics=test_result.metrics,
-            ))
+            )
         except Exception:
             LOG.exception(
                 "walk-forward window %d failed, window incomplete", w.window_id,
             )
+            return None
+
+    # Windows are independent train/test slices -- run them concurrently,
+    # bounded by a semaphore the same way sweep_grid.py bounds its own
+    # grid-point concurrency. Order is preserved (gather returns in input
+    # order) though nothing downstream depends on window order.
+    _sem = asyncio.Semaphore(max(1, WALK_FORWARD_MAX_CONCURRENCY))
+
+    async def _bounded(w: WalkForwardWindow) -> WalkForwardRunWindow | None:
+        async with _sem:
+            return await _run_window(w)
+
+    results = await asyncio.gather(*[_bounded(w) for w in windows])
+    completed: list[WalkForwardRunWindow] = [r for r in results if r is not None]
 
     if not completed:
         return None

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 
-def _geometric_cagr(daily_returns: pd.Series, periods_per_year: int = 252) -> float:
+def _geometric_cagr(daily_returns: pd.Series, periods_per_year: float = 252.0) -> float:
     """
     Compound the actual sequence of daily returns, not their arithmetic mean.
     Compounding a mean return ignores volatility drag and systematically overstates
@@ -21,22 +21,40 @@ def _geometric_cagr(daily_returns: pd.Series, periods_per_year: int = 252) -> fl
     return cumulative ** (periods_per_year / n) - 1
 
 
-def compute_benchmark_returns_metrics(daily_returns: pd.Series) -> dict[str, float]:
-    """Compute standard metrics from a benchmark returns series."""
+def compute_benchmark_returns_metrics(
+    daily_returns: pd.Series,
+    risk_free_rate: float = 0.0,
+    periods_per_year: float = 252.0,
+) -> dict[str, float]:
+    """Compute standard metrics from a benchmark returns series.
+
+    `risk_free_rate`/`periods_per_year` mirror vinu_simulator's
+    `compute_performance_metrics` signature and defaults (0.0 / 252) so the
+    two never silently diverge if either gains a real risk-free rate or a
+    non-daily interval later -- they're mathematically equivalent at these
+    defaults (see test_benchmark.py::TestGeometricCagrCorrectness), just
+    computed from a bare returns series here instead of portfolio values.
+    """
     if len(daily_returns) < 2:
         return {}
     n = len(daily_returns)
     total_return = float((1 + daily_returns).prod() - 1)
-    cagr = _geometric_cagr(daily_returns)
-    vol = float(daily_returns.std() * np.sqrt(252))
-    sharpe = float(daily_returns.mean() / daily_returns.std() * np.sqrt(252)) if daily_returns.std() > 0 else 0.0
+    cagr = _geometric_cagr(daily_returns, periods_per_year=periods_per_year)
+    vol = float(daily_returns.std() * np.sqrt(periods_per_year))
+    rf_daily = (1 + risk_free_rate) ** (1 / periods_per_year) - 1
+    excess_returns = daily_returns - rf_daily
+    sharpe = (
+        float(excess_returns.mean() / daily_returns.std() * np.sqrt(periods_per_year))
+        if daily_returns.std() > 0
+        else 0.0
+    )
     cumulative = (1 + daily_returns).cumprod()
     running_max = cumulative.expanding().max()
     dd = (cumulative - running_max) / running_max
     max_dd = float(dd.min())
     win_rate = float((daily_returns > 0).sum() / n) if n > 0 else 0.0
     downside = daily_returns[daily_returns < 0]
-    downside_vol = float(downside.std() * np.sqrt(252)) if len(downside) > 1 else 0.0
+    downside_vol = float(downside.std() * np.sqrt(periods_per_year)) if len(downside) > 1 else 0.0
     sortino = float(cagr / downside_vol) if downside_vol > 0 else 0.0
 
     return {
@@ -53,8 +71,15 @@ def compute_benchmark_returns_metrics(daily_returns: pd.Series) -> dict[str, flo
 def compute_benchmark_comparison(
     strategy_returns: pd.Series,
     benchmark_returns: pd.Series,
+    risk_free_rate: float = 0.0,
+    periods_per_year: float = 252.0,
 ) -> dict[str, float]:
-    """Compute alpha, beta, tracking error, information ratio, up/down capture."""
+    """Compute alpha, beta, tracking error, information ratio, up/down capture.
+
+    `risk_free_rate`/`periods_per_year` default to the same 0.0/252 vinu_simulator
+    uses -- see compute_benchmark_returns_metrics's docstring for why these are
+    parameterized instead of hardcoded.
+    """
     aligned = pd.concat([strategy_returns, benchmark_returns], axis=1).dropna()
     if len(aligned) < 20:
         return {}
@@ -68,17 +93,17 @@ def compute_benchmark_comparison(
     beta = float(cov_matrix[0, 1] / bench_var) if bench_var > 1e-12 else 0.0
     result["beta"] = beta
 
-    rf_daily = (1 + 0.0) ** (1 / 252) - 1
+    rf_daily = (1 + risk_free_rate) ** (1 / periods_per_year) - 1
     excess_strat = strat.mean() - rf_daily
     excess_bench = bench.mean() - rf_daily
     alpha_daily = excess_strat - beta * excess_bench
-    alpha = float(alpha_daily * 252)
+    alpha = float(alpha_daily * periods_per_year)
     result["alpha"] = alpha
 
     excess_returns = strat - bench
-    te = float(excess_returns.std() * np.sqrt(252))
+    te = float(excess_returns.std() * np.sqrt(periods_per_year))
     result["tracking_error"] = te
-    ir = float((excess_returns.mean() / excess_returns.std() * np.sqrt(252))) if te > 0 else 0.0
+    ir = float((excess_returns.mean() / excess_returns.std() * np.sqrt(periods_per_year))) if te > 0 else 0.0
     result["information_ratio"] = ir
 
     bench_up = bench > 0
@@ -96,8 +121,8 @@ def compute_benchmark_comparison(
     relative_dd = (relative_cum - running_max) / running_max
     result["relative_max_drawdown"] = float(relative_dd.min())
 
-    strat_cagr = _geometric_cagr(strat)
-    bench_cagr = _geometric_cagr(bench)
+    strat_cagr = _geometric_cagr(strat, periods_per_year=periods_per_year)
+    bench_cagr = _geometric_cagr(bench, periods_per_year=periods_per_year)
     result["excess_cagr"] = strat_cagr - bench_cagr
 
     return result

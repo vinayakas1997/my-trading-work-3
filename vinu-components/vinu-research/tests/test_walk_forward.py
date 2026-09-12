@@ -21,7 +21,6 @@ class TestWindowSplitter:
             method="expanding",
             n_windows=3,
             min_train_days=10,
-            step_size_days=30,
             gap_days=5,
             train_pct=0.6,
             test_pct=0.2,
@@ -35,7 +34,6 @@ class TestWindowSplitter:
             method="sliding",
             n_windows=3,
             min_train_days=10,
-            step_size_days=30,
             gap_days=5,
             train_pct=0.6,
             test_pct=0.2,
@@ -70,7 +68,6 @@ class TestWindowSplitter:
             method="expanding",
             n_windows=2,
             min_train_days=10,
-            step_size_days=30,
             gap_days=5,
             train_pct=0.5,
             test_pct=0.2,
@@ -85,7 +82,6 @@ class TestWindowSplitter:
             method="sliding",
             n_windows=2,
             min_train_days=10,
-            step_size_days=30,
             gap_days=5,
             train_pct=0.5,
             test_pct=0.2,
@@ -99,7 +95,7 @@ class TestWindowSplitter:
             assert (test_start - train_end).days >= 5
 
     def test_window_ids_are_sequential(self):
-        config = WalkForwardConfig(n_windows=5, min_train_days=10, step_size_days=20)
+        config = WalkForwardConfig(n_windows=5, min_train_days=10)
         splitter = WindowSplitter(config)
         windows = splitter.split("2024-01-01", "2024-12-31")
         for i, w in enumerate(windows, 1):
@@ -327,7 +323,6 @@ def _run_wf_with(monkeypatch, window_params, is_sharpe, oos_sharpe, n_windows=3)
         walk_forward_train_pct=0.6,
         walk_forward_test_pct=0.2,
         walk_forward_min_train_days=10,
-        walk_forward_step_size_days=30,
         walk_forward_gap_days=5,
         walk_forward_stability_threshold=0.5,
         walk_forward_min_completed_windows=2,
@@ -336,7 +331,7 @@ def _run_wf_with(monkeypatch, window_params, is_sharpe, oos_sharpe, n_windows=3)
         method=cfg.walk_forward_method, n_windows=cfg.walk_forward_windows,
         train_pct=cfg.walk_forward_train_pct, test_pct=cfg.walk_forward_test_pct,
         min_train_days=cfg.walk_forward_min_train_days,
-        step_size_days=cfg.walk_forward_step_size_days, gap_days=cfg.walk_forward_gap_days,
+        gap_days=cfg.walk_forward_gap_days,
     ))
     global split_windows
     split_windows = splitter.split("2024-01-01", "2024-12-31")
@@ -405,14 +400,13 @@ class TestRunWalkForward:
             walk_forward_train_pct=0.6,
             walk_forward_test_pct=0.2,
             walk_forward_min_train_days=10,
-            walk_forward_step_size_days=30,
             walk_forward_gap_days=5,
             walk_forward_stability_threshold=0.5,
             walk_forward_min_completed_windows=2,
         )
         splitter = WindowSplitter(WalkForwardConfig(
             method="expanding", n_windows=3, train_pct=0.6, test_pct=0.2,
-            min_train_days=10, step_size_days=30, gap_days=5,
+            min_train_days=10, gap_days=5,
         ))
         global split_windows
         split_windows = splitter.split("2024-01-01", "2024-12-31")
