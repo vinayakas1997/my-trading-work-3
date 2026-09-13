@@ -32,6 +32,249 @@ def _configured_broker(submit_result=None) -> MagicMock:
     return broker
 
 
+class TestSymbolGroundingCheck:
+    """#6: a symbol with no basis anywhere in this turn's actual request/tool
+    results is held for confirmation rather than traded on blind trust or
+    silently allowed -- but only a PAUSE, never a flat reject, since a
+    company name resolved to a ticker ("buy some Apple shares") legitimately
+    never spells out "AAPL" anywhere, and a missing literal match must not
+    be treated as proof of a mistake."""
+
+    def test_ungrounded_symbol_is_held_for_confirmation(self) -> None:
+        broker = _configured_broker()
+        guard = MagicMock()
+        tool = _tool()
+        tool._grounding_context = "the user asked about MSFT and TSLA today"
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard):
+            result = json.loads(tool.execute(symbol="AAPL", qty=10, side="buy"))
+
+        assert result["status"] == "pending_confirmation"
+        assert result["reason_code"] == "symbol_not_grounded"
+        guard.check.assert_not_called()
+        broker.submit_order.assert_not_called()
+
+    def test_grounded_symbol_proceeds_normally(self) -> None:
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(True)
+        guard.pre_approve.return_value = GuardResult(True)
+        tool = _tool()
+        tool._grounding_context = "the user asked to buy some AAPL shares"
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            result = json.loads(tool.execute(symbol="AAPL", qty=10, side="buy"))
+
+        assert result["status"] == "submitted"
+
+    def test_reduce_only_bypasses_the_grounding_check(self) -> None:
+        """An exit resolved by name ("close my position") is exactly the
+        case a strict grounding check would false-positive on -- and a
+        risk-reducing order must never be the one held up by ambiguity,
+        same posture as every other check in this file that exempts
+        reduce_only."""
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(True)
+        guard.pre_approve.return_value = GuardResult(True)
+        tool = _tool()
+        tool._grounding_context = "close my losing position"
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            result = json.loads(tool.execute(symbol="AAPL", qty=10, side="sell", reduce_only=True))
+
+        assert result["status"] == "submitted"
+
+    def test_empty_grounding_context_means_no_check_at_all(self) -> None:
+        """Default '' (not wired -- an older/direct caller, a test, replay
+        mode) must mean 'no check', not 'reject everything'."""
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(True)
+        guard.pre_approve.return_value = GuardResult(True)
+        tool = _tool()
+        assert tool._grounding_context == ""
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            result = json.loads(tool.execute(symbol="AAPL", qty=10, side="buy"))
+
+        assert result["status"] == "submitted"
+
+    def test_grounding_check_is_case_insensitive(self) -> None:
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(True)
+        guard.pre_approve.return_value = GuardResult(True)
+        tool = _tool()
+        tool._grounding_context = "the user asked to buy some aapl shares"
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            result = json.loads(tool.execute(symbol="AAPL", qty=10, side="buy"))
+
+        assert result["status"] == "submitted"
+
+    def test_symbol_as_substring_of_an_unrelated_word_is_not_grounded(self) -> None:
+        """situation-test/17-symbol-grounding-substring-false-negative.md: a
+        plain substring test wrongly treated ticker CAT as grounded whenever
+        the turn merely contained the word "Caterpillar" -- the ticker
+        itself was never mentioned. Word-boundary matching must still pause
+        this, the exact case #6 exists to catch."""
+        broker = _configured_broker()
+        guard = MagicMock()
+        tool = _tool()
+        tool._grounding_context = "what's the outlook for caterpillar's heavy machinery division"
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard):
+            result = json.loads(tool.execute(symbol="CAT", qty=10, side="buy"))
+
+        assert result["status"] == "pending_confirmation"
+        assert result["reason_code"] == "symbol_not_grounded"
+        guard.check.assert_not_called()
+        broker.submit_order.assert_not_called()
+
+    def test_symbol_as_a_real_standalone_word_is_still_grounded(self) -> None:
+        """The word-boundary fix must not become stricter than the original
+        substring check for the common, legitimate case -- the ticker
+        appearing as its own word (not just inside a longer word)."""
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(True)
+        guard.pre_approve.return_value = GuardResult(True)
+        tool = _tool()
+        tool._grounding_context = "please buy some CAT shares, I like the setup"
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            result = json.loads(tool.execute(symbol="CAT", qty=10, side="buy"))
+
+        assert result["status"] == "submitted"
+
+
+class TestInvalidQtyRejectedBeforeGuard:
+    """A negative/zero/non-finite qty must never reach OrderGuard: `value`
+    (qty * price) goes negative, and reduce_only orders skip the guard's
+    "cannot determine order value" fail-closed check entirely -- so a
+    hallucinated negative qty + reduce_only=True would otherwise clear
+    every notional/position cap outright. Rejected in the tool, before any
+    guard/broker call."""
+
+    def test_negative_qty_rejected(self) -> None:
+        broker = _configured_broker()
+        guard = MagicMock()
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard):
+            result = json.loads(_tool().execute(symbol="AAPL", qty=-10, side="sell", reduce_only=True))
+
+        assert result["status"] == "rejected"
+        assert result["reason_code"] == "invalid_qty"
+        guard.check.assert_not_called()
+        broker.submit_order.assert_not_called()
+
+    def test_zero_qty_rejected(self) -> None:
+        broker = _configured_broker()
+        guard = MagicMock()
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard):
+            result = json.loads(_tool().execute(symbol="AAPL", qty=0, side="buy"))
+
+        assert result["status"] == "rejected"
+        assert result["reason_code"] == "invalid_qty"
+        broker.submit_order.assert_not_called()
+
+    def test_nan_qty_rejected(self) -> None:
+        broker = _configured_broker()
+        guard = MagicMock()
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard):
+            result = json.loads(_tool().execute(symbol="AAPL", qty=float("nan"), side="buy"))
+
+        assert result["status"] == "rejected"
+        assert result["reason_code"] == "invalid_qty"
+        broker.submit_order.assert_not_called()
+
+    def test_infinite_qty_rejected(self) -> None:
+        broker = _configured_broker()
+        guard = MagicMock()
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard):
+            result = json.loads(_tool().execute(symbol="AAPL", qty=float("inf"), side="buy"))
+
+        assert result["status"] == "rejected"
+        assert result["reason_code"] == "invalid_qty"
+        broker.submit_order.assert_not_called()
+
+    def test_positive_qty_still_proceeds_to_guard(self) -> None:
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(True)
+        guard.pre_approve.return_value = GuardResult(True)
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            result = json.loads(_tool().execute(symbol="AAPL", qty=10, side="buy"))
+
+        assert result["status"] == "submitted"
+
+
+class TestClientOrderIdIsLlmVisible:
+    """client_order_id was always threaded through to broker.submit_order()
+    for idempotency, but was missing from the LLM-facing tool schema -- so
+    the LLM itself had no way to supply one on a retry after a timeout/
+    unclear result, meaning a reasonable retry could create a real duplicate
+    order. Now exposed as an optional schema property; omitting it keeps the
+    exact prior behavior."""
+
+    def test_schema_exposes_client_order_id(self) -> None:
+        assert "client_order_id" in TradeTool.parameters["properties"]
+        assert "client_order_id" not in TradeTool.parameters.get("required", [])
+
+    def test_llm_supplied_client_order_id_reaches_the_broker(self) -> None:
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(True)
+        guard.pre_approve.return_value = GuardResult(True)
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            _tool().execute(symbol="AAPL", qty=1, side="buy", client_order_id="retry-aapl-buy-1")
+
+        assert broker.submit_order.call_args.kwargs["client_order_id"] == "retry-aapl-buy-1"
+
+    def test_omitted_client_order_id_still_works(self) -> None:
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(True)
+        guard.pre_approve.return_value = GuardResult(True)
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            result = json.loads(_tool().execute(symbol="AAPL", qty=1, side="buy"))
+
+        assert result["status"] == "submitted"
+        assert broker.submit_order.call_args.kwargs["client_order_id"] is None
+
+
 class TestTradeToolPreApproveResultChecked:
     def test_successful_order_submission(self) -> None:
         broker = _configured_broker()

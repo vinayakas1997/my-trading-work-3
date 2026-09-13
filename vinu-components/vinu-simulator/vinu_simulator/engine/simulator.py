@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -27,6 +28,8 @@ from vinu_simulator.models.simulation import (
     SimulationResult,
     TradeRecord,
 )
+
+LOG = logging.getLogger(__name__)
 
 
 class WeightSimulator:
@@ -173,6 +176,18 @@ class WeightSimulator:
 
                 deviation = np.abs(rebalance_weights - current_weights).sum()
                 if not np.isfinite(deviation):
+                    # #37: SimulatorEnv.step raises ValueError on this identical
+                    # condition, but this is the path research backtests actually
+                    # run, and turning a non-finite deviation into a hard failure
+                    # here would be a bigger behavior change to the primary
+                    # research path than this fix is meant to make. At minimum,
+                    # make the skipped rebalance visible in diagnostics instead of
+                    # silently continuing with no trace.
+                    LOG.warning(
+                        "Skipping rebalance on %s: non-finite deviation (%s) -- "
+                        "rebalance_weights=%s current_weights=%s",
+                        date, deviation, rebalance_weights, current_weights,
+                    )
                     continue
                 if deviation > config.deviation_threshold:
                     sell_order = np.argsort(current_weights - rebalance_weights)[::-1]
@@ -275,6 +290,21 @@ class WeightSimulator:
 
             nav_after = cash + np.sum(holdings * prices)
             if nav_after <= 0:
+                # Equity wiped out -- a real margin call would force liquidation
+                # here. Previously only the *reported* nav_after was floored to
+                # 0.0 while cash/holdings (the actual short position) were left
+                # untouched, so a short that blew through zero equity could
+                # numerically "recover" on a later favorable price move. Zero the
+                # actual state too so the account stays wiped for the rest of the
+                # run, matching what a real broker would do (#35).
+                if np.any(holdings != 0.0) or cash != 0.0:
+                    LOG.warning(
+                        "Equity wiped out on %s (nav=%.2f) -- liquidating "
+                        "position and zeroing cash instead of letting it "
+                        "numerically recover", date, nav_after,
+                    )
+                holdings = np.zeros(n, dtype=np.float64)
+                cash = 0.0
                 nav_after = 0.0
 
             equity_curve.append(float(nav_after))

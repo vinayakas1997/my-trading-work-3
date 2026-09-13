@@ -1230,6 +1230,23 @@ class StrategyResearchLoop:
         result: BacktestResult,
         symbol: str,
     ) -> str:
+        # #31: a trade_count==0 result caused by generate_weights() crashing (see
+        # vinu-simulator's custom_sim.py) is not a legitimate "strategy chose not
+        # to trade" decision -- surface that distinction directly instead of
+        # asking the LLM to guess at a root cause from Sharpe/drawdown alone.
+        diagnostics = (result.raw or {}).get("diagnostics") or {}
+        if diagnostics.get("crash_fallback"):
+            crashed = diagnostics.get("strategy_crashed_symbols") or {}
+            detail = "; ".join(f"{sym}: {err}" for sym, err in crashed.items())
+            return (
+                "Root cause: generate_weights() crashed and was silently replaced "
+                f"with an all-zero weight series (not a legitimate zero-trade "
+                f"decision) — {detail}\n"
+                "Category: strategy_crash\n"
+                "Recommendation: fix the exception in generate_weights (e.g. "
+                "insufficient history, a missing/NaN indicator column) rather than "
+                "treating this as a signal-quality problem."
+            )
         if not self._llm or not self._llm.is_configured():
             return ""
         stock_profile = getattr(self, "_stock_profile", "")

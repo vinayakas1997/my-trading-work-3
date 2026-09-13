@@ -264,7 +264,13 @@ def run_backfill(
         return summary
 
     current_year = datetime.now(timezone.utc).year
-    end_year = to_year if to_year is not None else current_year - 1
+    # Include the current (live) year by default so intraday/session gaps
+    # in the still-accumulating year are actually caught by
+    # count_session_gaps (run_year_job caps end_dt at "now" for a
+    # not-yet-complete year, so this is safe: it can only pull in bars that
+    # already exist, never future ones). An explicit to_year is still
+    # honored as-is.
+    end_year = to_year if to_year is not None else current_year
     if end_year > current_year:
         end_year = current_year
 
@@ -287,7 +293,13 @@ def run_backfill(
             for sym in summary.symbols
         }
         for future in concurrent.futures.as_completed(futures):
-            future.result()
+            sym = futures[future]
+            try:
+                future.result()
+            except Exception as exc:  # one symbol's crash must not abort the whole backfill run
+                LOG.exception("Backfill failed for %s", sym)
+                with summary_lock:
+                    summary.errors.append(f"{sym}: {exc}")
 
     rollover_and_consolidate(
         summary.symbols,

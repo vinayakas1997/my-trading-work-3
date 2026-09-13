@@ -185,9 +185,27 @@ class AuditLogger:
             "paper_trading": paper_trading,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        cls.LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with cls.LOG_PATH.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, default=str) + "\n")
+        # situation-test/18-audit-logger-unwritable-path-crashes-order-pipeline.md:
+        # found by real testing that a filesystem hiccup here (disk full, a
+        # permissions/mount problem, the data dir vanishing at the wrong
+        # moment) raised OSError straight out of log(), and most callers in
+        # trade_tool.py (the earliest checks especially -- invalid qty,
+        # symbol-not-grounded, guard rejection) call this completely
+        # unwrapped, so the exception propagated all the way out of
+        # TradeTool.execute() -- crashing order rejection/pause paths, not
+        # just failing to record them. The audit log is a secondary,
+        # observability-only side effect of every real check in this
+        # codebase (mandate/guard/kill-switch), never itself a safety gate,
+        # so it must fail open the same way every optional store lookup in
+        # order_guard.py already does. The entry is still emitted via the
+        # regular application logger below either way, so a write failure
+        # here loses durability, not the content itself.
+        try:
+            cls.LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with cls.LOG_PATH.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, default=str) + "\n")
+        except OSError:
+            logger.exception("Could not write audit entry to %s", cls.LOG_PATH)
         logger.info("AUDIT: %s %s", action, json.dumps(details or {}))
 
     @classmethod

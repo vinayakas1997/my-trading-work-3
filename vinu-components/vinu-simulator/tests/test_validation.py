@@ -52,6 +52,48 @@ class TestBlockBootstrapPermutation:
         assert r1["p_value"] == r2["p_value"]
 
 
+class TestMonteCarloPermutation:
+    """
+    #38: monte_carlo_permutation used to draw from the unseeded global
+    np.random.permutation, unlike every sibling permutation/bootstrap function
+    in this module (all of which accept an explicit rng). It must now accept
+    and honor an rng the same way its siblings do, so it can be seeded via
+    config.random_seed for reproducibility.
+    """
+
+    def test_returns_expected_keys_with_sufficient_data(self):
+        pnls = [1.0, -0.5, 0.8, -0.3, 1.2, -0.7, 0.5, -0.2, 0.9, -0.4]
+        result = monte_carlo_permutation(pnls, actual_sharpe=0.5, n_iterations=50)
+        assert "p_value" in result
+        assert result["n_trades"] == 10
+        assert result["minimum_met"] is True
+
+    def test_requires_minimum_trades(self):
+        result = monte_carlo_permutation([1.0, -0.5], 0.5)
+        assert result["minimum_met"] is False
+        assert result["p_value"] == 1.0
+
+    def test_uses_provided_rng(self):
+        pnls = [1.0, -0.5, 0.8, -0.3, 1.2] * 5
+        rng = np.random.default_rng(42)
+        r1 = monte_carlo_permutation(pnls, 0.5, n_iterations=50, rng=rng)
+        rng = np.random.default_rng(42)
+        r2 = monte_carlo_permutation(pnls, 0.5, n_iterations=50, rng=rng)
+        assert r1["p_value"] == r2["p_value"]
+        assert r1["sim_mean"] == r2["sim_mean"]
+
+    def test_different_seeds_can_diverge(self):
+        pnls = [1.0, -0.5, 0.8, -0.3, 1.2, -0.9, 0.6, -0.1] * 3
+        r1 = monte_carlo_permutation(pnls, 0.5, n_iterations=200, rng=np.random.default_rng(1))
+        r2 = monte_carlo_permutation(pnls, 0.5, n_iterations=200, rng=np.random.default_rng(2))
+        assert r1["sim_mean"] != r2["sim_mean"]
+
+    def test_omitting_rng_still_works_unseeded(self):
+        pnls = [1.0, -0.5, 0.8, -0.3, 1.2]
+        result = monte_carlo_permutation(pnls, actual_sharpe=0.5, n_iterations=20)
+        assert result["minimum_met"] is True
+
+
 class TestPricePathResample:
     def test_returns_expected_keys_with_sufficient_data(self):
         returns = pd.Series(np.random.default_rng(42).normal(0.001, 0.02, 100))

@@ -30,6 +30,21 @@ class WriteTool(BaseTool):
         return f'note saved: {kwargs.get("note", "")}'
 
 
+class GroundingAwareWriteTool(BaseTool):
+    """Mirrors TradeTool's `_grounding_context` attribute (see #6 in
+    trade_tool.py) without any of its trading logic -- lets these tests
+    verify the wiring in AgentLoop directly, independent of TradeTool."""
+
+    name = "place"
+    description = "A write tool that reports what grounding context it saw"
+    parameters = {"symbol": {"type": "string", "description": "Symbol"}}
+    is_readonly = False
+    _grounding_context: str = ""
+
+    def execute(self, **kwargs: Any) -> str:
+        return json.dumps({"symbol": kwargs.get("symbol", ""), "saw_context": self._grounding_context})
+
+
 class FakeLLM:
     def __init__(self, responses: Optional[List[Dict]] = None):
         self.responses = responses or []
@@ -271,6 +286,75 @@ class TestAgentLoop:
             assert any(s["step_name"] == "tool:echo" and s["outcome"] == "completed" for s in steps)
             store.close()
             get_telemetry_store(Path(tmp) / "telemetry.db").close()
+
+    def test_grounding_context_seeded_from_latest_user_message(self) -> None:
+        llm = FakeLLM([
+            {"content": "", "tool_calls": [{"function": {"name": "place", "arguments": '{"symbol": "AAPL"}'}}]},
+            {"content": "Done."},
+        ])
+        registry = self._make_registry()
+        registry.register(GroundingAwareWriteTool())
+        loop = AgentLoop(registry=registry, llm=llm)
+
+        loop.run([{"role": "user", "content": "buy some AAPL please"}])
+
+        tool = registry.get("place")
+        assert "buy some AAPL please" in tool._grounding_context
+
+    def test_readonly_result_in_same_batch_is_folded_in_before_write_tool_runs(self) -> None:
+        # #6: a price/news lookup earlier in the SAME assistant turn must
+        # ground a symbol, not only a lookup from a prior iteration.
+        llm = FakeLLM([
+            {
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "echo", "arguments": '{"text": "TSLA quote: 250.00"}'}},
+                    {"function": {"name": "place", "arguments": '{"symbol": "AAPL"}'}},
+                ],
+            },
+            {"content": "Done."},
+        ])
+        registry = self._make_registry()
+        registry.register(GroundingAwareWriteTool())
+        loop = AgentLoop(registry=registry, llm=llm)
+
+        loop.run([{"role": "user", "content": "check TSLA"}])
+
+        tool = registry.get("place")
+        assert "TSLA quote: 250.00" in tool._grounding_context
+
+    def test_readonly_result_from_a_prior_iteration_is_still_visible_later(self) -> None:
+        llm = FakeLLM([
+            {"content": "", "tool_calls": [{"function": {"name": "echo", "arguments": '{"text": "MSFT quote: 400.00"}'}}]},
+            {"content": "", "tool_calls": [{"function": {"name": "place", "arguments": '{"symbol": "AAPL"}'}}]},
+            {"content": "Done."},
+        ])
+        registry = self._make_registry()
+        registry.register(GroundingAwareWriteTool())
+        loop = AgentLoop(registry=registry, llm=llm)
+
+        loop.run([{"role": "user", "content": "check MSFT then place an order"}])
+
+        tool = registry.get("place")
+        assert "MSFT quote: 400.00" in tool._grounding_context
+
+    def test_grounding_context_does_not_leak_across_separate_runs(self) -> None:
+        llm = FakeLLM([
+            {"content": "", "tool_calls": [{"function": {"name": "echo", "arguments": '{"text": "NVDA quote: 900.00"}'}}]},
+            {"content": "Done."},
+        ])
+        registry = self._make_registry()
+        registry.register(GroundingAwareWriteTool())
+        loop = AgentLoop(registry=registry, llm=llm)
+        loop.run([{"role": "user", "content": "check NVDA"}])
+
+        llm2 = FakeLLM([{"content": "", "tool_calls": [{"function": {"name": "place", "arguments": '{"symbol": "AAPL"}'}}]}, {"content": "Done."}])
+        loop2 = AgentLoop(registry=registry, llm=llm2)
+        loop2.run([{"role": "user", "content": "buy AAPL"}])
+
+        tool = registry.get("place")
+        assert "NVDA" not in tool._grounding_context
+        assert "buy AAPL" in tool._grounding_context
 
     def test_no_telemetry_written_when_data_root_empty(self) -> None:
         # Default construction (no data_root) must not raise and must not

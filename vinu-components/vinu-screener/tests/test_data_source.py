@@ -115,6 +115,45 @@ class TestGetOhlcvBatch:
         out = ds.get_ohlcv_batch(["AAPL"])
         assert out == {"AAPL": None}
 
+    def test_transport_failure_flags_symbols_as_batch_failed(self) -> None:
+        """#26: a total fetch failure must be distinguishable from
+        legitimately-thin data -- `last_batch_failed_symbols` is how a
+        caller (ScanMonitor) tells the two apart."""
+        client = MagicMock()
+        client.post.side_effect = ConnectionError("down")
+        ds = HttpStockDataSource(client, base_url="http://stock:8081")
+        ds.get_ohlcv_batch(["AAPL", "MSFT"])
+        assert ds.last_batch_failed_symbols == {"AAPL", "MSFT"}
+
+    def test_http_error_flags_symbols_as_batch_failed(self) -> None:
+        client = MagicMock()
+        client.post.return_value = _resp({}, status_ok=False)
+        ds = HttpStockDataSource(client, base_url="http://stock:8081")
+        ds.get_ohlcv_batch(["AAPL"])
+        assert ds.last_batch_failed_symbols == {"AAPL"}
+
+    def test_symbol_missing_from_a_successful_response_is_not_flagged_failed(self) -> None:
+        """A chunk that succeeds but has no data for a symbol is
+        legitimately-thin data, not a fetch failure."""
+        client = MagicMock()
+        client.post.return_value = _resp({"results": {}})
+        ds = HttpStockDataSource(client, base_url="http://stock:8081")
+        ds.get_ohlcv_batch(["AAPL", "GHOST"])
+        assert ds.last_batch_failed_symbols == set()
+
+    def test_last_batch_failed_symbols_resets_on_a_later_successful_call(self) -> None:
+        client = MagicMock()
+        ds = HttpStockDataSource(client, base_url="http://stock:8081")
+
+        client.post.side_effect = ConnectionError("down")
+        ds.get_ohlcv_batch(["AAPL"])
+        assert ds.last_batch_failed_symbols == {"AAPL"}
+
+        client.post.side_effect = None
+        client.post.return_value = _resp({"results": {}})
+        ds.get_ohlcv_batch(["AAPL"])
+        assert ds.last_batch_failed_symbols == set()
+
     def test_large_universe_is_split_into_multiple_chunk_calls(self) -> None:
         client = MagicMock()
         client.post.return_value = _resp({"results": {}})

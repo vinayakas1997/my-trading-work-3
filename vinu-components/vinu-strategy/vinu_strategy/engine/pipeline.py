@@ -49,8 +49,10 @@ class WeightPipeline:
 
         risk_params = dict(pipeline.risk.params)
         if params:
-            risk_params.setdefault("max_weight", params.get("max_weight"))
-            risk_params.setdefault("cash_floor", params.get("cash_floor"))
+            if params.get("max_weight") is not None:
+                risk_params.setdefault("max_weight", params.get("max_weight"))
+            if params.get("cash_floor") is not None:
+                risk_params.setdefault("cash_floor", params.get("cash_floor"))
         final_weights = run_risk(pipeline.risk.method, timed_weights, risk_params)
         meta["risk"] = {"method": pipeline.risk.method, "max_weight": risk_params.get("max_weight")}
         meta["rule_trace"] = rule_trace

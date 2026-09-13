@@ -95,6 +95,75 @@ class _CheatingPerfectForesightStrategy(BaseStrategy):
         return future_up.astype(float) * 0.98
 
 
+class _CrashingStrategy(BaseStrategy):
+    """Crashes on a missing/NaN indicator column -- e.g. a features fetch that
+    silently returned None upstream (see #32) and dropped a column the
+    strategy relies on."""
+
+    def generate_weights(self, data: pd.DataFrame) -> pd.Series:
+        return (data["rsi_14"] > 50).astype(float)  # KeyError: column absent
+
+
+class TestGenerateWeightsCrashIsDistinguishableFromLegitimateZeroTrades:
+    """
+    #31: a strategy that crashes in generate_weights must not be silently
+    indistinguishable from one that legitimately chose to trade zero times --
+    both used to produce an identical all-zero-weight, trade_count==0 result.
+    """
+
+    def test_crash_is_recorded_in_diagnostics(self, sim_config):
+        # Two symbols: BBB gets the indicator column it needs and trades
+        # normally; AAA doesn't and crashes. Mirrors #32 composing with #31 --
+        # a missing-indicator-driven crash must still be flagged as a crash,
+        # and having one healthy symbol must not hide the other's crash (and
+        # must not itself trip the module's "no weight data at all" guard).
+        dates = pd.date_range("2023-01-02", "2023-01-20", freq="B")
+        closes = 100.0 + np.arange(len(dates), dtype=float)
+        ohclv_data = {
+            "AAA": _make_ohlcv(dates, closes),
+            "BBB": _make_ohlcv(dates, closes * 2),
+        }
+        indicator_data = {"BBB": pd.DataFrame({"rsi_14": [60.0] * len(dates)}, index=dates)}
+
+        result = simulate_custom(
+            strategy_class=_CrashingStrategy,
+            symbols=["AAA", "BBB"],
+            ohclv_data=ohclv_data,
+            sim_config=sim_config,
+            indicator_data=indicator_data,
+        )
+
+        # ...but is now flagged as a crash-fallback, not a legitimate zero-trade
+        # decision, and names which symbol/error caused it.
+        assert result.diagnostics.get("crash_fallback") is True
+        assert "AAA" in result.diagnostics.get("strategy_crashed_symbols", {})
+        assert "BBB" not in result.diagnostics.get("strategy_crashed_symbols", {})
+        assert "rsi_14" in result.diagnostics["strategy_crashed_symbols"]["AAA"]
+
+    def test_legitimate_zero_trades_has_no_crash_diagnostics(self, sim_config):
+        """A strategy that runs cleanly and just returns all-zero weights must
+        NOT be flagged as a crash -- the two cases must stay distinguishable
+        in both directions."""
+
+        class _AlwaysFlatStrategy(BaseStrategy):
+            def generate_weights(self, data: pd.DataFrame) -> pd.Series:
+                return pd.Series(0.0, index=data.index)
+
+        dates = pd.date_range("2023-01-02", "2023-01-20", freq="B")
+        closes = 100.0 + np.arange(len(dates), dtype=float)
+        ohclv_data = {"AAA": _make_ohlcv(dates, closes)}
+
+        result = simulate_custom(
+            strategy_class=_AlwaysFlatStrategy,
+            symbols=["AAA"],
+            ohclv_data=ohclv_data,
+            sim_config=sim_config,
+        )
+
+        assert len(result.trades) == 0
+        assert not result.diagnostics.get("crash_fallback")
+
+
 class TestPerfectForesightCannotProfit:
     def test_perfect_foresight_strategy_loses_money_once_execution_is_delayed(self):
         # Hand-verified price path: up, down, up, flat. A same-bar-execution engine

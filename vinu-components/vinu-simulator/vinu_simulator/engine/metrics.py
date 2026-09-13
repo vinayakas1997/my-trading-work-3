@@ -29,6 +29,15 @@ def periods_per_year_for_interval(interval: str) -> float:
     return bars_per_day * 252.0
 
 
+# Sentinel for a ratio whose mathematically correct value is "undefined" (a
+# zero denominator) rather than 0.0 -- used for profit_factor/win_loss_ratio
+# (no losing days) and, per #39, sortino_ratio/calmar_ratio (no downside
+# deviation / no drawdown). A large-but-finite float rather than inf so it
+# survives compute_full_metrics's inf/-inf/nan -> 0.0 JSON-safety pass below
+# and so downstream consumers doing plain arithmetic don't need special-casing.
+_NO_LOSSES_SENTINEL = 999.0
+
+
 def compute_performance_metrics(
     portfolio_values: pd.Series,
     daily_returns: pd.Series,
@@ -58,7 +67,14 @@ def compute_performance_metrics(
     downside = daily_returns[daily_returns < 0]
     downside_std = float(downside.std()) if len(downside) > 1 else 0.0
     annual_downside = downside_std * np.sqrt(periods_per_year)
-    sortino = (cagr / annual_downside) if annual_downside > 0 else 0.0
+    # #39: zero losing days is not the same as a Sortino of 0.0 -- that reads
+    # identically to a mediocre strategy. Only treat it as the undefined/
+    # "excellent" case when there was actually a positive return to divide by;
+    # a flat/no-gain series with no losses either is genuinely neutral (0.0).
+    sortino = (
+        (cagr / annual_downside) if annual_downside > 0
+        else (_NO_LOSSES_SENTINEL if cagr > 0 else 0.0)
+    )
 
     cumulative = (
         portfolio_values / initial_value if initial_value > 0
@@ -68,7 +84,12 @@ def compute_performance_metrics(
     drawdown_series = (cumulative - running_max) / running_max
     max_dd = float(drawdown_series.min())
 
-    calmar = (cagr / abs(max_dd)) if max_dd < 0 else 0.0
+    # #39: same reasoning as Sortino above -- zero drawdown with a real gain is
+    # undefined/"excellent", not 0.0. Zero drawdown with no gain (flat) stays 0.0.
+    calmar = (
+        (cagr / abs(max_dd)) if max_dd < 0
+        else (_NO_LOSSES_SENTINEL if cagr > 0 else 0.0)
+    )
 
     up_days = (daily_returns > 0).sum()
     win_rate = up_days / len(daily_returns) if len(daily_returns) > 0 else 0.0
@@ -143,7 +164,6 @@ def compute_extended_metrics(
 
     # Capped rather than literal inf when there are no losing days — inf is not
     # valid JSON and would fail to serialize at the API boundary.
-    _NO_LOSSES_SENTINEL = 999.0
     profit_factor = float(wins.sum() / abs(losses.sum())) if abs(losses.sum()) > 0 else _NO_LOSSES_SENTINEL
     avg_win_pct = float(wins.mean()) if len(wins) > 0 else 0.0
     avg_loss_pct = float(losses.mean()) if len(losses) > 0 else 0.0

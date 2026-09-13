@@ -87,6 +87,7 @@ async def simulate_custom(req: CustomSimulateRequest) -> CustomSimulateResponse:
         daily_returns=(
             result.daily_returns.fillna(0.0).tolist() if not result.daily_returns.empty else []
         ),
+        diagnostics=result.diagnostics,
     )
 
 

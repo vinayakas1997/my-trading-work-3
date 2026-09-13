@@ -132,6 +132,70 @@ def test_fetch_bars_multi_not_configured_returns_failure_per_symbol():
     assert results["MSFT"].success is False
 
 
+def test_fetch_bars_missing_ohlc_key_fails_cleanly_not_raises(monkeypatch):
+    """A malformed/partial Alpaca bar row (missing 'c') must be reported as
+    a failed fetch, not raise a bare KeyError out of the provider (#21)."""
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        return _FakeResp(
+            {"bars": {"AAPL": [{"t": "2023-11-14T22:00:00Z", "o": 1, "h": 2, "l": 0.5}]}, "next_page_token": None}
+        )
+
+    monkeypatch.setattr("vinu_stock.providers.alpaca.http_get_with_retry", fake_get)
+    provider = AlpacaProvider(_config())
+
+    result = provider.fetch_bars("AAPL", 1_700_000_000, 1_700_100_000)
+
+    assert result.success is False
+    assert result.bars == []
+    assert "malformed response" in result.error
+
+
+def test_fetch_bars_invalid_json_body_fails_cleanly_not_raises(monkeypatch):
+    class _BadJsonResp:
+        def json(self):
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        return _BadJsonResp()
+
+    monkeypatch.setattr("vinu_stock.providers.alpaca.http_get_with_retry", fake_get)
+    provider = AlpacaProvider(_config())
+
+    result = provider.fetch_bars("AAPL", 1_700_000_000, 1_700_100_000)
+
+    assert result.success is False
+    assert "malformed response" in result.error
+
+
+def test_fetch_bars_multi_malformed_row_fails_that_chunk_cleanly(monkeypatch):
+    """Same malformed-row protection for the batched multi-symbol path
+    (#21) -- one bad row must not crash the whole chunk's fetch."""
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        return _FakeResp(
+            {
+                "bars": {
+                    "AAPL": [{"t": "2023-11-14T22:00:00Z", "o": 1, "h": 2, "l": 0.5}],  # missing "c"
+                    "MSFT": [_bar_row("2023-11-14T22:00:00Z", 200.0)],
+                },
+                "next_page_token": None,
+            }
+        )
+
+    monkeypatch.setattr("vinu_stock.providers.alpaca.http_get_with_retry", fake_get)
+    provider = AlpacaProvider(_config())
+
+    results = provider.fetch_bars_multi(["AAPL", "MSFT"], 1_700_000_000, 1_700_100_000)
+
+    assert results["AAPL"].success is False
+    assert "malformed response" in results["AAPL"].error
+    # MSFT is in the same chunk, so it fails too (both rows are parsed in
+    # the same loop iteration before either FetchBarsResult is built) --
+    # this documents current chunk-wide failure behavior, not a per-row one.
+    assert results["MSFT"].success is False
+
+
 def test_fetch_bars_multi_chunks_large_symbol_lists(monkeypatch):
     provider = AlpacaProvider(_config())
     provider.MAX_BATCH_SYMBOLS = 2

@@ -43,6 +43,7 @@ from vinu_live.trade_plan.condition_evaluator import find_triggered_rules
 from vinu_live.trade_plan.live_metrics import compute_live_metrics
 from vinu_live.trade_plan.rebalance_intake import RebalanceRequestQueue
 from vinu_infra.calibration_log import record as record_calibration
+from vinu_infra.risk_math import cvar_exceeds as _cvar_exceeds
 from vinu_infra.risk_math import forecast_confidence_scale as _forecast_confidence_scale
 from vinu_infra.risk_math import vol_target_scale as _vol_target_scale
 from vinu_infra.runtime_settings import RuntimeSettings
@@ -508,6 +509,18 @@ class TradePlanOrchestrator:
         # reconcile trimmed a correct 5.74-share book to ~1 because Alpaca's
         # /positions lagged the fill by <1s).
         self._recently_traded: dict[str, float] = {}
+        # situation-test/24-reconciliation-drift-comment-promised-dedup-that-didnt-exist.md:
+        # this method's own comment claimed a persisting drift "doesn't
+        # re-notify every cycle" -- untrue by default, since the shared
+        # notify front door's dedup window is 0/disabled unless an operator
+        # opts in (situation 23). Edge-triggered per-instance tracking
+        # (notify on the transition INTO an alert-worthy state, not on
+        # every cycle it remains in one) makes the comment's original claim
+        # actually true, the same way `_recently_traded` above already
+        # tracks per-instance state across cycles -- this orchestrator
+        # instance is long-lived (constructed once outside the worker's
+        # `while True` loop, see cli.py), so this survives across cycles.
+        self._recon_drift_notified: set[tuple[str, str]] = set()
         self._breaker_state = BreakerState()
         self._reconciler = ReconciliationEngine()
         self._cycle_count = 0
@@ -940,7 +953,14 @@ class TradePlanOrchestrator:
         # open here" call, not a sizing tweak.
         if CVAR_GATE_ENABLED:
             cvar_95 = risk_bands.get("cvar_95_limit", 0.0) or 0.0
-            if cvar_95 > CVAR_THRESHOLD:
+            # Shared with vinu-agent's own CVaR gate (agent/position_sizing.py)
+            # instead of a raw `>` comparison -- `cvar_95 > CVAR_THRESHOLD`
+            # silently evaluates to False for a NaN cvar_95_limit (Python's
+            # NaN comparisons are always False), which would have looked
+            # identical to the deliberate "0.0 = never computed, skip the
+            # gate" fail-open case above, but for a real computation gone
+            # wrong rather than data that was never attempted.
+            if _cvar_exceeds(cvar_95, CVAR_THRESHOLD):
                 LOG.warning(
                     "Trade plan for %s: CVaR 95%% %.3f exceeds %.3f -- blocking entry",
                     symbol, cvar_95, CVAR_THRESHOLD,
@@ -1391,7 +1411,16 @@ class TradePlanOrchestrator:
         side = "sell" if position.side == "long" else "buy"
         order_result = await self._submit_order(symbol, side, reduce_qty, reduce_only=True)
         if order_result.get("status") == "submitted":
-            reduce_position(self._book, position.position_id, reduce_qty, price)
+            # situation-test/32-rebalance-honor-reduce-position-missing-book-lock.md:
+            # every other reduce_position()/close_position() call site in
+            # this file holds book_lock() -- this was the one real gap,
+            # confirmed as a real, reproducible lost-update race (two
+            # concurrent reduces on the same position both read the same
+            # starting qty, one write silently clobbers the other). Network
+            # I/O (_submit_order above) stays outside the lock, same
+            # convention as _reconcile_book_with_broker's own broker fetch.
+            with book_lock(self._book_lock_path):
+                reduce_position(self._book, position.position_id, reduce_qty, price)
             LOG.info("Honored rebalance request for %s (reason: %s)", symbol, request.reason)
             return {
                 "symbol": symbol, "action": "rebalance_honored",
@@ -1510,7 +1539,8 @@ class TradePlanOrchestrator:
         prices = await self._fetch_prices(symbols) if symbols else {}
         daily_pnl = daily_realized_pnl(self._book)
         covariance_matrix = await self._compute_covariance(symbols) if len(symbols) >= 2 else None
-        return check_limits(
+        was_halted = self._breaker_state.halted
+        verdict, reason = check_limits(
             self._book,
             prices=prices,
             portfolio_value=portfolio_value,
@@ -1519,6 +1549,41 @@ class TradePlanOrchestrator:
             cluster_map=None,
             state=self._breaker_state,
         )
+        if verdict == BreakerVerdict.HALT and not was_halted:
+            # check_limits() only just flipped this orchestrator's own
+            # in-memory BreakerState -- that blocks new entries HERE but is
+            # invisible to OrderGuard and the separate LLM-agent order path,
+            # which only ever consult the persistent, cross-process kill
+            # switch (vinu-portfolio's own equity-drawdown monitor already
+            # engages that switch for a daily-loss/drawdown breach; the
+            # VaR/leverage/cluster-exposure/position-count checks here have
+            # no other route to it). Mirror emergency_flatten()'s halt call
+            # so a breach detected here actually stops every order path.
+            await self._engage_real_halt(reason)
+        return verdict, reason
+
+    async def _engage_real_halt(self, reason: str | None) -> None:
+        try:
+            resp = await self._http.post(
+                f"{self._config.agent_api_url}/agent/broker/halt",
+                json={"reason": f"breaker: {reason}"},
+            )
+            ok = getattr(resp, "status_code", None) == 200
+            if ok:
+                LOG.warning("BREAKER HALT -- engaged the real kill switch via %s (%s)",
+                            self._config.agent_api_url, reason)
+            else:
+                LOG.error(
+                    "BREAKER HALT -- FAILED to engage the real kill switch via %s "
+                    "(http %s) -- OrderGuard and other order paths are NOT halted: %s",
+                    self._config.agent_api_url, getattr(resp, "status_code", "?"), reason,
+                )
+        except Exception as e:  # noqa: BLE001
+            LOG.error(
+                "BREAKER HALT -- FAILED to engage the real kill switch via %s -- "
+                "OrderGuard and other order paths are NOT halted: %s (%s)",
+                self._config.agent_api_url, reason, e,
+            )
 
     async def _compute_covariance(self, symbols: list[str]) -> np.ndarray | None:
         # See _covariance_cache's docstring in __init__ for why this is
@@ -2217,6 +2282,33 @@ class TradePlanOrchestrator:
                         )
                         if corr:
                             corrections.append(corr)
+        # Outside the book lock -- network I/O, same reasoning as the broker
+        # fetch at the top of this method. A phantom position / side conflict
+        # is deliberately never auto-corrected (see _reconcile_symbol) -- the
+        # best this can do is make sure the alert reaches a human instead of
+        # only a server log nobody's necessarily tailing.
+        #
+        # Edge-triggered: notify on the transition INTO an alert-worthy
+        # state for a given (symbol, action) pair, not on every cycle it
+        # remains in one -- the shared notify front door's own dedup window
+        # is disabled by default (situation 23), so without this an
+        # unresolved drift would otherwise re-page every configured channel
+        # on every reconciliation cycle (every 300s by default) for as long
+        # as it goes uninvestigated.
+        current_drift_keys: set[tuple[str, str]] = set()
+        for corr in corrections:
+            action = corr.get("action")
+            if action not in ("alert_phantom_broker_position", "alert_side_conflict"):
+                continue
+            key = (corr.get("symbol"), action)
+            current_drift_keys.add(key)
+            if key not in self._recon_drift_notified:
+                await self._notify_reconciliation_drift(corr)
+        # Anything that cleared this cycle drops out here, so if the same
+        # (symbol, action) recurs later it's treated as a new occurrence and
+        # notifies again -- this only suppresses re-notifying while it's
+        # continuously present, not forever.
+        self._recon_drift_notified = current_drift_keys
         return {
             "drift_detected": report.drift_detected,
             "n_drifts": len(report.symbol_drifts),
@@ -2224,6 +2316,31 @@ class TradePlanOrchestrator:
             "corrections": corrections,
             "deferred": deferred,
         }
+
+    async def _notify_reconciliation_drift(self, corr: dict[str, Any]) -> None:
+        """Best-effort push through vinu-agent's notification front door
+        (routes_notify.py). The edge-triggered dedup (per (symbol, action),
+        only re-notifying on a fresh occurrence) lives in the caller,
+        `_reconcile_book_with_broker`'s `_recon_drift_notified` tracking --
+        this method itself sends unconditionally whenever called. A
+        notification failure must never affect reconciliation itself."""
+        try:
+            resp = await self._http.post(
+                f"{self._config.agent_api_url}/notify/reconciliation-drift",
+                json={
+                    "symbol": corr.get("symbol"),
+                    "action": corr.get("action"),
+                    "book_qty": corr.get("book_qty"),
+                    "broker_qty": corr.get("broker_qty"),
+                },
+            )
+            if getattr(resp, "status_code", None) != 200:
+                LOG.warning(
+                    "Reconciliation-drift notification for %s returned http %s",
+                    corr.get("symbol"), getattr(resp, "status_code", "?"),
+                )
+        except Exception as e:  # noqa: BLE001
+            LOG.warning("Could not send reconciliation-drift notification for %s: %s", corr.get("symbol"), e)
 
     def _reconcile_symbol(
         self, symbol: str, book_pos: Position | None, broker_signed: float, price: float,

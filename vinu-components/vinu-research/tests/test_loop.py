@@ -162,6 +162,60 @@ class TestDefaultRiskCritic:
         assert critique.verdict == "PASS"
 
 
+class TestDiagnoseFailureCrashFallback:
+    """
+    #31: a trade_count==0 result caused by vinu-simulator's generate_weights
+    crash-fallback (custom_sim.py) must be reported as a strategy crash, not
+    handed to the LLM as an ordinary "why did this trade zero times" question
+    -- and a genuinely trade-free result must NOT be misreported as a crash.
+    """
+
+    def make_result(self, diagnostics: dict | None = None) -> BacktestResult:
+        metrics = BacktestMetrics(sharpe_ratio=0.0, max_drawdown=0.0)
+        raw = {"diagnostics": diagnostics} if diagnostics is not None else {}
+        return BacktestResult(
+            run_id="r1", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=0, equity_points=10, raw=raw,
+        )
+
+    async def test_crash_fallback_is_reported_without_calling_the_llm(self):
+        loop = StrategyResearchLoop()
+        result = self.make_result({
+            "crash_fallback": True,
+            "strategy_crashed_symbols": {"AAPL": "KeyError: 'rsi_14'"},
+        })
+        diagnosis = await loop._diagnose_failure(
+            strategy_code="class X: pass", result=result, symbol="AAPL",
+        )
+        assert "strategy_crash" in diagnosis
+        assert "AAPL" in diagnosis
+        assert "KeyError" in diagnosis
+
+    async def test_legitimate_zero_trades_does_not_report_a_crash(self):
+        loop = StrategyResearchLoop()
+        result = self.make_result({})
+        diagnosis = await loop._diagnose_failure(
+            strategy_code="class X: pass", result=result, symbol="AAPL",
+        )
+        # LLM is disabled by default in tests -> falls through to "" rather
+        # than fabricating a crash diagnosis for a legitimate no-trade result.
+        assert diagnosis == ""
+
+    async def test_missing_raw_diagnostics_does_not_crash(self):
+        """BacktestResult.raw defaults to {} for callers/tests that don't set
+        it -- _diagnose_failure must tolerate that instead of raising."""
+        loop = StrategyResearchLoop()
+        metrics = BacktestMetrics(sharpe_ratio=0.0, max_drawdown=0.0)
+        result = BacktestResult(
+            run_id="r1", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=0, equity_points=10,
+        )
+        diagnosis = await loop._diagnose_failure(
+            strategy_code="class X: pass", result=result, symbol="AAPL",
+        )
+        assert diagnosis == ""
+
+
 class TestMaxDDStop:
     def make_result(self, max_dd: float) -> BacktestResult:
         metrics = BacktestMetrics(sharpe_ratio=1.0, max_drawdown=max_dd, win_rate=0.5)

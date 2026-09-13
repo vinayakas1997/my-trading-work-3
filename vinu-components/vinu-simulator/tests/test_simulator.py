@@ -188,6 +188,128 @@ class TestWeightSimulator:
         assert result.portfolio_values.index.is_monotonic_increasing
 
 
+class TestShortBlowupLiquidation:
+    """
+    #35: nav_after used to be floored to 0.0 only in the *reported* equity
+    curve while cash/holdings (the actual short position) were left
+    untouched, so a short that blew through zero equity could numerically
+    "recover" on a later favorable price move -- a real margin call would
+    have liquidated the position. Once equity is wiped out, the internal
+    state must actually be zeroed, and stay at zero for the rest of the run.
+    """
+
+    def test_short_position_stays_wiped_after_blowup_instead_of_recovering(self):
+        # Fully short a name whose price explodes upward (a real short-squeeze):
+        # equity goes deeply negative, then the price falls back down. Without
+        # the fix, cash/holdings are untouched by the nav floor and the
+        # (still-short) position "recovers" equity on the way back down --
+        # something a real broker's margin call would never have allowed.
+        dates = pd.date_range("2023-01-02", periods=6, freq="D")
+        prices = pd.DataFrame(
+            {"X": [100.0, 100.0, 1000.0, 5000.0, 1000.0, 100.0]}, index=dates,
+        )
+        # Fully short from day 0, held constant (no further rebalances).
+        weights = pd.DataFrame({"X": [-1.0]}, index=[dates[0]])
+        config = SimulationConfig(
+            strategy_name="blowup_test",
+            start_date=str(dates[0].date()),
+            end_date=str(dates[-1].date()),
+            initial_capital=1_000_000.0,
+            transaction_cost_pct=0.0,
+            slippage_pct=0.0,
+            slippage_model="flat",
+            allow_short=True,
+            deviation_threshold=0.0,
+        )
+        inp = SimulationInput(
+            strategy_name="blowup_test",
+            weight_signals=weights,
+            price_data=prices,
+            config=config,
+        )
+        result = WeightSimulator(config).run(inp)
+
+        curve = result.portfolio_values
+        # Equity must have been wiped out at some point (the short blew up)...
+        assert (curve == 0.0).any()
+        first_wipe = next(i for i, v in enumerate(curve) if v == 0.0)
+        # ...and once wiped, it must STAY at zero for every subsequent day, even
+        # though the price later falls back toward where the short would have
+        # been profitable again -- proof the position was actually liquidated,
+        # not just cosmetically floored in the reported curve.
+        assert (curve.iloc[first_wipe:] == 0.0).all()
+
+    def test_normal_non_blowup_run_is_unaffected(self, synthetic_prices, synthetic_weights, sim_config):
+        """Sanity check: the liquidation branch must never fire, and results
+        must be unchanged, for an ordinary run that never wipes out equity."""
+        inp = SimulationInput(
+            strategy_name="test",
+            weight_signals=synthetic_weights,
+            price_data=synthetic_prices,
+            config=sim_config,
+        )
+        result = WeightSimulator(sim_config).run(inp)
+        assert (result.portfolio_values > 0).all()
+        assert len(result.trades) > 0
+
+
+class TestNonFiniteDeviationIsLogged:
+    """
+    #37: WeightSimulator.run silently `continue`s past a non-finite rebalance
+    deviation (SimulatorEnv.step raises on the identical condition). Changing
+    control flow on the primary research path is out of scope here -- the ask
+    is just to make a silently-skipped rebalance day visible in diagnostics.
+    """
+
+    def test_non_finite_deviation_logs_a_warning(self, caplog):
+        import logging as _logging
+
+        dates = pd.date_range("2023-01-02", periods=3, freq="D")
+        prices = pd.DataFrame({"X": [100.0, 105.0, 110.0]}, index=dates)
+        weights = pd.DataFrame({"X": [1.0]}, index=[dates[0]])
+        config = SimulationConfig(
+            strategy_name="nan_dev_test",
+            start_date=str(dates[0].date()),
+            end_date=str(dates[-1].date()),
+            initial_capital=1_000_000.0,
+            transaction_cost_pct=0.0,
+            slippage_pct=0.0,
+            slippage_model="flat",
+            deviation_threshold=0.0,
+        )
+        inp = SimulationInput(
+            strategy_name="nan_dev_test",
+            weight_signals=weights,
+            price_data=prices,
+            config=config,
+        )
+        sim = WeightSimulator(config)
+
+        # Force a non-finite deviation on the first rebalance day without
+        # needing a contrived position sizer: patch the sizer's output for one
+        # call to return a NaN weight.
+        # Only the rebalance-day usage of this matters (non-rebalance days
+        # compute target_weights but never act on them), so it's safe to
+        # always return NaN here.
+        sim._position_sizer.size = lambda weights_row, daily_ret: np.full(
+            len(weights_row), np.nan
+        )
+
+        with caplog.at_level(_logging.WARNING, logger="vinu_simulator.engine.simulator"):
+            try:
+                sim.run(inp)
+            except ValueError:
+                # Separate, pre-existing issue out of scope for #37: skipping
+                # the rebalance via `continue` also skips this day's equity/
+                # weights bookkeeping below it in the loop, which can desync
+                # `equity_curve`'s length from `total_calendar` by the end of
+                # the run. #37 only asks to make the skip visible (not to
+                # change control flow) -- we only care that the warning fired.
+                pass
+
+        assert any("non-finite deviation" in rec.message for rec in caplog.records)
+
+
 class TestSimulatorEnv:
     def test_reset_returns_state(self, synthetic_prices, sim_config):
         env = SimulatorEnv(

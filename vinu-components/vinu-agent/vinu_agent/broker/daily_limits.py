@@ -29,6 +29,9 @@ occasionally-too-permissive daily cap, not money moving while halted.
 from __future__ import annotations
 
 import os
+import random
+import sqlite3
+import time
 from datetime import date
 from pathlib import Path
 
@@ -86,24 +89,52 @@ class DailyLimitStore(SQLiteBackend):
     def record_order(self, symbol: str, value: float) -> None:
         """Called from OrderGuard.pre_approve() -- once per order that
         actually clears the guard, immediately before submission, same
-        point the old in-memory counter was incremented."""
+        point the old in-memory counter was incremented.
+
+        situation-test/01-daily-order-limit-race.md found this was a real
+        SELECT-then-INSERT/UPDATE TOCTOU race: 30 threads hammering the same
+        (symbol, date) row mostly crashed with unhandled
+        sqlite3.OperationalError ("database is locked") or
+        sqlite3.IntegrityError ("UNIQUE constraint failed") instead of the
+        module docstring's claimed worst case of "an occasionally-too-
+        permissive daily cap". The IntegrityError is gone for good with the
+        single atomic upsert below (no read-then-decide branch left for
+        another thread's commit to land inside of). The OperationalError
+        turned out to survive that fix, and even a busy_timeout pragma
+        ordering fix in vinu_infra.sqlite.SQLiteBackend -- empirically, on
+        Windows, a burst of ~30 threads each opening/closing their own
+        connection against one file (the real production shape: fresh
+        DailyLimitStore per trade_tool.py execute() call) can still return
+        "database is locked" in under 3ms, far faster than the 5s
+        busy_timeout, meaning the OS-level lock contention isn't always
+        routed through SQLite's own retry loop. A small in-process retry
+        with backoff -- the standard fix for exactly this SQLite pattern --
+        closes the gap; re-verified against the same 30-thread harness
+        across many repeated runs with zero failures.
+        """
         today = _today()
-        conn = self._get_conn()
-        existing = conn.execute(
-            "SELECT order_count, volume FROM daily_limits WHERE symbol = ? AND date = ?",
-            (symbol, today),
-        ).fetchone()
-        if existing:
-            conn.execute(
-                "UPDATE daily_limits SET order_count = ?, volume = ? WHERE symbol = ? AND date = ?",
-                (existing[0] + 1, existing[1] + value, symbol, today),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO daily_limits (symbol, date, order_count, volume) VALUES (?, ?, 1, ?)",
-                (symbol, today, value),
-            )
-        conn.commit()
+        last_error: sqlite3.OperationalError | None = None
+        for attempt in range(5):
+            try:
+                conn = self._get_conn()
+                conn.execute(
+                    """
+                    INSERT INTO daily_limits (symbol, date, order_count, volume)
+                    VALUES (?, ?, 1, ?)
+                    ON CONFLICT (symbol, date) DO UPDATE SET
+                        order_count = order_count + 1,
+                        volume = volume + excluded.volume
+                    """,
+                    (symbol, today, value),
+                )
+                conn.commit()
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e).lower() and "busy" not in str(e).lower():
+                    raise
+                last_error = e
+                time.sleep(0.02 * (2**attempt) + random.uniform(0, 0.02))
+        raise last_error  # type: ignore[misc]
 
     def _row_for(self, symbol: str):
         conn = self._get_conn()

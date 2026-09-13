@@ -162,8 +162,35 @@ class TradingMandate:
                 )
             return mandate
         except Exception as exc:
-            logger.warning("Failed to load mandate from %s: %s — using defaults", path, exc)
-            return cls(**SETTINGS.overrides())
+            # situation-test/19-corrupted-mandate-loosens-ticker-allowlist.md:
+            # found by real testing that this fell back to `cls(...)`'s
+            # bare defaults -- fine for "no mandate.yaml exists yet" (the
+            # `if not path.exists()` branch above, a system with no
+            # configured restrictions at all), but wrong here: the file
+            # DOES exist and an operator DID configure real restrictions in
+            # it (most concretely `allowed_tickers`, which defaults to "*",
+            # i.e. every ticker), so a parse failure silently discarded
+            # whatever restriction was actually configured and replaced it
+            # with the maximally permissive one -- the opposite direction
+            # from every other default in this dataclass (all of which are
+            # the *strictest* option: require_active_artifact/
+            # require_market_open/require_confirmation default True,
+            # allow_short/allow_margin default False). Failing closed here
+            # means blocking new/increasing orders for every symbol until
+            # the file is fixed -- reduce_only exits still work (see
+            # order_guard.py's allowed_tickers exemption, situation 22),
+            # so this can't trap an existing position the way blocking
+            # everything outright would have.
+            logger.error(
+                "Failed to PARSE mandate from %s: %s — failing CLOSED (blocking "
+                "all new/increasing orders for every symbol) rather than silently "
+                "reverting to permissive defaults, since this file exists and may "
+                "encode real operator-configured restrictions that can no longer "
+                "be read. Fix the file's syntax; the next order attempt re-reads "
+                "it. Risk-reducing orders are not affected.",
+                path, exc,
+            )
+            return cls(allowed_tickers=set(), **SETTINGS.overrides())
 
     def to_dict(self) -> dict[str, Any]:
         return {

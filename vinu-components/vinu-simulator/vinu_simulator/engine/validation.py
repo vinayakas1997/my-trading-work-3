@@ -239,6 +239,7 @@ def monte_carlo_permutation(
     initial_capital: float = 1_000_000.0,
     n_iterations: int = 1000,
     periods_per_year: float = 252.0,
+    rng: np.random.Generator | None = None,
 ) -> dict[str, float]:
     if len(trade_pnls) < 3:
         return {
@@ -252,11 +253,17 @@ def monte_carlo_permutation(
             "minimum_met": False,
         }
 
+    # #38: was the unseeded global np.random.permutation, unlike every sibling
+    # function in this module (and simulator.py's execution_reject_prob rng),
+    # which take an explicit rng. Default to a fresh unseeded Generator when the
+    # caller doesn't pass one, but let a caller opt into config.random_seed for
+    # full run-to-run reproducibility of this permutation test.
+    rng = rng or np.random.default_rng()
     pnl_array = np.array(trade_pnls, dtype=float)
     sim_sharpes = np.zeros(n_iterations)
 
     for i in range(n_iterations):
-        shuffled = np.random.permutation(pnl_array)
+        shuffled = rng.permutation(pnl_array)
         equity = initial_capital + np.cumsum(shuffled)
         
         # Capping equity at a very small positive number to prevent negative or zero division

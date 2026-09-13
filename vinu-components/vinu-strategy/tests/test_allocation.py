@@ -1,3 +1,5 @@
+import logging
+
 from vinu_strategy.engine.allocation import run_allocation, allocate_equal, allocate_signal_scaled
 
 
@@ -70,6 +72,26 @@ class TestAllocation:
 
     def test_signal_scaled_candidates_empty(self):
         assert allocate_signal_scaled([], {}, signal_context={}) == {}
+
+    def test_expression_failure_for_every_candidate_logs_at_error_not_warning(self, caplog):
+        """A typo'd field name in a strategy's expression makes every
+        candidate's contribution silently 0 -> equal-weight fallback, which
+        is indistinguishable downstream from a legitimate flat-signal day.
+        That misconfiguration must be loud (ERROR), not blend in at WARNING."""
+        candidates = ["AAPL", "MSFT"]
+        signal_context = {
+            "AAPL": {"features": {"MOM_20": 1.5}},
+            "MSFT": {"features": {"MOM_20": -0.5}},
+        }
+        with caplog.at_level(logging.ERROR, logger="vinu_strategy.engine.allocation"):
+            result = allocate_signal_scaled(
+                candidates, {}, params={"signal": "made_up_field * 2"}, signal_context=signal_context,
+            )
+        assert abs(sum(result.values()) - 1.0) < 0.001
+        assert any(
+            r.levelno == logging.ERROR and "made_up_field" in r.message
+            for r in caplog.records
+        )
 
     def test_run_allocation_unknown(self):
         candidates = ["AAPL"]

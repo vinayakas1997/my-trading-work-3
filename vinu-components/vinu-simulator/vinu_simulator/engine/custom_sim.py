@@ -32,6 +32,9 @@ def simulate_custom(
 
     per_ticker_weights: dict[str, pd.Series] = {}
     all_dates: set[pd.Timestamp] = set()
+    # Symbols whose generate_weights() raised, keyed by error message. Distinct
+    # from a symbol that legitimately produced all-zero weights -- see #31.
+    crashed_symbols: dict[str, str] = {}
 
     for sym in symbols:
         df = ohclv_data.get(sym)
@@ -58,6 +61,10 @@ def simulate_custom(
         except Exception as e:
             LOG.warning("generate_weights failed for %s: %s, using zeros", sym, e)
             per_ticker_weights[sym] = pd.Series(index=data.index, data=0.0)
+            # Record the crash so downstream (vinu-research's _diagnose_failure)
+            # can tell this trade_count==0 result apart from a strategy that
+            # legitimately chose not to trade -- see #31.
+            crashed_symbols[sym] = str(e)
             continue
 
         if not isinstance(weights, pd.Series):
@@ -113,6 +120,9 @@ def simulate_custom(
 
     simulator = WeightSimulator(sim_config)
     result = simulator.run(inp)
+    if crashed_symbols:
+        result.diagnostics["crash_fallback"] = True
+        result.diagnostics["strategy_crashed_symbols"] = crashed_symbols
     return result
 
 

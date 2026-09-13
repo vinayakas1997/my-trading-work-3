@@ -21,10 +21,13 @@ hang the whole cycle.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Protocol
 
 import pandas as pd
+
+LOG = logging.getLogger(__name__)
 
 
 class SymbolDataSource(Protocol):
@@ -67,6 +70,14 @@ class HttpStockDataSource:
         self._base_url = base_url.rstrip("/")
         self._days = days
         self._interval = interval
+        # (#26) Populated by the most recent get_ohlcv_batch() call with any
+        # symbol whose chunk's HTTP request itself failed (network error,
+        # non-2xx, bad JSON) -- as opposed to a chunk that succeeded but had
+        # no data for that symbol. `ScanMonitor` duck-types this (same
+        # pattern as `get_ohlcv_batch` itself) to tell "fetch failed
+        # entirely" apart from "legitimately thin data" instead of both
+        # degrading identically to `None`.
+        self.last_batch_failed_symbols: set[str] = set()
 
     def _rows_to_ohlcv(self, rows: list[dict] | None) -> pd.DataFrame | None:
         if not rows:
@@ -90,8 +101,12 @@ class HttpStockDataSource:
         Every requested symbol gets an entry in the result -- `None` for
         any symbol the server had no data for, or if the whole batch call
         failed (never raises; a fully-failed chunk degrades every symbol
-        in it to `None`, same as a single failed `get_ohlcv` call would)."""
+        in it to `None`, same as a single failed `get_ohlcv` call would).
+        `self.last_batch_failed_symbols` is reset here and repopulated with
+        any symbol whose chunk actually failed the request/parse (#26) --
+        distinct from a chunk that succeeded with no data for a symbol."""
         out: dict[str, pd.DataFrame | None] = {}
+        self.last_batch_failed_symbols = set()
         for i in range(0, len(symbols), self.BATCH_CHUNK_SIZE):
             chunk = symbols[i : i + self.BATCH_CHUNK_SIZE]
             try:
@@ -103,8 +118,14 @@ class HttpStockDataSource:
                 resp.raise_for_status()
                 data = resp.json()
                 results = data.get("results", {}) if isinstance(data, dict) else {}
-            except Exception:
+            except Exception as exc:
+                LOG.warning(
+                    "get_ohlcv_batch: chunk of %d symbol(s) failed entirely (%s); "
+                    "flagging as fetch-failed rather than no-data",
+                    len(chunk), exc,
+                )
                 results = {}
+                self.last_batch_failed_symbols.update(s.upper() for s in chunk)
             for symbol in chunk:
                 entry = results.get(symbol.upper())
                 rows = entry.get("data") if isinstance(entry, dict) else None

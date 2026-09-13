@@ -172,15 +172,18 @@ class TestComputeRiskStatus:
         assert result["aggregate"]["n_positions"] == 1
         assert result["game_plan_readiness"] == 0.5
 
-    def test_daily_pnl_accumulates_across_repeated_calls(self) -> None:
-        """Stage 2 fix (how-to-make-it-live.md #22): compute_risk_status()
-        used to build a fresh DailyPositionTracker on every call, so
-        repeated polling never accumulated P&L the way DailyPositionTracker
-        itself supports -- each call just reflected that call's
-        unrealized_pl snapshot, silently under-counting real daily risk.
-        The tracker now lives on the service instance (self._risk_tracker,
-        set once in __init__) and is reused across calls, so two calls in
-        the same trading day correctly accumulate."""
+    def test_steady_unrealized_pnl_does_not_inflate_across_repeated_calls(self) -> None:
+        """situation-test/31-risk-budget-accumulates-repeated-unrealized-pnl-snapshots.md:
+        the tracker used to be fed the raw unrealized_pl on every call via
+        record_daily_pnl() (a += accumulator meant for discrete REALIZED
+        events), so a position sitting at a steady, healthy -$500 all day
+        would drift into TIER_HALT purely from being polled enough times
+        (every order check, every dashboard refresh) -- completely
+        independent of any real change in the position. The tracker now
+        lives on the service instance specifically so a real change is
+        remembered across calls (that part of the original Stage 2 fix was
+        right); repeated IDENTICAL snapshots must report the identical
+        result."""
         svc = TestComputeRiskStatus._service()
         svc.compute_daily_game_plan = AsyncMock(
             return_value={
@@ -191,9 +194,41 @@ class TestComputeRiskStatus:
             }
         )
         svc._fetch_positions = AsyncMock(
-            return_value=[{"symbol": "AAPL", "unrealized_pl": 500.0}]
+            return_value=[{"symbol": "AAPL", "unrealized_pl": -500.0}]
         )
-        first = asyncio.run(svc.compute_risk_status())
-        second = asyncio.run(svc.compute_risk_status())
-        assert first["symbols"][0]["daily_pnl"] == 500.0
-        assert second["symbols"][0]["daily_pnl"] == 1000.0
+        results = [asyncio.run(svc.compute_risk_status()) for _ in range(5)]
+        daily_pnls = [r["symbols"][0]["daily_pnl"] for r in results]
+        assert daily_pnls == [-500.0] * 5
+        assert all(r["symbols"][0]["tier"] == 0 for r in results)
+
+    def test_a_breach_latches_for_the_rest_of_the_day_even_after_recovery(self) -> None:
+        """The intended "accumulates across a real trading day" behavior,
+        implemented correctly: the WORST unrealized reading seen for a
+        symbol today is what should be sticky, not a nonsensical sum of
+        repeated reads -- a position that touched TIER_HALT and later
+        recovered should stay flagged, matching how a real circuit breaker
+        behaves (it doesn't silently clear the instant the price ticks
+        back)."""
+        svc = TestComputeRiskStatus._service()
+        svc.compute_daily_game_plan = AsyncMock(
+            return_value={
+                "status": "ok",
+                "readiness_score": 1.0,
+                "account_equity": 100_000.0,
+                "regime": {"regime": "bull"},
+            }
+        )
+
+        def _fetch_with(pnl: float):
+            return AsyncMock(return_value=[{"symbol": "AAPL", "unrealized_pl": pnl}])
+
+        svc._fetch_positions = _fetch_with(-100.0)
+        asyncio.run(svc.compute_risk_status())
+        svc._fetch_positions = _fetch_with(-3500.0)  # breaches TIER_HALT
+        breach = asyncio.run(svc.compute_risk_status())
+        svc._fetch_positions = _fetch_with(-50.0)  # recovers to nearly flat
+        recovered = asyncio.run(svc.compute_risk_status())
+
+        assert breach["symbols"][0]["halted"] is True
+        assert recovered["symbols"][0]["halted"] is True
+        assert recovered["symbols"][0]["daily_pnl"] == -3500.0

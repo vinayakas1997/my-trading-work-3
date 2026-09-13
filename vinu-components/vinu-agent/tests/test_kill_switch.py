@@ -6,12 +6,15 @@ closed" is now actually closed). See broker/kill_switch.py.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
+from unittest.mock import patch
 
 import pytest
 
 from vinu_agent.broker.kill_switch import (
+    AuditLogger,
     halt_trading,
     is_trading_halted,
     kill_switch_lock,
@@ -120,3 +123,50 @@ class TestKillSwitchLockRealMutualExclusion:
         t2.join(timeout=5)
 
         assert events == ["critical_section_start", "critical_section_end", "halted"]
+
+
+class TestAuditLoggerFailsOpenOnUnwritablePath:
+    """situation-test/18-audit-logger-unwritable-path-crashes-order-pipeline.md:
+    found by real testing that a filesystem error writing the audit entry
+    (disk full, a permissions/mount problem, ...) raised straight out of
+    `AuditLogger.log()`, and most `trade_tool.py` call sites (the earliest
+    checks especially) call it completely unwrapped -- so the error
+    propagated all the way out of `TradeTool.execute()`, crashing an order
+    rejection/pause response instead of just failing to record it. The
+    audit log is a secondary, observability-only side effect of every real
+    check in this codebase, never itself a safety gate, so it must fail
+    open the same way every other optional store lookup in `order_guard.py`
+    already does."""
+
+    def test_log_does_not_raise_when_the_log_path_is_unwritable(self, tmp_path) -> None:
+        # A file where log()'s mkdir(parents=True) expects a directory --
+        # a real, reproducible OSError (FileExistsError on Windows,
+        # NotADirectoryError on POSIX), not a mocked one.
+        blocking_file = tmp_path / "not_a_directory"
+        blocking_file.write_text("i am a file, not a directory")
+        bad_log_path = blocking_file / "trade_audit.log"
+
+        with patch.object(AuditLogger, "LOG_PATH", bad_log_path):
+            AuditLogger.log("order_rejected", {"symbol": "AAPL"}, session_id="s1", symbol="AAPL")
+            # Must not raise -- the call above completing at all is the assertion.
+
+    def test_real_trade_tool_execute_still_returns_when_audit_log_is_unwritable(self, tmp_path) -> None:
+        """End-to-end: the real invalid-qty rejection path in
+        TradeTool.execute() calls AuditLogger.log() before any try/except
+        of its own -- confirms the fix actually protects that real call
+        site, not just a direct unit test of log() in isolation."""
+        from vinu_agent.tools.trade_tool import TradeTool
+
+        blocking_file = tmp_path / "not_a_directory"
+        blocking_file.write_text("i am a file, not a directory")
+        bad_log_path = blocking_file / "trade_audit.log"
+
+        tool = TradeTool()
+        tool._as_of = None
+        tool._session_id = "s1"
+
+        with patch.object(AuditLogger, "LOG_PATH", bad_log_path):
+            result = json.loads(tool.execute(symbol="AAPL", qty=-5, side="buy"))
+
+        assert result["status"] == "rejected"
+        assert result["reason_code"] == "invalid_qty"

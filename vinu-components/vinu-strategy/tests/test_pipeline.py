@@ -57,6 +57,29 @@ class TestWeightPipeline:
         assert result == {}
         assert meta["selection"]["candidates"] == 0
 
+    def test_params_missing_max_weight_falls_back_to_risk_stage_default(self):
+        """A caller-supplied `params` dict missing max_weight/cash_floor must not
+        clobber risk.py's own defaults with an explicit None (regression: this
+        used to crash with TypeError comparing float to NoneType)."""
+        config = StrategyConfig(
+            name="test",
+            description="test",
+            schedule="daily",
+            pipeline=PipelineConfig(
+                selection=PipelineStage("all"),
+                allocation=PipelineStage("equal"),
+                timing=PipelineStage("none"),
+                risk=PipelineStage("normalize"),
+            ),
+        )
+        pipeline = WeightPipeline()
+        result, meta = pipeline.run(
+            config,
+            universe=["AAPL", "MSFT"],
+            params={"cash_floor": 0.1},
+        )
+        assert result == {"AAPL": 0.25, "MSFT": 0.25}
+
     def test_pipeline_with_timing_rules(self):
         config = StrategyConfig(
             name="test_rules",

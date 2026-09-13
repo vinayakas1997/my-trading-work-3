@@ -52,3 +52,39 @@ class TestMetrics:
         metrics = compute_performance_metrics(values, returns)
         expected_max_dd = (1.2 / 1.6) - 1
         assert abs(metrics["max_drawdown"] - expected_max_dd) < 1e-6
+
+
+class TestUndefinedSortinoCalmar:
+    """
+    #39: zero losing days / zero drawdown is mathematically "undefined", not a
+    genuine Sortino/Calmar of 0.0 — that reads identically to a mediocre
+    strategy. A strictly-monotonic-up equity curve must report a large
+    (sentinel) value distinguishable from the flat/no-gain case, which stays 0.0.
+    """
+
+    def test_no_losing_days_reports_sentinel_not_zero(self):
+        # Strictly increasing every day -> no losing days at all.
+        values = pd.Series([1.0, 1.05, 1.10, 1.15, 1.20, 1.25])
+        returns = values.pct_change().dropna()
+        metrics = compute_performance_metrics(values, returns)
+        assert metrics["sortino_ratio"] > 100.0
+        assert metrics["calmar_ratio"] > 100.0
+
+    def test_flat_series_still_reports_zero_not_sentinel(self):
+        # No losses AND no gain -- genuinely neutral, not "undefined-excellent".
+        values = pd.Series([1.0] * 10)
+        returns = values.pct_change().dropna()
+        metrics = compute_performance_metrics(values, returns)
+        assert metrics["sortino_ratio"] == 0.0
+        assert metrics["calmar_ratio"] == 0.0
+
+    def test_sentinel_survives_compute_full_metrics_finite_sanitization(self):
+        from vinu_simulator.engine.metrics import compute_full_metrics
+
+        values = pd.Series([1.0, 1.05, 1.10, 1.15, 1.20, 1.25])
+        returns = values.pct_change().dropna()
+        metrics = compute_full_metrics(values, returns, full=False)
+        # compute_full_metrics's inf/-inf/nan -> 0.0 pass must not also zero out
+        # the finite sentinel used to represent "undefined" here.
+        assert metrics["sortino_ratio"] > 100.0
+        assert metrics["calmar_ratio"] > 100.0

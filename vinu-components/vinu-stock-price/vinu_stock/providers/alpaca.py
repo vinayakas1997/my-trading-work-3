@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -102,6 +103,12 @@ class AlpacaProvider:
             return FetchBarsResult(True, all_bars)
         except requests.RequestException as exc:
             return FetchBarsResult(False, [], str(exc))
+        except (KeyError, ValueError, json.JSONDecodeError) as exc:
+            # Malformed/partial JSON from Alpaca (missing o/h/l/c, truncated
+            # body, etc.) -- treat it the same as a network failure: this
+            # fetch failed cleanly instead of raising out of the provider.
+            LOG.warning("Alpaca fetch_bars(%s): malformed response: %s", sym, exc)
+            return FetchBarsResult(False, [], f"malformed response: {exc}")
 
     def fetch_bars_multi(
         self,
@@ -172,6 +179,13 @@ class AlpacaProvider:
             return {s: FetchBarsResult(True, bars) for s, bars in bars_by_symbol.items()}
         except requests.RequestException as exc:
             err = str(exc)
+            return {s: FetchBarsResult(False, [], err) for s in chunk}
+        except (KeyError, ValueError, json.JSONDecodeError) as exc:
+            # Malformed/partial JSON from Alpaca -- fail this chunk cleanly
+            # (same shape as a network failure) instead of raising out of
+            # the provider and taking the whole batch fetch down with it.
+            LOG.warning("Alpaca fetch_bars_multi(%s): malformed response: %s", chunk, exc)
+            err = f"malformed response: {exc}"
             return {s: FetchBarsResult(False, [], err) for s in chunk}
 
     def earliest_available(self, symbol: str) -> EarliestResult:

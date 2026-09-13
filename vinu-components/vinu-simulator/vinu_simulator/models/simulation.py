@@ -104,3 +104,9 @@ class SimulationResult:
     metrics: dict[str, float]
     benchmark_metrics: dict[str, dict[str, float]] = field(default_factory=dict)
     validation: dict[str, Any] | None = None
+    # Populated by simulate_custom() when a strategy's generate_weights() crashed
+    # for one or more symbols and was silently replaced with an all-zero weight
+    # series (see custom_sim.py). Lets a caller (e.g. vinu-research's
+    # _diagnose_failure) tell "strategy crashed" apart from "strategy legitimately
+    # traded zero times" instead of both landing on trade_count == 0.
+    diagnostics: dict[str, Any] = field(default_factory=dict)

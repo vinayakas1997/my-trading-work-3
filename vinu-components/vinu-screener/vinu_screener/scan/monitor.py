@@ -157,12 +157,24 @@ class ScanMonitor:
         # symbol falls back to its own per-symbol fetch rather than the
         # whole cycle failing.
         prefetched: dict[str, object] | None = None
+        # (#26) Symbols whose batch fetch failed outright (network error,
+        # non-2xx, bad JSON) rather than legitimately having no/thin data --
+        # duck-typed the same way `get_ohlcv_batch` itself is, so a data
+        # source without this attribute (e.g. FakeDataSource) is unaffected.
+        batch_failed_symbols: set[str] = set()
         if universe and hasattr(self._data_source, "get_ohlcv_batch"):
             batch_result = call_with_timeout(
                 self._data_source.get_ohlcv_batch, universe, timeout_sec=self._batch_fetch_timeout_sec,
             )
             if batch_result.ok and not batch_result.timed_out:
                 prefetched = batch_result.value
+                batch_failed_symbols = set(getattr(self._data_source, "last_batch_failed_symbols", None) or ())
+                if batch_failed_symbols:
+                    LOG.warning(
+                        "scan %s: batch fetch failed outright for %d/%d symbol(s) -- "
+                        "flagging as fetch_error, not insufficient_history",
+                        rule.rule_id, len(batch_failed_symbols), len(universe),
+                    )
             elif batch_result.timed_out:
                 LOG.warning(
                     "scan %s: batch fetch for %d symbols timed out after %.1fs, "
@@ -171,7 +183,9 @@ class ScanMonitor:
                 )
 
         for symbol in universe:
-            outcome = self._evaluate_symbol(rule, symbol, min_bars, prefetched=prefetched)
+            outcome = self._evaluate_symbol(
+                rule, symbol, min_bars, prefetched=prefetched, batch_failed=symbol in batch_failed_symbols,
+            )
             outcomes.append(outcome)
             if outcome.status != "fired":
                 continue
@@ -206,7 +220,8 @@ class ScanMonitor:
         return coarse_select(snapshots, rule.coarse_filter)
 
     def _evaluate_symbol(
-        self, rule: ScanRule, symbol: str, min_bars: int, *, prefetched: dict[str, object] | None = None,
+        self, rule: ScanRule, symbol: str, min_bars: int, *,
+        prefetched: dict[str, object] | None = None, batch_failed: bool = False,
     ) -> SymbolOutcome:
         if prefetched is not None:
             # Already fetched (and already timeout-guarded, once, for the
@@ -222,6 +237,12 @@ class ScanMonitor:
             if not result.ok:
                 return SymbolOutcome(symbol, "fetch_error", result.error or "")
             ohlcv = result.value
+        if ohlcv is None and batch_failed:
+            # (#26) This symbol has no data because its batch chunk's fetch
+            # failed outright, not because the data is legitimately thin --
+            # don't bucket it with insufficient_history, which would make a
+            # total API outage look identical to "no data".
+            return SymbolOutcome(symbol, "fetch_error", "batch fetch failed for this symbol's chunk")
         if ohlcv is None or len(ohlcv) < min_bars:
             got = 0 if ohlcv is None else len(ohlcv)
             return SymbolOutcome(symbol, "insufficient_history", f"have {got} bars, need {min_bars}")

@@ -18,13 +18,19 @@ def select_threshold(
     field = (params or {}).get("on", "signal")
     min_val = (params or {}).get("min", 0.0)
 
-    def get_value(sym: str) -> float:
+    def passes(sym: str) -> bool:
         if field != "signal" and signal_context:
             features = signal_context.get(sym, {}).get("features", {})
-            return features.get(field, 0.0)
-        return signals.get(sym, 0.0)
+            if field not in features:
+                # No computed value for this field at all (partial upstream
+                # response, indicator not yet available for this symbol) --
+                # excluding is the safe default; defaulting to 0.0 here would
+                # silently pass any threshold with min_val <= 0.
+                return False
+            return features[field] >= min_val
+        return signals.get(sym, 0.0) >= min_val
 
-    return [sym for sym in signals if get_value(sym) >= min_val]
+    return [sym for sym in signals if passes(sym)]
 
 
 def select_top_n(signals: dict[str, float], params: dict[str, Any] | None = None) -> list[str]:

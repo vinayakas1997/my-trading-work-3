@@ -45,9 +45,17 @@ class SQLiteBackend:
     def _get_conn(self) -> sqlite3.Connection:
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is None or getattr(self._local, "gen", -1) != self._generation:
-            conn = sqlite3.connect(str(self._db_path))
-            conn.execute("PRAGMA journal_mode=WAL")
+            # busy_timeout must be the very first thing set on a fresh
+            # connection -- found via situation-test/01-daily-order-limit-race.md's
+            # real 30-thread concurrency harness: with `journal_mode=WAL` set
+            # first, a handful of connections still hit an immediate (sub-
+            # millisecond, not a 5s-exhausted) "database is locked" from
+            # sqlite3.connect()'s own default busy handler not yet being
+            # armed for the pragma calls made during connection setup itself.
+            # Passing timeout= here arms it before any statement runs.
+            conn = sqlite3.connect(str(self._db_path), timeout=5.0)
             conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.row_factory = sqlite3.Row
             self._init_schema(conn)
             self._local.conn = conn

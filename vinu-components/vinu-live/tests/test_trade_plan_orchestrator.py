@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import os
 import tempfile
@@ -176,6 +177,78 @@ class TestEntry:
 
         assert action["action"] == "entry_not_filled"
         assert list_open_positions(book) == []
+
+
+class TestBreakerEngagesRealHalt:
+    """A VaR/leverage/cluster/position-count breach detected by check_limits()
+    used to only flip this orchestrator's own in-memory BreakerState -- invisible
+    to OrderGuard and the LLM-agent order path, which only ever consult the real,
+    persistent kill switch. _check_breaker now engages that real kill switch
+    (mirroring emergency_flatten()'s halt call) on the transition into HALT."""
+
+    def _monkeypatch_check_limits(self, monkeypatch, verdict, reason="limit breached"):
+        import vinu_live.trade_plan.orchestrator as orch_mod
+
+        def _fake_check_limits(*args, **kwargs):
+            state = kwargs.get("state")
+            if verdict == BreakerVerdict.HALT and state is not None:
+                state.halted = True
+                state.halted_reason = reason
+            return verdict, reason if verdict == BreakerVerdict.HALT else None
+
+        monkeypatch.setattr(orch_mod, "check_limits", _fake_check_limits)
+
+    def test_new_breach_engages_the_real_kill_switch(self, book, monkeypatch) -> None:
+        orch = _make_orchestrator(book)
+        self._monkeypatch_check_limits(monkeypatch, BreakerVerdict.HALT, "leverage 3.0x exceeds limit 2.0x")
+        get_mock, post_mock = _router({}, {"/broker/halt": {"status": "ok", "halted": True}})
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        verdict, reason = asyncio.run(orch._check_breaker(100000.0))
+
+        assert verdict == BreakerVerdict.HALT
+        assert orch._breaker_state.halted is True
+        halt_calls = [c for c in post_mock.call_args_list if "/agent/broker/halt" in c.args[0]]
+        assert len(halt_calls) == 1
+        assert "leverage" in halt_calls[0].kwargs["json"]["reason"]
+
+    def test_already_halted_does_not_re_engage_every_cycle(self, book, monkeypatch) -> None:
+        orch = _make_orchestrator(book)
+        orch._breaker_state.halted = True
+        orch._breaker_state.halted_reason = "already halted"
+        self._monkeypatch_check_limits(monkeypatch, BreakerVerdict.HALT, "already halted")
+        get_mock, post_mock = _router({}, {"/broker/halt": {"status": "ok", "halted": True}})
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        asyncio.run(orch._check_breaker(100000.0))
+
+        assert post_mock.call_count == 0
+
+    def test_halt_engage_failure_does_not_raise(self, book, monkeypatch) -> None:
+        orch = _make_orchestrator(book)
+        self._monkeypatch_check_limits(monkeypatch, BreakerVerdict.HALT, "daily loss 6% exceeds limit 5%")
+        get_mock, post_mock = _router({})  # no /broker/halt route -> 404
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        verdict, reason = asyncio.run(orch._check_breaker(100000.0))
+
+        assert verdict == BreakerVerdict.HALT
+        assert orch._breaker_state.halted is True
+
+    def test_allow_verdict_never_calls_halt(self, book, monkeypatch) -> None:
+        orch = _make_orchestrator(book)
+        self._monkeypatch_check_limits(monkeypatch, BreakerVerdict.ALLOW)
+        get_mock, post_mock = _router({}, {"/broker/halt": {"status": "ok"}})
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        verdict, _ = asyncio.run(orch._check_breaker(100000.0))
+
+        assert verdict == BreakerVerdict.ALLOW
+        assert post_mock.call_count == 0
 
 
 class TestForecastConfidenceScalesEntrySize:
@@ -386,6 +459,28 @@ class TestCvarGateAndVolTargeting:
         orch._http.get, orch._http.post = get_mock, post_mock
 
         action = asyncio.run(orch._maybe_enter(_SAMPLE_PLAN, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+
+    def test_cvar_now_uses_the_shared_tested_helper_not_a_raw_comparison(self, book, monkeypatch) -> None:
+        """The gate used to be a raw `cvar_95 > CVAR_THRESHOLD` -- drifted
+        from vinu-agent's own CVaR gate, which goes through
+        vinu_infra.risk_math.cvar_exceeds(). Now both call the same, tested
+        helper. A NaN cvar_95_limit still doesn't block (cvar_exceeds()
+        fails open on non-finite input, same posture as every other
+        garbage-input case in that shared module) -- this pins that as a
+        deliberate, tested contract rather than an accident of Python's NaN
+        comparison semantics (which happened to produce the same result
+        before this fix, for a different, unintentional reason)."""
+        import vinu_live.trade_plan.orchestrator as orch_mod
+        monkeypatch.setattr(orch_mod, "CVAR_GATE_ENABLED", True)
+        monkeypatch.setattr(orch_mod, "CVAR_THRESHOLD", 0.03)
+        orch = _make_orchestrator(book)
+        plan = {**_SAMPLE_PLAN, "risk_bands": {"max_position_size_pct": 0.05, "cvar_95_limit": float("nan")}}
+        get_mock, post_mock = self._mocks()
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
 
         assert action["action"] == "entered"
 
@@ -793,24 +888,104 @@ class TestPartialFillHandling:
     def test_reconcile_alerts_on_side_conflict_no_change(self, book) -> None:
         open_position(book, "AAPL", "long", 100.0, 150.0)
         orch = _make_orchestrator(book)
-        orch._http.get = _router({"/broker/positions": [{"symbol": "AAPL", "qty": -50.0}]})[0]
+        get_mock, post_mock = _router(
+            {"/broker/positions": [{"symbol": "AAPL", "qty": -50.0}]},
+            {"/notify/reconciliation-drift": {"status": "ok", "delivered": 1}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
 
         recon = asyncio.run(orch._reconcile_book_with_broker({"AAPL": 150.0}))
 
         assert recon["corrections"][0]["action"] == "alert_side_conflict"
         assert list_open_positions(book, symbol="AAPL")[0].qty == qty_float(100.0)
+        # Never auto-corrected in the book -- but the alert must reach a human,
+        # not just a server log (#8).
+        drift_calls = [c for c in post_mock.call_args_list if "/notify/reconciliation-drift" in c.args[0]]
+        assert len(drift_calls) == 1
+        assert drift_calls[0].kwargs["json"]["action"] == "alert_side_conflict"
+        assert drift_calls[0].kwargs["json"]["symbol"] == "AAPL"
 
     def test_reconcile_alerts_on_phantom_broker_position(self, book) -> None:
         open_position(book, "AAPL", "long", 100.0, 150.0)
         orch = _make_orchestrator(book)
-        orch._http.get = _router(
-            {"/broker/positions": [{"symbol": "AAPL", "qty": 100.0}, {"symbol": "TSLA", "qty": 7.0}]}
-        )[0]
+        get_mock, post_mock = _router(
+            {"/broker/positions": [{"symbol": "AAPL", "qty": 100.0}, {"symbol": "TSLA", "qty": 7.0}]},
+            {"/notify/reconciliation-drift": {"status": "ok", "delivered": 1}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
 
         recon = asyncio.run(orch._reconcile_book_with_broker({"AAPL": 150.0, "TSLA": 200.0}))
 
         actions = {c["symbol"]: c["action"] for c in recon["corrections"]}
         assert actions["TSLA"] == "alert_phantom_broker_position"
+        drift_calls = [c for c in post_mock.call_args_list if "/notify/reconciliation-drift" in c.args[0]]
+        assert len(drift_calls) == 1
+        assert drift_calls[0].kwargs["json"]["symbol"] == "TSLA"
+        assert drift_calls[0].kwargs["json"]["broker_qty"] == 7.0
+
+    def test_reconcile_survives_notification_failure(self, book) -> None:
+        """A notification-delivery problem must never affect the
+        reconciliation result itself -- unrelated concerns."""
+        open_position(book, "AAPL", "long", 100.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._http.get = _router(
+            {"/broker/positions": [{"symbol": "AAPL", "qty": 100.0}, {"symbol": "TSLA", "qty": 7.0}]}
+        )[0]
+        orch._http.post = AsyncMock(side_effect=ConnectionError("agent-api down"))
+
+        recon = asyncio.run(orch._reconcile_book_with_broker({"AAPL": 150.0, "TSLA": 200.0}))
+
+        actions = {c["symbol"]: c["action"] for c in recon["corrections"]}
+        assert actions["TSLA"] == "alert_phantom_broker_position"
+
+    def test_reconcile_drift_notification_is_edge_triggered_not_every_cycle(self, book) -> None:
+        """situation-test/24-reconciliation-drift-comment-promised-dedup-that-didnt-exist.md:
+        the shared notify front door's own dedup window is disabled by
+        default (situation 23), so without the orchestrator's own
+        per-instance tracking, an unresolved phantom position would
+        re-notify on every single reconciliation cycle it persists through.
+        A persisting drift across 3 consecutive cycles must notify once."""
+        open_position(book, "AAPL", "long", 100.0, 150.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            {"/broker/positions": [{"symbol": "AAPL", "qty": 100.0}, {"symbol": "TSLA", "qty": 7.0}]},
+            {"/notify/reconciliation-drift": {"status": "ok", "delivered": 1}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        for _ in range(3):
+            asyncio.run(orch._reconcile_book_with_broker({"AAPL": 150.0, "TSLA": 200.0}))
+
+        drift_calls = [c for c in post_mock.call_args_list if "/notify/reconciliation-drift" in c.args[0]]
+        assert len(drift_calls) == 1
+
+    def test_reconcile_drift_notifies_again_after_clearing_and_recurring(self, book) -> None:
+        """The suppression must not be permanent -- once a drift resolves
+        (drops out of a cycle's corrections) and later recurs, it's a new
+        occurrence and should notify again."""
+        open_position(book, "AAPL", "long", 100.0, 150.0)
+        orch = _make_orchestrator(book)
+        post_mock = AsyncMock(return_value=MagicMock(status_code=200, json=lambda: {"status": "ok", "delivered": 1}))
+        orch._http.post = post_mock
+
+        # Cycle 1: TSLA is a phantom position -- notifies.
+        orch._http.get = _router(
+            {"/broker/positions": [{"symbol": "AAPL", "qty": 100.0}, {"symbol": "TSLA", "qty": 7.0}]}
+        )[0]
+        asyncio.run(orch._reconcile_book_with_broker({"AAPL": 150.0, "TSLA": 200.0}))
+
+        # Cycle 2: TSLA position is gone (resolved) -- no corrections for it.
+        orch._http.get = _router({"/broker/positions": [{"symbol": "AAPL", "qty": 100.0}]})[0]
+        asyncio.run(orch._reconcile_book_with_broker({"AAPL": 150.0, "TSLA": 200.0}))
+
+        # Cycle 3: TSLA phantom position reappears -- new occurrence, notifies again.
+        orch._http.get = _router(
+            {"/broker/positions": [{"symbol": "AAPL", "qty": 100.0}, {"symbol": "TSLA", "qty": 7.0}]}
+        )[0]
+        asyncio.run(orch._reconcile_book_with_broker({"AAPL": 150.0, "TSLA": 200.0}))
+
+        drift_calls = [c for c in post_mock.call_args_list if "/notify/reconciliation-drift" in c.args[0]]
+        assert len(drift_calls) == 2
 
     def test_reconcile_autocorrect_disabled_warns_only(self, book, monkeypatch) -> None:
         import vinu_live.trade_plan.orchestrator as m
@@ -1897,6 +2072,53 @@ class TestRebalanceRequestIntake:
         assert action["action"] == "rebalance_honored"
         remaining = list_open_positions(book, symbol="AAPL")[0]
         assert remaining.qty == pytest.approx(5.0)  # reduced by half
+
+    def test_rebalance_honor_reduce_holds_book_lock(self, book, monkeypatch) -> None:
+        """situation-test/32-rebalance-honor-reduce-position-missing-book-lock.md:
+        this was the one reduce_position()/close_position() call site in
+        the whole file NOT wrapped in book_lock() -- confirmed as a real,
+        reproducible lost-update race via a direct concurrency test against
+        book/positions.py. This locks in the fix at the actual call site:
+        reduce_position() must run while book_lock() is held."""
+        import vinu_live.trade_plan.orchestrator as orch_mod
+
+        events: list[str] = []
+        real_reduce_position = orch_mod.reduce_position
+        real_book_lock = orch_mod.book_lock
+
+        def spy_reduce_position(*args, **kwargs):
+            events.append("reduce_position")
+            return real_reduce_position(*args, **kwargs)
+
+        @contextlib.contextmanager
+        def spy_book_lock(*args, **kwargs):
+            events.append("lock_acquired")
+            with real_book_lock(*args, **kwargs):
+                yield
+            events.append("lock_released")
+
+        monkeypatch.setattr(orch_mod, "reduce_position", spy_reduce_position)
+        monkeypatch.setattr(orch_mod, "book_lock", spy_book_lock)
+
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._rebalance_queue.submit("AAPL", "free capital for candidate Y")
+        get_mock, post_mock = _router(
+            get_routes={
+                "/candles/AAPL": {"data": []},
+                "/angle/shock_clustering/AAPL": {"data": []},
+                "/broker/positions": [],
+            },
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o5"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        position = list_open_positions(book, symbol="AAPL")[0]
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 151.0, 100000.0))
+
+        assert action["action"] == "rebalance_honored"
+        assert events == ["lock_acquired", "reduce_position", "lock_released"]
 
     def test_critical_rebalance_request_overrides_gain_protect(self, book) -> None:
         """how-to-make-it-live.md #23: a critical request goes through even

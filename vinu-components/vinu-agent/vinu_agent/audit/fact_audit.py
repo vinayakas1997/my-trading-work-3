@@ -142,6 +142,21 @@ class FactAuditor:
         except Exception:
             pass
 
+        # #5: a Fail verdict can only ever be logged after the fact -- by the
+        # time the final narration exists to audit, any submit_order call
+        # this turn already reached the broker and can't be undone here. What
+        # was still missing was any way for that discovery to reach a human
+        # faster than "someone happens to read the audit log later" -- the
+        # exact gap #8 closed for reconciliation drift, via the same
+        # notification front door. Scoped specifically to a turn where an
+        # order was actually placed (not every ungrounded informational
+        # claim, which would be noisy and dilute the signal that actually
+        # matters here).
+        order_msgs = [m for m in tool_results_this_turn if m.get("name") == "submit_order"]
+        trade_claim_fails = [f for f in findings if f["verdict"] == "Fail"]
+        if order_msgs and trade_claim_fails:
+            self._notify_trade_claim_fail(trade_claim_fails, session_id, order_msgs[-1].get("tool_call_id", ""))
+
         for f in findings:
             if f["verdict"] in ("Stale", "Fail"):
                 logger.warning(
@@ -154,6 +169,40 @@ class FactAuditor:
                 )
 
         return findings
+
+    def _notify_trade_claim_fail(
+        self, fails: list[dict], session_id: str, order_tool_call_id: str,
+    ) -> None:
+        """Best-effort, in-process call into the same notification front door
+        #8 wired up for reconciliation drift (routes_notify.py's
+        _deliver_notification) -- no HTTP round-trip needed since fact_audit.py
+        already runs inside vinu-agent's own process. A notification failure
+        must never affect the audit result itself."""
+        try:
+            import asyncio
+
+            from ..agent.notification_noise import Severity
+            from ..server.routes_notify import _deliver_notification
+
+            detail = "; ".join(
+                f"{f['claim_type']}={f['claimed_value']} (claimed: {f['raw_match'][:60]!r})"
+                for f in fails
+            )
+            text = (
+                f"[Fact-Audit FAIL] A trade was submitted this turn but the "
+                f"assistant's own claim about it does not match any tool "
+                f"result: {detail}\n"
+                f"Session: {session_id or 'unknown'}. The order already "
+                f"executed and cannot be undone here -- review immediately."
+            )
+            # Deduped per (session, order) -- not per claim text -- so
+            # multiple failing claims about the SAME order produce one alert,
+            # while a different order (even in the same session) always
+            # notifies independently.
+            key = f"fact-audit-fail:{session_id or 'unknown'}:{order_tool_call_id or 'unknown'}"
+            asyncio.run(_deliver_notification(key, Severity.CRITICAL, text))
+        except Exception:
+            logger.exception("Could not send fact-audit-fail notification")
 
     def _extract_claims(self, content: str) -> list[dict]:
         """Regex-extract symbol + numeric claims from the final answer."""

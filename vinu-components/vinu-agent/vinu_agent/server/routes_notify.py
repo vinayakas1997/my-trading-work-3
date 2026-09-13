@@ -52,36 +52,28 @@ def _format_trade_plan_pending_message(body: TradePlanPendingRequest) -> str:
     )
 
 
-@router.post("/notify/trade-plan-pending")
-async def notify_trade_plan_pending(body: TradePlanPendingRequest) -> dict[str, object]:
-    """Best-effort fan-out to every configured channel -- one channel
-    failing must not block the others, same posture as
-    significance_triage.deliver_flag(). Never raises back to the caller
-    (vinu-live's TradePlanApprovalWorker) -- a notification failure must
-    never be treated as an approval failure, they're unrelated concerns."""
+async def _deliver_notification(key: str, severity: Severity, text: str) -> dict[str, object]:
+    """Shared fan-out body for every /notify/* route below -- noise-gated,
+    best-effort per channel (one channel failing must not block the others,
+    same posture as significance_triage.deliver_flag()), and never raises
+    back to the caller: a notification failure must never be treated as a
+    failure of whatever real thing it was reporting on."""
     config = load_config()
-
-    # A33: noise control -- a plan that keeps failing the gate would
-    # otherwise re-notify on every TradePlanApprovalWorker cycle. Keyed by
-    # artifact so distinct plans never suppress each other. WARNING sev:
-    # gets through quiet hours only if the operator lowered the bar.
-    key = f"trade-plan-pending:{body.artifact_id}"
     gate = get_noise_gate()
-    decision = gate.evaluate(key, Severity.WARNING)
+    decision = gate.evaluate(key, severity)
     if not decision.send:
-        LOG.info("Suppressing trade-plan-pending notice for %s: %s", body.artifact_id, decision.reason)
+        LOG.info("Suppressing notice for %s: %s", key, decision.reason)
         return {"status": "suppressed", "reason": decision.reason, "delivered": 0}
     if not gate.reserve(key):
-        LOG.info("trade-plan-pending notice for %s already in flight, skipping", body.artifact_id)
+        LOG.info("Notice for %s already in flight, skipping", key)
         return {"status": "in_flight", "delivered": 0}
 
     try:
         targets = build_channel_targets(config)
         if not targets:
-            LOG.info("No notification channels configured, dropping trade-plan-pending notice for %s", body.artifact_id)
+            LOG.info("No notification channels configured, dropping notice for %s", key)
             return {"status": "no_channels_configured", "delivered": 0}
 
-        text = _format_trade_plan_pending_message(body)
         delivered = 0
         for target in targets:
             channel_name = type(target.channel).__name__
@@ -91,17 +83,16 @@ async def notify_trade_plan_pending(body: TradePlanPendingRequest) -> dict[str, 
                 delivered += 1
                 NotificationDeliveryLog.record(
                     channel=channel_name, chat_id=target.chat_id, key=key,
-                    severity=Severity.WARNING, ok=True,
+                    severity=severity, ok=True,
                     latency_ms=(time.perf_counter() - start) * 1000,
                 )
             except Exception as exc:
                 LOG.exception(
-                    "Failed to deliver trade-plan-pending notice for %s via a channel, continuing with the others",
-                    body.artifact_id,
+                    "Failed to deliver notice for %s via a channel, continuing with the others", key,
                 )
                 NotificationDeliveryLog.record(
                     channel=channel_name, chat_id=target.chat_id, key=key,
-                    severity=Severity.WARNING, ok=False,
+                    severity=severity, ok=False,
                     latency_ms=(time.perf_counter() - start) * 1000, error=str(exc),
                 )
         if delivered:
@@ -111,3 +102,64 @@ async def notify_trade_plan_pending(body: TradePlanPendingRequest) -> dict[str, 
         return {"status": "ok", "delivered": delivered, "targets": len(targets)}
     finally:
         gate.release(key)
+
+
+@router.post("/notify/trade-plan-pending")
+async def notify_trade_plan_pending(body: TradePlanPendingRequest) -> dict[str, object]:
+    """Best-effort fan-out to every configured channel. Never raises back to
+    the caller (vinu-live's TradePlanApprovalWorker) -- a notification
+    failure must never be treated as an approval failure, they're unrelated
+    concerns."""
+    # A33: noise control -- a plan that keeps failing the gate would
+    # otherwise re-notify on every TradePlanApprovalWorker cycle. Keyed by
+    # artifact so distinct plans never suppress each other. WARNING sev:
+    # gets through quiet hours only if the operator lowered the bar.
+    key = f"trade-plan-pending:{body.artifact_id}"
+    text = _format_trade_plan_pending_message(body)
+    return await _deliver_notification(key, Severity.WARNING, text)
+
+
+class ReconciliationDriftRequest(BaseModel):
+    """A book/broker discrepancy that TradePlanOrchestrator._reconcile_symbol
+    deliberately does NOT auto-correct (a phantom broker position could
+    belong to another strategy or a manual trade; a side conflict is never
+    safe to auto-flip) -- see orchestrator.py's own reasoning. Auto-trading
+    on either case would be actively harmful if the guess is wrong, so this
+    stays a human-review alert, not a healing action. What was missing
+    before this route existed was any way for that alert to reach further
+    than a server log nobody was necessarily tailing."""
+
+    symbol: str
+    action: str  # "alert_phantom_broker_position" | "alert_side_conflict"
+    book_qty: float | None = None
+    broker_qty: float | None = None
+
+
+def _format_reconciliation_drift_message(body: ReconciliationDriftRequest) -> str:
+    if body.action == "alert_phantom_broker_position":
+        detail = (
+            f"broker holds {body.broker_qty} but the book has no position for it. "
+            f"Could be another strategy, a manual trade, or a bug -- NOT auto-corrected."
+        )
+    elif body.action == "alert_side_conflict":
+        detail = (
+            f"book and broker disagree on side (book={body.book_qty}, broker={body.broker_qty}) "
+            f"-- NOT auto-corrected, never auto-flipped."
+        )
+    else:
+        detail = f"{body.action} (book={body.book_qty}, broker={body.broker_qty})"
+    return f"[Reconciliation Drift] {body.symbol}: {detail}\nNeeds manual review."
+
+
+@router.post("/notify/reconciliation-drift")
+async def notify_reconciliation_drift(body: ReconciliationDriftRequest) -> dict[str, object]:
+    """Same 'networked front door' idiom as notify_trade_plan_pending --
+    vinu-live's TradePlanOrchestrator has no direct channel access. CRITICAL
+    severity: an unmanaged live position or a book/broker discrepancy is a
+    real money-risk condition, not routine noise. Deduped per (symbol,
+    action) so a condition that persists across cycles doesn't re-notify
+    every cycle -- see _reconcile_book_with_broker, which calls this once
+    per cycle for as long as the condition is still detected."""
+    key = f"reconciliation-drift:{body.symbol}:{body.action}"
+    text = _format_reconciliation_drift_message(body)
+    return await _deliver_notification(key, Severity.CRITICAL, text)

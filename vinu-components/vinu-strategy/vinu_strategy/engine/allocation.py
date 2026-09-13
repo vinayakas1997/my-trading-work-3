@@ -57,7 +57,13 @@ def _allocate_by_expression(
         try:
             val = evaluate_expression(expr, ctx)
         except ExpressionError as e:
-            LOG.warning("Expression eval failed for '%s': %s", sym, e)
+            # ERROR, not WARNING: a failed expression silently degrades this
+            # symbol's contribution to 0, which -- if it happens for every
+            # candidate (e.g. a typo'd field name in the strategy config) --
+            # is indistinguishable downstream from a legitimate flat-signal
+            # equal-weight fallback. That misconfiguration must not blend
+            # into normal operation at WARNING severity.
+            LOG.error("Expression eval failed for '%s': %s", sym, e)
             val = 0.0
         val = val if val is not None else 0.0
         weights[sym] = val

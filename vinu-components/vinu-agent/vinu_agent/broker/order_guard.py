@@ -237,13 +237,44 @@ class OrderGuard:
                 code=ReasonCode.MANDATE_EXPIRED,
             )
 
+        # situation-test/22-ticker-allowlist-blocks-reduce-only-exits.md:
+        # `blocked_tickers` is a deliberate "don't touch this symbol for any
+        # reason" list -- same semantics as the symbol-override IGNORED
+        # state above (situation 11 confirmed that one blocking reduce_only
+        # too is intentional, not a bug) -- so this one is NOT exempted.
         if symbol in mandate.blocked_tickers:
             return GuardResult(False, f"{symbol} is in the blocked tickers list", code=ReasonCode.BLOCKED_TICKER)
 
-        if "*" not in mandate.allowed_tickers and symbol not in mandate.allowed_tickers:
+        # Unlike blocked_tickers, allowed_tickers is a scope restriction on
+        # what may be OPENED, not a "this symbol is untouchable" statement
+        # -- a symbol can fall out of an allowlist (a strategy retired, an
+        # operator narrowing scope) while a position from when it WAS
+        # allowed is still open. Exempting reduce_only here means that
+        # position can still be closed; same posture as every other
+        # exemption in this method (kill switch, consent expiry, the
+        # portfolio-wide daily cap, risk-budget halt, and -- since
+        # situation 15 -- the short-selling check).
+        if (
+            not reduce_only
+            and "*" not in mandate.allowed_tickers
+            and symbol not in mandate.allowed_tickers
+        ):
             return GuardResult(False, f"{symbol} is not in the allowed tickers list", code=ReasonCode.TICKER_NOT_ALLOWED)
 
-        if side == "sell" and not mandate.allow_short:
+        # situation-test/15-reduce-only-sell-blocked-by-short-check.md: found
+        # by real testing that this had no reduce_only exemption, unlike
+        # every other check in this method (kill switch, mandate expiry,
+        # portfolio-wide daily cap, risk-budget halt all exempt reduce_only
+        # explicitly, with a comment saying so at each site). A reduce_only
+        # sell can only ever mean "close/trim an existing long" -- reducing
+        # a short position is a reduce_only BUY -- so there is no real
+        # scenario where this check should ever fire for a reduce_only
+        # order. Without this, the mandate's own default (allow_short=False)
+        # made a position opened via a normal buy permanently unexitable
+        # through submit_order(side="sell", reduce_only=True): the exact
+        # "trapped position" failure mode the kill-switch reduce_only
+        # exemption above was written to prevent for the halt case.
+        if side == "sell" and not reduce_only and not mandate.allow_short:
             return GuardResult(False, "Short selling is not permitted by mandate", code=ReasonCode.SHORT_NOT_PERMITTED)
 
         # Stage A (A36, Vibe-Trading `order_guard.py`): take the LARGER of the
@@ -372,7 +403,15 @@ class OrderGuard:
             except Exception as e:
                 logger.warning("Could not check max_capital_utilization_pct: %s", e)
 
-        if mandate.require_active_artifact:
+        # situation-test/29-active-artifact-check-blocks-reduce-only-exits.md:
+        # same class of gap as situations 15 and 22 -- require_active_artifact
+        # governs whether a symbol may be OPENED/increased under a
+        # promoted strategy, not whether an existing position is
+        # untouchable. A strategy can be archived/failed/retired (its
+        # artifact leaving ACTIVE) while a position it opened is still
+        # held; exiting that position must not depend on the strategy
+        # still being active.
+        if mandate.require_active_artifact and not reduce_only:
             active_result = self._check_active_artifact(symbol)
             if not active_result:
                 return active_result
@@ -741,6 +780,27 @@ class OrderGuard:
         if budget is None:
             return GuardResult(True)
 
+        # vinu-portfolio reports this with a normal HTTP 200 (not an error --
+        # so it doesn't hit the `budget is None` fail-open path above) when
+        # broker equity itself couldn't be read. `symbols` is unconditionally
+        # empty in that case, which otherwise looks identical to "this
+        # symbol has no open position yet, nothing to check" and silently
+        # passed -- including for a symbol that was at TIER_HALT the last
+        # time equity WAS readable. Equity being unreadable means the tier
+        # can't be verified either way, so fail closed here specifically.
+        # reduce_only orders never reach this method (see check()'s
+        # `if not reduce_only:` guard above), so this can't trap an exit.
+        if budget.get("aggregate", {}).get("status") == "no_equity":
+            return GuardResult(
+                False,
+                f"Cannot verify risk-budget status for {symbol} — vinu-portfolio "
+                f"could not read current account equity, so an existing "
+                f"TIER_HALT can't be ruled out. Blocking new/increasing orders "
+                f"until equity is readable again; risk-reducing orders are "
+                f"still allowed.",
+                code=ReasonCode.RISK_BUDGET_HALT,
+            )
+
         for s in budget.get("symbols", []):
             if s.get("symbol") != symbol:
                 continue
@@ -758,10 +818,29 @@ class OrderGuard:
         return GuardResult(True)
 
     def pre_approve(
-        self, symbol: str, side: str, qty: float, price: float | None = None, reduce_only: bool = False,
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        price: float | None = None,
+        estimated_value: float | None = None,
+        reduce_only: bool = False,
     ) -> GuardResult:
-        result = self.check(symbol, side, qty, price, reduce_only=reduce_only)
+        # situation-test/28-pre-approve-drops-price-rechecks-with-zero-value.md:
+        # found by real end-to-end testing that `estimated_value` (and,
+        # from trade_tool.py's actual call site, even `price`) was never
+        # forwarded here, so this fresh re-check silently recomputed
+        # `value` as 0 for every order that priced itself via a limit price
+        # or an already-held position's reference price rather than a bare
+        # `qty*price` the caller happened to pass here too -- a limit order
+        # that `check()` had just approved moments earlier was then
+        # rejected again right here, immediately before submission, as
+        # "cannot determine order value". Every unit test exercising this
+        # path mocked `pre_approve` directly (`guard.pre_approve.return_value
+        # = GuardResult(True)`), so nothing had ever driven this method's
+        # own internal `self.check(...)` call with real arguments before.
+        result = self.check(symbol, side, qty, price, estimated_value=estimated_value, reduce_only=reduce_only)
         if result:
-            value = qty * (price or 0.0)
+            value = max(estimated_value or 0.0, qty * (price or 0.0))
             self._increment_daily_count(symbol, value)
         return result

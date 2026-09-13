@@ -1,3 +1,4 @@
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -558,6 +559,30 @@ class TestRequireActiveArtifact:
 
         assert result
 
+    def test_reduce_only_exit_allowed_with_no_active_artifact(self) -> None:
+        """situation-test/29-active-artifact-check-blocks-reduce-only-exits.md:
+        same class of gap as situations 15/22 -- a strategy can be
+        archived/failed while a position it opened is still held; exiting
+        it must not depend on the strategy still being ACTIVE."""
+        mandate = TradingMandate(max_position_pct=1.0, allow_short=True)
+        guard = _guard(mandate)
+        store = SqliteStrategyStore(Path(tempfile.mktemp(suffix=".db")))  # no artifacts at all
+
+        with patch("vinu_agent.broker.research_link.get_strategy_store", return_value=store):
+            result = guard.check("AAPL", "sell", qty=10, price=100.0, reduce_only=True)
+
+        assert result
+
+    def test_non_reduce_only_order_still_blocked_with_no_active_artifact(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0)
+        guard = _guard(mandate)
+        store = SqliteStrategyStore(Path(tempfile.mktemp(suffix=".db")))
+
+        with patch("vinu_agent.broker.research_link.get_strategy_store", return_value=store):
+            result = guard.check("AAPL", "buy", qty=10, price=100.0)
+
+        assert not result
+
 
 class TestRequireMarketOpen:
     def test_rejects_when_market_closed(self) -> None:
@@ -788,6 +813,43 @@ class TestRiskBudget:
             result = guard.check("AAPL", "buy", qty=10, price=100.0)
         assert result
 
+    def test_blocks_new_order_when_equity_unreadable(self) -> None:
+        """vinu-portfolio reports aggregate.status=='no_equity' (HTTP 200, not
+        an error -- so this does NOT hit the fail-open ConnectionError path
+        above) when it can't read broker equity. `symbols` is unconditionally
+        empty in that response, which used to look identical to 'this symbol
+        has no position, nothing to check' and silently pass -- including for
+        a symbol that was at TIER_HALT the last time equity WAS readable.
+        Equity being unreadable must fail closed for new/increasing orders."""
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, require_market_open=False)
+        guard = _guard(mandate)
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {
+            "symbols": [],
+            "aggregate": {"status": "no_equity", "n_halted": 0, "n_warning": 0},
+        }
+        with patch("vinu_agent.broker.order_guard.requests.get", return_value=resp):
+            result = guard.check("AAPL", "buy", qty=10, price=100.0)
+        assert not result
+        assert "equity" in result.reason.lower()
+
+    def test_reduce_only_bypasses_equity_unreadable(self) -> None:
+        mandate = TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False, require_market_open=False, allow_short=True,
+        )
+        guard = _guard(mandate)
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {
+            "symbols": [],
+            "aggregate": {"status": "no_equity", "n_halted": 0, "n_warning": 0},
+        }
+        with patch("vinu_agent.broker.order_guard.requests.get", return_value=resp) as mock_get:
+            result = guard.check("AAPL", "sell", qty=10, price=100.0, reduce_only=True)
+        mock_get.assert_not_called()
+        assert result
+
     def test_ignores_other_symbols_in_the_budget(self) -> None:
         mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, require_market_open=False)
         guard = _guard(mandate)
@@ -972,6 +1034,129 @@ class TestPortfolioDailyOrderCap:
         assert not result
 
 
+class TestPreApproveForwardsEstimatedValue:
+    """situation-test/28-pre-approve-drops-price-rechecks-with-zero-value.md:
+    `pre_approve()` used to have no `estimated_value` parameter at all, and
+    `trade_tool.py`'s real call site didn't even pass `price` -- so this
+    method's own internal `self.check(...)` re-check always recomputed
+    `value` as 0, silently re-rejecting an order `check()` had just
+    approved moments earlier with real pricing. Every existing test above
+    in this file passes `price` directly to `pre_approve()`, which already
+    worked (value = qty*price) -- this class specifically covers the
+    `estimated_value` path, which is what a limit order or an
+    already-held-position market order actually uses."""
+
+    def test_pre_approve_uses_estimated_value_when_price_is_none(self) -> None:
+        """The exact real shape that was broken: a limit order where
+        trade_tool.py computes `estimated_value = qty * limit_price` but
+        the order is a plain market order type (or the caller has already
+        priced it via estimated_value some other way), so `price` itself
+        stays None."""
+        mandate = TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False, require_market_open=False,
+            max_order_value=10_000.0,
+        )
+        broker = MagicMock()
+        broker.get_account.return_value = _account()
+        guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=DailyLimitStore(":memory:"))
+
+        result = guard.pre_approve("AAPL", "buy", qty=5, estimated_value=500.0)
+
+        assert result
+
+    def test_pre_approve_still_rejects_when_estimated_value_exceeds_the_cap(self) -> None:
+        mandate = TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False, require_market_open=False,
+            max_order_value=100.0,
+        )
+        broker = MagicMock()
+        broker.get_account.return_value = _account()
+        guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=DailyLimitStore(":memory:"))
+
+        result = guard.pre_approve("AAPL", "buy", qty=5, estimated_value=500.0)
+
+        assert not result
+        assert "max_order_value" in result.reason
+
+    def test_pre_approve_records_the_larger_of_price_and_estimated_value_for_daily_volume(self) -> None:
+        """Daily-volume tracking must not silently undercount an order
+        priced via estimated_value -- same "larger of the two" rule
+        check() itself uses for the notional cap."""
+        mandate = TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False, require_market_open=False,
+        )
+        store = DailyLimitStore(":memory:")
+        broker = MagicMock()
+        broker.get_account.return_value = _account()
+        guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=store)
+
+        guard.pre_approve("AAPL", "buy", qty=5, estimated_value=500.0)
+
+        assert store.volume_today("AAPL") == 500.0
+
+
+class TestTradeToolPreApproveEndToEndWithARealOrderGuard:
+    """The actual regression, driven through the real production call site
+    (trade_tool.py) with a REAL OrderGuard -- not the mocked
+    `guard.pre_approve.return_value = GuardResult(True)` every other
+    TradeTool test in tests/test_trade_tool.py uses, which is exactly why
+    this bug went uncaught: nothing had ever driven this method's own
+    internal re-check with real arguments before."""
+
+    def test_a_real_limit_order_actually_submits(self) -> None:
+        from vinu_agent.tools.trade_tool import TradeTool
+
+        broker = MagicMock()
+        broker.is_configured.return_value = True
+        broker.get_positions.return_value = []
+        broker.get_account.return_value = _account(equity=1_000_000.0, cash=1_000_000.0)
+        broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
+
+        mandate = TradingMandate(
+            require_active_artifact=False, require_market_open=False, require_confirmation=False,
+        )
+        guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=DailyLimitStore(":memory:"))
+
+        tool = TradeTool()
+        tool._as_of = None
+        tool._session_id = "s1"
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = mandate
+            result = json.loads(tool.execute(symbol="NVDA", qty=5, side="buy", order_type="limit", limit_price=100.0))
+
+        assert result["status"] == "submitted"
+
+    def test_a_real_market_order_into_an_already_held_symbol_actually_submits(self) -> None:
+        from vinu_agent.tools.trade_tool import TradeTool
+
+        held = MagicMock(symbol="NVDA", current_price=200.0)
+        broker = MagicMock()
+        broker.is_configured.return_value = True
+        broker.get_positions.return_value = [held]
+        broker.get_account.return_value = _account(equity=1_000_000.0, cash=1_000_000.0)
+        broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
+
+        mandate = TradingMandate(
+            require_active_artifact=False, require_market_open=False, require_confirmation=False,
+        )
+        guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=DailyLimitStore(":memory:"))
+
+        tool = TradeTool()
+        tool._as_of = None
+        tool._session_id = "s1"
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = mandate
+            result = json.loads(tool.execute(symbol="NVDA", qty=5, side="buy", order_type="market"))
+
+        assert result["status"] == "submitted"
+
+
 class TestMaxCapitalUtilization:
     def test_rejects_when_projected_utilization_exceeds_cap(self) -> None:
         mandate = TradingMandate(max_position_pct=1.0, max_capital_utilization_pct=0.6, require_active_artifact=False)
@@ -993,3 +1178,101 @@ class TestMaxCapitalUtilization:
         result = guard.check("AAPL", "buy", qty=10, price=100.0)
 
         assert result
+
+
+class TestShortCheckExemptsReduceOnly:
+    """situation-test/15-reduce-only-sell-blocked-by-short-check.md: found
+    by real testing that under the mandate's own default
+    (allow_short=False), a reduce_only sell -- the only way to close/trim an
+    existing long via submit_order -- was rejected as "short selling not
+    permitted", with no reduce_only exemption at all, unlike every other
+    check in this method. A reduce_only sell can only ever mean closing a
+    long (reducing a short is a reduce_only BUY), so this could never
+    legitimately fire for a reduce_only order."""
+
+    def test_reduce_only_sell_allowed_even_when_shorting_is_disallowed(self) -> None:
+        from vinu_agent.broker.guard_codes import ReasonCode
+
+        mandate = TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False, allow_short=False,
+        )
+        guard = _guard(mandate)
+
+        result = guard.check("AAPL", "sell", qty=1, price=100.0, reduce_only=True)
+
+        assert result
+        assert result.code != ReasonCode.SHORT_NOT_PERMITTED
+
+    def test_non_reduce_only_sell_still_blocked_when_shorting_is_disallowed(self) -> None:
+        from vinu_agent.broker.guard_codes import ReasonCode
+
+        mandate = TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False, allow_short=False,
+        )
+        guard = _guard(mandate)
+
+        result = guard.check("AAPL", "sell", qty=1, price=100.0, reduce_only=False)
+
+        assert not result
+        assert result.code == ReasonCode.SHORT_NOT_PERMITTED
+
+    def test_reduce_only_sell_allowed_when_shorting_is_allowed_too(self) -> None:
+        mandate = TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False, allow_short=True,
+        )
+        guard = _guard(mandate)
+
+        result = guard.check("AAPL", "sell", qty=1, price=100.0, reduce_only=True)
+
+        assert result
+
+
+class TestTickerAllowlistExemptsReduceOnlyButBlockedTickersDoesNot:
+    """situation-test/22-ticker-allowlist-blocks-reduce-only-exits.md:
+    `allowed_tickers` is a scope restriction on what may be OPENED -- a
+    symbol can fall out of the allowlist while a position from when it WAS
+    allowed is still open, and reduce_only must still be able to close it,
+    same posture as every other exemption in this method.
+    `blocked_tickers`, by contrast, is a deliberate "don't touch this
+    symbol for any reason" list (same semantics as the symbol-override
+    IGNORED state, confirmed intentional in situation 11) and correctly
+    does NOT get a reduce_only exemption."""
+
+    def test_reduce_only_exit_allowed_for_a_symbol_no_longer_on_the_allowlist(self) -> None:
+        mandate = TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False,
+            allowed_tickers={"MSFT"}, allow_short=True,
+        )
+        guard = _guard(mandate)
+
+        result = guard.check("AAPL", "sell", qty=1, price=100.0, reduce_only=True)
+
+        assert result
+
+    def test_non_reduce_only_order_still_blocked_for_a_symbol_not_on_the_allowlist(self) -> None:
+        from vinu_agent.broker.guard_codes import ReasonCode
+
+        mandate = TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False,
+            allowed_tickers={"MSFT"},
+        )
+        guard = _guard(mandate)
+
+        result = guard.check("AAPL", "buy", qty=1, price=100.0)
+
+        assert not result
+        assert result.code == ReasonCode.TICKER_NOT_ALLOWED
+
+    def test_blocked_tickers_still_blocks_a_reduce_only_exit(self) -> None:
+        from vinu_agent.broker.guard_codes import ReasonCode
+
+        mandate = TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False,
+            blocked_tickers={"AAPL"}, allow_short=True,
+        )
+        guard = _guard(mandate)
+
+        result = guard.check("AAPL", "sell", qty=1, price=100.0, reduce_only=True)
+
+        assert not result
+        assert result.code == ReasonCode.BLOCKED_TICKER

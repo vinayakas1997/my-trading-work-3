@@ -103,9 +103,12 @@ def ingest_main(argv: list[str] | None = None) -> None:
 
     tick_sec = 2
     while True:
-        run_rss_cycle()
-        run_ticker_cycle()
-        sync_and_backfill()
+        try:
+            run_rss_cycle()
+            run_ticker_cycle()
+            sync_and_backfill()
+        except Exception as e:  # defensive -- must never kill the ingest loop
+            logging.error("Ingest cycle failed (will retry next interval): %s", e, exc_info=True)
 
         elapsed = 0
         while True:
@@ -118,11 +121,17 @@ def ingest_main(argv: list[str] | None = None) -> None:
                         next_poll_at=status.last_poll_finished_at + current_interval
                     )
             if pending:
-                logging.info(
-                    "New ticker(s) added (%s); fetching news immediately",
-                    ", ".join(pending),
-                )
-                run_ticker_cycle(pending)
+                try:
+                    logging.info(
+                        "New ticker(s) added (%s); fetching news immediately",
+                        ", ".join(pending),
+                    )
+                    run_ticker_cycle(pending)
+                except Exception as e:  # defensive -- must never kill the ingest loop
+                    logging.error(
+                        "Ticker news fetch failed for %s (will retry next interval): %s",
+                        ", ".join(pending), e, exc_info=True,
+                    )
                 continue
             if elapsed >= current_interval:
                 break

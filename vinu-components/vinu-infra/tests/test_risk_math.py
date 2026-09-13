@@ -29,6 +29,14 @@ class TestVolTargetScale:
         assert vol_target_scale("not-a-number", 0.15) == 1.0
         assert vol_target_scale(None, 0.15) == 1.0
 
+    def test_nan_or_inf_current_vol_is_fail_open(self) -> None:
+        assert vol_target_scale(float("nan"), 0.15) == 1.0
+        assert vol_target_scale(float("inf"), 0.15) == 1.0
+
+    def test_nan_or_inf_target_vol_is_fail_open(self) -> None:
+        assert vol_target_scale(0.03, float("nan")) == 1.0
+        assert vol_target_scale(0.03, float("inf")) == 1.0
+
     def test_no_floor_below_0_25(self) -> None:
         # A prior vinu-agent-only copy floored this at 0.25x; the shared
         # implementation (matching vinu-live's live-path formula) does not.
@@ -51,6 +59,10 @@ class TestForecastConfidenceScale:
         assert forecast_confidence_scale(0.0, floor=0.5) == 1.0
         assert forecast_confidence_scale(-0.2, floor=0.5) == 1.0
 
+    def test_nan_or_inf_is_fail_open(self) -> None:
+        assert forecast_confidence_scale(float("nan"), floor=0.5) == 1.0
+        assert forecast_confidence_scale(float("inf"), floor=0.5) == 1.0
+
 
 class TestCvarExceeds:
     def test_above_threshold(self) -> None:
@@ -62,3 +74,11 @@ class TestCvarExceeds:
     def test_unparseable_is_fail_open(self) -> None:
         assert cvar_exceeds("bad", 0.03) is False
         assert cvar_exceeds(None, 0.03) is False
+
+    def test_nan_or_inf_is_fail_open(self) -> None:
+        # float('nan') > threshold is always False in Python regardless --
+        # this pins that as deliberate (same fail-open convention as every
+        # other garbage-input case here), not an accident of the raw
+        # comparison, and also covers +inf explicitly.
+        assert cvar_exceeds(float("nan"), 0.03) is False
+        assert cvar_exceeds(float("inf"), 0.03) is False

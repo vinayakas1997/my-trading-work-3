@@ -11,12 +11,13 @@ research, see New-talk-agents/implementation/00-status.md.
 from __future__ import annotations
 
 import json
+from unittest.mock import AsyncMock, patch
 
 from vinu_agent.audit.fact_audit import FactAuditor
 
 
-def _tool_msg(name: str, content: str) -> dict:
-    return {"role": "tool", "name": name, "tool_call_id": "call_1", "content": content}
+def _tool_msg(name: str, content: str, tool_call_id: str = "call_1") -> dict:
+    return {"role": "tool", "name": name, "tool_call_id": tool_call_id, "content": content}
 
 
 class TestDirectToolGrounding:
@@ -40,6 +41,74 @@ class TestDirectToolGrounding:
 
     def test_no_claims_returns_no_findings(self) -> None:
         assert FactAuditor().audit("Everything looks fine, no numbers here.", []) == []
+
+
+class TestFailVerdictNotifiesWhenAnOrderWasPlaced:
+    """#5: a Fail verdict can only ever be caught after the tool call
+    already ran -- the order can't be undone here, but a human should be
+    paged immediately rather than finding this in an audit-log file later.
+    Scoped to a turn where submit_order actually appears in this turn's
+    tool results -- not every ungrounded informational claim."""
+
+    def test_notifies_when_a_trade_claim_fails_and_an_order_was_placed(self) -> None:
+        history = [
+            _tool_msg("submit_order", json.dumps({"status": "submitted", "order_id": "o1"})),
+        ]
+        with patch(
+            "vinu_agent.server.routes_notify._deliver_notification", new_callable=AsyncMock,
+        ) as deliver:
+            findings = FactAuditor().audit("Bought at $999,999", history, session_id="s1")
+
+        assert findings[0]["verdict"] == "Fail"
+        deliver.assert_awaited_once()
+        key, severity, text = deliver.await_args.args
+        assert key == "fact-audit-fail:s1:call_1"
+        assert "999,999" in text
+        assert "already executed" in text
+
+    def test_does_not_notify_when_no_order_was_placed_this_turn(self) -> None:
+        history = [_tool_msg("get_portfolio", json.dumps({"account": {"portfolio_value": 100000.0}}))]
+        with patch(
+            "vinu_agent.server.routes_notify._deliver_notification", new_callable=AsyncMock,
+        ) as deliver:
+            findings = FactAuditor().audit("Portfolio value: $999,999", history)
+
+        assert findings[0]["verdict"] == "Fail"
+        deliver.assert_not_awaited()
+
+    def test_does_not_notify_when_order_placed_but_claim_verifies(self) -> None:
+        history = [
+            _tool_msg("submit_order", json.dumps({"status": "submitted", "order_id": "o1"})),
+            _tool_msg("get_quote", json.dumps({"price": 150.0}), tool_call_id="call_2"),
+        ]
+        with patch(
+            "vinu_agent.server.routes_notify._deliver_notification", new_callable=AsyncMock,
+        ) as deliver:
+            findings = FactAuditor().audit("Bought at $150", history)
+
+        assert findings[0]["verdict"] == "Verified"
+        deliver.assert_not_awaited()
+
+    def test_notification_failure_does_not_break_the_audit_result(self) -> None:
+        history = [_tool_msg("submit_order", json.dumps({"status": "submitted"}))]
+        with patch(
+            "vinu_agent.server.routes_notify._deliver_notification",
+            new_callable=AsyncMock, side_effect=ConnectionError("agent-api down"),
+        ):
+            findings = FactAuditor().audit("Bought at $999,999", history)
+
+        assert findings[0]["verdict"] == "Fail"
+
+    def test_multiple_failing_claims_for_the_same_order_notify_once(self) -> None:
+        history = [_tool_msg("submit_order", json.dumps({"status": "submitted"}))]
+        with patch(
+            "vinu_agent.server.routes_notify._deliver_notification", new_callable=AsyncMock,
+        ) as deliver:
+            findings = FactAuditor().audit("Bought 999 shares at $999,999", history)
+
+        assert len(findings) >= 2
+        assert all(f["verdict"] == "Fail" for f in findings)
+        deliver.assert_awaited_once()
 
 
 class TestNestedSpecialistContentGrounding:

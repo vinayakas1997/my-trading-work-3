@@ -26,6 +26,18 @@ class TestSelection:
         result = select_threshold(signals, {"on": "MOM_20", "min": 0.0}, signal_context=None)
         assert result == ["AAPL"]
 
+    def test_select_threshold_excludes_symbol_missing_the_field_entirely(self):
+        """A symbol with no computed value at all for the filtered field must
+        not be silently treated as 0.0 -- that would let it pass any
+        min_val <= 0 threshold despite having no real data (regression)."""
+        signals = {"AAPL": 1.5, "GOOGL": 0.3}
+        signal_context = {
+            "AAPL": {"features": {"MOM_20": 1.5}},
+            "GOOGL": {"features": {}},  # MOM_20 missing entirely for GOOGL
+        }
+        result = select_threshold(signals, {"on": "MOM_20", "min": -0.2}, signal_context)
+        assert result == ["AAPL"]
+
     def test_select_top_n(self):
         signals = {"AAPL": 3.0, "MSFT": 1.0, "GOOGL": 2.0}
         result = select_top_n(signals, {"n": 2})

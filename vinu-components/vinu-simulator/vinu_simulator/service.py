@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from vinu_simulator.clients.features_client import FeaturesClient
@@ -571,6 +572,10 @@ class SimulatorService:
             trade_pnls=trade_pnls,
             actual_sharpe=result.metrics.get("sharpe_ratio", 0.0),
             initial_capital=sim_config.initial_capital,
+            # #38: seed via the same config.random_seed convention the rest of
+            # the engine uses (see simulator.py) instead of the unseeded global
+            # RNG, so this permutation test is reproducible run to run.
+            rng=np.random.default_rng(sim_config.random_seed),
         )
         
         bb_result = block_bootstrap_permutation(

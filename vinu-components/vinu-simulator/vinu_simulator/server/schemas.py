@@ -106,6 +106,11 @@ class CustomSimulateResponse(BaseModel):
     # candidates, not just summary metrics). Additive field, safe for every
     # existing caller that doesn't read it.
     daily_returns: list[float] = Field(default_factory=list)
+    # Surfaces custom_sim.py's crash-fallback info (see #31): non-empty when at
+    # least one symbol's generate_weights() raised and was replaced with an
+    # all-zero weight series, so a trade_count==0 result caused by a strategy
+    # crash is distinguishable from one caused by a legitimate no-trade decision.
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class SimulateDryRunResponse(BaseModel):

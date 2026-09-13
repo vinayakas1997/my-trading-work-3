@@ -94,6 +94,13 @@ class AgentLoop:
         self._facts_system_msg: dict | None = None
         self._freshness_system_msg: dict | None = None
         self._research_digest_system_msg: dict | None = None
+        # #6: this run's originating user message, plus every readonly tool
+        # result seen so far this run -- injected into TradeTool (and any
+        # other tool declaring `_grounding_context`) right before it executes,
+        # so a symbol with no basis anywhere in the current turn's actual
+        # request/context can be caught. Reset per run(), not per session --
+        # see run()'s own comment for why session-wide would be too permissive.
+        self._grounding_context: str = ""
 
     def run(self, messages: List[Dict], session_id: str = "") -> Dict:
         self._cancel_event.clear()
@@ -102,6 +109,17 @@ class AgentLoop:
         iteration = 0
         full_history = list(messages)
         token_usage = TokenUsage()
+
+        # #6: scoped to THIS turn's own user message, not the whole session --
+        # `messages` is the full accumulated conversation the caller passes in,
+        # and a symbol from many turns ago being treated as still "in play"
+        # forever is exactly the failure mode this exists to catch. Tool
+        # results from this run's own iterations are folded in as they happen
+        # (see _process_tool_calls).
+        self._grounding_context = next(
+            (str(m.get("content", "")) for m in reversed(messages) if m.get("role") == "user"),
+            "",
+        )
 
         self._emit("loop.start", {
             "session_id": session_id,
@@ -313,11 +331,21 @@ class AgentLoop:
                         "content": result,
                     })
 
+        # #6: fold this batch's readonly results (a price/news lookup, say)
+        # into the grounding context BEFORE any write tool in this same batch
+        # runs -- a lookup earlier in the same assistant turn must count as
+        # grounding a symbol, not only a lookup from a prior iteration.
+        for r in results:
+            self._grounding_context = f"{self._grounding_context}\n{r.get('content', '')}"
+
         for tc in write_calls:
             name = tc["function"]["name"]
             params = self._parse_params(tc)
             call_id = tc.get("id", "")
             call_start = time.perf_counter()
+            tool = self.registry.get(name)
+            if tool is not None and hasattr(tool, "_grounding_context"):
+                tool._grounding_context = self._grounding_context
             try:
                 with ThreadPoolExecutor(max_workers=1) as pool:
                     fut = pool.submit(self.registry.execute, name, params)

@@ -8,6 +8,8 @@ follow-up note). See broker/daily_limits.py's module docstring.
 from __future__ import annotations
 
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -19,7 +21,23 @@ from vinu_agent.broker.daily_limits import DailyLimitStore
 def db_path() -> Path:
     path = Path(tempfile.mktemp(suffix=".db"))
     yield path
-    path.unlink(missing_ok=True)
+    # Windows can hold the file handle open for a while after a thread's
+    # sqlite3.Connection.close() returns (WAL's -shm/-wal sidecars in
+    # particular) -- only observed here, at fixture teardown, after tests
+    # that open many concurrent connections. Not a correctness issue (every
+    # test's own assertions already passed by this point) and not worth
+    # failing the test run over -- these are throwaway tempfiles the OS
+    # reclaims regardless. Best-effort cleanup only.
+    for _ext in ("", "-wal", "-shm"):
+        p = Path(str(path) + _ext)
+        for attempt in range(10):
+            try:
+                p.unlink(missing_ok=True)
+                break
+            except PermissionError:
+                if attempt == 9:
+                    break
+                time.sleep(0.1)
 
 
 @pytest.fixture
@@ -108,5 +126,52 @@ class TestDailyLimitStorePersistsAcrossInstances:
         try:
             assert final.count_today("AAPL") == 10
             assert final.volume_today("AAPL") == 1000.0
+        finally:
+            final.close()
+
+
+class TestRecordOrderUnderRealConcurrency:
+    """situation-test/01-daily-order-limit-race.md: 30 threads racing
+    record_order() for the same symbol against a real, shared, on-disk
+    SQLite store used to mostly crash with unhandled
+    sqlite3.OperationalError ("database is locked") or
+    sqlite3.IntegrityError ("UNIQUE constraint failed") from the old
+    SELECT-then-INSERT/UPDATE logic -- a real bug, not just a narrow race
+    window, since it fired on nearly every run. Each thread opens its own
+    DailyLimitStore instance (own thread-local sqlite3 connection, same
+    on-disk file) to mirror the real shape: a fresh OrderGuard/
+    DailyLimitStore per trade_tool.py execute() call, per-thread in a real
+    server."""
+
+    def test_thirty_concurrent_orders_all_succeed_with_correct_final_count(
+        self, db_path: Path
+    ) -> None:
+        n = 30
+        errors: list[BaseException] = []
+        errors_lock = threading.Lock()
+
+        def place_one() -> None:
+            try:
+                s = DailyLimitStore(db_path)
+                try:
+                    s.record_order("AAPL", 100.0)
+                finally:
+                    s.close()
+            except BaseException as e:  # noqa: BLE001 -- capturing for the assertion below
+                with errors_lock:
+                    errors.append(e)
+
+        threads = [threading.Thread(target=place_one) for _ in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"{len(errors)}/{n} threads raised: {errors}"
+
+        final = DailyLimitStore(db_path)
+        try:
+            assert final.count_today("AAPL") == n
+            assert final.volume_today("AAPL") == 100.0 * n
         finally:
             final.close()

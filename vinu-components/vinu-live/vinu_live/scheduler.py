@@ -107,18 +107,29 @@ class LiveScheduler:
         return resp.json()
 
     async def _fetch_positions(self) -> dict[str, float]:
-        try:
-            resp = await self._http.get(f"{self._config.agent_api_url}/agent/broker/positions")
-            if resp.status_code == 200:
-                data = resp.json()
-                if isinstance(data, list):
-                    return {
-                        p.get("symbol", ""): float(p.get("qty", 0))
-                        for p in data if p.get("symbol")
-                    }
-        except Exception as e:
-            LOG.warning("Could not fetch positions: %s", e)
-        return {}
+        """Current broker positions, keyed by symbol.
+
+        Raises on failure -- same fail-closed posture as `_fetch_portfolio`.
+        Silently returning {} here used to make an unreadable position list
+        indistinguishable from a genuinely flat book, and that {} feeds
+        straight into signal_translator.translate() as the current-holdings
+        baseline: a real, unreported position would look like a fresh entry
+        (order doubles up) and a needed reduce/exit would never be computed
+        at all. The outer cycle() try/except aborts the whole cycle on this,
+        which is the correct response to "we don't actually know what we
+        hold" -- not "assume we hold nothing."
+        """
+        resp = await self._http.get(f"{self._config.agent_api_url}/agent/broker/positions")
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, list):
+            raise ValueError(
+                f"Unexpected /agent/broker/positions response shape: {type(data).__name__}"
+            )
+        return {
+            p.get("symbol", ""): float(p.get("qty", 0))
+            for p in data if p.get("symbol")
+        }
 
     async def _fetch_prices(self, target_weights: list[dict]) -> dict[str, float]:
         """Latest close per symbol from vinu-stock-price directly.

@@ -61,8 +61,12 @@ class AlpacaTickerNewsProvider:
                 _RATE_LIMITER.wait()
                 resp = net.request("GET", url, headers=self._headers, params=params, timeout=TIMEOUT_SEC)
             except requests.RequestException as exc:
-                status = resp.status_code if hasattr(resp, 'status_code') else 'N/A'
-                body = resp.text[:200] if hasattr(resp, 'text') else 'N/A'
+                # `resp` was never assigned when the request itself raised --
+                # the only response available is the one (if any) attached to
+                # the exception, e.g. from a non-2xx `raise_for_status()`.
+                err_resp = exc.response
+                status = err_resp.status_code if err_resp is not None else 'N/A'
+                body = err_resp.text[:200] if err_resp is not None else 'N/A'
                 LOG.warning(
                     "Alpaca news fetch failed for %s (page %d, range %s to %s): "
                     "HTTP %s, body=%s, error=%s",

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pandas as pd
 
 from vinu_simulator.clients.base import BaseClient
+
+LOG = logging.getLogger(__name__)
 
 
 class FeaturesClient(BaseClient):
@@ -24,7 +27,12 @@ class FeaturesClient(BaseClient):
         }
         try:
             data = self.get(f"/indicators/{symbol}", params)
-        except Exception:
+        except Exception as e:
+            # #32: this silently drops the indicator column from custom_sim.py's
+            # merge, which can then trip the generate_weights crash-fallback if
+            # the strategy references it -- log clearly so that's diagnosable
+            # instead of indistinguishable from "no indicators requested".
+            LOG.warning("get_indicators failed for %s (kinds=%s): %s", symbol, kinds, e)
             return None
         if not data or not isinstance(data, list):
             return None

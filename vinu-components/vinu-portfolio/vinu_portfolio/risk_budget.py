@@ -43,20 +43,49 @@ class RiskBudget:
 
 
 class DailyPositionTracker:
-    """In-memory daily P&L tracker. Resets each day."""
+    """In-memory daily P&L tracker. Resets each day.
+
+    Two distinct kinds of P&L are tracked here, on purpose, through two
+    different methods:
+
+    - `record_daily_pnl` / `get_daily_pnl`: a generic accumulator for
+      DISCRETE realized-P&L events (e.g. "this position just closed,
+      realizing -$200") -- each call is a one-time delta, so `+=` is
+      correct. Nothing in this codebase currently feeds it a realized
+      close event (no such hook exists yet), so it stays at 0 today; it's
+      here for that future use and its own semantics are independently
+      tested and correct.
+    - `record_unrealized_pnl`: for a position's CURRENT unrealized P&L,
+      which is a live STATE snapshot, not a discrete event -- calling it
+      repeatedly with an unchanged value must not change the tracked
+      result. See situation-test/31 for the real bug this replaced:
+      `compute_risk_budget()` used to feed a position's unrealized_pl into
+      `record_daily_pnl` on every call, so polling the SAME steady, healthy
+      position enough times (every order check, every dashboard refresh)
+      eventually tripped TIER_HALT purely from being observed often,
+      completely independent of any real change in the position. This
+      tracks the WORST (most negative) unrealized reading seen for the
+      symbol today instead -- sticky, matching a real circuit breaker (a
+      position that touched -3% and later recovered to -1% should stay
+      flagged, not silently clear the moment the price ticks back), and
+      immune to reading the same live value any number of times.
+    """
 
     def __init__(self) -> None:
         self._current_date: date | None = None
         self._daily_pnl: dict[str, float] = {}
+        self._worst_unrealized: dict[str, float] = {}
 
     def _check_reset(self) -> None:
         today = datetime.now(timezone.utc).date()
         if self._current_date is None or today > self._current_date:
             self._current_date = today
             self._daily_pnl.clear()
+            self._worst_unrealized.clear()
 
     def record_daily_pnl(self, symbol: str, pnl: float) -> float:
-        """Accumulate and return the running daily P&L for the symbol."""
+        """Accumulate and return the running REALIZED daily P&L for the
+        symbol from a discrete event -- see the class docstring."""
         self._check_reset()
         prev = self._daily_pnl.get(symbol, 0.0)
         self._daily_pnl[symbol] = prev + pnl
@@ -65,6 +94,18 @@ class DailyPositionTracker:
     def get_daily_pnl(self, symbol: str) -> float:
         self._check_reset()
         return self._daily_pnl.get(symbol, 0.0)
+
+    def record_unrealized_pnl(self, symbol: str, current_unrealized_pnl: float) -> float:
+        """Feed the position's current unrealized P&L snapshot; returns the
+        worst (most negative) value seen for this symbol today, latched
+        until the next UTC day. Combined with any realized P&L recorded
+        via `record_daily_pnl` for a fair "how bad has today actually
+        been" total."""
+        self._check_reset()
+        prev_worst = self._worst_unrealized.get(symbol)
+        worst = current_unrealized_pnl if prev_worst is None else min(prev_worst, current_unrealized_pnl)
+        self._worst_unrealized[symbol] = worst
+        return worst + self._daily_pnl.get(symbol, 0.0)
 
 
 def regime_sizing_multiplier(regime: str | None) -> float:
@@ -115,7 +156,7 @@ def compute_risk_budget(
     for p in positions:
         symbol = p.get("symbol", "?")
         current_pnl = float(p.get("unrealized_pl", 0.0))
-        daily_pnl = tracker.record_daily_pnl(symbol, current_pnl)
+        daily_pnl = tracker.record_unrealized_pnl(symbol, current_pnl)
 
         tier = compute_symbol_tier(
             daily_pnl, equity, warning_threshold, reduce_threshold, halt_threshold

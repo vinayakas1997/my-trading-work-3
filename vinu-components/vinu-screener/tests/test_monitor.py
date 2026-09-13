@@ -279,3 +279,39 @@ class TestBatchFetch:
         rule = _above_100_rule([])
         monitor.run_cycle(rule)
         assert ds.batch_calls == []
+
+
+class TestBatchFetchFailureVsThinData:
+    """#26: a data source that flags a symbol's chunk as having failed
+    outright (`last_batch_failed_symbols`, the real `HttpStockDataSource`'s
+    convention) must have that symbol reported as `fetch_error`, not
+    `insufficient_history` -- a total API outage must not look identical
+    to legitimately-thin data."""
+
+    def test_batch_failed_symbol_is_fetch_error_not_insufficient_history(self) -> None:
+        ds = FakeBatchDataSource()
+        ds.last_batch_failed_symbols = {"AAPL"}  # no frame set -> ohlcv is None
+        monitor = ScanMonitor(ds)
+        rule = _above_100_rule(["AAPL"])
+        result = monitor.run_cycle(rule)
+        outcome = next(o for o in result.outcomes if o.symbol == "AAPL")
+        assert outcome.status == "fetch_error"
+
+    def test_symbol_not_in_failed_set_still_insufficient_history(self) -> None:
+        ds = FakeBatchDataSource()
+        ds.last_batch_failed_symbols = {"MSFT"}  # AAPL's chunk succeeded, just no data
+        monitor = ScanMonitor(ds)
+        rule = _above_100_rule(["AAPL"])
+        result = monitor.run_cycle(rule)
+        outcome = next(o for o in result.outcomes if o.symbol == "AAPL")
+        assert outcome.status == "insufficient_history"
+
+    def test_data_source_without_the_attribute_is_unaffected(self) -> None:
+        """FakeDataSource (and any other minimal SymbolDataSource without
+        get_ohlcv_batch) never sets last_batch_failed_symbols -- the
+        getattr(..., None) default must not error."""
+        ds = FakeDataSource()
+        rule = _above_100_rule(["GHOST"])
+        monitor = ScanMonitor(ds)
+        result = monitor.run_cycle(rule)
+        assert result.outcomes[0].status == "insufficient_history"

@@ -1,6 +1,7 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from vinu_live.config import LiveConfig
@@ -20,6 +21,58 @@ def _resp(status_code=200, json_body=None):
     resp.status_code = status_code
     resp.json.return_value = json_body or {}
     return resp
+
+
+class TestFetchPositions:
+    """A broker-positions fetch failure must abort the cycle, not silently
+    look like a flat book -- signal_translator.translate() uses this as the
+    current-holdings baseline, so a fabricated {} would size a real existing
+    position as a fresh entry (doubling up) or hide a needed exit entirely."""
+
+    def test_returns_position_map_on_success(self) -> None:
+        scheduler = _make_scheduler()
+        scheduler._http.get = AsyncMock(return_value=_resp(json_body=[{"symbol": "AAPL", "qty": 10.0}]))
+
+        positions = asyncio.run(scheduler._fetch_positions())
+
+        assert positions == {"AAPL": 10.0}
+
+    def test_raises_on_http_error_instead_of_returning_empty(self) -> None:
+        scheduler = _make_scheduler()
+        resp = _resp(status_code=500)
+        resp.raise_for_status.side_effect = httpx.HTTPStatusError("500", request=MagicMock(), response=resp)
+        scheduler._http.get = AsyncMock(return_value=resp)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            asyncio.run(scheduler._fetch_positions())
+
+    def test_raises_on_connection_error_instead_of_returning_empty(self) -> None:
+        scheduler = _make_scheduler()
+        scheduler._http.get = AsyncMock(side_effect=ConnectionError("down"))
+
+        with pytest.raises(ConnectionError):
+            asyncio.run(scheduler._fetch_positions())
+
+    def test_raises_on_unexpected_response_shape(self) -> None:
+        scheduler = _make_scheduler()
+        scheduler._http.get = AsyncMock(return_value=_resp(json_body={"not": "a list"}))
+
+        with pytest.raises(ValueError):
+            asyncio.run(scheduler._fetch_positions())
+
+    def test_cycle_marks_failed_when_positions_fetch_fails(self) -> None:
+        scheduler = _make_scheduler()
+
+        async def _get(url, **kwargs):
+            if "/portfolio/state" in url:
+                return _resp(json_body={"weights": [{"symbol": "AAPL", "target_weight": 0.1}]})
+            raise ConnectionError("positions down")
+
+        scheduler._http.get = AsyncMock(side_effect=_get)
+
+        result = asyncio.run(scheduler.cycle())
+
+        assert result["status"] == "failed"
 
 
 class TestFetchPrices:

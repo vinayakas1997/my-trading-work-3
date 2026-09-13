@@ -13,6 +13,7 @@ keeps vinu-live's formula as the one source of truth for both.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 _TRADING_DAYS_PER_YEAR = 252.0
@@ -22,15 +23,20 @@ def vol_target_scale(current_vol: Any, target_vol: float = 0.15) -> float:
     """target_vol (annual) / current_vol (daily), so size halves when
     realized daily vol doubles relative to the annualized target. target_vol
     is converted to a daily figure (/ sqrt(252)) before the ratio -- same
-    units on both sides. Non-positive/unparseable current_vol or target_vol
-    = 1.0 (no scaling, fail-open). Never scales size *up* past 1.0 -- a calm
-    market does not license extra leverage here."""
+    units on both sides. Non-positive/non-finite/unparseable current_vol or
+    target_vol = 1.0 (no scaling, fail-open). Never scales size *up* past
+    1.0 -- a calm market does not license extra leverage here.
+
+    The non-finite check is explicit rather than left to fall out of
+    `min(1.0, ...)`'s argument order -- `min(1.0, nan)` happens to return
+    1.0 in CPython, but `min(nan, 1.0)` would silently return `nan` instead,
+    so this must not depend on which argument comes first."""
     try:
         cur = float(current_vol)
         tgt = float(target_vol)
     except (TypeError, ValueError):
         return 1.0
-    if cur <= 0.0 or tgt <= 0.0:
+    if not (math.isfinite(cur) and math.isfinite(tgt)) or cur <= 0.0 or tgt <= 0.0:
         return 1.0
     target_daily = tgt / (_TRADING_DAYS_PER_YEAR ** 0.5)
     return min(1.0, target_daily / cur)
@@ -39,21 +45,36 @@ def vol_target_scale(current_vol: Any, target_vol: float = 0.15) -> float:
 def forecast_confidence_scale(confidence: Any, floor: float = 0.5) -> float:
     """confidence as a direct fraction of the caller's requested size,
     floored so a real forecast is dampened, never zeroed, by conviction
-    alone. None/non-positive confidence = 1.0 (no scaling, fail-open --
-    the caller didn't supply a forecast, not evidence the forecast is bad)."""
+    alone. None/non-positive/non-finite confidence = 1.0 (no scaling,
+    fail-open -- the caller didn't supply a usable forecast, not evidence
+    the forecast is bad). Explicit finite check for the same reason as
+    `vol_target_scale` -- not left to fall out of `min()`/`max()` argument
+    order."""
     try:
         c = float(confidence)
     except (TypeError, ValueError):
         return 1.0
-    if c <= 0.0:
+    if not math.isfinite(c) or c <= 0.0:
         return 1.0
     return max(float(floor), min(1.0, c))
 
 
 def cvar_exceeds(cvar_95: Any, threshold: float = 0.03) -> bool:
     """True if tail risk blocks sizing. cvar_95 as positive loss fraction
-    (0.04 = 4% daily)."""
+    (0.04 = 4% daily). Non-finite/unparseable cvar_95 or threshold = False
+    (fail-open) -- same convention as `vol_target_scale` and
+    `forecast_confidence_scale` above: garbage/missing input here means "we
+    have no usable signal", not "block the trade". The caller
+    (vinu-agent's position_sizing.py) already only invokes this when a
+    real, non-None cvar_95 was computed; this is a second, explicit line of
+    defense against a NaN/inf value slipping through as if it exceeded the
+    threshold (float('nan') > x is always False in Python, so this needs to
+    be explicit rather than left to fall out of the raw comparison)."""
     try:
-        return float(cvar_95) > float(threshold)
+        cur = float(cvar_95)
+        thr = float(threshold)
     except (TypeError, ValueError):
         return False
+    if not (math.isfinite(cur) and math.isfinite(thr)):
+        return False
+    return cur > thr

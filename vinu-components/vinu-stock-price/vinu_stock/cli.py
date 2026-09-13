@@ -111,8 +111,11 @@ def ingest_main(argv: list[str] | None = None) -> None:
 
     with StockService() as service:
         while True:
-            sync_and_backfill(service)
-            run_cycle(service)
+            try:
+                sync_and_backfill(service)
+                run_cycle(service)
+            except Exception as e:  # defensive -- must never kill the ingest loop
+                logging.error("Ingest cycle failed (will retry next interval): %s", e, exc_info=True)
             refresh_events(service)
             sleep_sec = service.get_settings().poll_interval_sec
             logging.info("Sleeping %s seconds until next ingest", sleep_sec)
