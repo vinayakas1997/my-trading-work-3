@@ -96,6 +96,32 @@ class ComputePositionSizeTool(BaseTool):
                 "type": "number",
                 "description": "average true range, needed for atr_stop sizing",
             },
+            "cvar_95": {
+                "type": "number",
+                "description": (
+                    "Tail-risk gate input (VINU_RISK_CVAR_ENABLED). Pull this from the "
+                    "frozen trade plan's risk_bands: expected_drawdown if positive, else "
+                    "cvar_95_limit. 0.0/absent means not computed -- the gate is skipped, "
+                    "not treated as zero risk."
+                ),
+            },
+            "current_vol": {
+                "type": "number",
+                "description": (
+                    "Dynamic vol-targeting input (VINU_RISK_VOL_TARGET_ENABLED). Pull this "
+                    "from the frozen trade plan's risk_bands.daily_vol. 0.0/absent means "
+                    "not computed -- scaling is skipped (no size change)."
+                ),
+            },
+            "forecast_confidence": {
+                "type": "number",
+                "description": (
+                    "The trade plan's forecast.confidence (0..1). Scales size so a "
+                    "barely-better-than-coin-flip forecast doesn't get the same size as "
+                    "a high-conviction one -- floored so it dampens, never zeroes, size. "
+                    "Enabled by default (VINU_RISK_FORECAST_SCALING_ENABLED)."
+                ),
+            },
         },
         "required": ["account_equity"],
     }
@@ -117,6 +143,22 @@ class ComputePositionSizeTool(BaseTool):
             kwargs.get("atr_stop_multiple")
             or getattr(cfg, "atr_stop_multiple", DEFAULT_ATR_STOP_MULTIPLE)
         )
+        # These three come straight from a frozen trade plan the LLM already
+        # has in context (generate_trade_plan's risk_bands/forecast) -- None
+        # when not supplied, which compute_position_size treats as "not
+        # computed" (gate/scaling skipped), not as zero risk/confidence.
+        # Previously this tool's schema didn't even expose them, so the CVaR
+        # gate, vol targeting, and forecast-confidence scaling were dead code
+        # regardless of their env flags -- no caller could ever populate them.
+        def _optional_float(key: str) -> float | None:
+            v = kwargs.get(key)
+            if v is None or v == "":
+                return None
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+
         result = compute_position_size(
             account_equity=account_equity,
             method=method,
@@ -127,5 +169,8 @@ class ComputePositionSizeTool(BaseTool):
             entry_price=float(kwargs.get("entry_price", 0.0) or 0.0),
             atr=float(kwargs.get("atr", 0.0) or 0.0),
             atr_stop_multiple=atr_stop_multiple,
+            cvar_95=_optional_float("cvar_95"),
+            current_vol=_optional_float("current_vol"),
+            forecast_confidence=_optional_float("forecast_confidence"),
         )
         return json.dumps(result, indent=2)

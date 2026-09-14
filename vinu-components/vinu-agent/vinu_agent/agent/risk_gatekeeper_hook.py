@@ -94,6 +94,15 @@ def apply_risk_gatekeeper_verdict(
         try:
             from .position_sizing import compute_position_size
 
+            def _sizing_input_float(key: str) -> float | None:
+                v = sizing_inputs.get(key)
+                if v is None:
+                    return None
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return None
+
             result = compute_position_size(
                 account_equity=float(sizing_inputs.get("account_equity", 0.0) or 0.0),
                 method=str(sizing_inputs.get("method", "fractional_kelly")),
@@ -104,6 +113,13 @@ def apply_risk_gatekeeper_verdict(
                 entry_price=float(sizing_inputs.get("entry_price", 0.0) or 0.0),
                 atr=float(sizing_inputs.get("atr", 0.0) or 0.0),
                 atr_stop_multiple=float(sizing_inputs.get("atr_stop_multiple", 2.0) or 2.0),
+                # These three used to never be present in sizing_inputs at
+                # all (the tool that populates it never recorded them) --
+                # see position_sizing_tool.py's ComputePositionSizeTool for
+                # the fix that lets a caller actually supply them now.
+                cvar_95=_sizing_input_float("cvar_95"),
+                current_vol=_sizing_input_float("current_vol"),
+                forecast_confidence=_sizing_input_float("forecast_confidence"),
             )
             if result.get("status") == "ok":
                 formula_size = float(result.get("size", 0.0) or 0.0)

@@ -39,7 +39,17 @@ from vinu_live.breaker.engine import BreakerVerdict, check_limits
 from vinu_live.breaker.limits import BreakerState
 from vinu_live.config import LiveConfig, load_config
 from vinu_live.reconciliation import ReconciliationEngine
+from vinu_live.execution import plan_twap
+from vinu_live.signal_translator import OrderInstruction
 from vinu_live.trade_plan.condition_evaluator import find_triggered_rules
+from vinu_live.trade_plan.guards import (
+    event_blackout_reason,
+    fetch_spread_bps,
+    halt_reason as _halt_reason,
+    spread_bps_from_quote as _spread_bps_from_quote,
+    spread_gate_reason_from_bps,
+)
+from vinu_live.trade_plan.loss_classifier import classify_exit_cause
 from vinu_live.trade_plan.live_metrics import compute_live_metrics
 from vinu_live.trade_plan.rebalance_intake import RebalanceRequestQueue
 from vinu_infra.calibration_log import record as record_calibration
@@ -47,6 +57,7 @@ from vinu_infra.risk_math import cvar_exceeds as _cvar_exceeds
 from vinu_infra.risk_math import forecast_confidence_scale as _forecast_confidence_scale
 from vinu_infra.risk_math import vol_target_scale as _vol_target_scale
 from vinu_infra.runtime_settings import RuntimeSettings
+from vinu_infra.trade_audit_log import read_by_trade_id, record_entry, record_exit
 
 LOG = logging.getLogger(__name__)
 
@@ -344,20 +355,114 @@ def _opposing_active_signal(
 MAX_SPREAD_BPS = float(_os.environ.get("VINU_LIVE_MAX_SPREAD_BPS", "25"))
 
 
-def _spread_bps_from_quote(payload: Any) -> float | None:
-    """Basis-point spread from a vinu-stock-price /stock/quote payload, or None
-    (never blocks) when the payload is missing / not `ok` / unparseable /
-    negative -- fail-open, same posture as every other data-quality guard in
-    this file."""
-    if not isinstance(payload, dict) or not payload.get("ok"):
+# Execution was single-path: _submit_order hardcoded "order_type": "market"
+# no matter what TWAP/VWAP planning existed elsewhere in the scheduled
+# executor, so that planning never reached the actual live order. ENTRIES
+# ONLY (same "entries only" posture as MAX_SPREAD_BPS above) -- a passive
+# limit order that fails to fill on an exit/stop is a risk-control failure,
+# not an execution-quality tradeoff, so exits always stay "market" regardless
+# of this mode. Defaults to today's exact behavior ("market") -- this is a
+# new capability, not a correction to a wrong default like
+# promotion_correlation_required was.
+ORDER_ROUTING_MODE = _os.environ.get("VINU_LIVE_ORDER_ROUTING_MODE", "market").strip().lower()
+# Limit price offset for a passive entry, as a fraction of price -- buy limit
+# is placed *below* the quoted price (side="buy" -> price*(1-offset)), sell
+# limit *above* it (side="sell" -> price*(1+offset)), so the order sits on
+# the passive side of the spread instead of crossing it.
+PASSIVE_LIMIT_OFFSET_BPS = float(_os.environ.get("VINU_LIVE_PASSIVE_LIMIT_OFFSET_BPS", "5"))
+
+# `_spread_bps_from_quote` now lives in guards.py (shared with scheduler.py's
+# rebalance path) -- imported above as `_spread_bps_from_quote` to keep this
+# module's own name/behavior for any external caller/test that imported it
+# from here directly.
+
+# Execution unification: an entry whose size is a large fraction of the
+# symbol's average daily volume gets sliced (TWAP) instead of firing as one
+# market/limit order that would itself move the price -- see
+# _participation_pct/_entry_execution_queue. 0.01 = 1% of ADV. Only entries
+# are sliced (same "entries only" posture as every other execution-quality
+# guard in this file) -- an exit still fires as one order, a risk-control
+# concern outweighing execution-quality here. 0 disables slicing entirely
+# (every entry stays single-order, today's exact behavior).
+LARGE_ORDER_PARTICIPATION_PCT = float(
+    _os.environ.get("VINU_LIVE_LARGE_ORDER_PARTICIPATION_PCT", "0.01"),
+)
+ENTRY_TWAP_SLICES = int(_os.environ.get("VINU_LIVE_ENTRY_TWAP_SLICES", "3"))
+
+# Dynamic per-order routing: ORDER_ROUTING_MODE used to be the ONLY thing
+# deciding market vs. limit, a static global toggle with no notion of
+# whether THIS symbol's spread is actually wide enough to matter --
+# signal_translator.py's SignalTranslator._max_slippage_pct (a "how much
+# slippage is this trade allowed to eat" budget) was set but never read by
+# anything. VINU_LIVE_MAX_SLIPPAGE_PCT mirrors that same default (10bps) as
+# this live path's own budget (there is no per-plan slippage field on
+# RiskBand to read instead); SLIPPAGE_BUDGET_FRACTION is how much of that
+# budget crossing the spread is allowed to spend before routing switches to
+# passive. ORDER_ROUTING_MODE="passive" still force-overrides globally --
+# kept for the existing manual-override use case.
+MAX_SLIPPAGE_PCT = float(_os.environ.get("VINU_LIVE_MAX_SLIPPAGE_PCT", "0.001"))
+SLIPPAGE_BUDGET_FRACTION = float(_os.environ.get("VINU_LIVE_SLIPPAGE_BUDGET_FRACTION", "0.5"))
+
+
+def _choose_entry_order_type(spread_bps: float | None, max_slippage_pct: float) -> str:
+    """"market" or "limit" for an entry, from how much of `max_slippage_pct`'s
+    budget crossing the known spread would spend. None `spread_bps` (no
+    quote / fetch problem) fails open to "market", same posture as every
+    other guard here. ORDER_ROUTING_MODE="passive" is handled by the caller
+    as an unconditional override, not routed through this function."""
+    if spread_bps is None or max_slippage_pct <= 0:
+        return "market"
+    budget_bps = max_slippage_pct * 10_000.0 * SLIPPAGE_BUDGET_FRACTION
+    return "limit" if spread_bps > budget_bps else "market"
+
+
+# In-trade thesis re-check (high-expectations follow-up): condition_evaluator
+# only evaluates frozen metric/operator/threshold triples -- nothing
+# re-checks whether the original reasoning still holds against fresh
+# information while a position is open. Reuses the investment_committee
+# debate instead of a second LLM-reasoning pipeline: periodically re-run it
+# for a symbol with an open position (vinu-agent's /swarm/runs/ensure-fresh)
+# and read the freshest verdict. Off by default -- real ongoing LLM cost,
+# unlike every other guard in this file.
+THESIS_RECHECK_ENABLED = _os.environ.get(
+    "VINU_LIVE_THESIS_RECHECK_ENABLED", "false",
+).strip().lower() in ("1", "true", "yes")
+THESIS_RECHECK_COOLDOWN_SEC = float(_os.environ.get("VINU_LIVE_THESIS_RECHECK_COOLDOWN_SEC", "3600"))
+THESIS_RECHECK_PRESET_NAME = "investment_committee"
+
+# Same conviction-tier keyword sets as vinu-research's
+# trade_plan_authoring.debate_conviction_strength -- duplicated, not
+# imported, since vinu-live deliberately never imports vinu_research (see
+# condition_evaluator.py's own module docstring on this exact point).
+_STRONG_CONVICTION_PHRASES = ("strongly", "high conviction", "clear")
+_WEAK_CONVICTION_PHRASES = ("leaning", "slightly", "modest", "low conviction")
+
+
+def _debate_conviction_strength(text_lower: str) -> float:
+    if any(p in text_lower for p in _STRONG_CONVICTION_PHRASES):
+        return 1.0
+    if any(p in text_lower for p in _WEAK_CONVICTION_PHRASES):
+        return 0.4
+    return 0.7
+
+
+def _parse_debate_verdict_vs_position(text: str, position_side: str) -> tuple[str, float] | None:
+    """(verdict_direction, strength) cross-referenced against the OPEN
+    POSITION's own side -- a "bearish" verdict contradicts a long, supports
+    a short. None when the text matches none of bullish/bearish/neutral."""
+    text_lower = text.lower()
+    strength = _debate_conviction_strength(text_lower)
+    if "bullish" in text_lower:
+        bullish, bearish = True, False
+    elif "bearish" in text_lower:
+        bullish, bearish = False, True
+    elif "neutral" in text_lower:
+        return "neutral", strength
+    else:
         return None
-    try:
-        sb = float(payload.get("spread_bps"))
-    except (TypeError, ValueError):
-        return None
-    if sb < 0.0:
-        return None
-    return sb
+    if (bullish and position_side == "long") or (bearish and position_side == "short"):
+        return "supporting", strength
+    return "contradicting", strength
 
 
 # how-to-make-it-live.md #14 (Stage 4): broker-outage pause. Half A -- no new
@@ -410,6 +515,93 @@ OOD_MIN_SIGNALS = int(_os.environ.get("VINU_LIVE_OOD_MIN_SIGNALS", "2"))
 # the threshold is a multiple of the open-book size; default 5x only fires
 # on a genuinely extreme joint move.
 OOD_TURBULENCE_MULT = float(_os.environ.get("VINU_LIVE_OOD_TURBULENCE_MULT", "5.0"))
+
+
+# High-expectations spec #10/#11: HOLD/ADD/REDUCE/EXIT as a first-class
+# continuous re-scoring outcome, overlaying (not replacing) this file's own
+# much richer action-string vocabulary below -- those strings encode *why*
+# (e.g. "entry_blocked_by_cvar") in a way a 4-way enum can't, so they stay
+# exactly as-is; classify_action() only adds a coarser annotation for
+# consumers that want the spec's 4-way view. Deliberately plain strings, not
+# vinu_research.models.TradeAction -- this module's docstring is explicit
+# that it never imports vinu_research.models to preserve the 3-environment
+# isolation boundary; the values below match TradeAction's `.value`s exactly
+# so the two stay in sync by convention, not by import.
+#
+# Classified by outcome, not raw intent: an unfilled attempt ("*_not_filled")
+# changed nothing in the book, so it classifies as HOLD even though the
+# *attempted* action was an entry/exit/reduce.
+_ACTION_CLASS_MAP: dict[str, str] = {
+    # Entry blocked or unfilled -- book unchanged.
+    "entry_blocked_by_emergency_halt": "HOLD",
+    "entry_blocked_by_broker_outage": "HOLD",
+    "entry_blocked_by_signal_conflict": "HOLD",
+    "entry_blocked_by_stale_signal": "HOLD",
+    "entry_blocked_by_stale_data": "HOLD",
+    "entry_blocked_by_cvar": "HOLD",
+    "entry_blocked_by_event_blackout": "HOLD",
+    "entry_blocked_by_wide_spread": "HOLD",
+    "entry_blocked_by_breaker": "HOLD",
+    "entry_blocked_by_cooldown": "HOLD",
+    "entry_blocked_by_turbulence": "HOLD",
+    "entry_blocked_by_borrow": "HOLD",
+    "entry_blocked_by_entry_decision": "HOLD",
+    "entry_not_filled": "HOLD",
+    # A new position opened -- exposure added.
+    "entered": "ADD",
+    # A queued TWAP entry slice filled -- more exposure added to an
+    # already-open position (see _drain_entry_execution_queue).
+    "entry_slice_filled": "ADD",
+    "entry_slice_not_filled": "HOLD",
+    # No open-position rule triggered this cycle.
+    "hold": "HOLD",
+    # Rebalance requests.
+    "rebalance_declined": "HOLD",
+    "rebalance_blocked_by_breaker": "HOLD",
+    "rebalance_honored": "REDUCE",
+    "rebalance_not_filled": "HOLD",
+    # Exit path (invalidation conditions / time-stop).
+    "exit_blocked_by_breaker": "HOLD",
+    "exit_blocked_side_conflict": "HOLD",
+    "invalidation_exit_book_only": "EXIT",
+    "invalidation_exit": "EXIT",
+    "exit_not_filled": "HOLD",
+    # Contingency-rule path.
+    "tighten_stop": "REDUCE",
+    "reduce_blocked_by_breaker": "HOLD",
+    "reduce_book_only": "REDUCE",
+    "reduce_blocked_side_conflict": "HOLD",
+    "reduce_position": "REDUCE",
+    "reduce_not_filled": "HOLD",
+    "bracket_partial": "REDUCE",
+    "unhandled_contingency": "HOLD",
+    # Kill switch / OOD detector.
+    "emergency_flatten": "EXIT",
+    "halt": "HOLD",
+    # Rule-dict `action` field (e.g. the time-stop's synthetic invalidation
+    # rule passed into _apply_invalidation), distinct from but equivalent to
+    # "invalidation_exit" above -- included so this map stays exhaustive
+    # over every "action": "<literal>" string in this module, not just
+    # cycle-result outcome keys.
+    "exit": "EXIT",
+    # Broker-book reconciliation.
+    "alert_phantom_broker_position": "HOLD",
+    "alert_side_conflict": "HOLD",
+    "closed_to_match_broker": "EXIT",
+    "reduced_to_match_broker": "REDUCE",
+    "alert_implausible_gap": "HOLD",
+    "increased_to_match_broker": "ADD",
+}
+
+
+def classify_action(action_str: str) -> str:
+    """Maps one of this file's own action-result strings to the spec's
+    4-way HOLD/ADD/REDUCE/EXIT outcome. Unrecognized strings default to
+    HOLD (fail toward "nothing changed"), but every action string this file
+    can actually emit today is listed explicitly in _ACTION_CLASS_MAP above
+    -- see test_orchestrator_action_classify.py, which enumerates every
+    action-string literal in this module and fails if one has no entry."""
+    return _ACTION_CLASS_MAP.get(action_str, "HOLD")
 
 
 def _signal_age_hours(created_at: Any) -> float | None:
@@ -597,6 +789,23 @@ class TradePlanOrchestrator:
         # (on_shock_event / cycle_shock_batch) that don't go through cycle().
         self._covariance_cache: dict[tuple[str, ...], tuple[float, np.ndarray | None]] = {}
         self._covariance_cache_ttl = 30.0
+        # Execution unification (high-expectations follow-up): a large
+        # entry (participation vs ADV over LARGE_ORDER_PARTICIPATION_PCT)
+        # gets TWAP-sliced instead of firing as one order. Slice 1 fires
+        # immediately through the existing single-order entry flow below;
+        # slices 2..N land here and are drained one per subsequent cycle by
+        # _drain_entry_execution_queue, once the symbol has an open
+        # position and the normal per-cycle loop routes it to
+        # _evaluate_open_position instead of _maybe_enter. In-memory, not
+        # SQLite-backed like _rebalance_queue -- unlike a rebalance
+        # request, nothing outside this orchestrator's own process ever
+        # submits into it, so there is no cross-process visibility need.
+        self._entry_execution_queue: dict[str, list[dict[str, Any]]] = {}
+        # In-trade thesis re-check: per-symbol monotonic time of the last
+        # ensure-fresh call, so THESIS_RECHECK_COOLDOWN_SEC actually throttles
+        # -- same "None = no prior record" sentinel convention as
+        # _last_corr_reduce above (see that dict's own bug-fix comment).
+        self._last_thesis_recheck: dict[str, float] = {}
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -800,7 +1009,9 @@ class TradePlanOrchestrator:
                         cluster_corr=cluster_corr_by_symbol.get(symbol, _NOT_FETCHED),
                     )
                 if action:
+                    action["trade_action_class"] = classify_action(action.get("action", ""))
                     actions.append(action)
+                    await self._persist_in_trade_action(plan.get("_artifact_id", ""), action["trade_action_class"])
 
             result["actions"] = actions
             self._last_prices = prices
@@ -872,6 +1083,23 @@ class TradePlanOrchestrator:
         direction = plan.get("direction", "neutral")
         if direction not in ("long", "short"):
             return None
+
+        # entry_decision (Phase 1/3 of the trade-score work) used to be
+        # persisted on the frozen plan but never actually read anywhere on
+        # this live path -- a "watch"-tier plan's own entry_decision says
+        # WAIT (see trade_plan_authoring._derive_entry_decision), yet this
+        # function only ever looked at `direction`/`max_position_size_pct`,
+        # so it still entered live at TIER_SIZE_MULTIPLIER["watch"]=0.4 size,
+        # contradicting its own decision field. Empty string (older plans
+        # predating this field, or a plan where it was never computed) does
+        # NOT block -- fail-open, same posture as every other optional field
+        # on this path.
+        entry_decision = plan.get("entry_decision", "")
+        if entry_decision == "WAIT":
+            return {
+                "symbol": symbol, "action": "entry_blocked_by_entry_decision",
+                "reason": "trade plan entry_decision is WAIT",
+            }
 
         # how-to-make-it-live.md #33: emergency halt. The agent's global kill
         # switch is set (emergency_flatten, or a manual /agent/broker/halt).
@@ -952,7 +1180,15 @@ class TradePlanOrchestrator:
         # entry outright -- this is a "the tail on this name is too fat to
         # open here" call, not a sizing tweak.
         if CVAR_GATE_ENABLED:
-            cvar_95 = risk_bands.get("cvar_95_limit", 0.0) or 0.0
+            # expected_drawdown (Phase 5's options-IV-blended risk estimate)
+            # used to be computed at authoring time but never actually read
+            # anywhere on this live path -- only the plain GARCH-based
+            # cvar_95_limit reached here, so the options-blended figure
+            # never changed a real gate/stop decision. Prefer it when
+            # present and positive, falling back to cvar_95_limit -- same
+            # fail-open "0.0 = never computed" convention as everywhere
+            # else in this file.
+            cvar_95 = risk_bands.get("expected_drawdown", 0.0) or risk_bands.get("cvar_95_limit", 0.0) or 0.0
             # Shared with vinu-agent's own CVaR gate (agent/position_sizing.py)
             # instead of a raw `>` comparison -- `cvar_95 > CVAR_THRESHOLD`
             # silently evaluates to False for a NaN cvar_95_limit (Python's
@@ -974,54 +1210,34 @@ class TradePlanOrchestrator:
         # local calendar whether this symbol has an earnings / macro event
         # inside the window; if so, do not open. ENTRIES ONLY. Fail-open on any
         # problem (service down, no key, no rows).
-        if EVENT_BLACKOUT_HOURS > 0:
-            _blackout = False
-            _why = ""
-            try:
-                _ev = await self._http.get(
-                    f"{self._config.stock_price_api_url}/stock/events/{symbol}",
-                    params={"within_hours": EVENT_BLACKOUT_HOURS},
-                )
-                if getattr(_ev, "status_code", None) == 200:
-                    _body = _ev.json()
-                    if isinstance(_body, dict) and _body.get("blackout"):
-                        _blackout = True
-                        _rows = _body.get("events") or []
-                        _why = (_rows[0].get("title") if _rows else "") or "event within blackout window"
-            except Exception as e:  # noqa: BLE001 -- fail-open on any fetch error
-                LOG.debug("Event blackout check failed for %s, failing open: %s", symbol, e)
-            if _blackout:
-                LOG.warning("Event blackout -- skipping entry for %s: %s", symbol, _why)
-                return {
-                    "symbol": symbol, "action": "entry_blocked_by_event_blackout",
-                    "reason": _why,
-                }
+        _blackout_reason = await event_blackout_reason(
+            self._http, self._config.stock_price_api_url, symbol, EVENT_BLACKOUT_HOURS,
+        )
+        if _blackout_reason:
+            LOG.warning("Event blackout -- skipping entry for %s: %s", symbol, _blackout_reason)
+            return {
+                "symbol": symbol, "action": "entry_blocked_by_event_blackout",
+                "reason": _blackout_reason,
+            }
 
         # how-to-make-it-live.md #13: liquidity / spread gate. Placed after the
         # cheaper guards and the zero-size early-return (mirrors the CVaR gate's
         # position) so the quote call is one request per *real* entry attempt,
         # not per symbol per cycle. ENTRIES ONLY -- _evaluate_open_position
         # never consults it. Fail-open on any quote problem.
-        if MAX_SPREAD_BPS > 0:
-            _qp: Any = None
-            try:
-                _q = await self._http.get(
-                    f"{self._config.stock_price_api_url}/stock/quote/{symbol}",
-                )
-                if getattr(_q, "status_code", None) == 200:
-                    _qp = _q.json()
-            except Exception as e:  # noqa: BLE001 -- fail-open on any fetch error
-                LOG.debug("Spread gate: quote fetch failed for %s, failing open: %s", symbol, e)
-            _spread = _spread_bps_from_quote(_qp)
-            if _spread is not None and _spread > MAX_SPREAD_BPS:
-                LOG.warning(
-                    "Spread gate: %s spread %.1fbps exceeds %.1fbps -- pausing entry",
-                    symbol, _spread, MAX_SPREAD_BPS,
-                )
-                return {
-                    "symbol": symbol, "action": "entry_blocked_by_wide_spread",
-                    "reason": f"spread {_spread:.1f}bps exceeds max {MAX_SPREAD_BPS:.1f}bps",
-                }
+        #
+        # Fetched once (not via spread_gate_reason's own wrapper) so the same
+        # number also drives _choose_entry_order_type below -- a dynamic
+        # per-order routing decision from how much of the slippage budget
+        # crossing this spread would spend, not just a block/no-block gate.
+        _spread_bps = await fetch_spread_bps(self._http, self._config.stock_price_api_url, symbol)
+        _spread_reason = spread_gate_reason_from_bps(_spread_bps, MAX_SPREAD_BPS)
+        if _spread_reason:
+            LOG.warning("Spread gate -- skipping entry for %s: %s", symbol, _spread_reason)
+            return {
+                "symbol": symbol, "action": "entry_blocked_by_wide_spread",
+                "reason": _spread_reason,
+            }
 
         if FORECAST_SCALING_ENABLED:
             confidence = (plan.get("forecast") or {}).get("confidence")
@@ -1094,23 +1310,78 @@ class TradePlanOrchestrator:
         # mechanism and keep tightening/trailing the book's own stop_loss
         # field independently of this broker order, which is never
         # re-placed. There is no fixed stop/target price anywhere in
-        # RiskBand to forward -- one has to be derived. cvar_95_limit (the
-        # plan's frozen 95% daily tail-loss estimate) is the only field on
-        # the plan that represents "how bad could one day plausibly be", so
-        # it's what a catastrophic-only backstop should be sized from.
-        # Fails open (no bracket param, same as a plain market order) when
-        # it wasn't computed -- same posture as every other data-quality
-        # guard in this file (CVaR gate, vol-target scaling) rather than
-        # inventing an arbitrary distance.
+        # RiskBand to forward -- one has to be derived. expected_drawdown
+        # (when computed -- Phase 5 blends options-implied move into the
+        # plain GARCH-based cvar_95_limit) or cvar_95_limit as a fallback
+        # is the field on the plan that represents "how bad could one day
+        # plausibly be", so it's what a catastrophic-only backstop should
+        # be sized from. Fails open (no bracket param, same as a plain
+        # market order) when neither was computed -- same posture as every
+        # other data-quality guard in this file (CVaR gate, vol-target
+        # scaling) rather than inventing an arbitrary distance.
         backstop_stop_price: float | None = None
-        cvar_95_for_stop = risk_bands.get("cvar_95_limit", 0.0) or 0.0
+        cvar_95_for_stop = risk_bands.get("expected_drawdown", 0.0) or risk_bands.get("cvar_95_limit", 0.0) or 0.0
         if cvar_95_for_stop > 0:
             backstop_stop_price = (
                 price * (1 - cvar_95_for_stop) if direction == "long"
                 else price * (1 + cvar_95_for_stop)
             )
+        # Passive routing: an entry-only mode (never exits -- see
+        # ORDER_ROUTING_MODE's own comment). Limit sits on the passive side
+        # of the spread: below `price` for a buy, above it for a sell.
+        # ORDER_ROUTING_MODE="passive" force-overrides to limit
+        # unconditionally (the pre-existing manual-override behavior);
+        # otherwise _choose_entry_order_type decides dynamically from the
+        # spread already fetched above vs. this order's slippage budget,
+        # replacing what used to be a static "always market unless forced"
+        # default.
+        entry_order_type = (
+            "limit" if ORDER_ROUTING_MODE == "passive"
+            else _choose_entry_order_type(_spread_bps, MAX_SLIPPAGE_PCT)
+        )
+        entry_limit_price: float | None = None
+        if entry_order_type == "limit":
+            offset = PASSIVE_LIMIT_OFFSET_BPS / 10_000.0
+            entry_limit_price = price * (1 - offset) if side == "buy" else price * (1 + offset)
+
+        # Execution unification: a large order (participation over
+        # LARGE_ORDER_PARTICIPATION_PCT of ADV) is TWAP-sliced instead of
+        # firing whole -- slice 1 fires below through the exact same
+        # single-order flow every other entry uses (fill confirmation,
+        # book-open, audit record all unchanged); slices 2..N queue for
+        # _drain_entry_execution_queue on later cycles. Fail-open: any ADV
+        # fetch problem or a small order leaves `qty` untouched.
+        artifact_id = plan.get("_artifact_id", "")
+        try:
+            participation = await self._participation_pct(symbol, qty, price)
+        except Exception as e:  # noqa: BLE001 -- fail-open, never blocks the entry
+            LOG.debug("ADV participation check failed for %s, failing open: %s", symbol, e)
+            participation = None
+        if (
+            LARGE_ORDER_PARTICIPATION_PCT > 0
+            and participation is not None
+            and participation > LARGE_ORDER_PARTICIPATION_PCT
+        ):
+            instr = OrderInstruction(
+                symbol=symbol, side=side, qty=qty,
+                target_weight=0.0, current_qty=0.0, estimated_value=qty * price,
+            )
+            slice_plan = plan_twap([instr], n_slices=ENTRY_TWAP_SLICES)
+            if len(slice_plan.slices) > 1:
+                first, rest = slice_plan.slices[0], slice_plan.slices[1:]
+                LOG.info(
+                    "Large entry for %s: %.4f shares is %.2f%% of ADV -- slicing into %d "
+                    "(submitting %.4f now, queuing %d more)",
+                    symbol, qty, participation * 100, len(slice_plan.slices), first.qty, len(rest),
+                )
+                qty = first.qty
+                self._entry_execution_queue.setdefault(symbol, []).extend(
+                    {"qty": s.qty, "side": side, "artifact_id": artifact_id} for s in rest
+                )
+
         order_result = await self._submit_order(
             symbol, side, qty, stop_loss_price=backstop_stop_price,
+            order_type=entry_order_type, limit_price=entry_limit_price,
         )
         if order_result.get("status") == "submitted":
             # how-to-make-it-live.md #15: book what actually filled, not the
@@ -1121,7 +1392,7 @@ class TradePlanOrchestrator:
             fill_qty = abs(actual_delta) or qty  # never book a zero-share position
             self._note_traded(symbol)
             with book_lock(self._book_lock_path):
-                open_position(
+                opened_position = open_position(
                     self._book, symbol, direction, fill_qty, price,
                     artifact_id=plan.get("_artifact_id", ""),
                 )
@@ -1132,17 +1403,59 @@ class TradePlanOrchestrator:
                 )
             LOG.info("Entered %s %s %.4f @ %.2f", direction, symbol, fill_qty, price)
             slippage_bps = await self._entry_slippage_bps(symbol, price, direction, pre_signed)
+            # max_slippage_pct enforcement (Phase B): can't undo an
+            # already-filled order, but a realized slippage past the budget
+            # this trade was authored under is exactly the signal the
+            # post-trade loss classifier (see loss_classifier.py) uses to
+            # tag execution_error -- surfaced here on both the action result
+            # and the audit record, never silently dropped.
+            slippage_exceeded = (
+                slippage_bps is not None
+                and MAX_SLIPPAGE_PCT > 0
+                and slippage_bps > MAX_SLIPPAGE_PCT * 10_000.0
+            )
             if slippage_bps is not None:
                 LOG.info(
-                    "Entry slippage %s: planned %.2f vs broker avg-entry -> %+.1f bps",
+                    "Entry slippage %s: planned %.2f vs broker avg-entry -> %+.1f bps%s",
                     symbol, price, slippage_bps,
+                    " (EXCEEDS budget)" if slippage_exceeded else "",
                 )
+
+            # Per-trade audit record (high-expectations spec's post-trade
+            # learning pillar): one row joining entry_decision/trade_score/
+            # risk_band to what actually filled, keyed by the book's own
+            # position_id -- every field here already exists on `plan`
+            # (frozen at authoring time) and the fill result above, this
+            # just writes the join. Best-effort (record_entry never raises)
+            # so a logging failure can never affect the trade itself.
+            if opened_position is not None:
+                trade_score = plan.get("trade_score") or {}
+                record_entry(
+                    opened_position.position_id, symbol,
+                    {
+                        "artifact_id": plan.get("_artifact_id", ""),
+                        "direction": direction,
+                        "entry_decision": plan.get("entry_decision", ""),
+                        "trade_score_tier": trade_score.get("tier", ""),
+                        "trade_score_total": trade_score.get("total_score"),
+                        "trade_score_reasons": trade_score.get("reasons", []),
+                        "risk_band": plan.get("risk_bands", {}),
+                        "fill_price": price,
+                        "fill_qty": fill_qty,
+                        "intended_qty": qty,
+                        "partial_fill": partial,
+                        "slippage_bps": slippage_bps,
+                        "slippage_exceeded": slippage_exceeded,
+                    },
+                )
+
             action = {
                 "symbol": symbol, "action": "entered", "direction": direction,
                 "qty": fill_qty, "price": price,
             }
             if slippage_bps is not None:
                 action["slippage_bps"] = round(slippage_bps, 1)
+                action["slippage_exceeded"] = slippage_exceeded
             if partial:
                 action.update({"partial_fill": True, "intended_qty": qty})
             return action
@@ -1172,11 +1485,112 @@ class TradePlanOrchestrator:
             LOG.debug("Failed to fetch calibration for %s: %s", artifact_id, e)
         return None
 
+    async def _drain_entry_execution_queue(
+        self, symbol: str, position: Position, price: float,
+    ) -> dict[str, Any] | None:
+        """Pop and submit one queued TWAP slice for `symbol` (see
+        _maybe_enter), added to the position that slice 1 already opened.
+        None (no-op) when nothing is queued -- the common case, and the
+        signal for the caller to fall through to normal position
+        evaluation this cycle."""
+        queue = self._entry_execution_queue.get(symbol)
+        if not queue:
+            return None
+        slice_ = queue.pop(0)
+        if not queue:
+            del self._entry_execution_queue[symbol]
+        order_result = await self._submit_order(symbol, slice_["side"], slice_["qty"])
+        if order_result.get("status") != "submitted":
+            LOG.info(
+                "Queued entry slice for %s not filled: broker status=%s -- %d slice(s) remain queued",
+                symbol, order_result.get("status"), len(queue),
+            )
+            return {
+                "symbol": symbol, "action": "entry_slice_not_filled",
+                "broker_status": order_result.get("status"),
+            }
+        self._note_traded(symbol)
+        with book_lock(self._book_lock_path):
+            add_to_position(self._book, position.position_id, slice_["qty"], price)
+        LOG.info(
+            "Filled queued entry slice for %s: %.4f @ %.2f (%d slice(s) remain queued)",
+            symbol, slice_["qty"], price, len(queue),
+        )
+        return {
+            "symbol": symbol, "action": "entry_slice_filled",
+            "qty": slice_["qty"], "price": price,
+        }
+
+    async def _check_thesis_recheck(
+        self, symbol: str, position: Position,
+    ) -> dict[str, Any] | None:
+        """None when the flag is off, the cooldown hasn't elapsed, no debate
+        verdict is available, or the verdict doesn't strongly contradict
+        this position's side -- else an invalidation-rule-shaped dict for
+        _apply_invalidation. Fail-open on any fetch problem, same posture as
+        every other guard in this file."""
+        if not THESIS_RECHECK_ENABLED:
+            return None
+        now = time.monotonic()
+        last = self._last_thesis_recheck.get(symbol)
+        if last is not None and now - last < THESIS_RECHECK_COOLDOWN_SEC:
+            return None
+        self._last_thesis_recheck[symbol] = now
+
+        try:
+            resp = await self._http.post(
+                f"{self._config.agent_api_url}/agent/swarm/runs/ensure-fresh",
+                params={
+                    "preset_name": THESIS_RECHECK_PRESET_NAME, "symbol": symbol,
+                    "max_age_minutes": THESIS_RECHECK_COOLDOWN_SEC / 60.0,
+                },
+            )
+            if resp.status_code != 200:
+                return None
+            body = resp.json()
+        except Exception as e:  # noqa: BLE001 -- fail-open on any fetch error
+            LOG.debug("Thesis re-check fetch failed for %s, failing open: %s", symbol, e)
+            return None
+        if not isinstance(body, dict) or body.get("status") != "ok":
+            return None
+
+        risk_officer_task = next(
+            (t for t in body.get("tasks", []) if t.get("agent_name") == "risk_officer"), None,
+        )
+        text = (risk_officer_task["result"] if risk_officer_task else body.get("final_report", "")) or ""
+        parsed = _parse_debate_verdict_vs_position(text, position.side)
+        if parsed is None:
+            return None
+        verdict_direction, strength = parsed
+        if verdict_direction != "contradicting" or strength < 1.0:
+            return None
+
+        LOG.warning(
+            "Thesis re-check: %s debate now strongly contradicts open %s position -- %s",
+            symbol, position.side, text[:200],
+        )
+        return {
+            "condition": f"thesis_recheck: debate now contradicts ({text[:100]!r})",
+            "action": "exit",
+        }
+
     async def _evaluate_open_position(
         self, plan: dict[str, Any], position: Position, price: float, portfolio_value: float,
         *, cluster_corr: float | None = _NOT_FETCHED,
     ) -> dict[str, Any] | None:
         symbol = position.symbol
+
+        # Execution unification: a queued TWAP slice from this position's own
+        # entry (see _maybe_enter's LARGE_ORDER_PARTICIPATION_PCT branch)
+        # takes this cycle's turn for the symbol -- submitted as an add to
+        # the existing position, one slice per cycle, same "considered once
+        # per cycle" cadence as every other action this function returns.
+        # Normal invalidation/contingency evaluation resumes on the cycle
+        # after the queue drains.
+        drained = await self._drain_entry_execution_queue(symbol, position, price)
+        if drained is not None:
+            return drained
+
         # how-to-make-it-live.md #16: a stale feed does NOT block managing an
         # open position -- an exit/reduce on a slightly stale mark still beats
         # flying blind. Surface it so it is visible in the logs, then proceed.
@@ -1228,6 +1642,16 @@ class TradePlanOrchestrator:
             return await self._apply_invalidation(
                 position, price, portfolio_value,
                 {"condition": f"time_stop age {age_days}d > max {MAX_HOLD_DAYS}d", "action": "exit"},
+            )
+
+        # In-trade thesis re-check (opt-in, off by default -- see
+        # THESIS_RECHECK_ENABLED's own comment). Only a strong,
+        # contradicting debate verdict exits; weak/neutral/agreeing verdicts
+        # are no-ops so this can never flip-flop a position on noise.
+        thesis_break = await self._check_thesis_recheck(symbol, position)
+        if thesis_break is not None:
+            return await self._apply_invalidation(
+                position, price, portfolio_value, thesis_break,
             )
 
         triggered_invalidations = find_triggered_rules(
@@ -1452,7 +1876,8 @@ class TradePlanOrchestrator:
         )
         if note == "broker_flat":
             with book_lock(self._book_lock_path):
-                close_position(self._book, position.position_id, price)
+                closed_position = close_position(self._book, position.position_id, price)
+            self._record_trade_exit(closed_position, symbol, "invalidation_exit_book_only", rule)
             LOG.warning(
                 "Invalidation exit %s: broker already flat -- closed stale book position, no order",
                 symbol,
@@ -1469,7 +1894,8 @@ class TradePlanOrchestrator:
         if order_result.get("status") == "submitted":
             self._note_traded(symbol)
             with book_lock(self._book_lock_path):
-                close_position(self._book, position.position_id, price)
+                closed_position = close_position(self._book, position.position_id, price)
+            self._record_trade_exit(closed_position, symbol, "invalidation_exit", rule)
             LOG.info("Invalidation exit for %s %.4f (rule: %s)", symbol, close_qty, rule.get("condition"))
             return {"symbol": symbol, "action": "invalidation_exit", "qty": close_qty, "rule": rule}
 
@@ -1878,9 +2304,67 @@ class TradePlanOrchestrator:
             return 0.0, "", "side_conflict"
         return min(float(book_qty), abs(bq)), ("sell" if bq > 0 else "buy"), "ok"
 
+    def _record_trade_exit(
+        self, closed_position: Position | None, symbol: str, exit_action: str, rule: dict[str, Any],
+    ) -> None:
+        """Per-trade audit record's exit side, joined back to its
+        record_entry row by the book's own position_id -- see record_entry's
+        call site in _maybe_enter for the entry half. Best-effort
+        (record_exit never raises); a None closed_position (close_position
+        found no matching open position) is a no-op, not an error."""
+        if closed_position is None:
+            return
+        # Post-trade causal loss classification (high-expectations
+        # follow-up): slippage_exceeded comes from this trade's own
+        # record_entry row (Phase B's audit flag) -- best-effort lookup,
+        # never able to affect the close that already happened above.
+        slippage_exceeded = False
+        try:
+            for row in read_by_trade_id(closed_position.position_id):
+                if row.get("event") == "entry":
+                    slippage_exceeded = bool(row.get("slippage_exceeded"))
+                    break
+        except Exception as e:  # noqa: BLE001 -- best-effort, never blocks the exit record
+            LOG.debug("Loss-classifier entry lookup failed for %s, continuing without it: %s", symbol, e)
+        loss_cause = classify_exit_cause(
+            rule, closed_position.realized_pnl, slippage_exceeded=slippage_exceeded,
+        )
+        record_exit(
+            closed_position.position_id, symbol,
+            {
+                "artifact_id": closed_position.artifact_id,
+                "exit_action": exit_action,
+                "exit_rule": rule,
+                "realized_pnl": closed_position.realized_pnl,
+                "qty": closed_position.qty,
+                "avg_entry": closed_position.avg_entry,
+                "loss_cause": loss_cause,
+            },
+        )
+
+    async def _persist_in_trade_action(self, artifact_id: str, trade_action_class: str) -> None:
+        """Closes the loop TradeAction (HOLD/ADD/REDUCE/EXIT) never had:
+        classify_action() computes this every cycle but it only ever
+        annotated the ephemeral per-cycle `action` dict -- nothing persisted
+        it back onto the artifact vinu-research owns. Best-effort, fire-
+        after-the-fact: a failure here must never affect this cycle's
+        already-decided action, same posture as _record_trade_exit /
+        _entry_slippage_bps logging above. No-op for actions not tied to a
+        real artifact (e.g. entry_blocked_* actions before any plan exists)."""
+        if not artifact_id:
+            return
+        try:
+            await self._http.post(
+                f"{self._config.research_api_url}/research/trade-plan/{artifact_id}/action",
+                json={"action": trade_action_class},
+            )
+        except Exception as e:
+            LOG.debug("Failed to persist in_trade_action for %s, continuing without it: %s", artifact_id, e)
+
     async def _submit_order(
         self, symbol: str, side: str, qty: float, artifact_id: str = "", reduce_only: bool = False,
-        stop_loss_price: float | None = None,
+        stop_loss_price: float | None = None, order_type: str = "market",
+        limit_price: float | None = None,
     ) -> dict[str, Any]:
         # Idempotency (16 step8): client_order_id = artifact+symbol+side+qty+minute bucket.
         # Retry within same minute dedupes on broker, no double fill.
@@ -1902,9 +2386,11 @@ class TradePlanOrchestrator:
             client_order_id = f"{base}-{symbol}-{side}-{qty:.4f}-{bucket}"
         try:
             payload: dict[str, Any] = {
-                "symbol": symbol, "side": side, "qty": qty, "order_type": "market",
+                "symbol": symbol, "side": side, "qty": qty, "order_type": order_type,
                 "reduce_only": reduce_only,
             }
+            if order_type == "limit" and limit_price is not None:
+                payload["limit_price"] = limit_price
             if client_order_id:
                 payload["client_order_id"] = client_order_id
             # Stage 0 (G3): a catastrophic-backstop stop price, when the caller
@@ -1966,6 +2452,32 @@ class TradePlanOrchestrator:
         results = await asyncio.gather(*(_fetch_one(symbol) for symbol in symbols))
         return {symbol: price for symbol, price in results if price is not None}
 
+    async def _participation_pct(self, symbol: str, qty: float, price: float) -> float | None:
+        """`qty / average daily share volume` over the last 5 trading days --
+        the same `/stock/candles` endpoint _fetch_prices already calls, just
+        reading `volume` instead of `close`. None (never blocks/slices) on
+        any fetch problem or when no volume data is available -- fail-open,
+        same posture as every other data-quality guard in this file."""
+        try:
+            resp = await self._http.get(
+                f"{self._config.stock_price_api_url}/stock/candles/{symbol}",
+                params={"interval": "1d", "days": 5, "adjusted": True},
+            )
+            if resp.status_code != 200:
+                return None
+            bars = resp.json().get("data", [])
+        except Exception as e:
+            LOG.debug("ADV fetch failed for %s, failing open: %s", symbol, e)
+            return None
+        volumes = [float(b.get("volume", 0.0) or 0.0) for b in bars]
+        volumes = [v for v in volumes if v > 0]
+        if not volumes:
+            return None
+        adv = sum(volumes) / len(volumes)
+        if adv <= 0:
+            return None
+        return qty / adv
+
     async def _fetch_recent_prices(self, symbol: str, days: int = _RETURNS_LOOKBACK_DAYS) -> list[float]:
         try:
             resp = await self._http.get(
@@ -2016,19 +2528,17 @@ class TradePlanOrchestrator:
     # ------------------------------------------------------------------
 
     async def _is_trading_halted(self) -> bool:
-        """Read the agent's global kill switch (filesystem-backed,
-        cross-process). Fail-safe here is False: if the agent is unreachable
+        """True if either kill-switch source is engaged: the agent's global
+        kill switch (filesystem-backed, cross-process, GET
+        /agent/broker/status) OR the local ~/.vinu-live/HALT sentinel that
+        LiveScheduler's TWAP/VWAP path also checks (see guards.halt_reason).
+        This used to only check the remote flag, so an operator dropping
+        the local HALT file believed it stopped everything but entries kept
+        firing here. Fail-safe here is False: if the agent is unreachable
         no order can be placed anyway, the broker-outage guard covers that,
-        and a real halt file is simply re-read next cycle."""
-        try:
-            resp = await self._http.get(
-                f"{self._config.agent_api_url}/agent/broker/status",
-            )
-            if getattr(resp, "status_code", None) == 200:
-                return bool((resp.json() or {}).get("halted"))
-        except Exception as e:  # noqa: BLE001
-            LOG.debug("Halt-status check failed, treating as not-halted: %s", e)
-        return False
+        and a real halt file (local or remote) is simply re-read next
+        cycle."""
+        return await _halt_reason(self._http, self._config.agent_api_url) is not None
 
     async def emergency_flatten(self, reason: str = "manual") -> dict[str, Any]:
         """The panic switch (how-to-make-it-live.md #33). Two steps:

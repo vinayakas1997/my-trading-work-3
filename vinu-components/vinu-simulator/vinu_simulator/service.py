@@ -39,6 +39,20 @@ LOG = logging.getLogger(__name__)
 # not to serve stale data across unrelated requests.
 _OHCLV_CACHE_TTL_SECONDS = float(os.environ.get("VINU_SIMULATOR_OHCLV_CACHE_TTL_SEC", "120"))
 
+# The execution-realism fields on SimulateRequest/CustomSimulateRequest are
+# all Optional, None meaning "use SimulationConfig's own default" -- passing
+# None explicitly as a kwarg would override that dataclass default with None
+# itself (a type violation for a float/int field), so only the fields the
+# caller actually set are forwarded.
+_OPTIONAL_SIZING_FIELDS = (
+    "target_annual_vol", "vol_lookback_days", "kelly_fraction", "kelly_lookback_days",
+    "max_leverage", "max_pct_of_volume", "execution_reject_prob", "random_seed",
+)
+
+
+def _optional_sizing_kwargs(req: Any) -> dict[str, Any]:
+    return {f: getattr(req, f) for f in _OPTIONAL_SIZING_FIELDS if getattr(req, f) is not None}
+
 
 class SimulatorService:
     def __init__(self, config: Any | None = None):
@@ -156,6 +170,17 @@ class SimulatorService:
             "deviation_threshold": req.deviation_threshold,
             "full_metrics": req.full_metrics,
             "run_validation": req.run_validation,
+            # See _simulate_custom_impl's identical block for why these
+            # must be part of the cache key.
+            "position_sizing_model": req.position_sizing_model,
+            "target_annual_vol": req.target_annual_vol,
+            "vol_lookback_days": req.vol_lookback_days,
+            "kelly_fraction": req.kelly_fraction,
+            "kelly_lookback_days": req.kelly_lookback_days,
+            "max_leverage": req.max_leverage,
+            "max_pct_of_volume": req.max_pct_of_volume,
+            "execution_reject_prob": req.execution_reject_prob,
+            "random_seed": req.random_seed,
         })
         cached = self._meta_storage.get_run_by_config_hash(config_hash)
         if cached is not None:
@@ -195,6 +220,8 @@ class SimulatorService:
             allow_short=req.allow_short,
             deviation_threshold=req.deviation_threshold if req.deviation_threshold is not None else self._config.deviation_threshold,
             full_metrics=req.full_metrics,
+            position_sizing_model=req.position_sizing_model,
+            **_optional_sizing_kwargs(req),
         )
 
         inp = SimulationInput(
@@ -294,6 +321,19 @@ class SimulatorService:
             "indicators": sorted(req.indicators) if req.indicators else None,
             "full_metrics": req.full_metrics,
             "run_validation": req.run_validation,
+            # Cache-key parity: these must be part of the hash or two
+            # requests differing ONLY in an execution-realism knob (e.g.
+            # execution_reject_prob=0.0 vs 0.1) would collide on the same
+            # cache entry and silently return the wrong config's result.
+            "position_sizing_model": req.position_sizing_model,
+            "target_annual_vol": req.target_annual_vol,
+            "vol_lookback_days": req.vol_lookback_days,
+            "kelly_fraction": req.kelly_fraction,
+            "kelly_lookback_days": req.kelly_lookback_days,
+            "max_leverage": req.max_leverage,
+            "max_pct_of_volume": req.max_pct_of_volume,
+            "execution_reject_prob": req.execution_reject_prob,
+            "random_seed": req.random_seed,
         })
         cached = self._meta_storage.get_run_by_config_hash(config_hash)
         if cached is not None:
@@ -368,6 +408,8 @@ class SimulatorService:
             deviation_threshold=req.deviation_threshold if req.deviation_threshold is not None else self._config.deviation_threshold,
             interval=req.interval,
             full_metrics=req.full_metrics,
+            position_sizing_model=req.position_sizing_model,
+            **_optional_sizing_kwargs(req),
         )
 
         result = _run_custom_sim(

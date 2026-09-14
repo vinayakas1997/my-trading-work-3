@@ -59,6 +59,40 @@ def forecast_confidence_scale(confidence: Any, floor: float = 0.5) -> float:
     return max(float(floor), min(1.0, c))
 
 
+def kelly_fraction(
+    win_rate: float,
+    avg_win: float,
+    avg_loss: float,
+    fraction_of_kelly: float = 1.0,
+) -> float:
+    """Kelly criterion for a binary win/loss bet: f* = p - (1-p)/b, where p
+    is win probability and b = avg_win/avg_loss is the payoff ratio.
+
+    This exact formula used to be reimplemented independently in
+    vinu-tools (`compute/risk/position_sizing.py`'s `kelly_optimal_fraction`)
+    and vinu-simulator (`engine/sizing.py`'s `FractionalKellySizer`) -- both
+    services already install vinu-infra (confirmed via each Dockerfile), so
+    this is the single source of truth both now delegate to, matching the
+    `vol_target_scale` unification above.
+
+    avg_loss<=0, avg_win<=0, or win_rate outside (0,1) = 0.0 (no edge
+    estimate possible from a degenerate sample -- same fail-safe as the
+    original implementations). avg_win<=0 is checked explicitly rather than
+    left to fall out of the division below -- b = avg_win/avg_loss = 0.0
+    would otherwise raise ZeroDivisionError computing f_star, discovered
+    when vinu-agent's full_kelly_fraction (a 3rd caller, unified here after
+    vinu-tools and vinu-simulator) was found to pass avg_win=payoff_ratio
+    directly, a value degenerate inputs upstream can legitimately drive to
+    0."""
+    if avg_loss <= 0 or avg_win <= 0 or win_rate <= 0 or win_rate >= 1:
+        return 0.0
+    b = avg_win / avg_loss
+    p = win_rate
+    q = 1 - p
+    f_star = (p * b - q) / b
+    return max(0.0, f_star * fraction_of_kelly)
+
+
 def cvar_exceeds(cvar_95: Any, threshold: float = 0.03) -> bool:
     """True if tail risk blocks sizing. cvar_95 as positive loss fraction
     (0.04 = 4% daily). Non-finite/unparseable cvar_95 or threshold = False

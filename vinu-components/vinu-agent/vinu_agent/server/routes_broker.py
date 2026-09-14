@@ -17,7 +17,7 @@ from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..broker.factory import get_live_broker
 from ..broker.kill_switch import halt_trading, is_trading_halted, resume_trading
@@ -323,11 +323,48 @@ class RecordPerformanceRequest(BaseModel):
 
 @router.post("/broker/performance/{artifact_id}")
 async def record_performance(artifact_id: str, body: RecordPerformanceRequest) -> dict[str, Any]:
-    """Record paper-trading daily returns for an artifact.
-
-    Called by vinu-live's cycle after each trading day to accumulate the
-    per-artifact paper P&L history that ShadowEvaluator reads.
+    """Replace an artifact's full paper-trading daily-returns history
+    (bulk/backfill use). For the actual per-day write, see
+    POST .../append below -- see its docstring for why this endpoint alone
+    was never enough to make ShadowEvaluator's promotion gate work.
     """
     store = get_store()
     store.record_daily_returns(artifact_id, body.daily_returns)
     return {"status": "ok", "artifact_id": artifact_id, "n_returns": len(body.daily_returns)}
+
+
+class AppendDailyReturnRequest(BaseModel):
+    daily_return: float
+    trade_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+@router.post("/broker/performance/{artifact_id}/append")
+async def append_daily_return(artifact_id: str, body: AppendDailyReturnRequest) -> dict[str, Any]:
+    """Append one day's paper return -- the write side ShadowEvaluator's
+    read side (_fetch_paper_sharpe -> GET .../performance/{id}) has always
+    depended on but never had a real caller for: neither this route nor
+    the bulk one above was ever called from production code, so
+    min_paper_days could never accumulate and no artifact could ever be
+    promoted via real paper performance (see high-expectations
+    gate-conflict audit). vinu-live's ShadowEvaluator.record_daily_paper_
+    returns() is the intended caller, once per BENCHING artifact per
+    trading day.
+
+    Idempotent per trade_date (tracked via the store's meta_json) so a
+    worker restart or a re-run within the same day does not double-count
+    -- the caller does not need its own dedup logic.
+    """
+    store = get_store()
+    meta = store.get_meta(artifact_id)
+    if meta.get("last_recorded_date") == body.trade_date:
+        return {
+            "status": "already_recorded", "artifact_id": artifact_id,
+            "trade_date": body.trade_date, "n_returns": len(store.get_daily_returns(artifact_id)),
+        }
+    store.record_daily_return(artifact_id, body.daily_return)
+    meta["last_recorded_date"] = body.trade_date
+    store.record_meta(artifact_id, meta)
+    return {
+        "status": "ok", "artifact_id": artifact_id, "trade_date": body.trade_date,
+        "n_returns": len(store.get_daily_returns(artifact_id)),
+    }

@@ -120,6 +120,26 @@ def compute(
             "n_observations": len(bars),
         }])
 
+    # The symbol's regime AS OF the most recent bar -- distinct from the
+    # "regime_stats" rows below, which are a per-regime aggregate over the
+    # whole analyzed history (e.g. "bull 62% of the time"). A consumer that
+    # wants "what regime is this symbol in right now" (e.g. a strategy
+    # filter gating on current conditions) needs this row, not the
+    # highest-pct_of_time regime_stats row -- picking the latter answers a
+    # different question ("what has this symbol mostly been in") and was a
+    # confirmed bug at the vinu-strategy call site that consumed this angle.
+    current_row = rf.iloc[-1]
+    rows.append({
+        "symbol": symbol,
+        "analysis_at": analysis_at,
+        "angle": "regime_analysis",
+        "metric": "current_regime",
+        "regime": current_row["regime"],
+        "bar_ts": current_row["bar_ts"],
+        "ret_20d": float(current_row["ret_20d"]),
+        "vol_trailing_z": float(current_row["vol_trailing_z"]),
+    })
+
     af = ann_factor(time_format)
     for rg, grp in rf.groupby("regime"):
         sr = (grp["ret"].mean() / grp["ret"].std() * af) if grp["ret"].std() > 0 else 0.0

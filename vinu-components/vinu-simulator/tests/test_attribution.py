@@ -88,6 +88,29 @@ class TestRegimeAnalysis:
         assert len(regimes) == len(returns)
         assert all(r in ("bull", "bear", "sideways", "high_vol") for r in regimes)
 
+    def test_prefix_classification_unaffected_by_future_data(self):
+        """Regression test for the fixed look-ahead leak: the old
+        implementation computed `vol_threshold = rolling_vol.quantile(0.7)`
+        over the ENTIRE input series once, so an early bar's classification
+        depended on volatility that hadn't happened yet at that point in a
+        bar-by-bar backtest replay. The fix compares each bar's vol only
+        against a trailing 120-bar baseline, so appending more (even much
+        louder) data after a given prefix must never change that prefix's
+        classifications.
+        """
+        import numpy as np
+
+        rng = np.random.default_rng(5)
+        base = rng.normal(0.0, 0.008, size=150).tolist()
+        short_series = pd.Series(base)
+        loud_tail = rng.normal(0.0, 0.06, size=30).tolist()
+        long_series = pd.Series(base + loud_tail)
+
+        regimes_short = classify_regime(short_series)
+        regimes_long = classify_regime(long_series)
+
+        assert regimes_short.tolist() == regimes_long.iloc[: len(short_series)].tolist()
+
     def test_per_regime_performance(self):
         returns = pd.Series([0.02, -0.02, 0.01, 0.03, -0.01] * 10)
         regimes = pd.Series(["bull", "bear", "bull", "bull", "bear"] * 10)

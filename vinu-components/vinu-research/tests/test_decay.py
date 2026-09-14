@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import tempfile
 from pathlib import Path
 
 from vinu_research.config import DecayThresholds
 from vinu_research.decay import (
+    approve_decay_action,
     compute_decay_metrics,
     compute_decay_snapshot,
     compute_strategy_decay_metrics,
@@ -364,6 +366,107 @@ class TestSqliteStrategyStore:
 
         assert store.list_artifacts_for_symbol("GOOGL") == []
 
+    def test_record_and_get_proposed_decay_action(self):
+        store, _ = self._make_store()
+        a = Artifact.create("strategy", "Test", universe=["AAPL"])
+        a.status = ArtifactStatus.MONITORING
+        store.upsert_artifact(a)
+
+        assert store.get_proposed_decay_action(a.artifact_id) is None
+
+        store.record_proposed_decay_action(a.artifact_id, "MONITORING", "DECAYED")
+        proposal = store.get_proposed_decay_action(a.artifact_id)
+        assert proposal is not None
+        assert proposal["from_status"] == "MONITORING"
+        assert proposal["proposed_status"] == "DECAYED"
+        assert proposal["created_at"]
+
+    def test_recording_again_overwrites_the_previous_proposal(self):
+        store, _ = self._make_store()
+        a = Artifact.create("strategy", "Test", universe=["AAPL"])
+        store.upsert_artifact(a)
+
+        store.record_proposed_decay_action(a.artifact_id, "ACTIVE", "MONITORING")
+        store.record_proposed_decay_action(a.artifact_id, "MONITORING", "DECAYED")
+
+        proposal = store.get_proposed_decay_action(a.artifact_id)
+        assert proposal["from_status"] == "MONITORING"
+        assert proposal["proposed_status"] == "DECAYED"
+
+    def test_clear_proposed_decay_action(self):
+        store, _ = self._make_store()
+        a = Artifact.create("strategy", "Test", universe=["AAPL"])
+        store.upsert_artifact(a)
+
+        store.record_proposed_decay_action(a.artifact_id, "ACTIVE", "MONITORING")
+        store.clear_proposed_decay_action(a.artifact_id)
+        assert store.get_proposed_decay_action(a.artifact_id) is None
+
+
+class TestApproveDecayAction:
+    @staticmethod
+    def _make_store() -> SqliteStrategyStore:
+        tmp = tempfile.mkdtemp()
+        return SqliteStrategyStore(Path(tmp) / "strategy_store.db")
+
+    def test_approves_and_applies_the_proposed_transition(self):
+        store = self._make_store()
+        a = Artifact.create("strategy", "Test", universe=["AAPL"])
+        a.status = ArtifactStatus.MONITORING
+        store.upsert_artifact(a)
+        store.record_proposed_decay_action(a.artifact_id, "MONITORING", "DECAYED")
+
+        approved = approve_decay_action(store, a.artifact_id, approver="alice")
+
+        assert approved.status == ArtifactStatus.DECAYED
+        assert store.get_proposed_decay_action(a.artifact_id) is None
+
+    def test_requires_an_approver(self):
+        store = self._make_store()
+        a = Artifact.create("strategy", "Test", universe=["AAPL"])
+        a.status = ArtifactStatus.MONITORING
+        store.upsert_artifact(a)
+        store.record_proposed_decay_action(a.artifact_id, "MONITORING", "DECAYED")
+
+        try:
+            approve_decay_action(store, a.artifact_id, approver="")
+            assert False, "expected ValueError"
+        except ValueError as e:
+            assert "approver" in str(e)
+
+    def test_raises_when_no_proposal_exists(self):
+        store = self._make_store()
+        a = Artifact.create("strategy", "Test", universe=["AAPL"])
+        store.upsert_artifact(a)
+
+        try:
+            approve_decay_action(store, a.artifact_id, approver="alice")
+            assert False, "expected ValueError"
+        except ValueError as e:
+            assert "no proposed decay action" in str(e)
+
+    def test_rejects_a_transition_the_real_lifecycle_no_longer_allows(self):
+        # The artifact's status changed (e.g. by another path) between the
+        # proposal being recorded and this approval call -- the store's
+        # real _ALLOWED_TRANSITIONS must still be enforced, not bypassed.
+        store = self._make_store()
+        a = Artifact.create("strategy", "Test", universe=["AAPL"])
+        a.status = ArtifactStatus.MONITORING
+        store.upsert_artifact(a)
+        store.record_proposed_decay_action(a.artifact_id, "MONITORING", "DECAYED")
+
+        # Someone else already disabled the artifact in the meantime.
+        store.transition_status(a.artifact_id, ArtifactStatus.DECAYED)
+        store.transition_status(a.artifact_id, ArtifactStatus.DISABLED)
+
+        from vinu_research.storage.strategy_store import InvalidStatusTransition
+
+        try:
+            approve_decay_action(store, a.artifact_id, approver="alice")
+            assert False, "expected InvalidStatusTransition"
+        except InvalidStatusTransition:
+            pass
+
 
 class TestStrategyDecay:
     def test_sharpe_holding_steady_is_healthy(self):
@@ -430,3 +533,51 @@ class TestEvalHistoryOrdering:
         # snapshot right before "DECAYED", silently misreading the trend.
         buggy_ordered = [s.evaluation for s in previous_snapshots] + ["DECAYED"]
         assert buggy_ordered != correctly_ordered
+
+
+class TestApproveDecayMain:
+    """cli.py's `approve-decay` subcommand -- previously approve_decay_action
+    had no caller reachable outside a Python REPL (no HTTP route, no CLI
+    command). This is the CLI-first path, matching decay-scan's own
+    manual-CLI-first precedent."""
+
+    @staticmethod
+    def _args(db_path: Path, artifact_id: str, approver: str) -> argparse.Namespace:
+        return argparse.Namespace(db=str(db_path), artifact_id=artifact_id, approver=approver)
+
+    def test_approves_and_prints_new_status(self, capsys) -> None:
+        from vinu_research.cli import approve_decay_main
+
+        tmp = tempfile.mkdtemp()
+        db_path = Path(tmp) / "strategy_store.db"
+        store = SqliteStrategyStore(db_path)
+        a = Artifact.create("strategy", "Test", universe=["AAPL"])
+        a.status = ArtifactStatus.MONITORING
+        store.upsert_artifact(a)
+        store.record_proposed_decay_action(a.artifact_id, "MONITORING", "DECAYED")
+        store.close()
+
+        approve_decay_main(self._args(db_path, a.artifact_id, "alice"))
+
+        out = capsys.readouterr().out
+        assert "DECAYED" in out
+        verify_store = SqliteStrategyStore(db_path)
+        assert verify_store.get_artifact(a.artifact_id).status == ArtifactStatus.DECAYED
+        verify_store.close()
+
+    def test_no_proposal_exits_nonzero(self, capsys) -> None:
+        from vinu_research.cli import approve_decay_main
+
+        tmp = tempfile.mkdtemp()
+        db_path = Path(tmp) / "strategy_store.db"
+        store = SqliteStrategyStore(db_path)
+        a = Artifact.create("strategy", "Test", universe=["AAPL"])
+        store.upsert_artifact(a)
+        store.close()
+
+        try:
+            approve_decay_main(self._args(db_path, a.artifact_id, "alice"))
+            assert False, "expected SystemExit"
+        except SystemExit as e:
+            assert e.code == 1
+        assert "Error" in capsys.readouterr().out

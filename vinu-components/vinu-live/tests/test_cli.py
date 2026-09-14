@@ -59,6 +59,7 @@ class TestShadowWorkerMain:
              patch("vinu_live.cli.time.sleep", side_effect=KeyboardInterrupt):
             instance = MockEvaluator.return_value
             instance.evaluate_all = _fake_evaluate_all
+            instance.record_daily_paper_returns = AsyncMock(return_value=[])
             instance.close = AsyncMock()
 
             shadow_worker_main(argparse.Namespace(interval_sec=None))
@@ -76,6 +77,7 @@ class TestShadowWorkerMain:
                 return []
 
             instance.evaluate_all = _fake_evaluate_all
+            instance.record_daily_paper_returns = AsyncMock(return_value=[])
             instance.close = AsyncMock()
 
             shadow_worker_main(argparse.Namespace(interval_sec=7))

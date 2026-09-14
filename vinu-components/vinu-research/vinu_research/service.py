@@ -17,7 +17,7 @@ from vinu_research.models import Artifact, ArtifactStatus, BenchEntry, Goal
 from vinu_research.storage import ResearchStorage
 from vinu_research.storage.models import ResearchRunRecord, STATUS_DONE, STATUS_FAILED, STATUS_PENDING, STATUS_RUNNING
 from vinu_research.storage.strategy_store import SqliteStrategyStore
-from vinu_research.gates.correlation_gate import check_correlation_gate
+from vinu_research.gates.correlation_gate import CorrelationVerdict, check_correlation_gate
 from vinu_research.tools import ResearchTools
 from vinu_research.walk_forward import deflated_sharpe_ratio
 
@@ -332,6 +332,54 @@ class ResearchService:
         response["artifact_id"] = artifact.artifact_id
         return response
 
+    async def build_correlation_verdict(self, artifact: Artifact) -> CorrelationVerdict | None:
+        """The same correlation gate check approve_run() applies inline at
+        creation time, for a caller working from an already-BENCHING
+        artifact instead of a fresh run result -- meets_promotion_bar()
+        itself only applies the correlation check when a verdict is passed
+        in, and this used to be the only caller that did: both real
+        BENCHING->ACTIVE promotion paths (POST /artifacts/{id}/promote and
+        the `promote-scan` CLI command) called meets_promotion_bar with no
+        third argument, so promotion_correlation_required was silently a
+        no-op for every promotion except the one done through approve_run.
+
+        Returns None (no-op, matching approve_run's own fail-open posture)
+        when the flag is off, the artifact has no source run to pull the
+        symbol/date-range from, or the gate check itself errors/finds no
+        active strategies to compare against.
+        """
+        if not self._config.promotion_correlation_required:
+            return None
+        if not artifact.strategy_code or not artifact.source_run_id:
+            return None
+        run = await self._run_in_thread(self._storage.get_run, artifact.source_run_id)
+        if run is None or not run.from_date or not run.to_date:
+            return None
+        try:
+            active = await self._run_in_thread(
+                self._strategy_store.list_artifacts_by_statuses,
+                [ArtifactStatus.ACTIVE], "strategy",
+            )
+            if not active:
+                return None
+            tools = ResearchTools(self._config)
+            try:
+                return await check_correlation_gate(
+                    candidate_code=artifact.strategy_code,
+                    candidate_symbol=run.symbol,
+                    from_date=run.from_date,
+                    to_date=run.to_date,
+                    active_strategies=active,
+                    tools=tools,
+                    config=self._config,
+                    interval=self._config.interval,
+                )
+            finally:
+                await tools.close()
+        except Exception as e:
+            LOG.warning("Correlation gate check failed for artifact %s: %s", artifact.artifact_id, e)
+            return None
+
     def _create_artifact_from_run(self, record: ResearchRunRecord, status: ArtifactStatus = ArtifactStatus.ACTIVE) -> Artifact:
         """Persist an approved run as a strategy artifact — the bridge between
         "a research run finished" and "a strategy is tracked over time"."""
@@ -406,10 +454,32 @@ class ResearchService:
             artifact.revalidation_count += 1
             artifact.last_revalidation_verdict = validation_passed
 
-            # Transition to MONITORING when validation fails on an ACTIVE artifact
+            # Transition to MONITORING when validation fails on an ACTIVE
+            # artifact -- gated by the same VINU_RESEARCH_DECAY_RESPONSE_MODE
+            # knob decay_scan() uses (see its own docstring for the three
+            # modes). This single-strike demotion used to run un-gated, so
+            # an operator setting VINU_RESEARCH_DECAY_RESPONSE_MODE=off to
+            # disable automated status transitions only actually stopped
+            # decay_scan's 3-strike hysteresis path, not this one -- the
+            # exact same artifact could still get demoted here on a single
+            # failed re-backtest. `off` skips the transition entirely (the
+            # revalidation itself, last_validated_ts/revalidation_count/
+            # last_revalidation_verdict, still records); `propose` records a
+            # proposal via the same record_proposed_decay_action path
+            # decay_scan already uses, requiring decay.approve_decay_action
+            # before the status actually changes; `auto` (default)
+            # preserves the original always-on behavior.
+            import os as _os
+            _mode = _os.environ.get("VINU_RESEARCH_DECAY_RESPONSE_MODE", "auto").lower()
             previous_status = artifact.status
-            if not validation_passed and artifact.status == ArtifactStatus.ACTIVE:
-                artifact.status = ArtifactStatus.MONITORING
+            if not validation_passed and artifact.status == ArtifactStatus.ACTIVE and _mode != "off":
+                if _mode == "propose":
+                    await self._run_in_thread(
+                        self._strategy_store.record_proposed_decay_action,
+                        artifact.artifact_id, artifact.status.value, ArtifactStatus.MONITORING.value,
+                    )
+                else:
+                    artifact.status = ArtifactStatus.MONITORING
 
             await self._run_in_thread(self._strategy_store.upsert_artifact, artifact)
 

@@ -112,3 +112,72 @@ class TestAlwaysCarriesPriceFields:
         assert candidate.fields["price"] == pytest.approx(110.0)
         assert candidate.fields["volume"] == pytest.approx(1000.0)
         assert candidate.fields["dollar_volume"] == pytest.approx(110.0 * 1000.0)
+
+
+def _trend_with_index(start: float, end: float, index: pd.DatetimeIndex) -> pd.DataFrame:
+    n = len(index)
+    c = np.linspace(start, end, n)
+    return pd.DataFrame(
+        {"open": c, "high": c + 0.5, "low": c - 0.5, "close": c, "volume": np.full(n, 1000.0)},
+        index=index,
+    )
+
+
+class TestDataQualityRiskFlags:
+    """Regression for the dead data_stale/data_fetch_degraded risk-overlay
+    checks: nothing ever set these fields, so a candidate built from a
+    stale cache or a failed batch fetch scored identically to one built
+    from good data (see high-expectations gate-conflict audit)."""
+
+    def test_recent_bars_are_not_flagged_stale(self) -> None:
+        idx = pd.date_range(end=pd.Timestamp.now(tz="UTC"), periods=30, freq="D")
+        ds = FakeDataSource()
+        ds.frames["AAPL"] = _trend_with_index(100, 110, idx)
+        factors = (FactorSpec("momentum", "pct_change", weight=1.0),)
+        result = RankerRunner(ds).run(_cfg(("AAPL",), factors))
+        assert result.ranked[0].fields["data_stale"] == 0.0
+
+    def test_old_last_bar_is_flagged_stale(self) -> None:
+        idx = pd.date_range(end=pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=10), periods=30, freq="D")
+        ds = FakeDataSource()
+        ds.frames["AAPL"] = _trend_with_index(100, 110, idx)
+        factors = (FactorSpec("momentum", "pct_change", weight=1.0),)
+        result = RankerRunner(ds).run(_cfg(("AAPL",), factors))
+        assert result.ranked[0].fields["data_stale"] == 1.0
+
+    def test_index_without_timestamps_fails_open_not_stale(self) -> None:
+        """_trend()'s plain RangeIndex (no dates at all) -- the age check
+        must fail open (not-stale), not raise."""
+        ds = FakeDataSource()
+        ds.frames["AAPL"] = _trend(100, 110)
+        factors = (FactorSpec("momentum", "pct_change", weight=1.0),)
+        result = RankerRunner(ds).run(_cfg(("AAPL",), factors))
+        assert result.ranked[0].fields["data_stale"] == 0.0
+
+    def test_fetch_degraded_flag_reflects_last_batch_failed_symbols(self) -> None:
+        idx = pd.date_range(end=pd.Timestamp.now(tz="UTC"), periods=30, freq="D")
+        ds = FakeBatchDataSource()
+        ds.frames["AAPL"] = _trend_with_index(100, 110, idx)
+        ds.frames["MSFT"] = _trend_with_index(100, 110, idx)
+        # A real HttpStockDataSource never leaves a symbol both present AND
+        # batch-failed (an all-failed chunk returns None for every symbol
+        # in it, which _fetch_universe drops entirely) -- this stub
+        # exercises the wiring itself, independent of that constraint, so a
+        # future data source that CAN report present-but-degraded data is
+        # covered too.
+        ds.last_batch_failed_symbols = {"MSFT"}
+        factors = (FactorSpec("momentum", "pct_change", weight=1.0),)
+        result = RankerRunner(ds).run(_cfg(("AAPL", "MSFT"), factors))
+        by_symbol = {c.symbol: c for c in result.ranked}
+        assert by_symbol["AAPL"].fields["data_fetch_degraded"] == 0.0
+        assert by_symbol["MSFT"].fields["data_fetch_degraded"] == 1.0
+
+    def test_no_last_batch_failed_symbols_attribute_is_not_degraded(self) -> None:
+        """FakeDataSource (no batch support at all) must not crash or
+        false-flag -- getattr's default handles a source with no concept
+        of batch-failed symbols."""
+        ds = FakeDataSource()
+        ds.frames["AAPL"] = _trend(100, 110)
+        factors = (FactorSpec("momentum", "pct_change", weight=1.0),)
+        result = RankerRunner(ds).run(_cfg(("AAPL",), factors))
+        assert result.ranked[0].fields["data_fetch_degraded"] == 0.0

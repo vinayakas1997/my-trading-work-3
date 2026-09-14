@@ -22,6 +22,25 @@ class SimulateRequest(BaseModel):
     dry_run: bool = False
     run_validation: bool = Field(default=False, description="Run full validation suite (Monte Carlo, block-bootstrap, price-path resample, bootstrap CI, walk-forward, attribution). Results are returned in the API response and persisted on the run record (queryable later via GET /results/{run_id} and GET /runs).")
     full_metrics: bool = Field(default=True, description="Compute extended metrics (VaR, CVaR, drawdown, win/loss ratios, Sharpe CI, turnover). When False, only basic metrics are returned.")
+    # Execution-realism knobs: implemented and tested in engine/simulator.py
+    # and engine/sizing.py, but this request schema never exposed them, so
+    # every call through the real API always got SimulationConfig's
+    # defaults -- position_sizing_model="fixed" (FractionalKellySizer/
+    # VolTargetSizer dead code in production), max_pct_of_volume=1.0 (no
+    # ADV cap, ever), execution_reject_prob=0.0 (no simulated broker fill
+    # failures, ever). Every result silently ran under more favorable fill
+    # assumptions than a real broker would give (see high-expectations
+    # gate-conflict audit). Defaults preserve prior behavior exactly --
+    # this only ADDS the ability to opt in.
+    position_sizing_model: Literal["fixed", "vol_target", "kelly"] = "fixed"
+    target_annual_vol: float | None = None
+    vol_lookback_days: int | None = None
+    kelly_fraction: float | None = None
+    kelly_lookback_days: int | None = None
+    max_leverage: float | None = None
+    max_pct_of_volume: float | None = None
+    execution_reject_prob: float | None = None
+    random_seed: int | None = None
 
 
 class SimulateResponse(BaseModel):
@@ -86,6 +105,20 @@ class CustomSimulateRequest(BaseModel):
     indicators: list[str] | None = None
     run_validation: bool = Field(default=False, description="Run full validation suite (Monte Carlo, block-bootstrap, price-path resample, bootstrap CI, walk-forward, attribution). Results are returned in the API response and persisted on the run record (queryable later via GET /results/{run_id} and GET /runs).")
     full_metrics: bool = Field(default=True, description="Compute extended metrics (VaR, CVaR, drawdown, win/loss ratios, Sharpe CI, turnover). When False, only basic metrics are returned.")
+    # Execution-realism knobs -- see SimulateRequest's identical fields for
+    # the full rationale (high-expectations gate-conflict audit). This is
+    # the path vinu-research's tools.run_backtest actually calls
+    # (/simulate/custom), so every backtest that has ever fed strategy
+    # selection ran under these same silently-optimistic defaults.
+    position_sizing_model: Literal["fixed", "vol_target", "kelly"] = "fixed"
+    target_annual_vol: float | None = None
+    vol_lookback_days: int | None = None
+    kelly_fraction: float | None = None
+    kelly_lookback_days: int | None = None
+    max_leverage: float | None = None
+    max_pct_of_volume: float | None = None
+    execution_reject_prob: float | None = None
+    random_seed: int | None = None
 
 
 class CustomSimulateResponse(BaseModel):

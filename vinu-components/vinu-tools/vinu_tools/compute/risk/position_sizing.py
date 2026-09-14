@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from vinu_infra.risk_math import kelly_fraction as _kelly_fraction
+
 
 def kelly_optimal_fraction(
     win_rate: float,
@@ -9,13 +11,11 @@ def kelly_optimal_fraction(
     avg_loss: float,
     fraction_of_kelly: float = 1.0,
 ) -> float:
-    if avg_loss <= 0 or win_rate <= 0 or win_rate >= 1:
-        return 0.0
-    b = avg_win / avg_loss
-    p = win_rate
-    q = 1 - p
-    f_star = (p * b - q) / b
-    return max(0.0, f_star * fraction_of_kelly)
+    """Thin wrapper over vinu_infra.risk_math.kelly_fraction -- the single
+    source of truth for this formula (also used by vinu-simulator's
+    FractionalKellySizer). Kept as a separate name/module here since
+    existing callers import kelly_optimal_fraction from this path."""
+    return _kelly_fraction(win_rate, avg_win, avg_loss, fraction_of_kelly)
 
 
 def risk_budget_position_size(

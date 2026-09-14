@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vinu · System Mirror — Premium Demo (mock)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = { darkMode: 'class', theme: { extend: {
+  colors: { base:'#0A0E14', panel:'#11161F', raised:'#161D29', edge:'#1E2632',
+    ink:'#E6E9EF', muted:'#8B93A3', faint:'#5B6474', accent:'#2F81F7', paper:'#A371F7',
+    up:'#26A69A', down:'#EF5350', warn:'#F0B90B', halt:'#F85149', ok:'#3FB950' },
+  fontFamily: { sans:['Inter','system-ui','sans-serif'], mono:['JetBrains Mono','monospace'] }
+}}};
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<style>
+  body{background:#0A0E14;font-family:Inter,system-ui,sans-serif}
+  .num{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums}
+  .card{background:#11161F;border:1px solid #1E2632;border-radius:14px}
+  .card-hd{font-weight:700;letter-spacing:.01em}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:3px 10px;border-radius:9999px;background:#161D29;border:1px solid #1E2632;color:#E6E9EF}
+  .dot{width:9px;height:9px;border-radius:9999px;display:inline-block;flex:none}
+  .fmtbtn{cursor:pointer;transition:all .15s}.fmtbtn.active{background:#2F81F7;border-color:#2F81F7;color:#fff}
+  .tabbtn{cursor:pointer;transition:all .15s}.tabbtn.active{background:#2F81F7;border-color:#2F81F7;color:#fff}
+  .halt-glow{box-shadow:0 0 0 1px #F85149,0 0 28px rgba(248,81,73,.45);animation:pulse-red 2s infinite}
+  @keyframes pulse-red{0%,100%{box-shadow:0 0 0 1px #F85149,0 0 18px rgba(248,81,73,.35)}50%{box-shadow:0 0 0 1px #F85149,0 0 34px rgba(248,81,73,.6)}}
+  .stage-dot{width:11px;height:11px;border-radius:9999px;display:inline-block;margin-right:3px}
+  .angle{font-size:10px;padding:3px 2px;border-radius:6px;text-align:center;font-family:'JetBrains Mono',monospace;border:1px solid transparent}
+  pre.raw{background:#0A0E14;border:1px solid #1E2632;color:#7dd3fc;font-size:11px;padding:12px;border-radius:10px;overflow:auto}
+  tbody tr{transition:background .12s} tbody tr:hover{background:#161D29}
+  .pos{color:#26A69A}.neg{color:#EF5350}
+  .kbtn{font-size:11px;padding:4px 10px;border-radius:8px;background:#161D29;border:1px solid #1E2632;cursor:pointer}
+  .kbtn:hover{border-color:#2F81F7}
+  ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#1E2632;border-radius:8px}
+</style>
+</head>
+<body class="text-ink font-sans">
+<div class="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
+
+  <!-- HEADER -->
+  <header class="flex flex-wrap items-center justify-between gap-3">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-xl flex items-center justify-center font-extrabold text-white" style="background:linear-gradient(135deg,#2F81F7,#A371F7)">V</div>
+      <div>
+        <h1 class="text-lg font-extrabold tracking-tight">Vinu <span class="text-accent">·</span> System Mirror</h1>
+        <p class="text-xs text-muted">what is flowing · per-ticker · per-market · down to granularity</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2 text-xs">
+      <span class="text-faint">View:</span>
+      <button data-fmt="table" class="fmtbtn chip active">Table</button>
+      <button data-fmt="kanban" class="fmtbtn chip">Kanban</button>
+      <button data-fmt="timeline" class="fmtbtn chip">Timeline</button>
+      <button data-fmt="raw" class="fmtbtn chip">Raw JSON</button>
+      <button id="haltSim" class="kbtn text-halt border-halt" style="border-color:#F85149">⚠ simulate halt</button>
+    </div>
+  </header>
+
+  <!-- HALT BANNER -->
+  <div id="haltBanner" class="hidden card halt-glow p-3 flex items-center gap-3" style="border-color:#F85149">
+    <span class="dot" style="background:#F85149"></span>
+    <div class="text-sm"><b class="text-halt">TRADING HALTED</b> <span class="text-muted">· scope: global · policy <span class="num">entries_only</span> · reduce-only exits still pass · entries + PEND→ACTIVE blocked</span></div>
+    <div class="ml-auto text-xs text-muted num">/tmp/vinu-trading-halt present</div>
+  </div>
+
+  <!-- L0 -->
+  <section class="card p-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="card-hd text-sm">L0 · Fleet / Market <span class="text-xs font-normal text-faint">kill-switch · broker · drawdown · OOD · correlation · workers</span></h2>
+      <span class="chip"><span class="dot" id="fleetDot" style="background:#3FB950"></span><span id="fleetTxt">ALL CLEAR</span></span>
+    </div>
+    <div class="flex flex-wrap gap-2 text-xs" id="fleet"></div>
+    <div class="mt-3">
+      <div class="text-[11px] text-faint mb-1">Worker heartbeats <span class="num">(planner 30m · risk 15m · allocator 15m · significance 15m · live 5m · feedback 5m · shadow 1h · analysis 1h · screener 30s · ranker 24h)</span></div>
+      <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted num" id="workers"></div>
+    </div>
+  </section>
+
+  <!-- L1 -->
+  <section class="card p-4">
+    <h2 class="card-hd text-sm mb-2">L1 · Ticker board <span class="text-xs font-normal text-faint">click a row → L2 detail</span></h2>
+    <div id="board"></div>
+  </section>
+
+  <!-- L2 -->
+  <section class="card p-4" id="detailSec">
+    <h2 class="card-hd text-sm mb-2">L2 · Ticker detail — <span id="detailSym" class="text-accent num">AAPL</span> <span id="detailArtifact"></span></h2>
+    <div class="flex flex-wrap gap-2 mb-3 text-xs">
+      <button id="tabFlow" class="tabbtn chip active">Artifact flow</button>
+      <button id="tabAngles" class="tabbtn chip">28 angles</button>
+      <button id="tabGates" class="tabbtn chip">Live gates</button>
+      <button id="tabCharts" class="tabbtn chip">Charts · 3 libs</button>
+      <button id="tabLedger" class="tabbtn chip">Ledger</button>
+    </div>
+    <div id="detail"></div>
+    <div id="charts" class="hidden grid md:grid-cols-3 gap-3 mt-3">
+      <div class="rounded-xl p-2" style="background:#0A0E14;border:1px solid #1E2632"><h3 class="text-[11px] text-muted mb-1">lightweight-charts · candles + entries</h3><div id="lwchart" style="height:230px"></div></div>
+      <div class="rounded-xl p-2" style="background:#0A0E14;border:1px solid #1E2632"><h3 class="text-[11px] text-muted mb-1">ECharts · equity + drawdown</h3><div id="echart" style="height:230px"></div></div>
+      <div class="rounded-xl p-2" style="background:#0A0E14;border:1px solid #1E2632"><h3 class="text-[11px] text-muted mb-1">Plotly · sweep compare</h3><div id="plotly" style="height:230px"></div></div>
+    </div>
+  </section>
+
+  <!-- L3 -->
+  <section class="card p-4">
+    <h2 class="card-hd text-sm mb-2">L3 · Order trace <span class="text-xs font-normal text-faint num">GET /agent/trace/{ref_id} — OrderGuard 7 checks in real order</span></h2>
+    <div id="trace" class="text-[13px] space-y-1.5"></div>
+  </section>
+
+  <footer class="text-center text-[11px] text-faint pb-4">mock data · premium dark theme tokens: Inter + JetBrains Mono · up #26A69A / down #EF5350 / halt #F85149 / paper #A371F7</footer>
+</div>
+
+<script>
+// ---------- MOCK STATE ----------
+const ANGLES28 = ["arima","backtesting_44_metrics","chronos","dlinear","drawdown_deep_dive","exponential_smoothing","garch","itransformer","kalman_filters","kronos","lag_llama","lpatchtst","lstm","moirai","moment","news_price_causality","patchtst","peer_relative_strength","pnl_attribution","regime_analysis","shock_clustering","shock_personality","tft","timer_timerxl","timesfm","tips_regime_aware_transformer","trend_lifecycle","trend_session_structure"];
+const READ_BY_FORECAST = new Set(["shock_clustering","shock_personality"]);
+const TICKERS = [
+  {sym:"AAPL", px:231.42, chg:+1.84, runStatus:"completed", runId:"run_AAPL_2214", changeGate:"yes · vol breakout", anglesHit:21, lowTrust:["lag_llama","moment"], tier:"A · high", tierCls:"pos", sweep:"Sharpe 1.8 · 120 trades", artifact:"ACTIVE", artCls:"#2F81F7", artifactAge:"2d", risk:"APPROVED", alloc:"funded 8.2%", live:"LONG 150 @ 228.40", monitor:"hold · bracket armed @1R", feed:"open", pnl:"+2.1%"},
+  {sym:"TSLA", px:248.10, chg:-0.62, runStatus:"skipped_existing", runId:"run_TSLA_2209", changeGate:"no · noise", anglesHit:14, lowTrust:["chronos","tft","kronos"], tier:"C · watch", tierCls:"neg", sweep:"Sharpe 0.6 · 88 trades", artifact:"BENCHING", artCls:"#A371F7", artifactAge:"6h", risk:"PENDING", alloc:"candidate 3.1% would-be", live:"shadow paper +1.2%", monitor:"awaiting promotion bar", feed:"—", pnl:"—"}
+];
+const FLEET = {halt:false, policy:"entries_only", broker:"healthy · grace 180s", dd:"-3.2% from peak", ddCls:"", absLoss:"-1.1% session", ood:"dormant", corr:"AAPL–TSLA 0.31"};
+const WORKERS = [["planner · 30m",4],["risk · 15m",2],["allocator · 15m",6],["significance · 15m",1],["live · 5m",0],["feedback · 5m",1],["shadow · 1h",22],["analysis · 1h",18],["screener · 30s",0],["ranker · 24h",300]];
+const GUARD = ["halt check → CLEAR (policy entries_only, reduce_only exempt)","throttle 10/s → PASS","symbol override → none","mandate expiry → valid","notional caps → 8.2% ≤ cap · PASS","risk budget → tier ok · PASS","submit → Alpaca <b class='num'>ord_AAPL_8812</b> + resting <span class='num'>oto</span> stop 219.10"];
+const LEDGER = ["AAPL · Planner PASS fit=A · 09-13 14:00","AAPL · risk_gatekeeper APPROVED · 14:15","AAPL · capital_allocator funded 8.2% · 14:30","AAPL · live entered LONG 150 @228.40 · 14:35","TSLA · ChangeGate NO — advanced to next ticker"];
+const STAGES = ["watchlist","RunLog","ChangeGate","Summary","Planner","sweep","CREATED","risk","PEND","alloc","ACTIVE","monitor"];
+
+let fmt = "table", detailSym = "AAPL", detailTab = "flow", halted = false;
+
+function renderFleet(){
+  document.getElementById("haltBanner").classList.toggle("hidden", !halted);
+  document.getElementById("fleetDot").style.background = halted ? "#F85149" : "#3FB950";
+  document.getElementById("fleetTxt").textContent = halted ? "HALTED — entries blocked" : "ALL CLEAR";
+  document.getElementById("fleetTxt").style.color = halted ? "#F85149" : "#3FB950";
+  document.getElementById("fleet").innerHTML = `
+    <span class="chip"><span class="dot" style="background:${halted?"#F85149":"#3FB950"}"></span>kill-switch: <b>${halted?"HALTED":"CLEAR"}</b>&nbsp;<span class="num text-muted">${FLEET.policy}</span></span>
+    <span class="chip"><span class="dot" style="background:#3FB950"></span>broker: ${FLEET.broker}</span>
+    <span class="chip"><span class="dot" style="background:#F0B90B"></span>drawdown: <span class="num">${FLEET.dd} · ${FLEET.absLoss}</span></span>
+    <span class="chip">OOD: ${FLEET.ood}</span>
+    <span class="chip">corr: <span class="num">${FLEET.corr}</span></span>`;
+  document.getElementById("workers").innerHTML = WORKERS.map(([n,age])=>
+    `<span><span class="dot" style="background:${age>60?"#F0B90B":"#3FB950"}"></span> ${n} · ${age}m ago</span>`).join("");
+}
+document.getElementById("haltSim").onclick = (e)=>{ halted=!halted; e.target.textContent = halted?"✓ clear halt":"⚠ simulate halt"; renderFleet(); };
+
+function stageDots(t){
+  const reached = t.artifact==="ACTIVE" ? 11 : 7;
+  return STAGES.map((s,i)=>`<span class="stage-dot" title="${s}" style="background:${i<=reached?(i>=10?"#2F81F7":i>=6?"#A371F7":"#3FB950"):"#2A3342"}"></span>`).join("");
+}
+function artPill(a,c){ return `<span class="chip num" style="border-color:${c};color:${c}">● ${a}</span>`; }
+
+function renderBoard(){
+  const el = document.getElementById("board");
+  document.querySelectorAll(".fmtbtn").forEach(b=>b.classList.toggle("active", b.dataset.fmt===fmt));
+  if(fmt==="table"){
+    el.innerHTML = `<div class="overflow-x-auto"><table class="w-full text-[13px]"><thead><tr class="text-left text-faint text-[11px] uppercase tracking-wide">
+      <th class="pb-2">Ticker</th><th class="pb-2">Price</th><th class="pb-2">RunLog</th><th class="pb-2">ChangeGate</th><th class="pb-2">Summary</th><th class="pb-2">Planner</th><th class="pb-2">Artifact</th><th class="pb-2">Live / Shadow</th><th class="pb-2">Monitor</th><th class="pb-2">Flow</th></tr></thead><tbody>` +
+      TICKERS.map(t=>`<tr class="border-t cursor-pointer" style="border-color:#1E2632" onclick="selectTicker('${t.sym}')">
+        <td class="py-2 font-bold text-accent num">${t.sym}</td>
+        <td class="num"><span class="${t.chg>=0?"pos":"neg"}">${t.px.toFixed(2)} (${t.chg>=0?"+":""}${t.chg.toFixed(2)}%)</span></td>
+        <td class="num text-muted">${t.runStatus}</td><td class="text-muted">${t.changeGate}</td>
+        <td class="num">${t.anglesHit}/28</td><td class="${t.tierCls}">${t.tier}</td>
+        <td>${artPill(t.artifact,t.artCls)}</td><td class="text-muted">${t.live}</td><td>${t.monitor}</td><td class="whitespace-nowrap">${stageDots(t)}</td></tr>`).join("") + `</tbody></table></div>`;
+  } else if(fmt==="kanban"){
+    const cols = ["CREATED","BENCHING","PEND","ACTIVE"];
+    el.innerHTML = `<div class="flex gap-2 overflow-x-auto pb-1">` + cols.map(c=>{
+      const cards = TICKERS.filter(t=>t.artifact===c);
+      return `<div class="flex-1 rounded-xl p-2" style="background:#0A0E14;border:1px solid #1E2632;min-width:170px">
+        <h3 class="text-[11px] font-bold text-muted mb-2 num">${c} · ${cards.length}</h3>` +
+        (cards.map(t=>`<div class="rounded-lg p-2 mb-2 cursor-pointer" style="background:#161D29;border:1px solid ${t.artCls}" onclick="selectTicker('${t.sym}')">
+          <b class="num text-accent">${t.sym}</b> <span class="num text-xs ${t.chg>=0?"pos":"neg"}">${t.chg>=0?"+":""}${t.chg}%</span><br>
+          <span class="text-[11px] text-muted">${t.tier} · ${t.monitor}</span></div>`).join("") || `<span class="text-[11px] text-faint">— empty —</span>`) + `</div>`;
+    }).join("") + `</div>`;
+  } else if(fmt==="timeline"){
+    el.innerHTML = TICKERS.map(t=>`<div class="mb-3 cursor-pointer" onclick="selectTicker('${t.sym}')">
+      <b class="num text-accent">${t.sym}</b> <span class="text-xs text-faint num">${t.runId}</span>
+      <div class="mt-1 flex flex-wrap gap-1">${STAGES.map((s,i)=>{const on=i<=(t.artifact==="ACTIVE"?11:7);
+        return `<span class="chip" style="${on?"border-color:#2F81F7":"opacity:.45"}">${on?"●":"○"} ${s}</span>`;}).join("")}</div></div>`).join("");
+  } else {
+    el.innerHTML = `<pre class="raw">${JSON.stringify({fleet:FLEET, tickers:TICKERS}, null, 2)}</pre>`;
+  }
+}
+function selectTicker(sym){ detailSym = sym; document.getElementById("detailSym").textContent = sym; renderDetail(); }
+
+function angleGrid(t){
+  return `<div class="grid grid-cols-4 md:grid-cols-7 gap-1">` + ANGLES28.map(a=>{
+    const hit = ANGLES28.indexOf(a) < t.anglesHit;
+    const low = t.lowTrust.includes(a);
+    const read = READ_BY_FORECAST.has(a);
+    const bg = !hit ? "#161D29" : low ? "rgba(240,185,11,.14)" : "rgba(63,185,80,.13)";
+    const bd = read ? "#2F81F7" : low ? "#F0B90B" : "#1E2632";
+    const fg = !hit ? "#5B6474" : low ? "#F0B90B" : "#3FB950";
+    return `<div class="angle" style="background:${bg};border-color:${bd};color:${fg}" title="${read?"READ by forecast":"NOT read by forecast"}">${a}${read?" ★":""}${low?" ⚠":""}</div>`;
+  }).join("") + `</div>
+  <p class="text-[11px] text-faint mt-2">★ = only 2 angles the trade-plan forecast reads · ⚠ = low_trust&lt;0.45 · <span class="num">${t.runStatus} · ${t.runId}</span></p>`;
+}
+function renderDetail(){
+  const t = TICKERS.find(x=>x.sym===detailSym);
+  document.getElementById("detailArtifact").innerHTML = artPill(t.artifact, t.artCls);
+  const el = document.getElementById("detail");
+  document.getElementById("charts").classList.toggle("hidden", detailTab!=="charts");
+  ["Flow","Angles","Gates","Charts","Ledger"].forEach(n=>document.getElementById("tab"+n).classList.toggle("active", detailTab===n.toLowerCase()));
+  if(detailTab==="flow"){
+    el.innerHTML = `<div class="text-[13px] space-y-2">
+      <div>📝 Summary <span class="num">${t.anglesHit}/28 angles</span> with rows → Planner tier <b class="${t.tierCls}">${t.tier}</b></div>
+      <div>🔬 Sweep <span class="num">${t.sweep}</span> · risk <b class="pos">${t.risk}</b> · alloc <span class="num">${t.alloc}</span></div>
+      <div>⚡ Live <span class="text-muted">${t.live}</span> · PnL <b class="num ${t.pnl.startsWith("+")?"pos":""}">${t.pnl}</b></div>
+      <div>👁 Monitor ${t.monitor}</div>
+      <div>📉 Promotion bar <span class="num">Sharpe≥1.0 · PSR · dd · paper-days</span> + correlation verdict <span class="num">${FLEET.corr}</span></div></div>`;
+  } else if(detailTab==="angles"){ el.innerHTML = angleGrid(t);
+  } else if(detailTab==="gates"){ el.innerHTML = `<div class="text-[13px] space-y-2">
+      <div><b>Entry gates (11)</b> <span class="text-muted">emergency halt → broker-outage → signal conflict → stale signal → data-freshness → CVaR tail → event blackout → liquidity/spread → borrow → cooldown → turbulence — each a real <span class="num">entry_blocked_by_*</span></span></div>
+      <div><b>Exit chain</b> <span class="text-muted">contingency → invalidation (reduce_only close) → rebalance-advisory → trailing ratchet (bookkeeping only) → bracket <span class="num">25%@1R · 50%@2R · cap75%</span> → hold</span></div>
+      <div><b>OrderGuard</b> <span class="text-muted">see L3 below — same path for interactive + automated orders</span></div></div>`;
+  } else if(detailTab==="charts"){ el.innerHTML = `<p class="text-[11px] text-faint">Same mock OHLCV in all three — judge which lib earns the L2 charts. Locked default: lightweight-charts (candles) + ECharts (dashboards).</p>`; drawCharts();
+  } else { el.innerHTML = LEDGER.filter(l=>l.startsWith(t.sym)).map(l=>`<div class="text-[13px] num text-muted">• ${l}</div>`).join("") || `<span class="text-sm text-faint">no entries</span>`; }
+}
+["Flow","Angles","Gates","Charts","Ledger"].forEach(n=>{ document.getElementById("tab"+n).onclick = ()=>{ detailTab = n.toLowerCase(); renderDetail(); }; });
+
+function renderTrace(){
+  document.getElementById("trace").innerHTML =
+    `<div class="chip num mb-1" style="border-color:#2F81F7;color:#2F81F7">ref ord_AAPL_8812 · session ses_441 · AAPL</div>` +
+    GUARD.map(g=>`<div><span class="dot" style="background:#3FB950"></span> <span class="text-muted">${g}</span></div>`).join("");
+}
+
+function mockCandles(n=60){ let p=228, out=[], t=Math.floor(Date.now()/1000) - n*86400;
+  for(let i=0;i<n;i++){ const o=p, c=o+(Math.random()-0.45)*3, h=Math.max(o,c)+Math.random(), l=Math.min(o,c)-Math.random();
+    out.push({time:t+i*86400, open:o, high:h, low:l, close:c}); p=c; } return out; }
+function drawCharts(){
+  try{
+    const data = mockCandles();
+    const lw = document.getElementById("lwchart"); lw.innerHTML="";
+    const chart = LightweightCharts.createChart(lw,{layout:{background:{color:"#0A0E14"},textColor:"#8B93A3",fontFamily:"JetBrains Mono"},grid:{vertLines:{color:"#1E2632"},horzLines:{color:"#1E2632"}},height:230});
+    const cs = chart.addCandlestickSeries({upColor:"#26A69A",downColor:"#EF5350",wickUpColor:"#26A69A",wickDownColor:"#EF5350",borderVisible:false});
+    cs.setData(data);
+    cs.setMarkers([{time:data[data.length-8].time,position:"belowBar",color:"#2F81F7",shape:"arrowUp",text:"LONG 150"},{time:data[data.length-3].time,position:"aboveBar",color:"#F0B90B",shape:"arrowDown",text:"1R armed"}]);
+  }catch(e){}
+  try{
+    const data = mockCandles(); const eq=[]; let v=100; const dd=[];
+    data.forEach((d,i)=>{ v += (d.close-d.open)/d.open*100; eq.push([i,+v.toFixed(2)]); dd.push([i,+(Math.min(0,(v-102))).toFixed(2)]); });
+    echarts.init(document.getElementById("echart")).setOption({backgroundColor:"#0A0E14",textStyle:{color:"#8B93A3",fontFamily:"JetBrains Mono",fontSize:10},
+      grid:{left:44,right:8,top:8,bottom:24},xAxis:{type:"value"},yAxis:{type:"value",splitLine:{lineStyle:{color:"#1E2632"}}},
+      series:[{type:"line",data:eq,showSymbol:false,lineStyle:{color:"#2F81F7",width:2},areaStyle:{color:"rgba(47,129,247,.15)"}},{type:"bar",data:dd,itemStyle:{color:"#F0B90B"}}]});
+  }catch(e){}
+  try{
+    const x=[...Array(20).keys()], y1=x.map(()=>0.4+Math.random()*1.6), y2=x.map(()=>0.2+Math.random()*1.2);
+    Plotly.newPlot("plotly",[{x,y:y1,name:"candidate",line:{color:"#2F81F7"}},{x,y:y2,name:"baseline",line:{color:"#5B6474",dash:"dot"}}],
+      {margin:{t:24,r:8,b:30,l:40},paper_bgcolor:"#0A0E14",plot_bgcolor:"#0A0E14",font:{color:"#8B93A3",family:"JetBrains Mono",size:10},height:230,showlegend:true,legend:{orientation:"h"}},
+      {displayModeBar:false});
+  }catch(e){}
+}
+
+document.querySelectorAll(".fmtbtn").forEach(b=>b.onclick=()=>{fmt=b.dataset.fmt;renderBoard();});
+renderFleet(); renderBoard(); renderDetail(); renderTrace();
+</script>
+</body>
+</html>

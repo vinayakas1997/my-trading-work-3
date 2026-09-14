@@ -97,6 +97,14 @@ CREATE TABLE IF NOT EXISTS angle_calibration_entries (
     FOREIGN KEY (artifact_id) REFERENCES artifacts(artifact_id)
 );
 
+CREATE TABLE IF NOT EXISTS proposed_decay_actions (
+    artifact_id TEXT PRIMARY KEY,
+    from_status TEXT NOT NULL,
+    proposed_status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (artifact_id) REFERENCES artifacts(artifact_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_bench_artifact ON bench_history(artifact_id);
 CREATE INDEX IF NOT EXISTS idx_snapshots_artifact ON decay_snapshots(artifact_id);
 CREATE INDEX IF NOT EXISTS idx_calibration_artifact ON calibration_entries(artifact_id);
@@ -530,6 +538,48 @@ class SqliteStrategyStore:
             (artifact_id,),
         ).fetchall()
         return [self._row_to_snapshot(r) for r in rows]
+
+    def record_proposed_decay_action(
+        self, artifact_id: str, from_status: str, proposed_status: str,
+    ) -> None:
+        """Phase 6 (decay-response manual/auto knob): records a decay
+        transition ScheduledResearchExecutor.decay_scan() detected but did
+        not apply because VINU_RESEARCH_DECAY_RESPONSE_MODE=propose --
+        awaiting a human's decay.approve_decay_action() call. One open
+        proposal per artifact; a fresh detection on the same artifact
+        overwrites the previous proposal rather than accumulating a queue.
+        """
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO proposed_decay_actions (artifact_id, from_status, proposed_status, created_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(artifact_id) DO UPDATE SET
+                   from_status=excluded.from_status,
+                   proposed_status=excluded.proposed_status,
+                   created_at=excluded.created_at""",
+            (artifact_id, from_status, proposed_status, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+    def get_proposed_decay_action(self, artifact_id: str) -> dict[str, Any] | None:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM proposed_decay_actions WHERE artifact_id = ?",
+            (artifact_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "artifact_id": row["artifact_id"],
+            "from_status": row["from_status"],
+            "proposed_status": row["proposed_status"],
+            "created_at": row["created_at"],
+        }
+
+    def clear_proposed_decay_action(self, artifact_id: str) -> None:
+        conn = self._get_conn()
+        conn.execute("DELETE FROM proposed_decay_actions WHERE artifact_id = ?", (artifact_id,))
+        conn.commit()
 
     @staticmethod
     def _row_to_artifact(row: sqlite3.Row) -> Artifact:

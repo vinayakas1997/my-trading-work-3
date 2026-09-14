@@ -35,6 +35,7 @@ from __future__ import annotations
 from typing import Any
 
 from vinu_infra.risk_math import cvar_exceeds, forecast_confidence_scale, vol_target_scale
+from vinu_infra.risk_math import kelly_fraction as _shared_kelly_fraction
 
 # Fraction of the full Kelly stake actually deployed. The design doc's own
 # "Open questions" leaves Kelly-vs-fixed-fractional undecided; the
@@ -76,16 +77,17 @@ _METHODS = ("fractional_kelly", "fixed_fractional", "atr_stop")
 def full_kelly_fraction(win_rate: float, payoff_ratio: float) -> float:
     """Full Kelly fraction f* = (p*b - q) / b, clamped to >= 0.
 
-    Ported from jarvis-trading-bot/risk_manager.py's kelly_criterion
-    (same guards: avg_loss == 0 or win_rate <= 0 or win_rate >= 1 -> 0).
-    Returns a fraction of capital (0..1), NOT a percentage.
+    Thin wrapper over vinu_infra.risk_math.kelly_fraction -- the single
+    source of truth for this exact formula (also used by vinu-tools' and
+    vinu-simulator's copies, unified there for the same reason). This
+    function's own signature takes a single `payoff_ratio` (= avg_win /
+    avg_loss, already reduced to one number) rather than separate avg_win/
+    avg_loss -- passing avg_win=payoff_ratio, avg_loss=1.0 preserves that
+    exact ratio through the shared formula (b = avg_win/avg_loss =
+    payoff_ratio/1.0 = payoff_ratio), so no behavior changes for existing
+    callers. Returns a fraction of capital (0..1), NOT a percentage.
     """
-    if win_rate <= 0.0 or win_rate >= 1.0 or payoff_ratio <= 0.0:
-        return 0.0
-    p = win_rate
-    q = 1.0 - p
-    b = payoff_ratio
-    return max(0.0, (p * b - q) / b)
+    return _shared_kelly_fraction(win_rate, avg_win=payoff_ratio, avg_loss=1.0)
 
 
 def fractional_kelly_size(

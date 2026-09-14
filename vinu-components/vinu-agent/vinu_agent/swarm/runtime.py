@@ -86,6 +86,9 @@ class SwarmRuntime:
     def get_run(self, run_id: str) -> Optional[SwarmRun]:
         return self._store.get(run_id)
 
+    def get_latest_run(self, preset_name: str, symbol: str) -> Optional[SwarmRun]:
+        return self._store.find_latest_run(preset_name, symbol)
+
     def cancel_run(self, run_id: str) -> bool:
         run = self._store.get(run_id)
         if not run or run.status != RunStatus.RUNNING:

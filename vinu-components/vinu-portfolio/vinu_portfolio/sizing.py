@@ -22,6 +22,13 @@ def vol_targeting_position_size(
 
     Returns:
         Target position size in dollars.
+
+    Deliberately NOT delegated to vinu_infra.risk_math.vol_target_scale
+    despite the similar intent -- that shared helper takes current_vol as
+    *daily* and target_vol as *annual* (converting the latter internally),
+    while this function's realized_vol/target_vol are both already
+    annualized. Reusing it here without a unit conversion would silently
+    change every existing caller's sizing math.
     """
     if realized_vol <= 0:
         return risk_budget
@@ -43,13 +50,25 @@ def apply_position_sizing(
         target_vol: Target annualized volatility.
         vol_estimates: Optional dict of strategy_name -> annualized vol.
                        When unavailable, uses the weight as-is (dollar
-                       amount proportional to weight * capital).
+                       amount proportional to weight * capital) -- this is
+                       intentional fail-open behavior, but it used to be
+                       silent: passing `vol = target_vol` as the fallback
+                       mathematically guarantees a 1.0 no-op ratio with no
+                       trace of why. Now logged so a systematically missing
+                       vol-estimation pipeline for a strategy is visible
+                       instead of masquerading as "already at target vol".
 
     Returns:
         Same list with added 'position_size' key.
     """
     vol_estimates = vol_estimates or {}
     result = []
+    missing = [w["name"] for w in weights if w["name"] not in vol_estimates]
+    if missing:
+        LOG.warning(
+            "No vol_estimate for %d strategies (%s) -- sizing left unscaled (weight * capital) for them",
+            len(missing), ", ".join(missing),
+        )
     for w in weights:
         name = w["name"]
         weight = w["target_weight"]

@@ -272,3 +272,67 @@ class TestHypothesisRegistryAndTickerLedgerWrites:
         # either audit write failing.
         assert list_closed_positions(book, unprocessed_only=True) == []
         assert result["status"] == "ok"
+
+
+class TestPushPnlAttributionLossCause:
+    """Post-trade causal loss classification follow-up: the closed_positions
+    row _push_pnl_attribution sends on has no loss_cause column in the book
+    itself -- this enriches a copy from the trade_audit_log's exit row
+    before the POST, without a SQLite schema migration."""
+
+    def test_enriches_payload_with_loss_cause_from_audit_log(self, book, monkeypatch) -> None:
+        worker = _make_worker(book)
+        worker._http.post = AsyncMock(return_value=_resp(200, {"status": "ok"}))
+        monkeypatch.setattr(
+            "vinu_live.feedback_loop.read_by_trade_id",
+            lambda trade_id: [{"trade_id": trade_id, "event": "exit", "loss_cause": "risk_error"}],
+        )
+
+        ok = asyncio.run(worker._push_pnl_attribution("AAPL", {"position_id": "pos_1", "symbol": "AAPL"}))
+
+        assert ok is True
+        _, kwargs = worker._http.post.call_args
+        sent = kwargs["json"]["closed_positions"][0]
+        assert sent["loss_cause"] == "risk_error"
+        assert sent["position_id"] == "pos_1"  # original fields still present
+
+    def test_no_audit_row_omits_loss_cause_without_failing(self, book, monkeypatch) -> None:
+        worker = _make_worker(book)
+        worker._http.post = AsyncMock(return_value=_resp(200, {"status": "ok"}))
+        monkeypatch.setattr("vinu_live.feedback_loop.read_by_trade_id", lambda trade_id: [])
+
+        ok = asyncio.run(worker._push_pnl_attribution("AAPL", {"position_id": "pos_1", "symbol": "AAPL"}))
+
+        assert ok is True
+        _, kwargs = worker._http.post.call_args
+        sent = kwargs["json"]["closed_positions"][0]
+        assert "loss_cause" not in sent
+
+    def test_audit_log_lookup_failure_does_not_block_the_push(self, book, monkeypatch) -> None:
+        worker = _make_worker(book)
+        worker._http.post = AsyncMock(return_value=_resp(200, {"status": "ok"}))
+
+        def _raise(trade_id):
+            raise OSError("disk error")
+
+        monkeypatch.setattr("vinu_live.feedback_loop.read_by_trade_id", _raise)
+
+        ok = asyncio.run(worker._push_pnl_attribution("AAPL", {"position_id": "pos_1", "symbol": "AAPL"}))
+
+        assert ok is True
+        _, kwargs = worker._http.post.call_args
+        sent = kwargs["json"]["closed_positions"][0]
+        assert "loss_cause" not in sent
+
+    def test_original_position_dict_not_mutated(self, book, monkeypatch) -> None:
+        worker = _make_worker(book)
+        worker._http.post = AsyncMock(return_value=_resp(200, {"status": "ok"}))
+        monkeypatch.setattr(
+            "vinu_live.feedback_loop.read_by_trade_id",
+            lambda trade_id: [{"trade_id": trade_id, "event": "exit", "loss_cause": "risk_error"}],
+        )
+        position = {"position_id": "pos_1", "symbol": "AAPL"}
+
+        asyncio.run(worker._push_pnl_attribution("AAPL", position))
+
+        assert "loss_cause" not in position

@@ -178,16 +178,28 @@ class StrategyService:
         if angle_name != "regime_analysis":
             return payload
         rows = (payload or {}).get("data") or []
+        # "current_regime" is the symbol's regime as of the most recent bar
+        # -- what strategy filters actually need. This used to fall back to
+        # scanning "regime_stats" rows for the highest pct_of_time, which
+        # answers "what regime has this symbol mostly been in historically",
+        # a different (and wrong) question for a live filter to be gating
+        # on. The pct_of_time fallback below only fires against older,
+        # not-yet-reprocessed regime_analysis payloads that predate the
+        # current_regime row.
+        current: dict[str, Any] | None = None
         best: dict[str, Any] | None = None
         for row in rows:
-            if row.get("metric") != "regime_stats":
-                continue
-            if best is None or (row.get("pct_of_time") or 0) > (best.get("pct_of_time") or 0):
-                best = row
-        if best is None:
+            metric = row.get("metric")
+            if metric == "current_regime":
+                current = row
+            elif metric == "regime_stats":
+                if best is None or (row.get("pct_of_time") or 0) > (best.get("pct_of_time") or 0):
+                    best = row
+        chosen = current or best
+        if chosen is None:
             return payload
         return {
-            "regime": best.get("regime"),
+            "regime": chosen.get("regime"),
             **payload,
         }
 

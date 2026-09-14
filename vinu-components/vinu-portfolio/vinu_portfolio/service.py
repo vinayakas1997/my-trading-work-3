@@ -827,6 +827,21 @@ class PortfolioService:
             if _tot3 > 0:
                 for t in tilted:
                     t["target_weight"] = round(t["target_weight"] / _tot3, 4)
+
+        # Re-enforce max_per_strategy_weight: build_portfolio's base weights
+        # already passed cap_concentration once (line ~325), but the three
+        # multiplicative tilts above (regime/outcome/confidence-gradient,
+        # each up to 1.3x uncapped) plus hysteresis/action-cap renormalize
+        # can push an already-capped sleeve back over the limit -- the same
+        # bug cap_concentration's own docstring documents fixing for
+        # build_portfolio, reintroduced here by the tilt pipeline having no
+        # idea the cap exists. Same iterative cap+redistribute, not a plain
+        # min(w, cap)+renormalize (which would just reintroduce it again).
+        _tilt_weights = {t["name"]: t["target_weight"] for t in tilted}
+        _capped = cap_concentration(_tilt_weights, self._config.max_per_strategy_weight)
+        for t in tilted:
+            t["target_weight"] = round(_capped.get(t["name"], t["target_weight"]), 4)
+
         self._last_weights = {t["name"]: t["target_weight"] for t in tilted}
 
         equity = await self._fetch_account_equity()

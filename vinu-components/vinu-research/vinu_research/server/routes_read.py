@@ -173,7 +173,8 @@ async def promote_artifact(artifact_id: str, force: bool = False) -> dict[str, A
         raise HTTPException(status_code=404, detail=f"Artifact {artifact_id} not found")
     if artifact.status.value != "BENCHING":
         raise HTTPException(status_code=400, detail=f"Artifact is {artifact.status.value}, not BENCHING")
-    verdict = meets_promotion_bar(artifact, _service.config)
+    correlation_verdict = await _service.build_correlation_verdict(artifact)
+    verdict = meets_promotion_bar(artifact, _service.config, correlation_verdict)
     if not verdict.eligible and not force:
         raise HTTPException(
             status_code=409,
@@ -189,6 +190,67 @@ async def promote_artifact(artifact_id: str, force: bool = False) -> dict[str, A
         "artifact_id": artifact_id,
         "forced": force and not verdict.eligible,
         "promotion_reasons": verdict.reasons,
+    }
+
+
+@router.get("/artifacts/{artifact_id}/paper-return")
+async def get_paper_return(artifact_id: str, lookback_days: int = 10) -> dict[str, Any]:
+    """The most recent trading day's realized return `artifact`'s
+    strategy_code would have produced, for vinu-live's ShadowEvaluator to
+    accumulate as one day of paper performance.
+
+    This is the write-side input ShadowEvaluator's promotion gate has
+    always needed but never had a real producer for -- nothing in
+    production ever computed a BENCHING artifact's daily paper return, so
+    PaperPerformanceStore stayed permanently empty and no artifact could
+    ever accumulate min_paper_days (see high-expectations gate-conflict
+    audit). Reuses the same backtest path revalidate_artifact() already
+    uses (ResearchTools.run_backtest), over a short trailing window rather
+    than building a second paper-execution engine, and reads the
+    simulator's own daily_returns series (CustomSimulateResponse.
+    daily_returns, chronologically ordered) rather than re-deriving
+    per-day PnL independently.
+    """
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    artifact = _service.strategy_store.get_artifact(artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail=f"Artifact {artifact_id} not found")
+    if not artifact.strategy_code or not artifact.universe:
+        return {"artifact_id": artifact_id, "status": "no_strategy_code_or_universe", "daily_return": None}
+
+    from datetime import datetime, timedelta, timezone
+
+    from vinu_research.tools import ResearchTools
+
+    symbol = artifact.universe[0]
+    now = datetime.now(timezone.utc)
+    from_date = (now - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    to_date = now.strftime("%Y-%m-%d")
+
+    tools = ResearchTools(_service.config)
+    try:
+        result = await tools.run_backtest(
+            strategy_code=artifact.strategy_code,
+            strategy_class_name="CustomStrategy",
+            symbols=[symbol],
+            from_date=from_date,
+            to_date=to_date,
+            run_validation=False,
+        )
+    except Exception as e:
+        return {"artifact_id": artifact_id, "status": f"backtest_failed: {e}", "daily_return": None}
+    finally:
+        await tools.close()
+
+    if result is None:
+        return {"artifact_id": artifact_id, "status": "backtest_returned_none", "daily_return": None}
+    returns = result.raw.get("daily_returns") if isinstance(result.raw, dict) else None
+    if not returns:
+        return {"artifact_id": artifact_id, "status": "no_returns", "daily_return": None}
+    return {
+        "artifact_id": artifact_id, "status": "ok",
+        "daily_return": returns[-1], "trade_date": to_date, "symbol": symbol,
     }
 
 

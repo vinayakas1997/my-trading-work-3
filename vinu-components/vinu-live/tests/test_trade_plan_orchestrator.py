@@ -141,6 +141,50 @@ class TestEntry:
         assert action is None
         assert list_open_positions(book) == []
 
+    def test_entry_decision_wait_blocks_entry(self, book) -> None:
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(get_routes={"/broker/positions": []})
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+        plan = {**_SAMPLE_PLAN, "entry_decision": "WAIT"}
+
+        action = asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entry_blocked_by_entry_decision"
+        assert post_mock.call_count == 0
+        assert list_open_positions(book) == []
+
+    def test_entry_decision_buy_enters_normally(self, book) -> None:
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+        plan = {**_SAMPLE_PLAN, "entry_decision": "BUY"}
+
+        action = asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+
+    def test_missing_entry_decision_fails_open_and_enters(self, book) -> None:
+        # Older plans predating the entry_decision field (or one where it was
+        # simply never computed) must not be blocked -- fail-open, matching
+        # every other optional field's convention on this path.
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+        plan = {k: v for k, v in _SAMPLE_PLAN.items() if k != "entry_decision"}
+
+        action = asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+
     def test_zero_position_size_skips_entry(self, book) -> None:
         orch = _make_orchestrator(book)
         plan = {**_SAMPLE_PLAN, "risk_bands": {"max_position_size_pct": 0.0}}
@@ -177,6 +221,116 @@ class TestEntry:
 
         assert action["action"] == "entry_not_filled"
         assert list_open_positions(book) == []
+
+    def test_entry_writes_trade_audit_record(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as orch_mod
+
+        recorded = []
+        monkeypatch.setattr(
+            orch_mod, "record_entry",
+            lambda trade_id, symbol, context: recorded.append((trade_id, symbol, context)),
+        )
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+        plan = {
+            **_SAMPLE_PLAN, "_artifact_id": "art_1", "entry_decision": "BUY",
+            "trade_score": {"tier": "strong", "total_score": 120.0, "reasons": ["r1"]},
+        }
+
+        action = asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+        assert len(recorded) == 1
+        trade_id, symbol, context = recorded[0]
+        opened = list_open_positions(book, symbol="AAPL")[0]
+        assert trade_id == opened.position_id
+        assert symbol == "AAPL"
+        assert context["artifact_id"] == "art_1"
+        assert context["entry_decision"] == "BUY"
+        assert context["trade_score_tier"] == "strong"
+        assert context["trade_score_total"] == 120.0
+        assert context["fill_price"] == 150.0
+
+    def test_default_order_routing_is_market(self, book) -> None:
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        asyncio.run(orch._maybe_enter(_SAMPLE_PLAN, "AAPL", 150.0, 100000.0))
+
+        _, kwargs = post_mock.call_args
+        assert kwargs["json"]["order_type"] == "market"
+        assert "limit_price" not in kwargs["json"]
+
+    def test_passive_routing_mode_submits_limit_order_below_price_for_buy(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as orch_mod
+
+        monkeypatch.setattr(orch_mod, "ORDER_ROUTING_MODE", "passive")
+        monkeypatch.setattr(orch_mod, "PASSIVE_LIMIT_OFFSET_BPS", 10.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        action = asyncio.run(orch._maybe_enter(_SAMPLE_PLAN, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+        _, kwargs = post_mock.call_args
+        assert kwargs["json"]["order_type"] == "limit"
+        assert kwargs["json"]["limit_price"] == pytest.approx(150.0 * (1 - 10.0 / 10_000.0))
+
+    def test_passive_routing_mode_submits_limit_order_above_price_for_sell(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as orch_mod
+
+        monkeypatch.setattr(orch_mod, "ORDER_ROUTING_MODE", "passive")
+        monkeypatch.setattr(orch_mod, "PASSIVE_LIMIT_OFFSET_BPS", 10.0)
+        orch = _make_orchestrator(book)
+        plan = {**_SAMPLE_PLAN, "direction": "short"}
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        _, kwargs = post_mock.call_args
+        assert kwargs["json"]["order_type"] == "limit"
+        assert kwargs["json"]["limit_price"] == pytest.approx(150.0 * (1 + 10.0 / 10_000.0))
+
+    def test_passive_routing_mode_does_not_affect_exits(self, book, monkeypatch) -> None:
+        """ENTRIES ONLY -- an exit/reduce must never go passive (a stop that
+        fails to fill on a limit is a risk-control failure, not an
+        execution-quality tradeoff)."""
+        import vinu_live.trade_plan.orchestrator as orch_mod
+
+        monkeypatch.setattr(orch_mod, "ORDER_ROUTING_MODE", "passive")
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get = get_mock
+        orch._http.post = post_mock
+
+        result = asyncio.run(orch._submit_order("AAPL", "sell", 1.0, reduce_only=True))
+
+        assert result["status"] == "submitted"
+        _, kwargs = post_mock.call_args
+        assert kwargs["json"]["order_type"] == "market"
 
 
 class TestBreakerEngagesRealHalt:
@@ -437,6 +591,24 @@ class TestCvarGateAndVolTargeting:
         assert post_mock.call_count == 0
         assert list_open_positions(book) == []
 
+    def test_expected_drawdown_preferred_over_cvar_95_limit_for_gate(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as orch_mod
+        monkeypatch.setattr(orch_mod, "CVAR_GATE_ENABLED", True)
+        monkeypatch.setattr(orch_mod, "CVAR_THRESHOLD", 0.03)
+        orch = _make_orchestrator(book)
+        # cvar_95_limit alone would pass (0.01 < 0.03), but expected_drawdown
+        # (Phase 5's options-IV-blended figure) is above threshold and must
+        # be the one actually used.
+        plan = {**_SAMPLE_PLAN, "risk_bands": {
+            "max_position_size_pct": 0.05, "cvar_95_limit": 0.01, "expected_drawdown": 0.05,
+        }}
+        get_mock, post_mock = self._mocks()
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entry_blocked_by_cvar"
+
     def test_cvar_below_threshold_enters(self, book, monkeypatch) -> None:
         import vinu_live.trade_plan.orchestrator as orch_mod
         monkeypatch.setattr(orch_mod, "CVAR_GATE_ENABLED", True)
@@ -582,6 +754,20 @@ class TestBrokerRestingStopBackstop:
         assert action["action"] == "entered"
         sent = post_mock.call_args.kwargs["json"]
         assert sent["stop_loss_price"] == pytest.approx(150.0 * (1 + 0.05))
+
+    def test_expected_drawdown_preferred_over_cvar_95_limit_for_backstop(self, book) -> None:
+        orch = _make_orchestrator(book)
+        plan = {**_SAMPLE_PLAN, "direction": "long", "risk_bands": {
+            "max_position_size_pct": 0.05, "cvar_95_limit": 0.02, "expected_drawdown": 0.08,
+        }}
+        get_mock, post_mock = self._mocks()
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._maybe_enter(plan, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+        sent = post_mock.call_args.kwargs["json"]
+        assert sent["stop_loss_price"] == pytest.approx(150.0 * (1 - 0.08))
 
     def test_missing_cvar_omits_stop_price_fail_open(self, book) -> None:
         orch = _make_orchestrator(book)
@@ -1277,6 +1463,390 @@ class TestSpreadGate:
         assert list_open_positions(book, symbol="AAPL") == []
 
 
+class TestExecutionSlicing:
+    """Execution unification follow-up: a large entry (qty over
+    LARGE_ORDER_PARTICIPATION_PCT of average daily volume) is TWAP-sliced --
+    slice 1 fires immediately through the normal entry flow, slices 2..N
+    queue on _entry_execution_queue and drain one per subsequent cycle via
+    _drain_entry_execution_queue (called from _evaluate_open_position)."""
+
+    @staticmethod
+    def _mocks(volume_per_bar, quote_body=None):
+        candles_body = {"data": [{"close": 150.0, "volume": volume_per_bar} for _ in range(5)]}
+        get_routes = {"/broker/positions": [], "/candles/AAPL": candles_body}
+        if quote_body is not None:
+            get_routes["/stock/quote"] = quote_body
+        return _router(
+            get_routes=get_routes,
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+
+    def test_small_order_not_sliced(self, book) -> None:
+        # ADV of 10,000,000/day vs. an intended qty of ~33 shares -- far below
+        # the 1% participation threshold, so this must behave exactly like
+        # before this feature existed: one order, nothing queued.
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = self._mocks(volume_per_bar=10_000_000)
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._maybe_enter(_SAMPLE_PLAN, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+        assert orch._entry_execution_queue == {}
+        assert post_mock.call_count == 1
+
+    def test_adv_fetch_failure_fails_open_no_slicing(self, book) -> None:
+        orch = _make_orchestrator(book)
+        # No /candles/AAPL route mocked -> _router 404s -> _participation_pct
+        # returns None -> fail-open, no slicing.
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._maybe_enter(_SAMPLE_PLAN, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+        assert orch._entry_execution_queue == {}
+
+    def test_large_order_slices_first_and_queues_rest(self, book) -> None:
+        # qty = 0.05 * 100000 / 150 = 33.33 shares. ADV of 1,000/day makes
+        # participation ~3.3%, over the 1% default -- must slice into
+        # ENTRY_TWAP_SLICES=3 pieces: one submitted now, two queued.
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = self._mocks(volume_per_bar=1_000)
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._maybe_enter(_SAMPLE_PLAN, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+        queued = orch._entry_execution_queue["AAPL"]
+        assert len(queued) == 2
+        # 3 near-equal TWAP slices -- the whole intended order split roughly
+        # evenly across slice 1 (submitted now) and the 2 queued slices,
+        # regardless of exactly what upstream scaling (forecast confidence,
+        # vol targeting) sized the total order to.
+        total_qty = action["qty"] + sum(s["qty"] for s in queued)
+        assert action["qty"] == pytest.approx(total_qty / 3, rel=0.15)
+        assert all(s["side"] == "buy" for s in queued)
+
+    def test_disabled_via_env_ignores_large_order(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "LARGE_ORDER_PARTICIPATION_PCT", 0.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = self._mocks(volume_per_bar=1_000)
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._maybe_enter(_SAMPLE_PLAN, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+        assert orch._entry_execution_queue == {}
+
+    def test_drain_submits_queued_slice_and_adds_to_position(self, book) -> None:
+        position = open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._entry_execution_queue["AAPL"] = [
+            {"qty": 5.0, "side": "buy", "artifact_id": ""},
+            {"qty": 3.0, "side": "buy", "artifact_id": ""},
+        ]
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o2"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._drain_entry_execution_queue("AAPL", position, 151.0))
+
+        assert action["action"] == "entry_slice_filled"
+        assert action["qty"] == 5.0
+        assert orch._entry_execution_queue["AAPL"] == [{"qty": 3.0, "side": "buy", "artifact_id": ""}]
+        reloaded = list_open_positions(book, symbol="AAPL")[0]
+        assert reloaded.qty == pytest.approx(15.0)
+
+    def test_drain_last_slice_removes_queue_entry(self, book) -> None:
+        position = open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._entry_execution_queue["AAPL"] = [{"qty": 5.0, "side": "buy", "artifact_id": ""}]
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o2"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        asyncio.run(orch._drain_entry_execution_queue("AAPL", position, 151.0))
+
+        assert "AAPL" not in orch._entry_execution_queue
+
+    def test_drain_not_filled_leaves_queue_intact(self, book) -> None:
+        position = open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._entry_execution_queue["AAPL"] = [{"qty": 5.0, "side": "buy", "artifact_id": ""}]
+        get_mock, post_mock = _router(get_routes={"/broker/positions": []}, post_routes={})
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._drain_entry_execution_queue("AAPL", position, 151.0))
+
+        assert action["action"] == "entry_slice_not_filled"
+        reloaded = list_open_positions(book, symbol="AAPL")[0]
+        assert reloaded.qty == pytest.approx(10.0)
+
+    def test_evaluate_open_position_drains_queue_before_normal_evaluation(self, book) -> None:
+        # A queued slice must take this cycle's turn instead of running
+        # invalidation/contingency evaluation -- proven by a quote body that
+        # would otherwise be irrelevant here (no candles/shock mocks at all,
+        # which normal evaluation would need and 404 on).
+        position = open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._entry_execution_queue["AAPL"] = [{"qty": 5.0, "side": "buy", "artifact_id": ""}]
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o2"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 151.0, 100000.0))
+
+        assert action["action"] == "entry_slice_filled"
+
+
+class TestChooseEntryOrderType:
+    """Dynamic per-order routing follow-up: market vs. limit is now decided
+    per-order from how much of MAX_SLIPPAGE_PCT's budget crossing the known
+    spread would spend, replacing what used to be a static "always market
+    unless ORDER_ROUTING_MODE=passive" default."""
+
+    def test_none_spread_fails_open_to_market(self) -> None:
+        from vinu_live.trade_plan.orchestrator import _choose_entry_order_type
+        assert _choose_entry_order_type(None, 0.001) == "market"
+
+    def test_spread_within_budget_stays_market(self) -> None:
+        from vinu_live.trade_plan.orchestrator import _choose_entry_order_type
+        # budget = 0.001 * 10_000 * 0.5 (default SLIPPAGE_BUDGET_FRACTION) = 5bps
+        assert _choose_entry_order_type(4.0, 0.001) == "market"
+
+    def test_spread_over_budget_routes_limit(self) -> None:
+        from vinu_live.trade_plan.orchestrator import _choose_entry_order_type
+        assert _choose_entry_order_type(6.0, 0.001) == "limit"
+
+    def test_zero_max_slippage_disables_dynamic_routing(self) -> None:
+        from vinu_live.trade_plan.orchestrator import _choose_entry_order_type
+        assert _choose_entry_order_type(500.0, 0.0) == "market"
+
+    def test_force_override_routes_limit_regardless_of_spread(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "ORDER_ROUTING_MODE", "passive")
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": [], "/stock/quote": {"ok": True, "spread_bps": 1.0}},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        asyncio.run(orch._maybe_enter(_SAMPLE_PLAN, "AAPL", 150.0, 100000.0))
+
+        _, kwargs = post_mock.call_args
+        assert kwargs["json"]["order_type"] == "limit"
+
+    def test_wide_spread_within_gate_routes_limit_by_default(self, book) -> None:
+        # 10bps: inside MAX_SPREAD_BPS (25, doesn't block) but over the
+        # default 5bps slippage-routing budget -- must go limit, not market,
+        # with no ORDER_ROUTING_MODE override needed.
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": [], "/stock/quote": {"ok": True, "spread_bps": 10.0}},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        action = asyncio.run(orch._maybe_enter(_SAMPLE_PLAN, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+        _, kwargs = post_mock.call_args
+        assert kwargs["json"]["order_type"] == "limit"
+
+
+class TestSlippageExceededFlag:
+    """max_slippage_pct enforcement follow-up: a realized fill worse than
+    the budget can't be undone, but it must surface on both the action
+    result and the audit record for the post-trade loss classifier.
+    _entry_slippage_bps mocked directly at the method level (like
+    TestOODDetector's _compute_covariance) -- it already has its own
+    dedicated HTTP-level test coverage in TestEntrySlippageBps."""
+
+    def test_slippage_within_budget_not_flagged(self, book) -> None:
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+        orch._entry_slippage_bps = AsyncMock(return_value=3.0)  # under the 10bps default budget
+
+        action = asyncio.run(orch._maybe_enter(_SAMPLE_PLAN, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+        assert action.get("slippage_exceeded") is False
+
+    def test_slippage_over_budget_flagged(self, book) -> None:
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+        orch._entry_slippage_bps = AsyncMock(return_value=50.0)  # over the 10bps default budget
+
+        action = asyncio.run(orch._maybe_enter(_SAMPLE_PLAN, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+        assert action.get("slippage_exceeded") is True
+
+    def test_no_slippage_reading_never_flags(self, book) -> None:
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": []},
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+        orch._entry_slippage_bps = AsyncMock(return_value=None)
+
+        action = asyncio.run(orch._maybe_enter(_SAMPLE_PLAN, "AAPL", 150.0, 100000.0))
+
+        assert action["action"] == "entered"
+        assert "slippage_exceeded" not in action
+
+
+class TestThesisRecheck:
+    """In-trade thesis re-check follow-up: opt-in (off by default), re-runs
+    the investment_committee debate for an open position's symbol and exits
+    only on a strong, contradicting verdict -- weak/neutral/agreeing
+    verdicts are no-ops, so this can never flip-flop a position on noise."""
+
+    @staticmethod
+    def _run_body(result_text, status="ok"):
+        return {
+            "status": status,
+            "tasks": [{"agent_name": "risk_officer", "result": result_text}],
+        }
+
+    def test_disabled_by_default_is_a_complete_no_op(self, book) -> None:
+        position = open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._http.post = AsyncMock()
+
+        result = asyncio.run(orch._check_thesis_recheck("AAPL", position))
+
+        assert result is None
+        orch._http.post.assert_not_called()
+
+    def test_strong_contradicting_verdict_returns_invalidation_rule(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "THESIS_RECHECK_ENABLED", True)
+        position = open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._http.post = AsyncMock(return_value=_resp(json_body=self._run_body(
+            "Strongly bearish, clear breakdown."
+        )))
+
+        result = asyncio.run(orch._check_thesis_recheck("AAPL", position))
+
+        assert result is not None
+        assert result["action"] == "exit"
+        assert "thesis_recheck" in result["condition"]
+
+    def test_weak_contradicting_verdict_is_a_no_op(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "THESIS_RECHECK_ENABLED", True)
+        position = open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._http.post = AsyncMock(return_value=_resp(json_body=self._run_body(
+            "Leaning bearish, modest conviction."
+        )))
+
+        result = asyncio.run(orch._check_thesis_recheck("AAPL", position))
+
+        assert result is None
+
+    def test_strong_agreeing_verdict_is_a_no_op(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "THESIS_RECHECK_ENABLED", True)
+        position = open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._http.post = AsyncMock(return_value=_resp(json_body=self._run_body(
+            "Strongly bullish, clear continuation."
+        )))
+
+        result = asyncio.run(orch._check_thesis_recheck("AAPL", position))
+
+        assert result is None
+
+    def test_no_completed_run_is_a_no_op(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "THESIS_RECHECK_ENABLED", True)
+        position = open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._http.post = AsyncMock(return_value=_resp(json_body={"status": "none"}))
+
+        result = asyncio.run(orch._check_thesis_recheck("AAPL", position))
+
+        assert result is None
+
+    def test_fetch_failure_fails_open(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "THESIS_RECHECK_ENABLED", True)
+        position = open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._http.post = AsyncMock(side_effect=ConnectionError("agent down"))
+
+        result = asyncio.run(orch._check_thesis_recheck("AAPL", position))
+
+        assert result is None
+
+    def test_cooldown_prevents_refiring_every_cycle(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "THESIS_RECHECK_ENABLED", True)
+        monkeypatch.setattr(m, "THESIS_RECHECK_COOLDOWN_SEC", 3600.0)
+        position = open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        orch._http.post = AsyncMock(return_value=_resp(json_body=self._run_body(
+            "Strongly bearish, clear breakdown."
+        )))
+
+        first = asyncio.run(orch._check_thesis_recheck("AAPL", position))
+        second = asyncio.run(orch._check_thesis_recheck("AAPL", position))
+
+        assert first is not None
+        assert orch._http.post.call_count == 1  # second call never fires -- cooldown short-circuits
+        assert second is None
+
+    def test_evaluate_open_position_exits_on_strong_contradiction(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "THESIS_RECHECK_ENABLED", True)
+        open_position(book, "AAPL", "long", 10.0, 150.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={
+                "/candles/AAPL": {"data": []},
+                "/angle/shock_clustering/AAPL": {"data": []},
+                "/broker/positions": [{"symbol": "AAPL", "qty": 10.0}],
+            },
+            post_routes={
+                "/broker/order": {"status": "submitted", "order_id": "o2"},
+                "/swarm/runs/ensure-fresh": self._run_body("Strongly bearish, clear breakdown."),
+            },
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+        position = list_open_positions(book, symbol="AAPL")[0]
+
+        # Price flat at entry -- no mechanical invalidation/contingency rule
+        # would fire on its own; only the thesis re-check should exit this.
+        action = asyncio.run(orch._evaluate_open_position(_SAMPLE_PLAN, position, 150.0, 100000.0))
+
+        assert action["action"] == "invalidation_exit"
+        assert list_open_positions(book, symbol="AAPL") == []
+
+
 class TestBrokerOutagePause:
     """how-to-make-it-live.md #14 Half A (Stage 4): once per cycle the
     orchestrator probes /agent/broker/account. While that probe is failing
@@ -1399,6 +1969,54 @@ class TestBrokerOutagePause:
         result = asyncio.run(orch.cycle())
         assert result["broker_health"]["degraded"] is False
         assert result["actions"][0]["action"] == "entered"
+
+    def test_cycle_persists_in_trade_action_for_the_artifact(self, book) -> None:
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={
+                "/research/artifacts": [{"artifact_id": "art_1", "status": "ACTIVE", "type": "trade_plan"}],
+                "/research/trade-plan/art_1": {"artifact_id": "art_1", "trade_plan_data": json.dumps(_SAMPLE_PLAN)},
+                "/candles/AAPL": {"data": [{"close": 150.0}]},
+                "/broker/account": {"configured": True, "equity": 100000.0},
+                "/broker/positions": [],
+            },
+            post_routes={
+                "/broker/order": {"status": "submitted", "order_id": "o1"},
+                "/research/trade-plan/art_1/action": {"status": "ok"},
+            },
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        asyncio.run(orch.cycle())
+
+        action_calls = [c for c in post_mock.call_args_list if "/action" in c.args[0]]
+        assert len(action_calls) == 1
+        assert action_calls[0].kwargs["json"]["action"] in ("HOLD", "ADD", "REDUCE", "EXIT")
+
+    def test_cycle_persist_action_failure_does_not_break_cycle(self, book) -> None:
+        orch = _make_orchestrator(book)
+        get_mock, order_post_mock = _router(
+            get_routes={
+                "/research/artifacts": [{"artifact_id": "art_1", "status": "ACTIVE", "type": "trade_plan"}],
+                "/research/trade-plan/art_1": {"artifact_id": "art_1", "trade_plan_data": json.dumps(_SAMPLE_PLAN)},
+                "/candles/AAPL": {"data": [{"close": 150.0}]},
+                "/broker/account": {"configured": True, "equity": 100000.0},
+                "/broker/positions": [],
+            },
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+
+        async def _post(url, json=None, **kwargs):
+            if "/action" in url:
+                raise ConnectionError("research service down")
+            return await order_post_mock.side_effect(url, json=json, **kwargs)
+
+        orch._http.get = get_mock
+        orch._http.post = AsyncMock(side_effect=_post)
+
+        result = asyncio.run(orch.cycle())
+
+        assert result["actions"][0]["action"] == "entered"  # cycle succeeded despite the failure
 
 
 class TestEmergencyFlatten:
@@ -2727,6 +3345,100 @@ class TestReconcileRobustness:
         assert action["action"] == "invalidation_exit_book_only"
         assert post_mock.call_count == 0          # NO sell order placed
         assert list_open_positions(book, symbol="AAPL") == []   # book cleaned up
+
+    def test_invalidation_exit_writes_trade_audit_record(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as orch_mod
+
+        recorded = []
+        monkeypatch.setattr(
+            orch_mod, "record_exit",
+            lambda trade_id, symbol, context: recorded.append((trade_id, symbol, context)),
+        )
+
+        opened = open_position(book, "AAPL", "long", 6.0, 300.0, artifact_id="art_1")
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": [{"symbol": "AAPL", "qty": 6.0}]},
+            post_routes={"/broker/order": {"status": "submitted"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+        pos = list_open_positions(book, symbol="AAPL")[0]
+
+        action = asyncio.run(
+            orch._apply_invalidation(pos, 320.0, 100000.0, {"condition": "test", "action": "exit"})
+        )
+
+        assert action["action"] == "invalidation_exit"
+        assert len(recorded) == 1
+        trade_id, symbol, context = recorded[0]
+        assert trade_id == opened.position_id
+        assert symbol == "AAPL"
+        assert context["exit_action"] == "invalidation_exit"
+        assert context["artifact_id"] == "art_1"
+
+    def test_trade_audit_record_carries_loss_cause(self, book, monkeypatch) -> None:
+        # Post-trade causal loss classification follow-up: a losing exit
+        # triggered by a drawdown_pct rule must classify as risk_error,
+        # looked up from this trade's own record_entry row for the
+        # slippage_exceeded cross-check.
+        import vinu_live.trade_plan.orchestrator as orch_mod
+
+        recorded = []
+        monkeypatch.setattr(
+            orch_mod, "record_exit",
+            lambda trade_id, symbol, context: recorded.append((trade_id, symbol, context)),
+        )
+        monkeypatch.setattr(
+            orch_mod, "read_by_trade_id",
+            lambda trade_id: [{"event": "entry", "slippage_exceeded": True}],
+        )
+
+        open_position(book, "AAPL", "long", 6.0, 300.0, artifact_id="art_1")
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": [{"symbol": "AAPL", "qty": 6.0}]},
+            post_routes={"/broker/order": {"status": "submitted"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+        pos = list_open_positions(book, symbol="AAPL")[0]
+
+        # A loss (320 -> 280 is a paper loss for a long) with a
+        # drawdown_pct-metric rule as the trigger.
+        asyncio.run(
+            orch._apply_invalidation(
+                pos, 280.0, 100000.0,
+                {"metric": "drawdown_pct", "condition": "drawdown_pct >= 0.05", "action": "exit"},
+            )
+        )
+
+        assert len(recorded) == 1
+        _, _, context = recorded[0]
+        assert context["loss_cause"] == "risk_error+execution_error"
+
+    def test_invalidation_exit_book_only_also_writes_trade_audit_record(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as orch_mod
+
+        recorded = []
+        monkeypatch.setattr(
+            orch_mod, "record_exit",
+            lambda trade_id, symbol, context: recorded.append((trade_id, symbol, context)),
+        )
+
+        opened = open_position(book, "AAPL", "long", 6.0, 300.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={"/broker/positions": [{"symbol": "MSFT", "qty": 1.0}]},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+        pos = list_open_positions(book, symbol="AAPL")[0]
+
+        asyncio.run(
+            orch._apply_invalidation(pos, 250.0, 100000.0, {"condition": "test", "action": "exit"})
+        )
+
+        assert len(recorded) == 1
+        assert recorded[0][0] == opened.position_id
+        assert recorded[0][2]["exit_action"] == "invalidation_exit_book_only"
 
     def test_emergency_flatten_closes_at_broker_qty_not_book_qty(self, book) -> None:
         open_position(book, "AAPL", "long", 6.0, 313.0)   # book says 6

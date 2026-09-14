@@ -115,23 +115,119 @@ class ScheduledResearchExecutor:
         self._store.save(job)
         return result
 
-    async def decay_scan(self) -> int:
-        # Single decay policy (20 step2): ratio + forgetting in one place.
-        # VINU_DECAY_RATIO (default 0.5): rolling/initial below this -> decay.
-        # VINU_DECAY_FORGET_DAYS (default 90): snapshot older than this is
-        # stale evidence -> treat as decayed (old wins don't protect).
+    async def trade_score_calibration_scan(self) -> int:
+        """Self-calibrating TradeScore weights (high-expectations
+        follow-up): unlike decay_scan/revalidation_scan, this isn't
+        per-artifact -- there is one global TradeScoreThresholds shared by
+        every trade plan, so this computes one calibration metric set and
+        (depending on mode) one proposal/application, not a loop.
+
+        VINU_RESEARCH_TRADE_SCORE_CALIBRATION_MODE, same off|propose|auto
+        convention as VINU_RESEARCH_DECAY_RESPONSE_MODE:
+          off     -- (default) doesn't even run. This is a newer, higher-
+                     blast-radius mechanism than decay's already-proven
+                     state machine (it can change scoring for every future
+                     trade at once) -- ships dormant, same posture as the
+                     OOD detector and thesis-recheck.
+          propose -- computes metrics + a candidate calibration and records
+                     it (trade_score_calibration.save_proposal), requiring
+                     a human to call trade_score_calibration.approve_proposal
+                     (or the /research/trade-score-calibration/approve
+                     route) before it takes effect.
+          auto    -- applies the new calibration directly
+                     (trade_score_calibration.apply_directly).
+
+        Below config.trade_score_calibration_min_sample closed trades (or
+        no actionable signal -- see propose_calibrated_thresholds' own
+        docstring), this is a no-op regardless of mode: fitting weights
+        against too little data, or against a signal that says nothing
+        should change, is worse than leaving the current weights alone.
+        Returns 1 if a proposal/application happened, else 0.
+        """
         import os as _os
 
+        from vinu_research.trade_score_calibration import (
+            compute_calibration_metrics, load_active_thresholds, propose_calibrated_thresholds,
+            read_history, save_proposal,
+        )
+
+        mode = _os.environ.get("VINU_RESEARCH_TRADE_SCORE_CALIBRATION_MODE", "off").lower()
+        if mode == "off":
+            return 0
+
+        debug_log(f"trade_score_calibration_scan: starting (mode={mode})", level=1)
         try:
-            _ratio_th = float(_os.environ.get("VINU_DECAY_RATIO", "0.5"))
-        except ValueError:
-            _ratio_th = 0.5
-        try:
-            _forget_days = float(_os.environ.get("VINU_DECAY_FORGET_DAYS", "90"))
-        except ValueError:
-            _forget_days = 90.0
-        decayed_count = 0
-        debug_log("decay_scan: starting", level=1)
+            history = await asyncio.to_thread(read_history)
+            metrics = compute_calibration_metrics(
+                history, min_sample=self.service.config.trade_score_calibration_min_sample,
+            )
+            if metrics.get("status") != "ok":
+                debug_log(f"trade_score_calibration_scan: {metrics.get('status')}", level=1)
+                return 0
+
+            current = load_active_thresholds()
+            proposal = propose_calibrated_thresholds(
+                current, metrics, bound=self.service.config.trade_score_calibration_bound,
+            )
+            if proposal is None:
+                debug_log("trade_score_calibration_scan: no actionable signal", level=1)
+                return 0
+
+            if mode == "propose":
+                await asyncio.to_thread(save_proposal, proposal, metrics)
+                LOG.warning(
+                    "TradeScore calibration PROPOSED from %d closed trades (awaiting "
+                    "trade_score_calibration.approve_proposal)", metrics["n_entries"],
+                )
+                return 1
+
+            # auto
+            from vinu_research.trade_score_calibration import apply_directly
+            await asyncio.to_thread(apply_directly, proposal, metrics)
+            LOG.warning(
+                "TradeScore calibration applied from %d closed trades", metrics["n_entries"],
+            )
+            return 1
+        except Exception as e:
+            LOG.error("TradeScore calibration scan failed: %s", e)
+            return 0
+
+    async def decay_scan(self) -> int:
+        """High-expectations spec #8: this used to be a second, disconnected
+        decay-decision path -- an ad-hoc rolling-Sharpe-ratio/staleness
+        check that never called decay.py's real transition_status()/
+        evaluate_health() state machine at all (that state machine WAS
+        already used, just only by cli.py's manual `decay-scan` command,
+        never by this automated hourly one). This now uses the same real
+        state machine cli.py's `_run_decay_scan` does, and adds a graduated
+        manual/auto knob (VINU_RESEARCH_DECAY_RESPONSE_MODE, matching the
+        VINU_LIVE_OOD_DETECTOR=off|alert|halt|flatten convention) over how
+        a detected transition gets acted on:
+          off     -- detection doesn't even run.
+          propose -- detect + record (record_proposed_decay_action), but
+                     require a human to call decay.approve_decay_action()
+                     before the artifact's status or re-research actually
+                     changes.
+          auto    -- (default, replicates this method's pre-existing
+                     always-on behavior) apply the transition and trigger
+                     re-research on DECAYED, same as today.
+        Returns the number of artifacts actually acted on (in `propose`
+        mode, a recorded-but-unconfirmed proposal doesn't count).
+        """
+        import os as _os
+
+        from vinu_research.config import DecayThresholds
+        from vinu_research.decay import (
+            compute_decay_snapshot, compute_strategy_decay_snapshot, transition_status,
+        )
+
+        mode = _os.environ.get("VINU_RESEARCH_DECAY_RESPONSE_MODE", "auto").lower()
+        if mode == "off":
+            return 0
+
+        thresholds = DecayThresholds()
+        acted_count = 0
+        debug_log(f"decay_scan: starting (mode={mode})", level=1)
         try:
             artifacts = await asyncio.to_thread(
                 self.service.strategy_store.list_artifacts_by_statuses,
@@ -142,30 +238,60 @@ class ScheduledResearchExecutor:
                 if not art.universe or not art.strategy_code:
                     continue
                 LOG.info("Decay scan: checking %s (%s)", art.artifact_id, art.status.value)
-                snapshot = await asyncio.to_thread(self.service.strategy_store.get_latest_snapshot, art.artifact_id)
-                if snapshot is not None and art.initial_sharpe > 0:
-                    ratio = snapshot.rolling_sharpe / art.initial_sharpe if art.initial_sharpe else 0
-                    stale = False
-                    try:
-                        _sts = getattr(snapshot, "as_of", "") or getattr(snapshot, "created_at", "")
-                        if _sts:
-                            _dt = datetime.fromisoformat(str(_sts))
-                            if _dt.tzinfo is None:
-                                _dt = _dt.replace(tzinfo=timezone.utc)
-                            stale = (datetime.now(timezone.utc) - _dt).days > _forget_days
-                    except (ValueError, TypeError):
-                        stale = False
-                    if ratio < _ratio_th or stale:
-                        LOG.warning("Decay detected for %s: sharpe=%.2f vs initial=%.2f ratio=%.2f stale=%s", art.artifact_id, snapshot.rolling_sharpe, art.initial_sharpe, ratio, stale)
-                        debug_log(f"decay_scan: decayed {art.artifact_id} ratio={ratio:.2f}", level=1)
-                        result = await self.service.refresh_strategy(art.artifact_id, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
-                        if result.get("full_research"):
-                            LOG.info("Strategy %s marked as DECAYED, full re-research queued", art.artifact_id)
-                        debug_log(f"decay_scan: refresh {art.artifact_id} result={result}", level=1)
-                        decayed_count += 1
+
+                history = await asyncio.to_thread(self.service.strategy_store.get_bench_history, art.artifact_id)
+                if len(history) < 2:
+                    continue
+
+                if art.type == "strategy":
+                    snapshot = compute_strategy_decay_snapshot(art.artifact_id, history, thresholds)
+                else:
+                    snapshot = compute_decay_snapshot(art.artifact_id, history, thresholds)
+
+                # get_snapshots() returns newest-first; transition_status
+                # needs oldest-to-newest with the just-computed snapshot
+                # last, or _n_consecutive's "last N" check reads the wrong
+                # end of the history -- same ordering cli.py's manual
+                # decay-scan command already gets right.
+                previous_snapshots = await asyncio.to_thread(
+                    self.service.strategy_store.get_snapshots, art.artifact_id,
+                )
+                eval_history = [s.evaluation for s in reversed(previous_snapshots)] + [snapshot.evaluation]
+                new_status = transition_status(art.status, eval_history)
+
+                await asyncio.to_thread(self.service.strategy_store.save_snapshot, snapshot)
+
+                if new_status == art.status:
+                    continue
+
+                if mode == "propose":
+                    await asyncio.to_thread(
+                        self.service.strategy_store.record_proposed_decay_action,
+                        art.artifact_id, art.status.value, new_status.value,
+                    )
+                    LOG.warning(
+                        "Decay response PROPOSED for %s: %s -> %s (awaiting decay.approve_decay_action)",
+                        art.artifact_id, art.status.value, new_status.value,
+                    )
+                    debug_log(f"decay_scan: proposed {art.artifact_id} -> {new_status.value}", level=1)
+                    continue
+
+                # auto
+                await asyncio.to_thread(
+                    self.service.strategy_store.transition_status, art.artifact_id, new_status,
+                )
+                LOG.warning(
+                    "Decay transition for %s: %s -> %s", art.artifact_id, art.status.value, new_status.value,
+                )
+                if new_status == ArtifactStatus.DECAYED:
+                    result = await self.service.refresh_strategy(art.artifact_id, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+                    if result.get("full_research"):
+                        LOG.info("Strategy %s marked as DECAYED, full re-research queued", art.artifact_id)
+                    debug_log(f"decay_scan: refresh {art.artifact_id} result={result}", level=1)
+                acted_count += 1
         except Exception as e:
             LOG.error("Decay scan failed: %s", e)
-        return decayed_count
+        return acted_count
 
     async def revalidation_scan(self) -> int:
         """Re-validate ACTIVE/MONITORING artifacts whose `last_validated_ts` is
@@ -268,9 +394,15 @@ class ScheduledResearchExecutor:
         decay_interval = 3600.0  # once per hour
         revalidation_interval = 3600.0  # once per hour
         regime_recompute_interval = 86400.0  # once per day — regime moves slower than Sharpe
+        # TradeScore calibration moves slower still -- it needs a real
+        # accumulation of closed trades (min_sample, default 30) to say
+        # anything at all, so a daily cadence (like regime recompute) is
+        # already far more frequent than the underlying data can justify.
+        trade_score_calibration_interval = 86400.0  # once per day
         last_decay_scan = 0.0
         last_revalidation_scan = 0.0
         last_regime_recompute_scan = 0.0
+        last_trade_score_calibration_scan = 0.0
         startup = True
         while self._running:
             try:
@@ -284,6 +416,7 @@ class ScheduledResearchExecutor:
                 last_decay_scan = now
                 last_revalidation_scan = now
                 last_regime_recompute_scan = now
+                last_trade_score_calibration_scan = now
                 startup = False
             await asyncio.sleep(self._poll_interval)
             now = asyncio.get_event_loop().time()
@@ -302,6 +435,11 @@ class ScheduledResearchExecutor:
                 if n:
                     LOG.info("Regime recompute scan completed: %d symbols recomputed", n)
                 last_regime_recompute_scan = now
+            if now - last_trade_score_calibration_scan >= trade_score_calibration_interval:
+                n = await self.trade_score_calibration_scan()
+                if n:
+                    LOG.info("TradeScore calibration scan completed: %d proposal/application(s)", n)
+                last_trade_score_calibration_scan = now
 
     @property
     def is_running(self) -> bool:

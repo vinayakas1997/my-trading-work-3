@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 
+from vinu_infra.trade_audit_log import read_by_trade_id
 from vinu_live.book.positions import BookBackend, init_book, list_closed_positions, mark_feedback_processed
 from vinu_live.config import LiveConfig, load_config
 
@@ -133,10 +134,26 @@ class FeedbackLoopWorker:
             return False
 
     async def _push_pnl_attribution(self, symbol: str, position: dict[str, Any]) -> bool:
+        enriched = dict(position)
+        # Post-trade causal loss classification (high-expectations
+        # follow-up): the SQLite closed_positions row this method is handed
+        # has no loss_cause column (no schema migration for what's really
+        # audit/telemetry data -- same reasoning trade_audit_log.py's own
+        # docstring gives for being a separate append-only log rather than
+        # more book columns). Best-effort lookup by this trade's own
+        # position_id; a lookup failure just means pnl_attribution sees no
+        # loss_cause for this trade, never blocks the push itself.
+        try:
+            for row in read_by_trade_id(position.get("position_id", "")):
+                if row.get("event") == "exit" and row.get("loss_cause"):
+                    enriched["loss_cause"] = row["loss_cause"]
+                    break
+        except Exception as e:
+            LOG.debug("loss_cause lookup failed for %s, continuing without it: %s", symbol, e)
         try:
             resp = await self._http.post(
                 f"{self._config.initial_analysis_api_url}/analysis/pnl-attribution/{symbol}/record",
-                json={"closed_positions": [position]},
+                json={"closed_positions": [enriched]},
             )
             return resp.status_code == 200
         except Exception as e:

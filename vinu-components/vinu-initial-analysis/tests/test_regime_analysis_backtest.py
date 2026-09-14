@@ -34,6 +34,24 @@ def test_compute_insufficient_data_below_floor():
     assert df.iloc[0]["status"] == "insufficient_data"
 
 
+def test_compute_emits_current_regime_row_matching_last_bar():
+    """A separate row from `metric == "regime_stats"` -- consumers that want
+    the symbol's regime AS OF NOW (e.g. a live strategy filter) must read
+    this row, not scan regime_stats for the highest pct_of_time (that
+    answers "what has this symbol mostly been in historically", a
+    different and previously-confused question at the vinu-strategy call
+    site that consumes this angle's output).
+    """
+    bars = _make_bars(n=MIN_OBSERVATIONS + 100)
+    df = compute("AAPL", bars=bars)
+    current_rows = df[df["metric"] == "current_regime"]
+    assert len(current_rows) == 1
+    row = current_rows.iloc[0]
+    assert row["regime"] in {"bull", "bear", "high_vol", "sideways"}
+    assert "bar_ts" in row
+    assert "vol_trailing_z" in row
+
+
 def test_compute_transition_rows_have_normalized_probability():
     bars = _make_bars(n=MIN_OBSERVATIONS + 100)
     df = compute("AAPL", bars=bars)

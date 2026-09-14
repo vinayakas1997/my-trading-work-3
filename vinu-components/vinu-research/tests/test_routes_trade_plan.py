@@ -26,7 +26,7 @@ def client(app):
     return TestClient(app)
 
 
-async def _fake_author_trade_plan(symbol, timeframe, config, tools, llm_client=None):
+async def _fake_author_trade_plan(symbol, timeframe, config, tools, llm_client=None, summary_context=None):
     return TradePlan(
         symbol=symbol.upper(),
         timeframe=timeframe,
@@ -181,3 +181,122 @@ class TestGetCalibration:
         data = resp.json()
         assert data["artifact_id"] == "does_not_exist"
         assert data["n_entries"] == 0
+
+
+class TestUpdateInTradeActionRoute:
+    def test_persists_a_valid_action(self, client, monkeypatch) -> None:
+        monkeypatch.setattr(routes_trade_plan, "author_trade_plan", _fake_author_trade_plan)
+        created = client.post("/research/trade-plan/AAPL", json={"timeframe": "daily"}).json()
+
+        resp = client.post(
+            f"/research/trade-plan/{created['artifact_id']}/action", json={"action": "ADD"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+        assert resp.json()["in_trade_action"] == "ADD"
+
+    def test_invalid_action_string_is_422(self, client, monkeypatch) -> None:
+        monkeypatch.setattr(routes_trade_plan, "author_trade_plan", _fake_author_trade_plan)
+        created = client.post("/research/trade-plan/AAPL", json={"timeframe": "daily"}).json()
+
+        resp = client.post(
+            f"/research/trade-plan/{created['artifact_id']}/action", json={"action": "SELL_EVERYTHING"},
+        )
+
+        assert resp.status_code == 422
+
+    def test_unknown_artifact_does_not_raise(self, client) -> None:
+        resp = client.post(
+            "/research/trade-plan/does_not_exist/action", json={"action": "HOLD"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "not_persisted"
+
+
+class TestApproveDecayActionRoute:
+    """approve_decay_action used to have no HTTP route or CLI command --
+    `propose`-mode decay actions had no way to actually be acted on short of
+    a Python REPL. This route mirrors approve_trade_plan_route's shape."""
+
+    @staticmethod
+    def _artifact_with_proposal(strategy_store):
+        from vinu_research.models import Artifact, ArtifactStatus
+
+        a = Artifact.create("strategy", "Test", universe=["AAPL"])
+        a.status = ArtifactStatus.MONITORING
+        strategy_store.upsert_artifact(a)
+        strategy_store.record_proposed_decay_action(a.artifact_id, "MONITORING", "DECAYED")
+        return a
+
+    def test_approves_and_applies_the_transition(self, client, strategy_store) -> None:
+        artifact = self._artifact_with_proposal(strategy_store)
+
+        resp = client.post(
+            f"/research/decay/{artifact.artifact_id}/approve", params={"approver": "alice"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "DECAYED"
+
+    def test_missing_approver_is_400(self, client, strategy_store) -> None:
+        artifact = self._artifact_with_proposal(strategy_store)
+
+        resp = client.post(f"/research/decay/{artifact.artifact_id}/approve")
+
+        assert resp.status_code == 400
+
+    def test_no_proposal_is_404(self, client, strategy_store) -> None:
+        from vinu_research.models import Artifact
+
+        a = Artifact.create("strategy", "Test", universe=["AAPL"])
+        strategy_store.upsert_artifact(a)
+
+        resp = client.post(
+            f"/research/decay/{a.artifact_id}/approve", params={"approver": "alice"},
+        )
+
+        assert resp.status_code == 404
+
+    def test_unknown_artifact_is_404(self, client) -> None:
+        resp = client.post(
+            "/research/decay/does_not_exist/approve", params={"approver": "alice"},
+        )
+        assert resp.status_code == 404
+
+
+class TestApproveTradeScoreCalibrationRoute:
+    """approve_proposal (trade_score_calibration.py) used to have no HTTP
+    route or CLI command -- mirrors approve_decay_action_route's shape,
+    except this isn't artifact-keyed (one global pending proposal, or
+    none), so no artifact_id path parameter."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_state(self, tmp_path, monkeypatch):
+        import vinu_research.trade_score_calibration as tsc
+        monkeypatch.setattr(tsc, "DEFAULT_STATE_PATH", str(tmp_path / "trade_score_calibration.json"))
+
+    def test_approves_and_applies_the_proposal(self, client) -> None:
+        from vinu_research.config import TradeScoreThresholds
+        from vinu_research.trade_score_calibration import save_proposal
+
+        save_proposal(TradeScoreThresholds(confluence_max=45.0), {"status": "ok", "n_entries": 30})
+
+        resp = client.post("/research/trade-score-calibration/approve", params={"approver": "alice"})
+
+        assert resp.status_code == 200
+        assert resp.json()["confluence_max"] == 45.0
+
+    def test_missing_approver_is_400(self, client) -> None:
+        from vinu_research.config import TradeScoreThresholds
+        from vinu_research.trade_score_calibration import save_proposal
+
+        save_proposal(TradeScoreThresholds(confluence_max=45.0), {"status": "ok"})
+
+        resp = client.post("/research/trade-score-calibration/approve")
+
+        assert resp.status_code == 400
+
+    def test_no_pending_proposal_is_404(self, client) -> None:
+        resp = client.post("/research/trade-score-calibration/approve", params={"approver": "alice"})
+        assert resp.status_code == 404

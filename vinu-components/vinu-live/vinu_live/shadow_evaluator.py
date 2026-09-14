@@ -62,6 +62,59 @@ class ShadowEvaluator:
 
         return results
 
+    async def record_daily_paper_returns(self) -> list[dict[str, Any]]:
+        """The write side evaluate_all()'s read side (_fetch_paper_sharpe ->
+        GET .../performance/{id}) has always depended on but never had: for
+        each BENCHING artifact, ask vinu-research for the most recent
+        trading day's realized return its strategy_code would have
+        produced, then append it to vinu-agent's PaperPerformanceStore.
+
+        Nothing in production called either the vinu-research paper-return
+        endpoint or vinu-agent's performance-append endpoint before this
+        method existed, so min_paper_days could never accumulate and no
+        artifact could ever promote via real paper performance (see
+        high-expectations gate-conflict audit). shadow_worker_main is the
+        intended scheduled caller, once per cycle, before evaluate_all() so
+        the same cycle's promotion decision sees today's freshly-recorded
+        day.
+
+        Best-effort per artifact -- one artifact's failure (backtest error,
+        research/agent API unreachable) must never block another's, and
+        never raises out of this method.
+        """
+        results: list[dict[str, Any]] = []
+        artifacts = await self._list_benching_artifacts()
+
+        for art in artifacts:
+            artifact_id = art.get("artifact_id")
+            if not artifact_id:
+                continue
+            try:
+                resp = await self._http.get(
+                    f"{self._research_api}/research/artifacts/{artifact_id}/paper-return",
+                )
+                if getattr(resp, "status_code", None) != 200:
+                    results.append({"artifact_id": artifact_id, "status": "fetch_failed"})
+                    continue
+                data = resp.json() or {}
+                if data.get("status") != "ok" or data.get("daily_return") is None:
+                    results.append({"artifact_id": artifact_id, "status": data.get("status", "no_data")})
+                    continue
+                trade_date = data.get("trade_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                append_resp = await self._http.post(
+                    f"{self._agent_api}/agent/broker/performance/{artifact_id}/append",
+                    json={"daily_return": float(data["daily_return"]), "trade_date": trade_date},
+                )
+                if getattr(append_resp, "status_code", None) == 200:
+                    results.append({"artifact_id": artifact_id, "status": "recorded", "trade_date": trade_date})
+                else:
+                    results.append({"artifact_id": artifact_id, "status": "append_failed"})
+            except Exception as e:
+                LOG.warning("record_daily_paper_returns failed for %s: %s", artifact_id, e)
+                results.append({"artifact_id": artifact_id, "status": "error"})
+
+        return results
+
     async def _list_benching_artifacts(self) -> list[dict[str, Any]]:
         try:
             resp = await self._http.get(

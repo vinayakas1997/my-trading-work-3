@@ -22,6 +22,11 @@ class OrderInstruction:
     current_qty: float
     estimated_value: float
     strategy_name: str = ""
+    # SignalTranslator's own max_slippage_pct budget, carried onto each
+    # instruction it produces -- was set in __init__ but never read by
+    # anything downstream. 0.0 (the execution.py/ExecutionSlice default too)
+    # means "no per-order budget", not "zero slippage tolerated".
+    max_slippage_pct: float = 0.0
 
 
 class SignalTranslator:
@@ -70,7 +75,7 @@ class SignalTranslator:
             target_w = tw.get("target_weight", 0.0)
             instr = self._build_instruction(
                 symbol, target_w, current_positions, prices, portfolio_value,
-                strategy_name=tw.get("name", ""),
+                strategy_name=tw.get("name", ""), max_slippage_pct=self._max_slippage_pct,
             )
             if instr is not None:
                 instructions.append(instr)
@@ -80,7 +85,7 @@ class SignalTranslator:
                 continue
             instr = self._build_instruction(
                 symbol, 0.0, current_positions, prices, portfolio_value,
-                strategy_name="",
+                strategy_name="", max_slippage_pct=self._max_slippage_pct,
             )
             if instr is not None:
                 instructions.append(instr)
@@ -95,6 +100,7 @@ class SignalTranslator:
         prices: dict[str, float],
         portfolio_value: float,
         strategy_name: str,
+        max_slippage_pct: float = 0.0,
     ) -> OrderInstruction | None:
         from decimal import Decimal
 
@@ -142,4 +148,5 @@ class SignalTranslator:
             current_qty=float(current_qty),
             estimated_value=estimated_value,
             strategy_name=strategy_name,
+            max_slippage_pct=max_slippage_pct,
         )

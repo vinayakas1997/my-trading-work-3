@@ -51,6 +51,24 @@ class TestKellyFraction:
         f = full_kelly_fraction(0.3, 1.5)
         assert f == 0.0  # (0.3*1.5 - 0.7)/1.5 < 0, clamped to 0
 
+    def test_delegates_to_shared_kelly_fraction(self, monkeypatch) -> None:
+        """Regression guard for the sizing-unification fix: this must call
+        vinu_infra.risk_math.kelly_fraction (the single source of truth also
+        used by vinu-tools and vinu-simulator) rather than reimplementing
+        the formula inline a third time."""
+        import vinu_agent.agent.position_sizing as ps_module
+
+        calls = []
+
+        def _spy(win_rate, avg_win, avg_loss, fraction_of_kelly=1.0):
+            calls.append((win_rate, avg_win, avg_loss))
+            return 0.42
+
+        monkeypatch.setattr(ps_module, "_shared_kelly_fraction", _spy)
+        result = full_kelly_fraction(0.6, 1.5)
+        assert calls == [(0.6, 1.5, 1.0)]
+        assert result == 0.42
+
 
 class TestFractionalKellySize:
     def test_quarter_kelly_of_equity(self) -> None:
@@ -238,6 +256,50 @@ class TestComputePositionSizeTool:
         full_kelly = (0.6 * 1.5 - 0.4) / 1.5
         assert out["size"] == pytest.approx(100000.0 * full_kelly * 0.5, abs=1.0)
 
+    def test_forecast_confidence_schema_param_is_forwarded_and_applied(self) -> None:
+        """Regression: the tool's JSON schema used to expose no way for the
+        LLM to supply cvar_95/current_vol/forecast_confidence at all, so
+        even though compute_position_size() accepted them and
+        VINU_RISK_FORECAST_SCALING_ENABLED defaults on, no real caller could
+        ever populate them -- the scaling was dead code regardless of the
+        flag. A low forecast_confidence must now visibly shrink size."""
+        tool = ComputePositionSizeTool()
+        assert "forecast_confidence" in tool.parameters["properties"]
+        assert "cvar_95" in tool.parameters["properties"]
+        assert "current_vol" in tool.parameters["properties"]
+
+        full = json.loads(tool.execute(account_equity=100000.0, win_rate=0.6, payoff_ratio=1.5))
+        scaled = json.loads(tool.execute(
+            account_equity=100000.0, win_rate=0.6, payoff_ratio=1.5, forecast_confidence=0.5,
+        ))
+        assert scaled["size"] < full["size"]
+        assert scaled["inputs"]["forecast_confidence"] == 0.5
+
+    def test_cvar_95_schema_param_blocks_size_when_over_threshold(self) -> None:
+        tool = ComputePositionSizeTool()
+        config = MagicMock()
+        config.position_sizing_method = "fractional_kelly"
+        config.kelly_fraction = 0.25
+        config.risk_per_trade_pct = 0.02
+        config.atr_stop_multiple = 2.0
+        tool._config = config
+        out = json.loads(tool.execute(
+            account_equity=100000.0, win_rate=0.6, payoff_ratio=1.5, cvar_95=0.10,
+        ))
+        # cvar_enabled defaults off (VINU_RISK_CVAR_ENABLED unset) -- supplying
+        # the value alone must not change behavior, only the flag does.
+        assert out["size"] > 0
+
+    def test_omitted_optional_inputs_stay_none_not_zero(self) -> None:
+        """cvar_95/current_vol/forecast_confidence absent from kwargs must
+        come through as None (== "not computed", gate/scaling skipped), not
+        0.0 (which would read as "zero risk"/"zero confidence")."""
+        tool = ComputePositionSizeTool()
+        out = json.loads(tool.execute(account_equity=100000.0, win_rate=0.6, payoff_ratio=1.5))
+        assert out["inputs"]["cvar_95"] is None
+        assert out["inputs"]["current_vol"] is None
+        assert out["inputs"]["forecast_confidence"] is None
+
 
 def _pend_content(artifact_id: str, approved_size: float, sizing_inputs: dict) -> str:
     body = {
@@ -339,3 +401,46 @@ class TestRiskGatekeeperHookSizing:
             ledger.close()
             store_path.unlink(missing_ok=True)
             ledger_path.unlink(missing_ok=True)
+
+    def test_forecast_confidence_in_sizing_inputs_is_forwarded_to_recompute(self) -> None:
+        """Regression: the hook's recompute used to only forward the
+        original 8 fields (account_equity, method, win_rate, ...) even
+        though sizing_inputs could in principle carry cvar_95/current_vol/
+        forecast_confidence -- now that the tool actually records them (see
+        TestComputePositionSizeTool), the hook must pass them through too,
+        or the whole chain stays broken at this second link."""
+        from vinu_research.models import ArtifactStatus
+
+        store, ledger, artifact, store_path, ledger_path = self._stores()
+        try:
+            headroom_cap = 50000.0
+            full_content = _pend_content(artifact.artifact_id, headroom_cap, {
+                "account_equity": 100000.0, "win_rate": 0.6, "payoff_ratio": 1.5,
+                "method": "fractional_kelly", "kelly_fraction": 0.25,
+            })
+            self._hook()(full_content, strategy_store=store, ticker_ledger_store=ledger)
+            full_size = store.get_artifact(artifact.artifact_id).approved_size
+
+            artifact2 = self._pendable_artifact_with_id("BBB-test", "BBB", store)
+            scaled_content = _pend_content(artifact2.artifact_id, headroom_cap, {
+                "account_equity": 100000.0, "win_rate": 0.6, "payoff_ratio": 1.5,
+                "method": "fractional_kelly", "kelly_fraction": 0.25,
+                "forecast_confidence": 0.5,
+            })
+            self._hook()(scaled_content, strategy_store=store, ticker_ledger_store=ledger)
+            scaled_size = store.get_artifact(artifact2.artifact_id).approved_size
+
+            assert scaled_size < full_size
+        finally:
+            store.close()
+            ledger.close()
+            store_path.unlink(missing_ok=True)
+            ledger_path.unlink(missing_ok=True)
+
+    def _pendable_artifact_with_id(self, name: str, symbol: str, store):
+        from vinu_research.models import Artifact, ArtifactStatus
+
+        artifact = Artifact.create("strategy", name, universe=[symbol])
+        artifact.status = ArtifactStatus.BENCHING
+        store.upsert_artifact(artifact)
+        return artifact

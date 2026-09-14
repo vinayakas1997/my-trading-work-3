@@ -92,6 +92,28 @@ class TestAggregatePnlAttribution:
         assert row["by_artifact"] == {}
         assert row["n_trades"] == 1  # still counted at the symbol level
 
+    def test_loss_causes_breakdown_counts_by_cause(self) -> None:
+        # Post-trade causal loss classification follow-up: loss_cause is an
+        # extra key already on the closed_positions dict when vinu-live's
+        # feedback_loop enriched it -- no new data collection here.
+        positions = [
+            {**_closed_position("p1", -20.0), "loss_cause": "risk_error"},
+            {**_closed_position("p2", -30.0), "loss_cause": "risk_error"},
+            {**_closed_position("p3", -10.0), "loss_cause": "regime_change_error"},
+            {**_closed_position("p4", 50.0), "loss_cause": "expected_outcome"},
+        ]
+        df = aggregate_pnl_attribution("AAPL", positions)
+        row = df.iloc[0]
+        assert row["loss_causes"] == {
+            "risk_error": 2, "regime_change_error": 1, "expected_outcome": 1,
+        }
+
+    def test_missing_loss_cause_counted_as_unclassified(self) -> None:
+        positions = [_closed_position("p1", -20.0)]  # no loss_cause key at all
+        df = aggregate_pnl_attribution("AAPL", positions)
+        row = df.iloc[0]
+        assert row["loss_causes"] == {"unclassified": 1}
+
 
 class TestIngestClosedPositions:
     def test_first_batch_populates_angle(self) -> None:

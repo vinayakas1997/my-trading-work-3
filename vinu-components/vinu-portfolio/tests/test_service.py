@@ -374,7 +374,7 @@ class TestListActiveStrategies:
 class TestFetchBenchmarkRegime:
     def test_returns_classified_regime_on_success(self) -> None:
         svc = _service()
-        cycle = [0.025, -0.025, 0.001] * 13
+        cycle = [0.025, -0.025, 0.001] * 50
         closes = [100.0]
         for r in cycle + [0.015]:
             closes.append(closes[-1] * (1 + r))
@@ -696,7 +696,15 @@ class TestComputeDailyAllocation:
         tags_file.write_text(
             "strategies:\n  favored:\n    regime: [trending]\n", encoding="utf-8"
         )
-        svc = _service(tags_path=tags_file, regime_tilt_bound=0.3, outcome_tilt_bound=0.0)
+        # max_per_strategy_weight=1.0: this test is about tilt differentiation,
+        # not concentration capping -- with only 2 strategies the default 0.3
+        # cap's 1/n floor (max(0.3, 0.5) == 0.5) would force both weights back
+        # to exactly 0.5 after any tilt pushes one above 0.5, masking the very
+        # differentiation this test asserts on. See the re-enforced cap in
+        # compute_daily_allocation (service.py, "Re-enforce
+        # max_per_strategy_weight") -- other cap-specific tests exercise that
+        # directly with max_per_strategy_weight=0.30.
+        svc = _service(tags_path=tags_file, regime_tilt_bound=0.3, outcome_tilt_bound=0.0, max_per_strategy_weight=1.0)
         svc.build_portfolio = AsyncMock(return_value={
             "status": "ok",
             "strategies": [
@@ -742,9 +750,13 @@ class TestComputeDailyAllocation:
         but different promotion margins must end up with different final
         weight -- this is the end-to-end proof, not just the unit-level
         multiplier math above."""
+        # max_per_strategy_weight=1.0: same reasoning as
+        # test_applies_tilts_and_renormalizes above -- with 2 strategies the
+        # default cap's 1/n floor would force an exact 0.5/0.5 split and mask
+        # the differentiation this test is asserting on.
         svc = _service(
             promotion_deflated_sharpe_threshold=0.95, confidence_tilt_bound=0.3,
-            outcome_tilt_bound=0.0,
+            outcome_tilt_bound=0.0, max_per_strategy_weight=1.0,
         )
         svc.build_portfolio = AsyncMock(return_value={
             "status": "ok",
@@ -767,6 +779,49 @@ class TestComputeDailyAllocation:
         weights = {w["name"]: w for w in result["weights"]}
         assert weights["strong_pass"]["target_weight"] > weights["bare_pass"]["target_weight"]
         assert weights["bare_pass"]["confidence_gradient_multiplier"] < weights["strong_pass"]["confidence_gradient_multiplier"]
+
+    def test_tilts_cannot_push_a_sleeve_back_over_max_per_strategy_weight(self, tmp_path) -> None:
+        """Regression for the concentration-cap bypass: build_portfolio's base
+        weights already pass cap_concentration once, but the regime/outcome/
+        confidence-gradient tilts are uncapped multipliers applied afterward
+        -- a sleeve sitting right at the cap that gets every tilt favorably
+        used to end up well past it, with nothing re-enforcing the cap. 4
+        strategies (not 2) so the cap's 1/n floor (0.25) sits below the
+        configured 0.30 cap and doesn't itself force an equal split."""
+        tags_file = tmp_path / "tags.yaml"
+        tags_file.write_text(
+            "strategies:\n  favored:\n    regime: [trending]\n", encoding="utf-8"
+        )
+        svc = _service(
+            tags_path=tags_file, regime_tilt_bound=0.3, outcome_tilt_bound=0.0,
+            max_per_strategy_weight=0.30,
+        )
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [
+                {"name": "favored", "kind": "yaml"},
+                {"name": "b", "kind": "yaml"},
+                {"name": "c", "kind": "yaml"},
+                {"name": "d", "kind": "yaml"},
+            ],
+            "weights": [
+                {"name": "favored", "kind": "yaml", "symbol": "", "target_weight": 0.30},
+                {"name": "b", "kind": "yaml", "symbol": "", "target_weight": 0.30},
+                {"name": "c", "kind": "yaml", "symbol": "", "target_weight": 0.20},
+                {"name": "d", "kind": "yaml", "symbol": "", "target_weight": 0.20},
+            ],
+            "correlation_matrix": None,
+        })
+        svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "ok", "regime": "bull"})
+        svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
+        svc._fetch_account_equity = AsyncMock(return_value=None)
+
+        result = asyncio.run(svc.compute_daily_allocation())
+
+        weights = {w["name"]: w for w in result["weights"]}
+        assert weights["favored"]["target_weight"] <= 0.30 + 1e-9
+        total = sum(w["target_weight"] for w in result["weights"])
+        assert total == pytest.approx(1.0)
 
 
 class TestFetchAccountEquity:

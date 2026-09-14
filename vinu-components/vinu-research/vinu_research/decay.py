@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import logging
 import statistics
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vinu_research.config import DecayThresholds
-from vinu_research.models import ArtifactStatus, BenchEntry, DecaySnapshot
+from vinu_research.models import Artifact, ArtifactStatus, BenchEntry, DecaySnapshot
+
+if TYPE_CHECKING:
+    from vinu_research.storage.strategy_store import SqliteStrategyStore
+
+logger = logging.getLogger(__name__)
 
 
 def compute_decay_metrics(
@@ -199,6 +205,39 @@ def transition_status(
             return ArtifactStatus.DISABLED
 
     return current
+
+
+def approve_decay_action(
+    store: "SqliteStrategyStore",
+    artifact_id: str,
+    approver: str,
+) -> Artifact:
+    """Human confirms a `propose`-mode decay action recorded by
+    ScheduledResearchExecutor.decay_scan() (Phase 6's manual/auto knob,
+    VINU_RESEARCH_DECAY_RESPONSE_MODE=propose). Mirrors trade_plan_
+    authoring.approve_trade_plan's approver-required contract -- `approver`
+    is a required parameter with no default, not an optional flag a caller
+    could omit, same "human accountability, not a silent bypass" posture.
+
+    Raises ValueError if there's no pending proposal for this artifact, or
+    if the store's real lifecycle (_ALLOWED_TRANSITIONS) rejects the
+    proposed transition (should only happen if the artifact's status
+    changed through some other path between the proposal and this call).
+    """
+    if not approver:
+        raise ValueError("approver is required")
+    proposal = store.get_proposed_decay_action(artifact_id)
+    if proposal is None:
+        raise ValueError(f"no proposed decay action for artifact {artifact_id}")
+
+    new_status = ArtifactStatus(proposal["proposed_status"])
+    artifact = store.transition_status(artifact_id, new_status)
+    store.clear_proposed_decay_action(artifact_id)
+    logger.info(
+        "[%s] Decay action approved by %s: %s -> %s",
+        artifact_id, approver, proposal["from_status"], new_status.value,
+    )
+    return artifact
 
 
 def _n_consecutive(

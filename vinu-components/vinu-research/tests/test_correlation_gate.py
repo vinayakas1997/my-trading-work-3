@@ -144,7 +144,9 @@ class TestPromotionConfig:
     def test_defaults(self):
         cfg = ResearchConfig()
         assert cfg.promotion_correlation_threshold == 0.85
-        assert cfg.promotion_correlation_required is False
+        # Was False -- flipped to True since the gate itself was already
+        # correct (fail-closed), it just wasn't being invoked by default.
+        assert cfg.promotion_correlation_required is True
 
     def test_custom_threshold(self):
         cfg = ResearchConfig(promotion_correlation_threshold=0.75, promotion_correlation_required=True)

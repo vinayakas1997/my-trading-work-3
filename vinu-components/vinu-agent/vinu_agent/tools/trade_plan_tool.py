@@ -75,12 +75,39 @@ class TradePlanTool(BaseTool):
         "required": ["symbol"],
     }
     is_readonly = True
+    _ticker_summary_store: Any = None
 
     def __init__(self):
         self._services_config = {}
         self._session_id = ""
         self._last_plan_data: dict | None = None
         self._last_audit_findings: list[dict] | None = None
+
+    def _read_summary_context(self, symbol: str) -> dict[str, Any] | None:
+        """Best-effort read of the Summary Agent's stored read for `symbol`.
+
+        Fail-open: missing store, missing row, empty summary, or an
+        "Analysis unavailable" error-fallback summary all return None,
+        preserving the legacy risk + shock-rows-only forecast exactly.
+        """
+        try:
+            store = self._ticker_summary_store
+            if store is None:
+                return None
+            row = store.get_summary(symbol)
+            if row is None:
+                return None
+            summary = str(getattr(row, "summary", "") or "").strip()
+            if not summary or summary.lower().startswith("analysis unavailable"):
+                return None
+            return {
+                "summary": summary,
+                "source_run_id": str(getattr(row, "source_run_id", "") or ""),
+                "angles_with_data": getattr(row, "angles_with_data", "?"),
+                "angle_count": getattr(row, "angle_count", 28),
+            }
+        except Exception:
+            return None
 
     def execute(self, **kwargs) -> str:
         return asyncio.run(self._execute_async(**kwargs))
@@ -126,10 +153,6 @@ class TradePlanTool(BaseTool):
 
             artifacts_task = self._fetch_active_strategies(client, research_url, symbol)
 
-            frozen_plan_task = self._fetch_frozen_trade_plan(
-                client, research_url, symbol, timeframe,
-            )
-
             angles = await angles_task
             features = await features_task
             validation = await validation_task
@@ -137,11 +160,26 @@ class TradePlanTool(BaseTool):
             liquidity = await liquidity_task
             news = await news_task
             strategies = await artifacts_task
-            frozen_plan = await frozen_plan_task
 
         trend_stage = self._extract_trend_stage(angles)
         trend_bias = self._extract_trend_bias(angles)
         tranches_config = _TRANCHES_BY_STRENGTH.get(trend_stage, _TRANCHES_BY_STRENGTH["moderate"])
+
+        market_state = None
+        try:
+            from vinu_research.market_state import MarketState
+
+            market_state = MarketState.from_parts(
+                symbol,
+                angles=angles,
+                features=features,
+                liquidity=liquidity,
+                news=news or {},
+                validation=validation,
+                active_strategies=strategies,
+            )
+        except Exception as e:
+            logger.debug("Could not construct MarketState for %s: %s", symbol, e)
 
         plan_data = self._build_structured_plan(
             symbol=symbol,
@@ -154,8 +192,22 @@ class TradePlanTool(BaseTool):
             validation=validation,
             liquidity=liquidity,
             news=news,
+            market_state=market_state,
         )
         self._last_plan_data = plan_data
+
+        # Authored/frozen after plan_data so its entry_rules/exit_rules can
+        # merge into the frozen TradePlan's entry_checklist/exit_checklist
+        # in one pass (author_trade_plan's extra_checklist_entries) instead
+        # of never reaching it at all.
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            frozen_plan = await self._fetch_frozen_trade_plan(
+                client, research_url, symbol, timeframe,
+                extra_checklist_entries={
+                    "entry_rules": plan_data.get("entry_rules") or [],
+                    "exit_rules": plan_data.get("exit_rules") or [],
+                },
+            )
 
         markdown = self._render_plan(
             symbol=symbol,
@@ -467,6 +519,7 @@ class TradePlanTool(BaseTool):
         base_url: str,
         symbol: str,
         timeframe: str,
+        extra_checklist_entries: dict[str, list[dict[str, str]]] | None = None,
     ) -> dict:
         """Author + freeze the Phase 4 TradePlan (forecast + risk bands +
         contingency rules). In-process first -- runs vinu-research's real
@@ -475,17 +528,30 @@ class TradePlanTool(BaseTool):
         without the network hop); HTTP fallback (POST
         /research/trade-plan/{symbol}) only if that raises. See
         vinu_agent/broker/research_link.py.
+
+        `extra_checklist_entries` (this tool's own entry_rules/exit_rules
+        from _build_structured_plan) merges into the frozen plan's
+        entry_checklist/exit_checklist on the in-process path only -- the
+        HTTP fallback route doesn't accept it, matching that path's existing
+        narrower payload (timeframe + summary_context only).
         """
+        summary_context = self._read_summary_context(symbol)
         try:
-            data = await self._author_and_freeze_trade_plan_in_process(symbol, timeframe)
+            data = await self._author_and_freeze_trade_plan_in_process(
+                symbol, timeframe, summary_context=summary_context,
+                extra_checklist_entries=extra_checklist_entries,
+            )
             return {"status": "available", "artifact": data}
         except Exception as e:
             logger.debug("Failed in-process trade-plan authoring for %s, falling back to HTTP: %s", symbol, e)
 
         try:
+            payload: dict[str, Any] = {"timeframe": timeframe}
+            if summary_context is not None:
+                payload["summary_context"] = summary_context
             resp = await client.post(
                 f"{base_url}/research/trade-plan/{symbol}",
-                json={"timeframe": timeframe},
+                json=payload,
                 timeout=60.0,
             )
             if resp.status_code != 200:
@@ -496,7 +562,13 @@ class TradePlanTool(BaseTool):
             logger.warning("Failed to fetch frozen trade plan for %s: %s", symbol, e)
             return {"status": "error", "error": str(e)}
 
-    async def _author_and_freeze_trade_plan_in_process(self, symbol: str, timeframe: str) -> dict:
+    async def _author_and_freeze_trade_plan_in_process(
+        self,
+        symbol: str,
+        timeframe: str,
+        summary_context: dict[str, Any] | None = None,
+        extra_checklist_entries: dict[str, list[dict[str, str]]] | None = None,
+    ) -> dict:
         from vinu_research.trade_plan_authoring import author_trade_plan, freeze_trade_plan
 
         from ..broker.research_link import (
@@ -506,11 +578,16 @@ class TradePlanTool(BaseTool):
         config = get_research_config()
         tools = get_research_tools(config)
         try:
-            plan = await author_trade_plan(symbol, timeframe, config, tools)
+            plan = await author_trade_plan(
+                symbol, timeframe, config, tools, summary_context=summary_context,
+                extra_checklist_entries=extra_checklist_entries,
+            )
         finally:
             await tools.close()
 
-        artifact = await asyncio.to_thread(freeze_trade_plan, get_strategy_store(), plan)
+        artifact = await asyncio.to_thread(
+            freeze_trade_plan, get_strategy_store(), plan, summary_context,
+        )
         return serialize_trade_plan_artifact(artifact)
 
     def _render_frozen_plan_block(self, frozen_plan: dict) -> str:
@@ -537,7 +614,12 @@ class TradePlanTool(BaseTool):
         validation: dict,
         liquidity: dict,
         news: dict | None,
+        market_state: Any | None = None,
     ) -> dict:
+        # `market_state` (vinu_research.market_state.MarketState) is accepted
+        # for forward-compatibility with later phases that consume a unified
+        # state object; this function's own logic still reads the individual
+        # dict args below unchanged, so passing None here is a no-op.
         direction = "short" if trend_bias == "bearish" else "long"
         direction = "neutral" if trend_bias == "neutral" else direction
 

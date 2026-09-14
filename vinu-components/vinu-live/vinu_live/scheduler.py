@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -12,6 +11,26 @@ from vinu_live.config import LiveConfig, load_config
 from vinu_live.execution import compute_volume_profile, plan_twap, plan_vwap, schedule_slice_delays
 from vinu_live.reconciliation import ReconciliationEngine
 from vinu_live.signal_translator import SignalTranslator
+from vinu_live.trade_plan.guards import (
+    event_blackout_reason,
+    fetch_spread_bps,
+    halt_reason,
+    spread_gate_reason_from_bps,
+)
+# Reuses the orchestrator's own MAX_SPREAD_BPS/EVENT_BLACKOUT_HOURS/
+# MAX_SLIPPAGE_PCT/PASSIVE_LIMIT_OFFSET_BPS env-parsed thresholds and its
+# _choose_entry_order_type decision, rather than defining a second,
+# possibly-drifting copy of each -- both live paths should gate/route on
+# the same spread/event/slippage tolerance. This closes the last piece of
+# the execution-unification gap: this path used to always submit "market"
+# regardless of spread, unlike the entry path's dynamic routing.
+from vinu_live.trade_plan.orchestrator import (
+    EVENT_BLACKOUT_HOURS,
+    MAX_SLIPPAGE_PCT,
+    MAX_SPREAD_BPS,
+    PASSIVE_LIMIT_OFFSET_BPS,
+    _choose_entry_order_type,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -79,7 +98,7 @@ class LiveScheduler:
                 execution_plan = await self._plan_execution(instructions)
                 result["n_slices"] = execution_plan.total_orders
 
-                submitted = await self._execute_plan(execution_plan)
+                submitted = await self._execute_plan(execution_plan, prices)
                 result["submitted"] = submitted
 
             expected_positions = self._compute_expected_positions(
@@ -217,11 +236,17 @@ class LiveScheduler:
                 LOG.warning("Could not fetch volume profile for %s, using equal weights: %s", symbol, e)
         return weights
 
-    async def _execute_plan(self, plan: Any) -> list[dict]:
-        HALT_PATH = Path.home() / ".vinu-live" / "HALT"
-        if HALT_PATH.exists():
-            LOG.warning("HALT file detected at %s — skipping all order execution", HALT_PATH)
+    async def _execute_plan(self, plan: Any, prices: dict[str, float] | None = None) -> list[dict]:
+        # Checks both the local HALT file AND the agent's cross-process kill
+        # switch (see guards.halt_reason's docstring) -- this path used to
+        # only check the local file, so a breaker/OOD-engaged remote halt
+        # left the TWAP/VWAP loop cycling and failing orders instead of
+        # stopping cleanly.
+        _halt = await halt_reason(self._http, self._config.agent_api_url)
+        if _halt:
+            LOG.warning("Trading halted (%s) — skipping all order execution", _halt)
             return []
+        prices = prices or {}
         submitted = []
         delays = schedule_slice_delays(
             plan.total_orders, total_window_minutes=60,
@@ -229,20 +254,78 @@ class LiveScheduler:
         import time as _time
 
         for i, slice_ in enumerate(plan.slices):
+            # Execution unification: this path used to fire straight to the
+            # broker with no risk gates at all, unlike the signal-driven
+            # entry path's spread/event-blackout checks. Same guards, same
+            # fail-open posture, shared via guards.py rather than
+            # duplicated -- a wide-spread or event-blackout symbol is
+            # skipped (not submitted), remaining slices for OTHER symbols in
+            # this plan still proceed.
+            #
+            # The spread is fetched once (not via spread_gate_reason's own
+            # wrapper) so the same number also drives the order_type
+            # decision below -- same "fetch once, reuse for gate + routing"
+            # shape orchestrator.py's _maybe_enter already uses.
+            _spread_bps = await fetch_spread_bps(self._http, self._config.stock_price_api_url, slice_.symbol)
+            # A per-instruction max_slippage_pct budget (SignalTranslator's
+            # own knob, previously set but never read by anything -- see
+            # OrderInstruction.max_slippage_pct's docstring) tightens the
+            # ceiling below the global default when it's the stricter of
+            # the two; it never loosens it.
+            _spread_ceiling = MAX_SPREAD_BPS
+            if slice_.max_slippage_pct > 0:
+                _spread_ceiling = min(MAX_SPREAD_BPS, slice_.max_slippage_pct * 10_000.0)
+            _block_reason = spread_gate_reason_from_bps(_spread_bps, _spread_ceiling) or await event_blackout_reason(
+                self._http, self._config.stock_price_api_url, slice_.symbol, EVENT_BLACKOUT_HOURS,
+            )
+            if _block_reason:
+                LOG.warning(
+                    "Skipping slice %d/%d for %s: %s",
+                    slice_.slice_number, slice_.total_slices, slice_.symbol, _block_reason,
+                )
+                submitted.append({
+                    "symbol": slice_.symbol, "side": slice_.side, "qty": slice_.qty,
+                    "slice": slice_.slice_number, "status": "skipped", "reason": _block_reason,
+                })
+                if i < len(delays):
+                    await asyncio.sleep(delays[i])
+                continue
+
+            # Dynamic per-order routing: this path used to hardcode "market"
+            # regardless of spread, unlike the entry path -- same
+            # _choose_entry_order_type decision, same slippage-budget
+            # source (per-instruction if set, else the shared global
+            # default). Falls back to "market" if the order_type comes back
+            # "limit" but no price is known for this symbol (fail-open --
+            # never submit a limit order with a guessed price).
+            _slippage_budget = slice_.max_slippage_pct if slice_.max_slippage_pct > 0 else MAX_SLIPPAGE_PCT
+            _order_type = _choose_entry_order_type(_spread_bps, _slippage_budget)
+            _limit_price: float | None = None
+            if _order_type == "limit":
+                _price = prices.get(slice_.symbol)
+                if _price is not None and _price > 0:
+                    _offset = PASSIVE_LIMIT_OFFSET_BPS / 10_000.0
+                    _limit_price = _price * (1 - _offset) if slice_.side == "buy" else _price * (1 + _offset)
+                else:
+                    _order_type = "market"
+
             # Idempotency (16): same minute-bucket key as orchestrator so a
             # retried slice dedupes on broker instead of double-filling.
             _bucket = int(_time.time() // 60)
             _cid = f"sched-{slice_.symbol}-{slice_.side}-{slice_.qty:.4f}-{slice_.slice_number}-{_bucket}"
             try:
+                _payload = {
+                    "symbol": slice_.symbol,
+                    "side": slice_.side,
+                    "qty": slice_.qty,
+                    "order_type": _order_type,
+                    "client_order_id": _cid,
+                }
+                if _limit_price is not None:
+                    _payload["limit_price"] = _limit_price
                 resp = await self._http.post(
                     f"{self._config.agent_api_url}/agent/broker/order",
-                    json={
-                        "symbol": slice_.symbol,
-                        "side": slice_.side,
-                        "qty": slice_.qty,
-                        "order_type": "market",
-                        "client_order_id": _cid,
-                    },
+                    json=_payload,
                 )
                 result = {
                     "symbol": slice_.symbol,
@@ -270,8 +353,12 @@ class LiveScheduler:
 
             if i < len(delays):
                 await asyncio.sleep(delays[i])
-                if HALT_PATH.exists():
-                    LOG.warning("HALT file detected mid-plan — stopping remaining %d slices", len(plan.slices) - i - 1)
+                _mid_halt = await halt_reason(self._http, self._config.agent_api_url)
+                if _mid_halt:
+                    LOG.warning(
+                        "Trading halted mid-plan (%s) — stopping remaining %d slices",
+                        _mid_halt, len(plan.slices) - i - 1,
+                    )
                     break
 
         # Partial summary (16): slices already continue on failure above;

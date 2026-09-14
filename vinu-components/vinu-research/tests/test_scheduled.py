@@ -3,7 +3,9 @@ from __future__ import annotations
 import tempfile
 import pytest
 from pathlib import Path
+from unittest.mock import MagicMock
 
+from vinu_research.models import Artifact, ArtifactStatus, BenchEntry
 from vinu_research.scheduled.cron import next_run, parse_cron
 from vinu_research.scheduled.executor import ScheduledResearchExecutor
 from vinu_research.scheduled.models import ScheduledResearchJob
@@ -309,3 +311,303 @@ class TestScheduledExecutor:
             count = await executor.regime_recompute_scan()
 
         assert count == 1
+
+
+class TestDecayScanResponseMode:
+    """Phase 6: decay_scan() used to run its own disconnected ratio/
+    staleness heuristic that never called decay.py's real transition_status()
+    state machine -- cli.py's manual `decay-scan` command was the only
+    caller of that state machine. decay_scan() now uses the same real state
+    machine, gated by a graduated VINU_RESEARCH_DECAY_RESPONSE_MODE knob
+    (off/propose/auto, matching VINU_LIVE_OOD_DETECTOR's convention)."""
+
+    def _executor_with_mock_service(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        tmp = Path(tempfile.mkdtemp())
+        store = ScheduledResearchJobStore(tmp / "jobs.json")
+        executor = ScheduledResearchExecutor(store)
+        mock_svc = MagicMock()
+        mock_svc.refresh_strategy = AsyncMock(return_value={})
+        executor._service = mock_svc
+        return executor, mock_svc
+
+    def _artifact(self, status: ArtifactStatus) -> Artifact:
+        art = Artifact.create("strategy", "Test", universe=["AAPL"])
+        art.status = status
+        art.strategy_code = "class UserStrategy: pass"
+        return art
+
+    def _history(self) -> list[BenchEntry]:
+        return [
+            BenchEntry(artifact_id="x", date="2024-01-01", sharpe=0.2),
+            BenchEntry(artifact_id="x", date="2024-01-02", sharpe=0.1),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_off_mode_never_touches_the_store(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        monkeypatch.setenv("VINU_RESEARCH_DECAY_RESPONSE_MODE", "off")
+        executor, mock_svc = self._executor_with_mock_service()
+        mock_svc.strategy_store.list_artifacts_by_statuses = MagicMock(return_value=[])
+
+        count = await executor.decay_scan()
+
+        assert count == 0
+        mock_svc.strategy_store.list_artifacts_by_statuses.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auto_mode_applies_transition_and_triggers_refresh_on_decayed(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        import vinu_research.decay as decay_module
+
+        monkeypatch.setenv("VINU_RESEARCH_DECAY_RESPONSE_MODE", "auto")
+        monkeypatch.setattr(decay_module, "transition_status", lambda *a, **k: ArtifactStatus.DECAYED)
+
+        executor, mock_svc = self._executor_with_mock_service()
+        art = self._artifact(ArtifactStatus.MONITORING)
+        mock_svc.strategy_store.list_artifacts_by_statuses = MagicMock(return_value=[art])
+        mock_svc.strategy_store.get_bench_history = MagicMock(return_value=self._history())
+        mock_svc.strategy_store.get_snapshots = MagicMock(return_value=[])
+        mock_svc.strategy_store.save_snapshot = MagicMock()
+        mock_svc.strategy_store.transition_status = MagicMock()
+        mock_svc.refresh_strategy.return_value = {"full_research": True}
+
+        count = await executor.decay_scan()
+
+        assert count == 1
+        mock_svc.strategy_store.transition_status.assert_called_once_with(
+            art.artifact_id, ArtifactStatus.DECAYED,
+        )
+        mock_svc.refresh_strategy.assert_awaited_once()
+        mock_svc.strategy_store.record_proposed_decay_action.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auto_mode_no_op_when_status_unchanged(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        import vinu_research.decay as decay_module
+
+        monkeypatch.setenv("VINU_RESEARCH_DECAY_RESPONSE_MODE", "auto")
+        monkeypatch.setattr(decay_module, "transition_status", lambda current, *a, **k: current)
+
+        executor, mock_svc = self._executor_with_mock_service()
+        art = self._artifact(ArtifactStatus.ACTIVE)
+        mock_svc.strategy_store.list_artifacts_by_statuses = MagicMock(return_value=[art])
+        mock_svc.strategy_store.get_bench_history = MagicMock(return_value=self._history())
+        mock_svc.strategy_store.get_snapshots = MagicMock(return_value=[])
+        mock_svc.strategy_store.save_snapshot = MagicMock()
+        mock_svc.strategy_store.transition_status = MagicMock()
+
+        count = await executor.decay_scan()
+
+        assert count == 0
+        mock_svc.strategy_store.transition_status.assert_not_called()
+        mock_svc.refresh_strategy.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_propose_mode_records_proposal_without_mutating_status(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        import vinu_research.decay as decay_module
+
+        monkeypatch.setenv("VINU_RESEARCH_DECAY_RESPONSE_MODE", "propose")
+        monkeypatch.setattr(decay_module, "transition_status", lambda *a, **k: ArtifactStatus.DECAYED)
+
+        executor, mock_svc = self._executor_with_mock_service()
+        art = self._artifact(ArtifactStatus.MONITORING)
+        mock_svc.strategy_store.list_artifacts_by_statuses = MagicMock(return_value=[art])
+        mock_svc.strategy_store.get_bench_history = MagicMock(return_value=self._history())
+        mock_svc.strategy_store.get_snapshots = MagicMock(return_value=[])
+        mock_svc.strategy_store.save_snapshot = MagicMock()
+        mock_svc.strategy_store.record_proposed_decay_action = MagicMock()
+        mock_svc.strategy_store.transition_status = MagicMock()
+
+        count = await executor.decay_scan()
+
+        # A recorded-but-unconfirmed proposal isn't a counted action.
+        assert count == 0
+        mock_svc.strategy_store.record_proposed_decay_action.assert_called_once_with(
+            art.artifact_id, "MONITORING", "DECAYED",
+        )
+        mock_svc.strategy_store.transition_status.assert_not_called()
+        mock_svc.refresh_strategy.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_default_mode_is_auto(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        import vinu_research.decay as decay_module
+
+        monkeypatch.delenv("VINU_RESEARCH_DECAY_RESPONSE_MODE", raising=False)
+        monkeypatch.setattr(decay_module, "transition_status", lambda *a, **k: ArtifactStatus.DECAYED)
+
+        executor, mock_svc = self._executor_with_mock_service()
+        art = self._artifact(ArtifactStatus.MONITORING)
+        mock_svc.strategy_store.list_artifacts_by_statuses = MagicMock(return_value=[art])
+        mock_svc.strategy_store.get_bench_history = MagicMock(return_value=self._history())
+        mock_svc.strategy_store.get_snapshots = MagicMock(return_value=[])
+        mock_svc.strategy_store.save_snapshot = MagicMock()
+        mock_svc.strategy_store.transition_status = MagicMock()
+
+        count = await executor.decay_scan()
+
+        assert count == 1
+        mock_svc.strategy_store.transition_status.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_artifacts_without_enough_bench_history(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        monkeypatch.setenv("VINU_RESEARCH_DECAY_RESPONSE_MODE", "auto")
+        executor, mock_svc = self._executor_with_mock_service()
+        art = self._artifact(ArtifactStatus.ACTIVE)
+        mock_svc.strategy_store.list_artifacts_by_statuses = MagicMock(return_value=[art])
+        mock_svc.strategy_store.get_bench_history = MagicMock(return_value=[])
+        mock_svc.strategy_store.transition_status = MagicMock()
+
+        count = await executor.decay_scan()
+
+        assert count == 0
+        mock_svc.strategy_store.transition_status.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_exception_is_caught_and_returns_zero(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        monkeypatch.setenv("VINU_RESEARCH_DECAY_RESPONSE_MODE", "auto")
+        executor, mock_svc = self._executor_with_mock_service()
+        mock_svc.strategy_store.list_artifacts_by_statuses = MagicMock(side_effect=Exception("DB down"))
+
+        count = await executor.decay_scan()
+
+        assert count == 0
+
+
+class TestTradeScoreCalibrationScanResponseMode:
+    """Self-calibrating TradeScore weights follow-up: same off/propose/auto
+    convention as decay_scan, but a single global calibration (not
+    per-artifact) -- ships dormant (default off) since this is newer and
+    higher-blast-radius than decay's already-proven state machine."""
+
+    def _executor_with_mock_service(self, min_sample=30, bound=0.2):
+        from unittest.mock import MagicMock
+
+        tmp = Path(tempfile.mkdtemp())
+        store = ScheduledResearchJobStore(tmp / "jobs.json")
+        executor = ScheduledResearchExecutor(store)
+        mock_svc = MagicMock()
+        mock_svc.config.trade_score_calibration_min_sample = min_sample
+        mock_svc.config.trade_score_calibration_bound = bound
+        executor._service = mock_svc
+        return executor, mock_svc
+
+    @staticmethod
+    def _history_row(confluence, ev, risk, regime_fit, actual_return_pct):
+        return {
+            "confluence_score": confluence, "ev_score": ev, "risk_score": risk,
+            "regime_fit_score": regime_fit, "actual_return_pct": actual_return_pct,
+        }
+
+    def _rich_history(self):
+        # Strong positive signal on confluence_score, so a real proposal is
+        # generated whenever the scan actually runs.
+        return [
+            self._history_row(i, 30 - i, 10.0, i % 3, i * 0.01) for i in range(30)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_off_mode_never_reads_history(self, monkeypatch):
+        import vinu_research.trade_score_calibration as tsc
+
+        monkeypatch.setenv("VINU_RESEARCH_TRADE_SCORE_CALIBRATION_MODE", "off")
+        read_spy = MagicMock(return_value=[])
+        monkeypatch.setattr(tsc, "read_history", read_spy)
+        executor, _ = self._executor_with_mock_service()
+
+        count = await executor.trade_score_calibration_scan()
+
+        assert count == 0
+        read_spy.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_insufficient_sample_is_a_no_op(self, monkeypatch):
+        import vinu_research.trade_score_calibration as tsc
+
+        monkeypatch.setenv("VINU_RESEARCH_TRADE_SCORE_CALIBRATION_MODE", "auto")
+        monkeypatch.setattr(tsc, "read_history", MagicMock(return_value=[self._history_row(1, 1, 1, 1, 0.01)]))
+        apply_spy = MagicMock()
+        monkeypatch.setattr(tsc, "apply_directly", apply_spy)
+        executor, _ = self._executor_with_mock_service(min_sample=30)
+
+        count = await executor.trade_score_calibration_scan()
+
+        assert count == 0
+        apply_spy.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_actionable_signal_is_a_no_op(self, monkeypatch):
+        import vinu_research.trade_score_calibration as tsc
+
+        monkeypatch.setenv("VINU_RESEARCH_TRADE_SCORE_CALIBRATION_MODE", "auto")
+        # All identical scores -> zero-variance -> zero correlation -> no signal.
+        flat_history = [self._history_row(20, 20, 20, 20, 0.01) for _ in range(30)]
+        monkeypatch.setattr(tsc, "read_history", MagicMock(return_value=flat_history))
+        apply_spy = MagicMock()
+        monkeypatch.setattr(tsc, "apply_directly", apply_spy)
+        executor, _ = self._executor_with_mock_service(min_sample=30)
+
+        count = await executor.trade_score_calibration_scan()
+
+        assert count == 0
+        apply_spy.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_propose_mode_records_without_applying(self, monkeypatch):
+        import vinu_research.trade_score_calibration as tsc
+
+        monkeypatch.setenv("VINU_RESEARCH_TRADE_SCORE_CALIBRATION_MODE", "propose")
+        monkeypatch.setattr(tsc, "read_history", MagicMock(return_value=self._rich_history()))
+        save_spy = MagicMock()
+        apply_spy = MagicMock()
+        monkeypatch.setattr(tsc, "save_proposal", save_spy)
+        monkeypatch.setattr(tsc, "apply_directly", apply_spy)
+        executor, _ = self._executor_with_mock_service()
+
+        count = await executor.trade_score_calibration_scan()
+
+        assert count == 1
+        save_spy.assert_called_once()
+        apply_spy.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auto_mode_applies_directly(self, monkeypatch):
+        import vinu_research.trade_score_calibration as tsc
+
+        monkeypatch.setenv("VINU_RESEARCH_TRADE_SCORE_CALIBRATION_MODE", "auto")
+        monkeypatch.setattr(tsc, "read_history", MagicMock(return_value=self._rich_history()))
+        save_spy = MagicMock()
+        apply_spy = MagicMock()
+        monkeypatch.setattr(tsc, "save_proposal", save_spy)
+        monkeypatch.setattr(tsc, "apply_directly", apply_spy)
+        executor, _ = self._executor_with_mock_service()
+
+        count = await executor.trade_score_calibration_scan()
+
+        assert count == 1
+        apply_spy.assert_called_once()
+        save_spy.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_exception_is_caught_and_returns_zero(self, monkeypatch):
+        import vinu_research.trade_score_calibration as tsc
+
+        monkeypatch.setenv("VINU_RESEARCH_TRADE_SCORE_CALIBRATION_MODE", "auto")
+        monkeypatch.setattr(tsc, "read_history", MagicMock(side_effect=Exception("disk error")))
+        executor, _ = self._executor_with_mock_service()
+
+        count = await executor.trade_score_calibration_scan()
+
+        assert count == 0

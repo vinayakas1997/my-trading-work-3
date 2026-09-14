@@ -1,0 +1,5 @@
+vinu-ui/
+node_modules/
+dist/
+
+.env

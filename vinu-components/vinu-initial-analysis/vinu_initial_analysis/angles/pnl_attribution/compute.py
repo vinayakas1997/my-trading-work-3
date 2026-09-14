@@ -58,12 +58,25 @@ def _aggregate_group(closed_positions: list[dict[str, Any]]) -> dict[str, Any]:
     losses = [p for p in pnl_pcts if p <= 0]
     win_flags = [1.0 if p > 0 else 0.0 for p in pnl_pcts]
 
+    # Post-trade causal loss classification (high-expectations follow-up):
+    # win_rate/avg_win/avg_loss say THAT a strategy lost, never WHY.
+    # loss_cause is an extra key already available on `p` when vinu-live's
+    # feedback_loop enriched it from the trade_audit_log before pushing --
+    # same "extra keys already available, no new collection" pattern this
+    # module's own docstring already describes for artifact_id. Missing on
+    # older/un-enriched rows -> counted as "unclassified", not dropped.
+    loss_causes: dict[str, int] = {}
+    for p in closed_positions:
+        cause = p.get("loss_cause") or "unclassified"
+        loss_causes[cause] = loss_causes.get(cause, 0) + 1
+
     return {
         "n_trades": len(closed_positions),
         "total_realized_pnl": float(sum(realized_pnls)),
         "win_rate": _rate_with_ci(win_flags),
         "avg_win_pct": _rate_with_ci(wins),
         "avg_loss_pct": _rate_with_ci(losses),
+        "loss_causes": loss_causes,
     }
 
 

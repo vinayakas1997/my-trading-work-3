@@ -246,7 +246,66 @@ class TestMakePlannerOnYes:
         assert "macd_cross" in task_text
         assert "too correlated with existing book" in task_text
 
-        triage.on_propose.assert_called_once_with("AAPL", result, ref_id="run_42")
+        triage.on_propose.assert_called_once_with("AAPL", result, ref_id="run_42", debate_run_id="")
+
+    def test_debate_mode_off_never_starts_investment_committee(self, monkeypatch) -> None:
+        import vinu_agent.agent.scheduler_workers as sw_mod
+
+        monkeypatch.setattr(sw_mod, "DEBATE_MODE", "off")
+        service = _fake_service()
+        triage = MagicMock()
+        result = PlannerTriageResult("AAPL", True, "2 in flight", recipe_name="macd_cross")
+        triage.check.return_value = result
+
+        with patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker",
+                   return_value={"run_id": "run_42"}):
+            on_yes = make_planner_on_yes(service, triage)
+            on_yes("AAPL", MagicMock())
+
+        service.swarm_runtime.create_run.assert_not_called()
+        triage.on_propose.assert_called_once_with("AAPL", result, ref_id="run_42", debate_run_id="")
+
+    def test_debate_mode_full_starts_investment_committee_and_links_run_id(self, monkeypatch) -> None:
+        import vinu_agent.agent.scheduler_workers as sw_mod
+
+        monkeypatch.setattr(sw_mod, "DEBATE_MODE", "full")
+        service = _fake_service()
+        service.swarm_runtime.create_run.return_value = MagicMock(run_id="debate_99")
+        triage = MagicMock()
+        result = PlannerTriageResult("AAPL", True, "2 in flight", recipe_name="macd_cross")
+        triage.check.return_value = result
+
+        with patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker",
+                   return_value={"run_id": "run_42"}):
+            on_yes = make_planner_on_yes(service, triage)
+            on_yes("AAPL", MagicMock())
+
+        service.swarm_runtime.create_run.assert_called_once_with(
+            "investment_committee", {"symbol": "AAPL"},
+        )
+        service.swarm_runtime.start_run.assert_called_once_with("debate_99")
+        triage.on_propose.assert_called_once_with(
+            "AAPL", result, ref_id="run_42", debate_run_id="debate_99",
+        )
+
+    def test_debate_mode_full_failure_does_not_block_research_handoff(self, monkeypatch) -> None:
+        import vinu_agent.agent.scheduler_workers as sw_mod
+
+        monkeypatch.setattr(sw_mod, "DEBATE_MODE", "full")
+        service = _fake_service()
+        service.swarm_runtime.create_run.side_effect = RuntimeError("preset not found")
+        triage = MagicMock()
+        result = PlannerTriageResult("AAPL", True, "2 in flight", recipe_name="macd_cross")
+        triage.check.return_value = result
+
+        with patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker",
+                   return_value={"run_id": "run_42"}):
+            on_yes = make_planner_on_yes(service, triage)
+            on_yes("AAPL", MagicMock())  # must not raise
+
+        triage.on_propose.assert_called_once_with(
+            "AAPL", result, ref_id="run_42", debate_run_id="",
+        )
 
 
 class TestBuildChannelTargets:

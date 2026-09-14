@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from vinu_research.models import Goal
+from vinu_research.models import Artifact, ArtifactStatus, Goal
 from vinu_research.service import _has_violated_goal_constraints
 from vinu_research.storage import STATUS_DONE, STATUS_FAILED, STATUS_PENDING
 
@@ -73,6 +73,85 @@ class TestApprove:
         history = service.strategy_store.get_bench_history(art.artifact_id)
         assert len(history) == 1
         assert history[0].sharpe == 1.8
+
+
+class TestBuildCorrelationVerdict:
+    """Regression for the promotion-correlation bypass: meets_promotion_bar()
+    only applies the correlation check when a verdict is explicitly passed
+    in, and approve_run() used to be the only caller that ever built one --
+    POST /artifacts/{id}/promote and the `promote-scan` CLI command both
+    called it with none, silently no-opping promotion_correlation_required
+    for every promotion made through either path. build_correlation_verdict
+    is the shared helper both now call."""
+
+    async def test_returns_none_when_flag_disabled(self, service, strategy_store):
+        service.config.promotion_correlation_required = False
+        artifact = Artifact.create("strategy", "Test", universe=["AAPL"])
+        artifact.strategy_code = "class UserStrategy: pass"
+        artifact.source_run_id = 1
+        assert await service.build_correlation_verdict(artifact) is None
+
+    async def test_returns_none_without_source_run(self, service):
+        artifact = Artifact.create("strategy", "Test", universe=["AAPL"])
+        artifact.strategy_code = "class UserStrategy: pass"
+        artifact.source_run_id = None
+        assert await service.build_correlation_verdict(artifact) is None
+
+    async def test_returns_none_without_strategy_code(self, service):
+        artifact = Artifact.create("strategy", "Test", universe=["AAPL"])
+        artifact.strategy_code = ""
+        artifact.source_run_id = 1
+        assert await service.build_correlation_verdict(artifact) is None
+
+    async def test_returns_none_when_source_run_missing(self, service):
+        artifact = Artifact.create("strategy", "Test", universe=["AAPL"])
+        artifact.strategy_code = "class UserStrategy: pass"
+        artifact.source_run_id = 999  # never inserted
+        assert await service.build_correlation_verdict(artifact) is None
+
+    async def test_returns_none_when_no_active_strategies(self, service, storage, sample_record):
+        sample_record.status = "done"
+        r = storage.insert_run(sample_record)
+        artifact = Artifact.create("strategy", "Test", universe=["AAPL"])
+        artifact.strategy_code = "class UserStrategy: pass"
+        artifact.source_run_id = r.id
+        assert await service.build_correlation_verdict(artifact) is None
+
+    async def test_invokes_the_gate_when_an_active_strategy_exists(
+        self, service, storage, strategy_store, sample_record, monkeypatch,
+    ):
+        sample_record.status = "done"
+        r = storage.insert_run(sample_record)
+
+        active = Artifact.create("strategy", "Active", universe=["AAPL"])
+        active.status = ArtifactStatus.ACTIVE
+        active.strategy_code = "class Active: pass"
+        strategy_store.upsert_artifact(active)
+
+        candidate = Artifact.create("strategy", "Candidate", universe=["AAPL"])
+        candidate.strategy_code = "class Candidate: pass"
+        candidate.source_run_id = r.id
+
+        from vinu_research.gates.correlation_gate import CorrelationVerdict
+        called = {}
+
+        async def _fake_gate(*, candidate_code, candidate_symbol, from_date, to_date, active_strategies, tools, config, interval):
+            called["candidate_symbol"] = candidate_symbol
+            called["from_date"] = from_date
+            called["to_date"] = to_date
+            called["n_active"] = len(active_strategies)
+            return CorrelationVerdict(eligible=False, avg_correlation=0.9, reasons=["too correlated"])
+
+        monkeypatch.setattr("vinu_research.service.check_correlation_gate", _fake_gate)
+
+        verdict = await service.build_correlation_verdict(candidate)
+
+        assert verdict is not None
+        assert verdict.eligible is False
+        assert called["candidate_symbol"] == sample_record.symbol
+        assert called["from_date"] == sample_record.from_date
+        assert called["to_date"] == sample_record.to_date
+        assert called["n_active"] == 1
 
 
 class TestRunResearchNoneUserIdea:
@@ -199,3 +278,74 @@ class TestRevalidate:
         result = await service.revalidate_artifact(a.artifact_id)
         assert result["revalidated"] is False
         assert "No strategy code" in result["error"]
+
+    @staticmethod
+    def _failing_backtest_result():
+        from vinu_research.models import BacktestMetrics, BacktestResult
+        return BacktestResult(
+            run_id="r1", strategy_name="CustomStrategy", metrics=BacktestMetrics(sharpe_ratio=0.1),
+            benchmark_metrics={}, trade_count=5, equity_points=10,
+            raw={"validation": {"passed": False}},
+        )
+
+    def _active_artifact(self, strategy_store):
+        from vinu_research.models import Artifact, ArtifactStatus
+        a = Artifact.create("strategy", "Active", universe=["AAPL"])
+        a.strategy_code = "class UserStrategy: pass"
+        a.status = ArtifactStatus.ACTIVE
+        strategy_store.upsert_artifact(a)
+        return a
+
+    @pytest.mark.asyncio
+    async def test_failed_validation_demotes_in_auto_mode(self, service, strategy_store, monkeypatch):
+        """Default mode (auto, or VINU_RESEARCH_DECAY_RESPONSE_MODE unset)
+        preserves the original always-on behavior."""
+        monkeypatch.delenv("VINU_RESEARCH_DECAY_RESPONSE_MODE", raising=False)
+        a = self._active_artifact(strategy_store)
+        async def _fake_run_backtest(self, **kw):
+            return TestRevalidate._failing_backtest_result()
+        monkeypatch.setattr("vinu_research.tools.ResearchTools.run_backtest", _fake_run_backtest)
+        result = await service.revalidate_artifact(a.artifact_id)
+        assert result["new_status"] == "MONITORING"
+        stored = strategy_store.get_artifact(a.artifact_id)
+        assert stored.status.value == "MONITORING"
+
+    @pytest.mark.asyncio
+    async def test_failed_validation_does_not_demote_when_mode_is_off(self, service, strategy_store, monkeypatch):
+        """Regression: VINU_RESEARCH_DECAY_RESPONSE_MODE=off is meant to
+        disable ALL automated status transitions (that's decay_scan's own
+        documented meaning for `off`), but this single-strike revalidation
+        demotion used to run un-gated -- an operator relying on `off` to
+        pause automated demotions for manual review would still see ACTIVE
+        artifacts silently drop to MONITORING here."""
+        monkeypatch.setenv("VINU_RESEARCH_DECAY_RESPONSE_MODE", "off")
+        a = self._active_artifact(strategy_store)
+        async def _fake_run_backtest(self, **kw):
+            return TestRevalidate._failing_backtest_result()
+        monkeypatch.setattr("vinu_research.tools.ResearchTools.run_backtest", _fake_run_backtest)
+        result = await service.revalidate_artifact(a.artifact_id)
+        # Telemetry (last_validated_ts, revalidation_count) still records --
+        # only the status transition is gated.
+        assert result["revalidated"] is True
+        assert result["new_status"] == "ACTIVE"
+        stored = strategy_store.get_artifact(a.artifact_id)
+        assert stored.status.value == "ACTIVE"
+        assert stored.revalidation_count == 1
+
+    @pytest.mark.asyncio
+    async def test_failed_validation_proposes_when_mode_is_propose(self, service, strategy_store, monkeypatch):
+        """`propose` mode records via the same record_proposed_decay_action
+        path decay_scan already uses -- a human must call
+        decay.approve_decay_action() before the status actually changes."""
+        monkeypatch.setenv("VINU_RESEARCH_DECAY_RESPONSE_MODE", "propose")
+        a = self._active_artifact(strategy_store)
+        async def _fake_run_backtest(self, **kw):
+            return TestRevalidate._failing_backtest_result()
+        monkeypatch.setattr("vinu_research.tools.ResearchTools.run_backtest", _fake_run_backtest)
+        result = await service.revalidate_artifact(a.artifact_id)
+        assert result["new_status"] == "ACTIVE"
+        stored = strategy_store.get_artifact(a.artifact_id)
+        assert stored.status.value == "ACTIVE"
+        proposal = strategy_store.get_proposed_decay_action(a.artifact_id)
+        assert proposal is not None
+        assert proposal["proposed_status"] == "MONITORING"

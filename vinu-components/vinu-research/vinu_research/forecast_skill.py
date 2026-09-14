@@ -161,10 +161,12 @@ def compute_angle_calibration(
 
 _FORECAST_SYSTEM_PROMPT = (
     "You are a quantitative forecast generator. Given personality "
-    "features and risk state for a symbol, produce a structured "
+    "features, risk state, and an optional Summary Agent ticker summary "
+    "for a symbol, produce a structured "
     "forecast: direction (long/short/neutral), confidence (0-1), "
     "expected magnitude percent, magnitude standard deviation, "
-    "and horizon in days. Return ONLY valid JSON with keys: "
+    "and horizon in days. Weigh the summary narrative for context, but "
+    "size only from the Risk State + Personality numbers. Return ONLY valid JSON with keys: "
     "direction, confidence, magnitude_pct, magnitude_std, horizon_days, reasoning. "
     "No markdown fences."
 )
@@ -176,19 +178,26 @@ async def generate_forecast(
     risk_state: dict[str, Any],
     config: ResearchConfig,
     llm_client: Any | None = None,
+    summary_context: dict[str, Any] | None = None,
 ) -> Forecast:
     """Produce a direction/magnitude forecast via the research LLM client.
 
     `llm_client` must expose an async `chat_json(system, user) -> dict | None`
     method — the same interface as `ResearchLlmClient` (vinu_research.llm). A
     client is constructed from `config` when none is supplied.
+
+    `summary_context` is the Summary Agent's stored read (already
+    normalized by trade_plan_authoring._normalize_summary_context, or None
+    for the legacy risk + shock-rows-only prompt).
     """
     if llm_client is None:
         from vinu_research.llm import ResearchLlmClient
 
         llm_client = ResearchLlmClient(config)
 
-    prompt = _build_forecast_prompt(symbol, personality_features, risk_state)
+    prompt = _build_forecast_prompt(
+        symbol, personality_features, risk_state, summary_context=summary_context,
+    )
 
     data = await llm_client.chat_json(_FORECAST_SYSTEM_PROMPT, prompt)
     if not isinstance(data, dict):
@@ -216,8 +225,16 @@ def _build_forecast_prompt(
     symbol: str,
     personality: dict[str, Any],
     risk: dict[str, Any],
+    summary_context: dict[str, Any] | None = None,
 ) -> str:
     lines = [f"Generate a forecast for {symbol}.\n"]
+    if isinstance(summary_context, dict) and str(summary_context.get("summary") or "").strip():
+        awd = summary_context.get("angles_with_data", "?")
+        ac = summary_context.get("angle_count", 28)
+        run = summary_context.get("source_run_id") or "unknown"
+        lines.append(f"=== Ticker Summary ({awd} of {ac} angles, run {run}) ===")
+        lines.append(str(summary_context["summary"]).strip())
+        lines.append("")
     lines.append("=== Personality Features ===")
     for k, v in _flatten_dict(personality).items():
         lines.append(f"  {k}: {v}")

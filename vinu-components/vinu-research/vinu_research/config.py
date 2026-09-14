@@ -12,6 +12,10 @@ DEFAULT_FEATURES_API_URL = "http://127.0.0.1:8082"
 DEFAULT_SIMULATOR_API_URL = "http://127.0.0.1:8085"
 DEFAULT_CORRELATION_API_URL = "http://127.0.0.1:8083"
 DEFAULT_STOCK_PRICE_API_URL = "http://127.0.0.1:8081"
+# Same shared VINU_AGENT_API_URL other services (e.g. vinu-live's
+# orchestrator) already read for this address -- not a new
+# VINU_RESEARCH_-scoped var, since this is the one canonical agent-api URL.
+DEFAULT_AGENT_API_URL = "http://127.0.0.1:8086"
 DEFAULT_BENCHMARK_SYMBOL = "SPY"
 DEFAULT_MAX_ITERATIONS = 5
 DEFAULT_IMPROVEMENT_THRESHOLD = 0.05
@@ -87,6 +91,7 @@ class ResearchConfig:
     walk_forward_stability_threshold: float = 0.5
     walk_forward_min_completed_windows: int = 2
     stock_price_api_url: str = DEFAULT_STOCK_PRICE_API_URL
+    agent_api_url: str = DEFAULT_AGENT_API_URL
     benchmark_symbol: str = DEFAULT_BENCHMARK_SYMBOL
     # "llm"/"hybrid": LLM drives every iteration (fresh generation on iteration 1,
     # feedback-informed refinement on iteration 2+). "template": deterministic
@@ -139,7 +144,15 @@ class ResearchConfig:
     # correlation exceeds this threshold, promotion is blocked and the artifact
     # is created as BENCHING instead of ACTIVE.
     promotion_correlation_threshold: float = 0.85
-    promotion_correlation_required: bool = False
+    # Was False -- the gate existed and worked (check_correlation_gate
+    # already handles the fail-closed path correctly) but defaulted off, so
+    # a highly-correlated candidate could still be promoted to ACTIVE
+    # unless something else caught it. The separate runtime trim monitor in
+    # vinu-live's orchestrator.py only ever cuts an ALREADY-open position at
+    # the same 0.85 threshold -- it never blocks a new promotion from being
+    # correlated in the first place. Flipped to True so promotion-time and
+    # runtime correlation awareness are both actually engaged.
+    promotion_correlation_required: bool = True
 
     # Fixed historical crisis windows the winning strategy is replayed through
     # once, after the refinement loop finishes — never used to pick or tune
@@ -183,6 +196,61 @@ class ResearchConfig:
     # slower than a strategy's rolling Sharpe. Set to 0 to disable.
     regime_recompute_interval_days: int = 1
 
+    # High-expectations spec #6 -- whole-market regime analogue engine
+    # (market_regime_analogue.py). Opt-in, same cautious-rollout posture as
+    # stress_test_derive_regime_windows above and VINU_LIVE_OOD_DETECTOR's
+    # "off" default: an extra benchmark-symbol fetch + KNN pass per day
+    # (cached, not per trade-plan call) feeding compute_trade_score's
+    # regime_fit_score, which already defaults to 0 (not skipped) when this
+    # is off. Env: VINU_RESEARCH_REGIME_ANALOGUE_ENABLED.
+    regime_analogue_enabled: bool = False
+    regime_analogue_benchmark_symbol: str = "SPY"
+
+    # High-expectations spec #7 -- live options-IV context (trade_plan_
+    # authoring.fetch_options_context), opt-in for the same reason: an
+    # extra per-symbol external API call on every authoring run (not day-
+    # cacheable like the regime analogue above -- IV moves intraday), and
+    # requires an Alpaca account with options-data entitlement, which not
+    # every deployment has. Env: VINU_RESEARCH_OPTIONS_IV_ENABLED.
+    options_iv_enabled: bool = False
+
+    # investment_committee debate signal (trade_plan_authoring.
+    # fetch_debate_signal) -- opt-in since it depends on
+    # VINU_AGENT_DEBATE_MODE=full (itself opt-in) already having produced a
+    # completed debate for this symbol; an extra cross-service HTTP round
+    # trip on every authoring run for a feature most deployments won't have
+    # populated. Env: VINU_RESEARCH_DEBATE_SIGNAL_ENABLED.
+    debate_signal_enabled: bool = False
+    # fetch_debate_signal used to hardcode strength=0.5 regardless of how
+    # strongly the risk_officer's text reads -- this multiplier applies on
+    # top of the conviction-tier strength (0.4/0.7/1.0) the parser now
+    # derives from the text, so the debate's overall influence on
+    # _confluence_score can be tuned independently of a single raw angle's
+    # typical strength range without touching the gate itself. 1.0 = no
+    # extra weighting beyond the conviction tier.
+    debate_signal_weight: float = 1.0
+
+    # Regime router for the LLM trade-plan pipeline (high-expectations
+    # follow-up): mirrors vinu-portfolio's own already-proven
+    # _regime_alignment_multiplier / regime_tilt_bound design (same default
+    # magnitude, same "bounded tilt, not a hard switch" shape) -- that
+    # router only reaches the rule-based vinu-strategy YAML pipeline, this
+    # gives current_regime (regime_analysis angle) a second, direct channel
+    # into THIS pipeline's position sizing, independent of its existing
+    # (diluted, one-vote-among-many) confluence-score signal. On by
+    # default, same as vinu-portfolio's own tilt -- 0.0 disables it.
+    # Env: VINU_RESEARCH_REGIME_SIZE_TILT_BOUND.
+    regime_size_tilt_bound: float = 0.3
+
+    # Self-calibrating TradeScore weights (high-expectations follow-up, see
+    # trade_score_calibration.py). Stays inert (no adjustment) below
+    # min_sample real closed trades -- fitting weights against noise would
+    # be worse than the honest heuristic default. `bound` caps how much any
+    # single sub-score's weight can move in one calibration cycle (0.2 =
+    # 20%), never a full refit. Env: VINU_RESEARCH_TRADE_SCORE_CALIBRATION_MIN_SAMPLE / _BOUND.
+    trade_score_calibration_min_sample: int = 30
+    trade_score_calibration_bound: float = 0.2
+
     # Sweep knobs (10-env-knobs.md): intervals + topN + fast flags. Env only, no code change to flip.
     sweep_intervals: str = "1d,1H,15min"
     sweep_top_n_per_interval: int = 3
@@ -202,6 +270,48 @@ class ResearchConfig:
 
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
+
+
+@dataclass(frozen=True)
+class TradeScoreThresholds:
+    """High-expectations spec #14's Trade Score tiers/weights. Same
+    standalone-frozen-dataclass-with-defaults shape as DecayThresholds below
+    (not a ResearchConfig field, not read via load_config) -- instantiate
+    directly (`TradeScoreThresholds()`), override only in tests or a future
+    calibration pass. See gates/trade_score_gate.py for how each is used.
+    """
+    # Tier cutoffs (spec: >110 strong, 90-110 moderate, 70-90 watch, <70 no_trade).
+    strong_threshold: float = 110.0
+    moderate_threshold: float = 90.0
+    watch_threshold: float = 70.0
+    # Sub-score max points; total_score's ceiling is their sum (135, matching
+    # the spec's own 135-point example).
+    confluence_max: float = 40.0
+    ev_max: float = 35.0
+    risk_max: float = 30.0
+    regime_fit_max: float = 30.0
+    # Net-EV-net-of-costs level treated as a full ev_score -- a documented
+    # heuristic (2%), not a fitted threshold.
+    ev_full_score_pct: float = 0.02
+    # expected_drawdown/cvar level treated as a zero risk_score -- also a
+    # documented heuristic (10%), not a fitted threshold.
+    risk_full_loss_pct: float = 0.10
+    # Cost estimate (basis points) used by _ev_score when market_state has no
+    # liquidity-derived cost_bps.
+    default_cost_bps: float = 10.0
+    # High-expectations spec #7: scales market_state.options' ATM IV into an
+    # extra EV-reducing uncertainty cost in _ev_score -- a documented
+    # heuristic, not a fitted coefficient (e.g. atm_iv=0.30 -> 0.015, a
+    # 1.5% haircut on expected value).
+    iv_uncertainty_weight: float = 0.05
+    # check_trade_score_gate() blocks approval below this tier.
+    min_tradeable_tier: str = "watch"
+    # Reward:risk hard veto (high-expectations spec's asymmetry pillar --
+    # "no R:R>=X veto" was a real gap: R:R only implicitly nudged ev_score/
+    # risk_score before this). forecast.magnitude_pct / risk_band.
+    # expected_drawdown below this forces tier to "no_trade" regardless of
+    # the composite score -- an explicit veto, not a sub-score penalty.
+    min_reward_risk_ratio: float = 1.5
 
 
 @dataclass(frozen=True)
@@ -254,6 +364,7 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         walk_forward_stability_threshold=float(os.environ.get("VINU_RESEARCH_WF_STABILITY_THRESHOLD", "0.5")),
         walk_forward_min_completed_windows=int(os.environ.get("VINU_RESEARCH_WF_MIN_COMPLETED_WINDOWS", "2")),
         stock_price_api_url=os.environ.get("VINU_STOCK_PRICE_API_URL", DEFAULT_STOCK_PRICE_API_URL),
+        agent_api_url=os.environ.get("VINU_AGENT_API_URL", DEFAULT_AGENT_API_URL),
         benchmark_symbol=os.environ.get("VINU_RESEARCH_BENCHMARK_SYMBOL", DEFAULT_BENCHMARK_SYMBOL),
         generator_mode=os.environ.get("VINU_RESEARCH_GENERATOR_MODE", "hybrid"),
         llm_candidates=int(os.environ.get("VINU_RESEARCH_LLM_CANDIDATES", "3")),
@@ -290,7 +401,7 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
             os.environ.get("VINU_RESEARCH_PROMOTION_CORRELATION_THRESHOLD", "0.85")
         ),
         promotion_correlation_required=os.environ.get(
-            "VINU_RESEARCH_PROMOTION_CORRELATION_REQUIRED", "false"
+            "VINU_RESEARCH_PROMOTION_CORRELATION_REQUIRED", "true"
         ).lower() in ("1", "true", "yes"),
         stress_test_enabled=os.environ.get("VINU_RESEARCH_STRESS_TEST_ENABLED", "true").lower()
         in ("1", "true", "yes"),
@@ -317,6 +428,26 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         ),
         regime_recompute_interval_days=int(
             os.environ.get("VINU_RESEARCH_REGIME_RECOMPUTE_INTERVAL_DAYS", "1")
+        ),
+        regime_analogue_enabled=os.environ.get(
+            "VINU_RESEARCH_REGIME_ANALOGUE_ENABLED", "false"
+        ).lower() in ("1", "true", "yes"),
+        regime_analogue_benchmark_symbol=os.environ.get(
+            "VINU_RESEARCH_REGIME_ANALOGUE_BENCHMARK_SYMBOL", "SPY"
+        ),
+        options_iv_enabled=os.environ.get(
+            "VINU_RESEARCH_OPTIONS_IV_ENABLED", "false"
+        ).lower() in ("1", "true", "yes"),
+        debate_signal_enabled=os.environ.get(
+            "VINU_RESEARCH_DEBATE_SIGNAL_ENABLED", "false"
+        ).lower() in ("1", "true", "yes"),
+        debate_signal_weight=float(os.environ.get("VINU_RESEARCH_DEBATE_SIGNAL_WEIGHT", "1.0")),
+        regime_size_tilt_bound=float(os.environ.get("VINU_RESEARCH_REGIME_SIZE_TILT_BOUND", "0.3")),
+        trade_score_calibration_min_sample=int(
+            os.environ.get("VINU_RESEARCH_TRADE_SCORE_CALIBRATION_MIN_SAMPLE", "30")
+        ),
+        trade_score_calibration_bound=float(
+            os.environ.get("VINU_RESEARCH_TRADE_SCORE_CALIBRATION_BOUND", "0.2")
         ),
         sweep_intervals=os.environ.get("VINU_SWEEP_INTERVALS", "1d,1H,15min"),
         sweep_top_n_per_interval=int(os.environ.get("VINU_SWEEP_TOP_N_PER_INTERVAL", "3")),

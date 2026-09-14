@@ -106,6 +106,10 @@ def run_shadow_evaluate_main(args: argparse.Namespace) -> None:
             agent_api_url=config.agent_api_url,
         )
         try:
+            record_results = await evaluator.record_daily_paper_returns()
+            recorded = sum(1 for r in record_results if r.get("status") == "recorded")
+            print(f"Recorded daily paper returns: {recorded}/{len(record_results)} artifacts")
+
             results = await evaluator.evaluate_all()
             print(f"Shadow evaluation complete: {len(results)} artifacts checked")
             for r in results:
@@ -140,6 +144,14 @@ def shadow_worker_main(args: argparse.Namespace | None = None) -> None:
         try:
             while True:
                 try:
+                    # Record today's paper return BEFORE evaluating, so a
+                    # freshly-recorded day counts toward this same cycle's
+                    # promotion decision -- see record_daily_paper_returns's
+                    # own docstring for why this write-side call didn't
+                    # exist at all before now.
+                    record_results = await evaluator.record_daily_paper_returns()
+                    recorded = sum(1 for r in record_results if r.get("status") == "recorded")
+
                     results = await evaluator.evaluate_all()
                     promoted = sum(1 for r in results if r.get("promoted"))
                     log.info(
@@ -149,6 +161,7 @@ def shadow_worker_main(args: argparse.Namespace | None = None) -> None:
                                 "worker": "shadow-worker",
                                 "artifacts_checked": len(results),
                                 "promoted": promoted,
+                                "daily_returns_recorded": recorded,
                             }
                         },
                     )

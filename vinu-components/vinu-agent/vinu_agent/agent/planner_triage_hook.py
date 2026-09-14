@@ -152,13 +152,26 @@ class PlannerTriage:
             prior_rejections=prior_rejections,
         )
 
-    def on_propose(self, ticker: str, result: PlannerTriageResult, *, ref_id: str = "") -> None:
+    def on_propose(
+        self, ticker: str, result: PlannerTriageResult, *, ref_id: str = "", debate_run_id: str = "",
+    ) -> None:
         """Best-effort write of the shared K-cap counter's write side --
-        THGATE's own read side already queries this same event_type."""
+        THGATE's own read side already queries this same event_type.
+
+        `debate_run_id` (VINU_AGENT_DEBATE_MODE=full) is the optional
+        investment_committee swarm run started alongside the research team
+        hand-off `ref_id` already points at -- appended to the note (not
+        folded into ref_id) so the two run ids stay individually visible
+        and ref_id's existing meaning ("the research team run") doesn't
+        change for the empty-string (default/off) case.
+        """
         try:
+            note = f"triage proposed recipe={result.recipe_name}: {result.reason}"
+            if debate_run_id:
+                note += f" | debate_run_id={debate_run_id}"
             self._ticker_ledger.add_event(
                 ticker.upper(), "planner", CANDIDATE_PROPOSED_EVENT_TYPE,
-                f"triage proposed recipe={result.recipe_name}: {result.reason}",
+                note,
                 ref_id=ref_id, source="watchlist",
             )
         except Exception:

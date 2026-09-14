@@ -35,7 +35,9 @@ class TestFetchFrozenTradePlanInProcess:
             ))
         assert result["status"] == "available"
         assert result["artifact"]["artifact_id"] == "art_inproc"
-        mock_author.assert_awaited_once_with("AAPL", "daily")
+        mock_author.assert_awaited_once_with(
+            "AAPL", "daily", summary_context=None, extra_checklist_entries=None,
+        )
 
     def test_falls_back_to_http_when_in_process_raises(self) -> None:
         tool = TradePlanTool()

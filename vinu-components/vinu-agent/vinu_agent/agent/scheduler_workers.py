@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -32,6 +33,17 @@ from .significance_triage import (
 from .team import TeamManager
 
 LOG = logging.getLogger(__name__)
+
+# The richer bull/bear/risk_officer debate (swarm/presets/investment_committee.yaml)
+# used to only run via the manual `vinu-agent swarm run investment_committee`
+# CLI command -- never invoked by the automated scheduled pipeline that
+# actually proposes ideas (make_planner_on_yes's `_on_yes` below, via the
+# "research" team's idea_generator -> backtest_runner -> risk_critic loop).
+# Defaults OFF: this adds a second LLM multi-agent run (real cost/latency)
+# per proposed idea, matching this codebase's "opt-in for anything adding
+# cost" convention (see e.g. stress_test_derive_regime_windows in
+# vinu-research/config.py) rather than silently changing default behavior.
+DEBATE_MODE = os.environ.get("VINU_AGENT_DEBATE_MODE", "off").strip().lower()
 
 
 def _angle_trust(angle_names: list[str]) -> dict[str, Any]:
@@ -550,6 +562,34 @@ def make_planner_on_yes(service: Any, triage: PlannerTriage):
             )
 
         handoff = run_team_for_ticker(service, "research", task, session_id=f"planner-{ticker}")
-        triage.on_propose(ticker, result, ref_id=handoff.get("run_id", ""))
+
+        debate_run_id = ""
+        if DEBATE_MODE == "full":
+            debate_run_id = _start_investment_committee_debate(service, ticker)
+
+        triage.on_propose(
+            ticker, result, ref_id=handoff.get("run_id", ""), debate_run_id=debate_run_id,
+        )
 
     return _on_yes
+
+
+def _start_investment_committee_debate(service: Any, ticker: str) -> str:
+    """VINU_AGENT_DEBATE_MODE=full: additionally kick off the richer
+    bull/bear/risk_officer swarm preset (investment_committee.yaml) for the
+    same ticker the research team was just handed off for -- the same
+    `create_run`+`start_run` path the manual `vinu-agent swarm run
+    investment_committee` CLI command already uses, not a new execution
+    mechanism. Runs in its own background thread (SwarmRuntime.start_run's
+    own design) so it never blocks the triage cycle; its run_id is recorded
+    on the same ticker_ledger event the research handoff's run_id already
+    is, so the two are traceable together rather than the debate being an
+    unlinked, parallel pipeline. Best-effort: a failure here must never
+    block the (already-succeeded) research team hand-off above."""
+    try:
+        run = service.swarm_runtime.create_run("investment_committee", {"symbol": ticker})
+        service.swarm_runtime.start_run(run.run_id)
+        return run.run_id
+    except Exception:
+        LOG.exception("Failed to start investment_committee debate for %s, continuing without it", ticker)
+        return ""

@@ -19,6 +19,11 @@ class ExecutionSlice:
     qty: float
     slice_number: int
     total_slices: int
+    # Carried over from the OrderInstruction this slice was cut from --
+    # see OrderInstruction.max_slippage_pct's own docstring. 0.0 = no
+    # per-order budget (the caller's global MAX_SPREAD_BPS ceiling applies
+    # unchanged).
+    max_slippage_pct: float = 0.0
 
 
 @dataclass
@@ -46,6 +51,7 @@ def plan_twap(
             plan.slices.append(ExecutionSlice(
                 symbol=instr.symbol, side=instr.side, qty=float(total),
                 slice_number=1, total_slices=max(n_slices, 1),
+                max_slippage_pct=instr.max_slippage_pct,
             ))
             continue
         per_slice = total / n_slices
@@ -60,6 +66,7 @@ def plan_twap(
                 qty=float(slice_qty),
                 slice_number=i + 1,
                 total_slices=n_slices,
+                max_slippage_pct=instr.max_slippage_pct,
             ))
     return plan
 
@@ -143,6 +150,7 @@ def plan_vwap(
                 qty=float(slice_qty),
                 slice_number=i + 1,
                 total_slices=n_slices,
+                max_slippage_pct=instr.max_slippage_pct,
             ))
     return plan
 

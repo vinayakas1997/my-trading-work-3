@@ -17,6 +17,17 @@ def client(tmp_path, monkeypatch):
     # C18: /broker/mandate/renew writes mandate.yaml -- point it at a tmp file
     import vinu_agent.broker.mandate as _mandate
     monkeypatch.setattr(_mandate, "DEFAULT_MANDATE_PATH", tmp_path / "mandate.yaml")
+    # get_store() caches a module-level singleton backed by a real,
+    # process-lifetime on-disk path (VINU_AGENT_DATA_ROOT, or /data, or
+    # ~/.vinu) -- without resetting it, performance tests silently share
+    # state across test runs (an artifact_id from a prior run's leftover
+    # DB file makes "first write" tests see stale data) and can hit /data
+    # permission errors in environments where that directory isn't
+    # writable. Point it at a tmp file and clear the cached singleton so
+    # each test gets a fresh, isolated store.
+    import vinu_agent.broker.performance_store as _perf_store
+    monkeypatch.setattr(_perf_store, "_store", None)
+    monkeypatch.setattr(_perf_store, "_persistent_path", lambda: tmp_path / "paper_performance.db")
     app = FastAPI()
     app.include_router(routes_broker.router)
     return TestClient(app)
@@ -205,6 +216,50 @@ class TestBrokerOrderRoute:
         client.post("/broker/performance/art-2", json={"daily_returns": [0.3, 0.4, 0.5]})
         resp = client.get("/broker/performance/art-2")
         assert resp.json()["daily_returns"] == [0.3, 0.4, 0.5]
+
+
+class TestAppendDailyReturnRoute:
+    """Regression for the dead ShadowEvaluator promotion gate: nothing in
+    production ever called this or the bulk POST above, so
+    PaperPerformanceStore stayed permanently empty (see high-expectations
+    gate-conflict audit)."""
+
+    def test_appends_a_single_day(self, client) -> None:
+        resp = client.post(
+            "/broker/performance/art-append-1/append",
+            json={"daily_return": 0.012, "trade_date": "2026-09-14"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert body["n_returns"] == 1
+
+        resp = client.get("/broker/performance/art-append-1")
+        assert resp.json()["daily_returns"] == [0.012]
+
+    def test_appends_accumulate_across_days(self, client) -> None:
+        client.post("/broker/performance/art-append-2/append", json={"daily_return": 0.01, "trade_date": "2026-09-10"})
+        client.post("/broker/performance/art-append-2/append", json={"daily_return": -0.02, "trade_date": "2026-09-11"})
+        resp = client.get("/broker/performance/art-append-2")
+        assert resp.json()["daily_returns"] == [0.01, -0.02]
+
+    def test_same_trade_date_is_idempotent(self, client) -> None:
+        client.post("/broker/performance/art-append-3/append", json={"daily_return": 0.01, "trade_date": "2026-09-14"})
+        resp = client.post(
+            "/broker/performance/art-append-3/append",
+            json={"daily_return": 0.99, "trade_date": "2026-09-14"},
+        )
+        assert resp.json()["status"] == "already_recorded"
+
+        resp = client.get("/broker/performance/art-append-3")
+        assert resp.json()["daily_returns"] == [0.01]  # the 0.99 second call never applied
+
+    def test_invalid_trade_date_is_422(self, client) -> None:
+        resp = client.post(
+            "/broker/performance/art-append-4/append",
+            json={"daily_return": 0.01, "trade_date": "not-a-date"},
+        )
+        assert resp.status_code == 422
 
     def test_passes_bracket_order_fields_through(self, client) -> None:
         mock_tool = MagicMock()

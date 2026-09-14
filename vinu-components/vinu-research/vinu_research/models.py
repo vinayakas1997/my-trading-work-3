@@ -262,6 +262,11 @@ class RiskBand:
     # fractions (0.03 = 3%). 0.0 = not computed -> gate/scale is skipped.
     cvar_95_limit: float = 0.0
     daily_vol: float = 0.0
+    # High-expectations spec #6/#8 -- a positive daily/position fraction, same
+    # convention as cvar_95_limit; blends the GARCH-based CVaR estimate with
+    # options-implied moves when available (see trade_score_gate.py). 0.0 =
+    # not computed, same fail-open posture as cvar_95_limit/daily_vol.
+    expected_drawdown: float = 0.0
 
 
 # Comparison operators a deterministic evaluator (Phase 6) can apply to a live
@@ -309,6 +314,65 @@ class InvalidationCondition:
             self.condition = f"{self.metric} {self.operator} {self.threshold}"
 
 
+class EntryDecision(Enum):
+    """Three-way pre-trade decision (high-expectations spec #11: 'WAIT is a
+    first-class decision'). Stored on TradePlan as a plain string value
+    (`.value`), matching how ArtifactStatus/HypothesisStatus already
+    serialize -- see EntryDecision.value usages in trade_plan_authoring.py."""
+    BUY = "BUY"
+    WAIT = "WAIT"
+    SHORT = "SHORT"
+
+
+class TradeAction(Enum):
+    """Continuous in-trade re-scoring outcome (high-expectations spec #10/#11:
+    HOLD/ADD/REDUCE/EXIT, not just BUY/SELL). Overlays vinu-live's existing
+    richer action strings via orchestrator.classify_action() -- it does not
+    replace them."""
+    HOLD = "HOLD"
+    ADD = "ADD"
+    REDUCE = "REDUCE"
+    EXIT = "EXIT"
+
+
+_VALID_SIGNAL_DIRECTIONS = ("supporting", "contradicting", "neutral")
+
+
+@dataclass
+class SignalEntry:
+    """One entry in a structured for/against signal ledger (high-expectations
+    spec #4: 'multiple independent signals... bull case / bear case'),
+    replacing what used to be only a free-text Forecast.reasoning string.
+    `reasoning` is kept alongside this, not replaced by it."""
+    signal: str
+    direction: str
+    strength: float = 0.0
+    source: str = ""
+    detail: str = ""
+
+    def __post_init__(self) -> None:
+        if self.direction not in _VALID_SIGNAL_DIRECTIONS:
+            raise ValueError(
+                f"invalid direction {self.direction!r}, must be one of {_VALID_SIGNAL_DIRECTIONS}"
+            )
+
+
+@dataclass
+class TradeScoreResult:
+    """Calibrated composite score (high-expectations spec #14: a 'Trade
+    Score' with tiers). Lives here rather than in gates/trade_score_gate.py
+    for the same reason CalibrationResult lives here while CalibrationGate
+    lives in calibration.py -- avoids a circular import between models.py
+    and the gate module that computes this."""
+    total_score: float = 0.0
+    tier: str = "no_trade"
+    confluence_score: float = 0.0
+    ev_score: float = 0.0
+    risk_score: float = 0.0
+    regime_fit_score: float = 0.0
+    reasons: list[str] = field(default_factory=list)
+
+
 @dataclass
 class Forecast:
     direction: str
@@ -318,6 +382,9 @@ class Forecast:
     horizon_days: int = 0
     brier_score: float = 0.0
     reasoning: str = ""
+    # High-expectations spec #4 -- structured supporting/contradicting signal
+    # ledger alongside (not replacing) the free-text `reasoning` above.
+    signals: list[SignalEntry] = field(default_factory=list)
 
 
 @dataclass
@@ -335,6 +402,17 @@ class TradePlan:
     exit_checklist: list[dict[str, str]] = field(default_factory=list)
     created_at: str = ""
     version: int = 1
+    # High-expectations spec #11 -- three-way pre-trade decision
+    # (EntryDecision.value); "" for any plan authored before this field
+    # existed, never backfilled, same contract as Artifact.origin_angles.
+    entry_decision: str = ""
+    # High-expectations spec #10 -- most recent continuous re-scoring outcome
+    # (TradeAction.value), set by whichever service re-evaluates the open
+    # position (vinu-live's orchestrator). "" until a live re-score has run.
+    in_trade_action: str = ""
+    # High-expectations spec #14 -- calibrated composite score attached at
+    # authoring time. None for any plan authored before this field existed.
+    trade_score: TradeScoreResult | None = None
 
     def to_json(self) -> str:
         return json.dumps(self, default=_dataclass_to_dict, indent=2)
@@ -350,7 +428,14 @@ class TradePlan:
             InvalidationCondition(**i) for i in d.get("invalidation_conditions") or []
         ]
         forecast = d.get("forecast")
-        d["forecast"] = Forecast(**forecast) if forecast else None
+        if forecast:
+            forecast = dict(forecast)
+            forecast["signals"] = [SignalEntry(**s) for s in forecast.get("signals") or []]
+            d["forecast"] = Forecast(**forecast)
+        else:
+            d["forecast"] = None
+        trade_score = d.get("trade_score")
+        d["trade_score"] = TradeScoreResult(**trade_score) if trade_score else None
         return cls(**d)
 
 

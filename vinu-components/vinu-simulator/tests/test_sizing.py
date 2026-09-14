@@ -97,6 +97,27 @@ class TestFractionalKellySizer:
         result = sizer.size(weights, history)
         assert result[0] <= 0  # scaled toward zero, never becomes positive
 
+    def test_delegates_to_shared_kelly_fraction(self, monkeypatch):
+        """Regression guard for the sizing-unification fix: this sizer must
+        call vinu_infra.risk_math.kelly_fraction (the single source of truth
+        also used by vinu-tools) rather than reimplementing the formula
+        inline a second time."""
+        import vinu_simulator.engine.sizing as sizing_module
+
+        calls = []
+
+        def _spy(win_rate, avg_win, avg_loss, fraction_of_kelly=1.0):
+            calls.append((win_rate, avg_win, avg_loss, fraction_of_kelly))
+            return 0.7
+
+        monkeypatch.setattr(sizing_module, "_kelly_fraction", _spy)
+        sizer = FractionalKellySizer(kelly_fraction=0.25, lookback_days=20, max_leverage=1.0)
+        weights = np.array([1.0])
+        history = np.array([0.02] * 16 + [-0.01] * 4)
+        result = sizer.size(weights, history)
+        assert len(calls) == 1
+        assert result[0] == pytest.approx(0.7 * 0.25)
+
 
 class TestBuildPositionSizer:
     def test_fixed_model(self):

@@ -148,6 +148,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     decay_p.add_argument("--dry-run", action="store_true", help="Show transitions without persisting")
     decay_p.set_defaults(func=decay_scan_main)
 
+    approve_decay_p = sub.add_parser(
+        "approve-decay", help="Apply a propose-mode decay action (VINU_RESEARCH_DECAY_RESPONSE_MODE=propose)",
+    )
+    approve_decay_p.add_argument("artifact_id", help="Artifact with a pending proposed decay action")
+    approve_decay_p.add_argument("--approver", required=True, help="Requesting user's identity")
+    approve_decay_p.add_argument("--db", default=None, help="Path to strategy store database (default: <data_root>/strategy_store.db)")
+    approve_decay_p.set_defaults(func=approve_decay_main)
+
+    approve_calibration_p = sub.add_parser(
+        "approve-trade-score-calibration",
+        help="Apply a propose-mode TradeScore calibration (VINU_RESEARCH_TRADE_SCORE_CALIBRATION_MODE=propose)",
+    )
+    approve_calibration_p.add_argument("--approver", required=True, help="Requesting user's identity")
+    approve_calibration_p.set_defaults(func=approve_trade_score_calibration_main)
+
     sched_decay_p = sub.add_parser("schedule-decay", help="Run decay-scan on a repeating interval")
     sched_decay_p.add_argument("--db", default=None, help="Path to strategy store database (default: <data_root>/strategy_store.db)")
     sched_decay_p.add_argument("--dry-run", action="store_true", help="Show transitions without persisting")
@@ -547,6 +562,43 @@ def decay_scan_main(args: argparse.Namespace) -> None:
         store.close()
 
 
+def approve_decay_main(args: argparse.Namespace) -> None:
+    """CLI-first path (matching decay's own manual-CLI-first precedent set by
+    `decay-scan`) for a human to actually invoke `decay.approve_decay_action` --
+    previously reachable only from a Python REPL."""
+    from vinu_research.decay import approve_decay_action
+    from vinu_research.storage.strategy_store import InvalidStatusTransition, SqliteStrategyStore
+
+    store = SqliteStrategyStore(_decay_db_path(args))
+    try:
+        artifact = approve_decay_action(store, args.artifact_id, args.approver)
+        print(f"{artifact.artifact_id}: status -> {artifact.status.value}")
+    except (ValueError, InvalidStatusTransition) as e:
+        print(f"Error: {e}")
+        raise SystemExit(1)
+    finally:
+        store.close()
+
+
+def approve_trade_score_calibration_main(args: argparse.Namespace) -> None:
+    """CLI-first path (matching approve-decay's own precedent) for a human
+    to actually invoke trade_score_calibration.approve_proposal --
+    previously reachable only from a Python REPL. Not artifact-keyed
+    (one global pending proposal, or none), unlike approve-decay."""
+    from vinu_research.trade_score_calibration import approve_proposal
+
+    try:
+        thresholds = approve_proposal(args.approver)
+        print(
+            f"TradeScore calibration approved: confluence_max={thresholds.confluence_max:.1f} "
+            f"ev_max={thresholds.ev_max:.1f} risk_max={thresholds.risk_max:.1f} "
+            f"regime_fit_max={thresholds.regime_fit_max:.1f}"
+        )
+    except ValueError as e:
+        print(f"Error: {e}")
+        raise SystemExit(1)
+
+
 def schedule_decay_main(args: argparse.Namespace) -> None:
     from vinu_research.config import DecayThresholds
     from vinu_research.storage.strategy_store import SqliteStrategyStore
@@ -625,6 +677,7 @@ def promote_scan_main(args: argparse.Namespace) -> None:
     """
     from vinu_research.models import ArtifactStatus
     from vinu_research.promotion import meets_promotion_bar
+    from vinu_research.service import ResearchService
     from vinu_research.storage.strategy_store import SqliteStrategyStore
 
     config = load_config()
@@ -638,19 +691,31 @@ def promote_scan_main(args: argparse.Namespace) -> None:
         print(f"[promote-scan] Checking {len(benching)} BENCHING artifact(s) "
               f"(deflated_sharpe >= {config.promotion_deflated_sharpe_threshold:.2f}, "
               f"holdout_required={config.promotion_holdout_required})\n")
-        for artifact in benching:
-            verdict = meets_promotion_bar(artifact, config)
-            print(f"  {artifact.artifact_id} ({artifact.name})")
-            print(f"    deflated_sharpe={artifact.deflated_sharpe:.3f}  holdout_passed={artifact.holdout_passed}  "
-                  f"stress_test_passed={artifact.stress_test_passed}")
-            if verdict.eligible:
-                print(f"    -> PROMOTE" + (" (dry-run, not persisted)" if args.dry_run else ""))
-                if not args.dry_run:
-                    artifact.status = ArtifactStatus.ACTIVE
-                    store.upsert_artifact(artifact)
-            else:
-                print(f"    -> hold: {'; '.join(verdict.reasons)}")
-            print()
+        # promotion_correlation_required needs the correlation gate, which
+        # needs each artifact's source run's symbol/date-range -- reuse
+        # ResearchService.build_correlation_verdict (the exact check
+        # approve_run() applies inline at creation time) instead of a second
+        # copy of the correlation-gate wiring. This command used to call
+        # meets_promotion_bar with no verdict at all, silently no-opping
+        # promotion_correlation_required for every artifact promoted here.
+        svc = ResearchService(config=config, strategy_store=store)
+        try:
+            for artifact in benching:
+                correlation_verdict = asyncio.run(svc.build_correlation_verdict(artifact))
+                verdict = meets_promotion_bar(artifact, config, correlation_verdict)
+                print(f"  {artifact.artifact_id} ({artifact.name})")
+                print(f"    deflated_sharpe={artifact.deflated_sharpe:.3f}  holdout_passed={artifact.holdout_passed}  "
+                      f"stress_test_passed={artifact.stress_test_passed}")
+                if verdict.eligible:
+                    print(f"    -> PROMOTE" + (" (dry-run, not persisted)" if args.dry_run else ""))
+                    if not args.dry_run:
+                        artifact.status = ArtifactStatus.ACTIVE
+                        store.upsert_artifact(artifact)
+                else:
+                    print(f"    -> hold: {'; '.join(verdict.reasons)}")
+                print()
+        finally:
+            asyncio.run(svc.close())
     finally:
         store.close()
 

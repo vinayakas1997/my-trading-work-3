@@ -154,6 +154,24 @@ class TestOnPropose:
         assert event["source"] == "watchlist"
         assert "macd_cross" in event["text"]
 
+    def test_debate_run_id_appended_to_note_when_present(self) -> None:
+        ledger = FakeTickerLedger()
+        triage = _triage(ticker_ledger=ledger)
+        result = PlannerTriageResult("AAPL", True, "reason", recipe_name="macd_cross")
+        triage.on_propose("AAPL", result, ref_id="run_123", debate_run_id="debate_99")
+
+        event = ledger.events[0]
+        assert event["ref_id"] == "run_123"  # unchanged meaning: the research run
+        assert "debate_run_id=debate_99" in event["text"]
+
+    def test_no_debate_run_id_omits_it_from_note(self) -> None:
+        ledger = FakeTickerLedger()
+        triage = _triage(ticker_ledger=ledger)
+        result = PlannerTriageResult("AAPL", True, "reason", recipe_name="macd_cross")
+        triage.on_propose("AAPL", result, ref_id="run_123")
+
+        assert "debate_run_id" not in ledger.events[0]["text"]
+
     def test_write_failure_does_not_raise(self) -> None:
         class RaisingLedger(FakeTickerLedger):
             def add_event(self, *a, **kw):

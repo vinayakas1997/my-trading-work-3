@@ -49,12 +49,23 @@ class ResearchTools:
             f"{self._config.stock_price_api_url}/stock", "vinu-stock-price",
             timeout=30.0, max_retries=2, circuit_breaker_threshold=3,
         )
+        # High-expectations spec #7 (options IV wiring): vinu-research
+        # cannot call an LLM tool directly (Rule 10, see module docstring on
+        # trade_plan_authoring.py) and shouldn't hold its own Alpaca
+        # credentials -- vinu-agent's tools/options_tool.py already does,
+        # so this reads live IV/Greeks over HTTP the same way every other
+        # ResearchTools fetch reads its data.
+        self._agent_client = ResilientClient(
+            f"{self._config.agent_api_url}/agent", "vinu-agent",
+            timeout=20.0, max_retries=2, circuit_breaker_threshold=3,
+        )
 
     async def close(self) -> None:
         await self._features_client.close()
         await self._simulator_client.close()
         await self._correlation_client.close()
         await self._stock_client.close()
+        await self._agent_client.close()
 
     async def run_backtest(
         self,
@@ -289,6 +300,46 @@ class ResearchTools:
             return None
         returns = prices.pct_change().dropna()
         return returns
+
+    async def get_options_snapshot(self, symbol: str) -> dict[str, Any] | None:
+        """Live options chain snapshot (Greeks + IV per contract) over
+        vinu-agent's /agent/options/{symbol}/snapshot route -- see that
+        route's docstring for why this goes through vinu-agent rather than
+        vinu-research holding its own Alpaca credentials. Live-snapshot
+        only, same limitation as tools/options_tool.py's fetch_chain: no
+        historical lookup, so this is meaningless in a backtest/replay
+        context (unlike get_benchmark_data above). None on any failure --
+        fail-open, same posture as every other ResearchTools fetch.
+        """
+        try:
+            data = await self._agent_client.get(f"/options/{symbol.upper()}/snapshot")
+        except Exception as e:
+            LOG.warning("get_options_snapshot(%s) failed: %s", symbol, e)
+            return None
+        if not isinstance(data, dict) or data.get("status") != "ok":
+            return None
+        return data
+
+    async def get_latest_debate_run(self, preset_name: str, symbol: str) -> dict[str, Any] | None:
+        """Most recent COMPLETED swarm run for `preset_name` + `symbol`, over
+        vinu-agent's /agent/swarm/runs/latest route -- used to
+        opportunistically fold a completed investment_committee debate
+        into the signal ledger. The debate runs asynchronously
+        (SwarmRuntime.start_run's own background thread) while trade-plan
+        authoring is a separate, later cycle, so this is a lookup, not a
+        wait -- None (fail-open, same posture as get_options_snapshot
+        above) when nothing has completed yet or the fetch fails.
+        """
+        try:
+            data = await self._agent_client.get(
+                "/swarm/runs/latest", params={"preset_name": preset_name, "symbol": symbol.upper()},
+            )
+        except Exception as e:
+            LOG.warning("get_latest_debate_run(%s, %s) failed: %s", preset_name, symbol, e)
+            return None
+        if not isinstance(data, dict) or data.get("status") != "ok":
+            return None
+        return data
 
     async def fetch_equity_returns(self, run_id: str) -> pd.Series | None:
         """Fetch equity curve for a completed run and return daily returns."""
