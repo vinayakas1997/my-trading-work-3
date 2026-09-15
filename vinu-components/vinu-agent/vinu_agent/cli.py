@@ -347,9 +347,13 @@ def planner_worker_main(args: argparse.Namespace) -> None:
     already have a Summary Agent read on file, per the decided watchlist
     source (Phase 9's implementation record). Before each cycle's own
     tickers are read, bootstrap_new_tickers() cold-starts a screener run
-    for any configured seed ticker (VINU_AGENT_WATCHLIST_SEED_TICKERS)
-    not yet in the store -- the watchlist bootstrap gap this worker used
-    to have no answer for. Per ticker, per cycle: RunLogTrigger refreshes
+    for any configured seed ticker not yet in the store -- the watchlist
+    bootstrap gap this worker used to have no answer for. Two additive
+    seed sources, merged: the static operator-provided list
+    (VINU_AGENT_WATCHLIST_SEED_TICKERS) and, when configured
+    (VINU_AGENT_SCREENER_RANKER_ID), vinu-screener's current top-ranked
+    symbols for that ranker -- ships inert when unset, same as the static
+    list being empty. Per ticker, per cycle: RunLogTrigger refreshes
     the Summary Agent if vinu-initial-analysis has a new run_id, then
     ChangeGate (Phase 0, unmodified) decides whether anything actually
     changed since the last Planner pass; only a "yes" reaches
@@ -374,8 +378,17 @@ def planner_worker_main(args: argparse.Namespace) -> None:
         try:
             while True:
                 try:
-                    if config.watchlist_seed_tickers:
-                        bootstrapped = bootstrap_new_tickers(service, config.watchlist_seed_tickers)
+                    seed_tickers = list(config.watchlist_seed_tickers)
+                    if config.screener_ranker_id:
+                        from .tools.screener_client import fetch_screener_top_tickers
+
+                        screener_url = config.services.get("vinu_screener", "")
+                        screener_tickers = fetch_screener_top_tickers(screener_url, config.screener_ranker_id)
+                        for ticker in screener_tickers:
+                            if ticker not in seed_tickers:
+                                seed_tickers.append(ticker)
+                    if seed_tickers:
+                        bootstrapped = bootstrap_new_tickers(service, seed_tickers)
                         if bootstrapped:
                             log.info(
                                 "bootstrapped new tickers",

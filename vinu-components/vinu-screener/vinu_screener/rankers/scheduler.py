@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Callable
 
 from .churn import RankerChurnStore, record_ranking
 from .runner import RankerRunner
@@ -29,11 +30,13 @@ class RankerScheduler:
         *,
         snapshot_store: RankedSnapshotStore | None = None,
         churn_store: RankerChurnStore | None = None,
+        held_symbols_fetcher: Callable[[], "frozenset[str]"] | None = None,
     ) -> None:
         self._ranker_store = ranker_store
         self._runner = runner
         self._snapshots = snapshot_store
         self._churn = churn_store
+        self._held_symbols_fetcher = held_symbols_fetcher
         self._last_run_at: dict[str, float] = {}
 
     def _due(self, stored: StoredRanker, now: float) -> bool:
@@ -45,12 +48,23 @@ class RankerScheduler:
         actually ran this tick (empty if nothing was due)."""
         now = now if now is not None else time.time()
         ran: list[str] = []
-        for stored in self._ranker_store.all(active_only=True):
-            if not self._due(stored, now):
-                continue
+        due = [stored for stored in self._ranker_store.all(active_only=True) if self._due(stored, now)]
+        if not due:
+            return ran
+        # Fetched once per tick, not once per ranker -- held positions don't
+        # change within one pass, and this avoids N redundant HTTP calls for
+        # N due rankers. Best-effort: a fetch failure must not stop the
+        # scheduler, same posture as every other per-ranker try/except below.
+        held_symbols: frozenset[str] = frozenset()
+        if self._held_symbols_fetcher is not None:
+            try:
+                held_symbols = self._held_symbols_fetcher()
+            except Exception:  # noqa: BLE001 -- a holdings-fetch failure must not stop the scheduler
+                LOG.exception("ranker scheduler: held_symbols_fetcher failed, continuing without it")
+        for stored in due:
             self._last_run_at[stored.ranker.ranker_id] = now
             try:
-                result = self._runner.run(stored.ranker)
+                result = self._runner.run(stored.ranker, held_symbols=held_symbols)
             except Exception:  # noqa: BLE001 -- one bad ranker must not stop the scheduler
                 LOG.exception("ranker scheduler: %s raised during run()", stored.ranker.ranker_id)
                 continue

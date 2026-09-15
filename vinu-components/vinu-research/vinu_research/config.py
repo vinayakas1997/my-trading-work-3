@@ -16,6 +16,7 @@ DEFAULT_STOCK_PRICE_API_URL = "http://127.0.0.1:8081"
 # orchestrator) already read for this address -- not a new
 # VINU_RESEARCH_-scoped var, since this is the one canonical agent-api URL.
 DEFAULT_AGENT_API_URL = "http://127.0.0.1:8086"
+DEFAULT_SCREENER_API_URL = "http://127.0.0.1:8095"
 DEFAULT_BENCHMARK_SYMBOL = "SPY"
 DEFAULT_MAX_ITERATIONS = 5
 DEFAULT_IMPROVEMENT_THRESHOLD = 0.05
@@ -92,6 +93,7 @@ class ResearchConfig:
     walk_forward_min_completed_windows: int = 2
     stock_price_api_url: str = DEFAULT_STOCK_PRICE_API_URL
     agent_api_url: str = DEFAULT_AGENT_API_URL
+    screener_api_url: str = DEFAULT_SCREENER_API_URL
     benchmark_symbol: str = DEFAULT_BENCHMARK_SYMBOL
     # "llm"/"hybrid": LLM drives every iteration (fresh generation on iteration 1,
     # feedback-informed refinement on iteration 2+). "template": deterministic
@@ -242,6 +244,19 @@ class ResearchConfig:
     # Env: VINU_RESEARCH_REGIME_SIZE_TILT_BOUND.
     regime_size_tilt_bound: float = 0.3
 
+    # Screener-rank sizing tilt: a second, independent optional channel
+    # into position sizing, same bounded-tilt shape as regime_size_tilt_
+    # bound above -- a symbol's percentile rank in vinu-screener's latest
+    # run for screener_ranker_id nudges size up/down. Unlike regime (on
+    # by default, since regime_analysis angle rows always exist once
+    # computed), this ships inert: screener_ranker_id is empty by
+    # default, so no fetch is ever attempted unless an operator
+    # deliberately points it at a real ranker_id -- most deployments
+    # won't have one configured. Env: VINU_RESEARCH_SCREENER_RANKER_ID,
+    # VINU_RESEARCH_SCREENER_RANK_SIZE_TILT_BOUND.
+    screener_ranker_id: str = ""
+    screener_rank_size_tilt_bound: float = 0.3
+
     # Self-calibrating TradeScore weights (high-expectations follow-up, see
     # trade_score_calibration.py). Stays inert (no adjustment) below
     # min_sample real closed trades -- fitting weights against noise would
@@ -365,6 +380,7 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         walk_forward_min_completed_windows=int(os.environ.get("VINU_RESEARCH_WF_MIN_COMPLETED_WINDOWS", "2")),
         stock_price_api_url=os.environ.get("VINU_STOCK_PRICE_API_URL", DEFAULT_STOCK_PRICE_API_URL),
         agent_api_url=os.environ.get("VINU_AGENT_API_URL", DEFAULT_AGENT_API_URL),
+        screener_api_url=os.environ.get("VINU_SCREENER_API_URL", DEFAULT_SCREENER_API_URL),
         benchmark_symbol=os.environ.get("VINU_RESEARCH_BENCHMARK_SYMBOL", DEFAULT_BENCHMARK_SYMBOL),
         generator_mode=os.environ.get("VINU_RESEARCH_GENERATOR_MODE", "hybrid"),
         llm_candidates=int(os.environ.get("VINU_RESEARCH_LLM_CANDIDATES", "3")),
@@ -443,6 +459,8 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         ).lower() in ("1", "true", "yes"),
         debate_signal_weight=float(os.environ.get("VINU_RESEARCH_DEBATE_SIGNAL_WEIGHT", "1.0")),
         regime_size_tilt_bound=float(os.environ.get("VINU_RESEARCH_REGIME_SIZE_TILT_BOUND", "0.3")),
+        screener_ranker_id=os.environ.get("VINU_RESEARCH_SCREENER_RANKER_ID", ""),
+        screener_rank_size_tilt_bound=float(os.environ.get("VINU_RESEARCH_SCREENER_RANK_SIZE_TILT_BOUND", "0.3")),
         trade_score_calibration_min_sample=int(
             os.environ.get("VINU_RESEARCH_TRADE_SCORE_CALIBRATION_MIN_SAMPLE", "30")
         ),

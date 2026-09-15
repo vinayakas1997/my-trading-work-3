@@ -211,6 +211,63 @@ class TestPlannerWorkerMain:
 
         mock_bootstrap.assert_called_once_with(fake_service, ["NVDA"])
 
+    def test_screener_ranker_id_unset_never_calls_screener_client(self) -> None:
+        config = AgentConfig(planner_worker_interval_sec=1, watchlist_seed_tickers=["NVDA"])
+        fake_service = MagicMock()
+        fake_service.ticker_summary_store.list_summaries.return_value = []
+        fake_service.__enter__.return_value = fake_service
+        fake_service.__exit__.return_value = False
+
+        with patch("vinu_agent.cli.load_config", return_value=config), \
+             patch("vinu_agent.cli.AgentService", return_value=fake_service), \
+             patch("vinu_agent.cli.HttpRunLogReader"), \
+             patch("vinu_agent.cli.RunLogTrigger"), \
+             patch("vinu_agent.cli.ChangeGate"), \
+             patch("vinu_agent.cli.PlannerTriage"), \
+             patch("vinu_agent.cli.hypothesis_reader_for"), \
+             patch("vinu_agent.cli.make_summary_agent_fn"), \
+             patch("vinu_agent.cli.make_planner_on_yes"), \
+             patch("vinu_agent.cli.run_gate_cycle"), \
+             patch("vinu_agent.cli.bootstrap_new_tickers", return_value=["NVDA"]) as mock_bootstrap, \
+             patch("vinu_agent.tools.screener_client.fetch_screener_top_tickers") as mock_fetch, \
+             patch("vinu_agent.cli.time.sleep", side_effect=KeyboardInterrupt):
+            planner_worker_main(argparse.Namespace(interval_sec=None))
+
+        mock_fetch.assert_not_called()
+        mock_bootstrap.assert_called_once_with(fake_service, ["NVDA"])
+
+    def test_screener_ranker_id_set_merges_and_dedupes_seed_tickers(self) -> None:
+        config = AgentConfig(
+            planner_worker_interval_sec=1,
+            watchlist_seed_tickers=["NVDA", "AAPL"],
+            screener_ranker_id="core_starter",
+        )
+        fake_service = MagicMock()
+        fake_service.ticker_summary_store.list_summaries.return_value = []
+        fake_service.__enter__.return_value = fake_service
+        fake_service.__exit__.return_value = False
+
+        with patch("vinu_agent.cli.load_config", return_value=config), \
+             patch("vinu_agent.cli.AgentService", return_value=fake_service), \
+             patch("vinu_agent.cli.HttpRunLogReader"), \
+             patch("vinu_agent.cli.RunLogTrigger"), \
+             patch("vinu_agent.cli.ChangeGate"), \
+             patch("vinu_agent.cli.PlannerTriage"), \
+             patch("vinu_agent.cli.hypothesis_reader_for"), \
+             patch("vinu_agent.cli.make_summary_agent_fn"), \
+             patch("vinu_agent.cli.make_planner_on_yes"), \
+             patch("vinu_agent.cli.run_gate_cycle"), \
+             patch("vinu_agent.cli.bootstrap_new_tickers", return_value=[]) as mock_bootstrap, \
+             patch(
+                 "vinu_agent.tools.screener_client.fetch_screener_top_tickers",
+                 return_value=["AAPL", "TSLA"],
+             ) as mock_fetch, \
+             patch("vinu_agent.cli.time.sleep", side_effect=KeyboardInterrupt):
+            planner_worker_main(argparse.Namespace(interval_sec=None))
+
+        mock_fetch.assert_called_once_with(config.services["vinu_screener"], "core_starter")
+        mock_bootstrap.assert_called_once_with(fake_service, ["NVDA", "AAPL", "TSLA"])
+
 
 class TestSignificanceWorkerMain:
     def test_wires_watchlist_through_significance_cycle(self, tmp_path: Path) -> None:

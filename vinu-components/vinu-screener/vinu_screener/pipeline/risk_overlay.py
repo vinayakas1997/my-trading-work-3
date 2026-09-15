@@ -76,6 +76,13 @@ DEFAULT_RISK_CHECKS: tuple[RiskCheck, ...] = (
     RiskCheck("deep_analysis_risk_flag", _flag_true("deep_analysis_risk_flag"), penalty=8.0),
     RiskCheck("stale_data", _flag_true("data_stale"), penalty=10.0),
     RiskCheck("fetch_degraded", _flag_true("data_fetch_degraded"), penalty=10.0),
+    # Held-symbol awareness (RankerRunner.run()'s held_symbols param sets
+    # this field the same way data_stale/data_fetch_degraded are set --
+    # see runner.py). A modest penalty, not a veto: a held symbol can
+    # still rank, it's just not prioritized for further accumulation.
+    # Ships inert: when held_symbols is never passed (today's behavior),
+    # every candidate's already_held=0.0, so this check never fires.
+    RiskCheck("already_held", _flag_true("already_held"), penalty=5.0),
 )
 
 

@@ -230,6 +230,19 @@ def _regime_size_multiplier(current_regime: str | None, direction: str, bound: f
     return 1.0 + bound if direction == favored else 1.0 - bound
 
 
+def _screener_rank_size_multiplier(percentile: float | None, bound: float) -> float:
+    """Position-size tilt from a symbol's percentile rank in vinu-screener's
+    latest run (1.0 = top of the ranked list, near 0.0 = bottom) -- same
+    linear-map shape as vinu-portfolio's _outcome_confidence_multiplier
+    (service.py:718-723): neutral at the midpoint (0.5), scaled toward
+    1.0+bound at the top and 1.0-bound at the bottom. None (screener
+    unreachable, symbol not in this run's top-N, or the tilt disabled via
+    bound<=0) is neutral -- no signal either way, not a penalty."""
+    if percentile is None or bound <= 0:
+        return 1.0
+    return 1.0 + bound * (2 * percentile - 1)
+
+
 async def fetch_angle_signals(tools: ResearchTools, symbol: str, direction: str) -> list[SignalEntry]:
     """The signal ledger used to draw on only 2 of ~28 available angles
     (shock_personality/shock_clustering, via fetch_personality_features
@@ -876,9 +889,28 @@ async def author_trade_plan(
         logger.debug("[%s %s] fetch_current_regime failed, continuing without it: %s", symbol, timeframe, e)
         current_regime = None
     regime_size_mult = _regime_size_multiplier(current_regime, forecast.direction, config.regime_size_tilt_bound)
-    risk_bands.max_position_size_pct *= size_multiplier * regime_size_mult
+    # Screener-rank sizing tilt (a second, independent optional channel --
+    # see _screener_rank_size_multiplier's own docstring): ships inert,
+    # the fetch is only ever attempted when an operator has explicitly
+    # configured screener_ranker_id. Fail-open to a neutral 1.0 on any
+    # fetch problem, same posture as the regime fetch immediately above.
+    screener_percentile = None
+    if config.screener_ranker_id:
+        try:
+            screener_percentile = await tools.fetch_screener_rank_percentile(config.screener_ranker_id, symbol)
+        except Exception as e:
+            logger.debug(
+                "[%s %s] fetch_screener_rank_percentile failed, continuing without it: %s", symbol, timeframe, e,
+            )
+            screener_percentile = None
+    screener_rank_mult = _screener_rank_size_multiplier(screener_percentile, config.screener_rank_size_tilt_bound)
+    risk_bands.max_position_size_pct *= size_multiplier * regime_size_mult * screener_rank_mult
     trade_score.reasons.append(
         f"regime_size_multiplier={regime_size_mult:.2f} (regime={current_regime or 'unknown'})"
+    )
+    trade_score.reasons.append(
+        f"screener_rank_size_multiplier={screener_rank_mult:.2f} "
+        f"(percentile={screener_percentile if screener_percentile is not None else 'unranked'})"
     )
 
     entry_decision = _derive_entry_decision(forecast, trade_score)

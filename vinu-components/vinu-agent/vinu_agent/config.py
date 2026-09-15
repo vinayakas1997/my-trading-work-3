@@ -138,6 +138,13 @@ class AgentConfig:
     # default: no seed list configured means no bootstrap happens, same
     # "skip, don't guess" contract as every other optional gate.
     watchlist_seed_tickers: list = field(default_factory=list)
+    # A second, optional watchlist-bootstrap source: vinu-screener's
+    # current top-ranked symbols for this ranker_id, merged into the seed
+    # list alongside watchlist_seed_tickers (see cli.py's
+    # planner_worker_main). Empty by default -- ships inert, no behavior
+    # change unless explicitly set, same "skip, don't guess" contract as
+    # watchlist_seed_tickers above.
+    screener_ranker_id: str = ""
     services: dict = field(default_factory=lambda: {
         "vinu_simulator": os.environ.get("VINU_SIMULATOR_API_URL", "http://localhost:8084"),
         "vinu_tools": os.environ.get("VINU_TOOLS_API_URL", "http://localhost:8082"),
@@ -260,4 +267,5 @@ def load_config() -> AgentConfig:
         watchlist_seed_tickers=[
             t.strip() for t in os.environ.get("VINU_AGENT_WATCHLIST_SEED_TICKERS", "").split(",") if t.strip()
         ],
+        screener_ranker_id=os.environ.get("VINU_AGENT_SCREENER_RANKER_ID", ""),
     )

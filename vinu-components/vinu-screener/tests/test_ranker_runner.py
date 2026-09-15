@@ -181,3 +181,31 @@ class TestDataQualityRiskFlags:
         factors = (FactorSpec("momentum", "pct_change", weight=1.0),)
         result = RankerRunner(ds).run(_cfg(("AAPL",), factors))
         assert result.ranked[0].fields["data_fetch_degraded"] == 0.0
+
+
+class TestHeldSymbolAwareness:
+    def test_held_symbol_gets_already_held_flag(self) -> None:
+        ds = FakeDataSource()
+        ds.frames["AAPL"] = _trend(100, 110)
+        ds.frames["MSFT"] = _trend(100, 110)
+        factors = (FactorSpec("momentum", "pct_change", weight=1.0),)
+        result = RankerRunner(ds).run(_cfg(("AAPL", "MSFT"), factors), held_symbols=frozenset({"AAPL"}))
+        by_symbol = {c.symbol: c for c in result.ranked}
+        assert by_symbol["AAPL"].fields["already_held"] == 1.0
+        assert by_symbol["MSFT"].fields["already_held"] == 0.0
+
+    def test_no_held_symbols_passed_defaults_to_not_held(self) -> None:
+        """Ships inert: held_symbols=None (default) must not crash or
+        false-flag."""
+        ds = FakeDataSource()
+        ds.frames["AAPL"] = _trend(100, 110)
+        factors = (FactorSpec("momentum", "pct_change", weight=1.0),)
+        result = RankerRunner(ds).run(_cfg(("AAPL",), factors))
+        assert result.ranked[0].fields["already_held"] == 0.0
+
+    def test_held_symbol_matching_is_case_insensitive(self) -> None:
+        ds = FakeDataSource()
+        ds.frames["AAPL"] = _trend(100, 110)
+        factors = (FactorSpec("momentum", "pct_change", weight=1.0),)
+        result = RankerRunner(ds).run(_cfg(("AAPL",), factors), held_symbols=frozenset({"aapl"}))
+        assert result.ranked[0].fields["already_held"] == 1.0

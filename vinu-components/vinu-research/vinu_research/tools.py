@@ -59,6 +59,16 @@ class ResearchTools:
             f"{self._config.agent_api_url}/agent", "vinu-agent",
             timeout=20.0, max_retries=2, circuit_breaker_threshold=3,
         )
+        # Screener-rank sizing tilt (author_trade_plan): reads vinu-screener's
+        # latest ranked snapshot for one symbol's percentile rank. Ships
+        # inert overall (config.screener_ranker_id empty by default, see
+        # config.py), but the client itself is always constructed the same
+        # way every other cross-service client here is -- only the *call*
+        # is gated on screener_ranker_id being set, not construction.
+        self._screener_client = ResilientClient(
+            f"{self._config.screener_api_url}/screener", "vinu-screener",
+            timeout=15.0, max_retries=2, circuit_breaker_threshold=3,
+        )
 
     async def close(self) -> None:
         await self._features_client.close()
@@ -66,6 +76,21 @@ class ResearchTools:
         await self._correlation_client.close()
         await self._stock_client.close()
         await self._agent_client.close()
+        await self._screener_client.close()
+
+    async def fetch_screener_rank_percentile(self, ranker_id: str, symbol: str) -> float | None:
+        """This symbol's percentile rank (1.0 = top of the ranked list, near
+        0.0 = bottom) in vinu-screener's latest snapshot for `ranker_id`, or
+        None if the symbol isn't present in that run's top-N (ranked but not
+        currently favored -- not an error). Raises on genuine fetch failure
+        (unreachable, 404, malformed response) -- same "raises, caught at
+        the call site" contract as fetch_current_regime above."""
+        data = await self._screener_client.get(f"/rankers/{ranker_id}/latest")
+        top = data.get("top", []) if isinstance(data, dict) else []
+        for i, entry in enumerate(top):
+            if isinstance(entry, dict) and entry.get("symbol", "").upper() == symbol.upper():
+                return 1.0 - (i / max(len(top), 1))
+        return None
 
     async def run_backtest(
         self,

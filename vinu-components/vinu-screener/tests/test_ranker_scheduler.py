@@ -142,3 +142,67 @@ class TestChurnIntegration:
             ranker_store, RankerRunner(data_source), snapshot_store=RankedSnapshotStore(":memory:"),
         )
         assert scheduler.tick(now=0.0) == ["r1"]
+
+
+class TestHeldSymbolsFetcher:
+    def test_no_fetcher_configured_runs_normally_with_no_held_symbols(self, ranker_store, data_source) -> None:
+        ranker_store.upsert_ranker(_cfg())
+        scheduler = RankerScheduler(ranker_store, RankerRunner(data_source))
+        ran = scheduler.tick(now=0.0)
+        assert ran == ["r1"]
+
+    def test_fetcher_result_is_passed_through_to_the_runner(self, ranker_store, data_source) -> None:
+        ranker_store.upsert_ranker(_cfg())
+        captured: dict = {}
+
+        class SpyRunner(RankerRunner):
+            def run(self, cfg, *, seed=0, sectors=None, enrich_fn=None, held_symbols=None):
+                captured["held_symbols"] = held_symbols
+                return super().run(cfg, seed=seed, sectors=sectors, enrich_fn=enrich_fn, held_symbols=held_symbols)
+
+        scheduler = RankerScheduler(
+            ranker_store, SpyRunner(data_source), held_symbols_fetcher=lambda: frozenset({"AAPL"}),
+        )
+        scheduler.tick(now=0.0)
+
+        assert captured["held_symbols"] == frozenset({"AAPL"})
+
+    def test_fetcher_called_at_most_once_per_tick_regardless_of_ranker_count(self, ranker_store, data_source) -> None:
+        ranker_store.upsert_ranker(_cfg("r1"))
+        ranker_store.upsert_ranker(_cfg("r2"))
+        calls = []
+
+        def fetcher():
+            calls.append(1)
+            return frozenset()
+
+        scheduler = RankerScheduler(ranker_store, RankerRunner(data_source), held_symbols_fetcher=fetcher)
+        ran = scheduler.tick(now=0.0)
+
+        assert set(ran) == {"r1", "r2"}
+        assert len(calls) == 1
+
+    def test_fetcher_not_called_when_nothing_is_due(self, ranker_store, data_source) -> None:
+        ranker_store.upsert_ranker(_cfg(), interval_sec=86400.0)
+        calls = []
+
+        def fetcher():
+            calls.append(1)
+            return frozenset()
+
+        scheduler = RankerScheduler(ranker_store, RankerRunner(data_source), held_symbols_fetcher=fetcher)
+        scheduler.tick(now=0.0)
+        calls.clear()
+
+        assert scheduler.tick(now=100.0) == []
+        assert calls == []
+
+    def test_fetcher_failure_does_not_stop_the_tick(self, ranker_store, data_source) -> None:
+        ranker_store.upsert_ranker(_cfg())
+
+        def failing_fetcher():
+            raise ConnectionError("agent down")
+
+        scheduler = RankerScheduler(ranker_store, RankerRunner(data_source), held_symbols_fetcher=failing_fetcher)
+
+        assert scheduler.tick(now=0.0) == ["r1"]

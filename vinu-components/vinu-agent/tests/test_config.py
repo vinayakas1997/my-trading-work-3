@@ -43,6 +43,18 @@ class TestLoadConfigWatchlistSeedTickers:
         assert load_config().watchlist_seed_tickers == ["AAPL", "MSFT"]
 
 
+class TestLoadConfigScreenerRankerId:
+    def test_defaults_to_empty_string(self, monkeypatch) -> None:
+        import vinu_agent.config as config_module
+        monkeypatch.setattr(config_module, "load_dotenv", lambda *a, **kw: None)
+        monkeypatch.delenv("VINU_AGENT_SCREENER_RANKER_ID", raising=False)
+        assert load_config().screener_ranker_id == ""
+
+    def test_picks_up_env_var(self, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_AGENT_SCREENER_RANKER_ID", "core_starter")
+        assert load_config().screener_ranker_id == "core_starter"
+
+
 class TestLoadOrchestratorLlmConfig:
     def test_returns_none_when_nothing_set(self) -> None:
         assert _load_orchestrator_llm_config() is None

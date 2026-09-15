@@ -68,6 +68,7 @@ class RankerRunner:
         seed: int = 0,
         sectors: dict[str, str] | None = None,
         enrich_fn: Any = None,
+        held_symbols: frozenset[str] | None = None,
     ) -> PipelineResult:
         ohlcv = self._fetch_universe(cfg.universe)
         self._library.clear_cache()
@@ -98,6 +99,7 @@ class RankerRunner:
         failed_symbols = {
             s.upper() for s in getattr(self._data_source, "last_batch_failed_symbols", None) or ()
         }
+        held = {s.upper() for s in (held_symbols or ())}
         for symbol, df in ohlcv.items():
             last = df.iloc[-1]
             price = float(last["close"])
@@ -107,6 +109,12 @@ class RankerRunner:
             snapshots[symbol].setdefault("dollar_volume", price * volume)
             snapshots[symbol]["data_stale"] = 1.0 if _is_stale(df) else 0.0
             snapshots[symbol]["data_fetch_degraded"] = 1.0 if symbol.upper() in failed_symbols else 0.0
+            # Held-symbol awareness: feeds risk_overlay.py's already_held
+            # RiskCheck, same pattern as data_stale/data_fetch_degraded
+            # above. held_symbols is empty unless a caller explicitly
+            # fetched real positions (see RankerScheduler's
+            # held_symbols_fetcher) -- ships inert otherwise.
+            snapshots[symbol]["already_held"] = 1.0 if symbol.upper() in held else 0.0
 
         scorer = make_weighted_scorer(cfg.factors)
         pipeline = ScreenPipeline(scorer, PipelineConfig(top_n=cfg.top_n, hard_filter=cfg.hard_filter))

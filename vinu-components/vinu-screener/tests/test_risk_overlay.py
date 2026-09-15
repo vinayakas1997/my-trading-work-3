@@ -28,6 +28,23 @@ class TestDefaultChecks:
         assert set(result.flags) >= {"invalid_pe", "high_pb", "rsi_overbought"}
         assert result.penalty > 4.0  # more than any single check alone
 
+    def test_already_held_flag(self) -> None:
+        result = apply_risk_overlay({"already_held": 1.0})
+        assert "already_held" in result.flags
+        assert result.penalty == 5.0
+
+    def test_not_held_no_penalty(self) -> None:
+        result = apply_risk_overlay({"already_held": 0.0})
+        assert "already_held" not in result.flags
+        assert result.penalty == 0.0
+
+    def test_missing_already_held_field_no_penalty(self) -> None:
+        """Ships inert: RankerRunner.run() only sets already_held when
+        held_symbols is passed -- a candidate built before this feature
+        existed (or without held_symbols configured) has no such field."""
+        result = apply_risk_overlay({"pe": 15.0})
+        assert "already_held" not in result.flags
+
 
 class TestCappedAndVeto:
     def test_penalty_is_capped_at_max_penalty(self) -> None:

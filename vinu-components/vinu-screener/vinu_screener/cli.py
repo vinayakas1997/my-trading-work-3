@@ -37,6 +37,7 @@ def scan_main(args: argparse.Namespace) -> None:
 
     from vinu_screener.audit.watch_history import WatchAuditStore
     from vinu_screener.rankers.churn import RankerChurnStore
+    from vinu_screener.rankers.holdings_client import fetch_held_symbols
     from vinu_screener.rankers.runner import RankerRunner
     from vinu_screener.rankers.scheduler import RankerScheduler
     from vinu_screener.rankers.snapshot_store import RankedSnapshotStore
@@ -46,6 +47,7 @@ def scan_main(args: argparse.Namespace) -> None:
     from vinu_screener.scan.monitor import ScanMonitor
     from vinu_screener.scheduler import Scheduler
     from vinu_screener.server.app import (
+        DEFAULT_AGENT_API_URL,
         DEFAULT_AUDIT_DB_PATH,
         DEFAULT_RANKER_CHURN_DB_PATH,
         DEFAULT_RANKER_DB_PATH,
@@ -63,8 +65,10 @@ def scan_main(args: argparse.Namespace) -> None:
     ranker_store = RankerStore(args.ranker_db or DEFAULT_RANKER_DB_PATH)
     ranker_snapshots = RankedSnapshotStore(args.ranker_snapshot_db or DEFAULT_RANKER_SNAPSHOT_DB_PATH)
     ranker_churn = RankerChurnStore(args.ranker_churn_db or DEFAULT_RANKER_CHURN_DB_PATH)
+    agent_api_url = DEFAULT_AGENT_API_URL
     ranker_scheduler = RankerScheduler(
         ranker_store, RankerRunner(data_source), snapshot_store=ranker_snapshots, churn_store=ranker_churn,
+        held_symbols_fetcher=(lambda: fetch_held_symbols(agent_api_url)) if agent_api_url else None,
     )
     ranker_thread = threading.Thread(
         target=ranker_scheduler.run_forever, kwargs={"poll_sec": args.ranker_poll_sec}, daemon=True,
@@ -72,6 +76,20 @@ def scan_main(args: argparse.Namespace) -> None:
     ranker_thread.start()
 
     scheduler.run_forever(poll_sec=args.poll_sec)
+
+
+def seed_default_main(args: argparse.Namespace) -> None:
+    """Idempotent: creates the `core_starter` ranker if (and only if) it
+    doesn't already exist, so this is safe to run on every container
+    start -- see `rankers/seed.py` for why a starter recipe is needed at
+    all (nothing else ever populates a RankerConfig by default)."""
+    from vinu_screener.rankers.seed import seed_default_ranker
+    from vinu_screener.rankers.store import RankerStore
+    from vinu_screener.server.app import DEFAULT_RANKER_DB_PATH
+
+    store = RankerStore(args.ranker_db or DEFAULT_RANKER_DB_PATH)
+    created = seed_default_ranker(store)
+    print(f"[seed-default] core_starter ranker {'created' if created else 'already exists, left unchanged'}")
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -98,6 +116,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "not just the bare host:port.",
     )
     scan_p.set_defaults(func=scan_main)
+
+    seed_p = sub.add_parser("seed-default", help="Create the starter core_starter ranker if it doesn't exist yet")
+    seed_p.add_argument("--ranker-db", type=Path, default=None)
+    seed_p.set_defaults(func=seed_default_main)
 
     return parser.parse_args(argv)
 

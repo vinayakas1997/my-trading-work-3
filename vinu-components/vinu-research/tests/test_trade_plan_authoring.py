@@ -20,6 +20,7 @@ from vinu_research.trade_plan_authoring import (
     TradePlanApprovalError,
     _normalize_summary_context,
     _regime_size_multiplier,
+    _screener_rank_size_multiplier,
     approve_trade_plan,
     author_trade_plan,
     fetch_angle_signals,
@@ -43,11 +44,15 @@ class _StubTools:
         angle_rows: dict[str, list[dict]],
         options_snapshot: dict | None = None,
         debate_run: dict | None = None,
+        screener_percentile: float | None = None,
+        screener_raises: Exception | None = None,
     ) -> None:
         self._returns = returns
         self._angle_rows = angle_rows
         self._options_snapshot = options_snapshot
         self._debate_run = debate_run
+        self._screener_percentile = screener_percentile
+        self._screener_raises = screener_raises
 
     async def get_benchmark_data(self, symbol, from_date, to_date):
         return self._returns
@@ -60,6 +65,11 @@ class _StubTools:
 
     async def get_latest_debate_run(self, preset_name, symbol):
         return self._debate_run
+
+    async def fetch_screener_rank_percentile(self, ranker_id, symbol):
+        if self._screener_raises is not None:
+            raise self._screener_raises
+        return self._screener_percentile
 
 
 def _synthetic_returns(n: int = 120, seed: int = 7) -> pd.Series:
@@ -1456,5 +1466,112 @@ class TestRegimeRouterIntegration:
         neutral_plan = await author_trade_plan("AAPL", "daily", config, no_regime_tools, self._llm())
 
         assert bull_plan.risk_bands.max_position_size_pct == pytest.approx(
+            neutral_plan.risk_bands.max_position_size_pct
+        )
+
+
+class TestScreenerRankSizeMultiplier:
+    """Screener-rank sizing tilt follow-up: a second, independent optional
+    channel into position sizing from vinu-screener's ranked output, same
+    bounded-tilt shape as vinu-portfolio's _outcome_confidence_multiplier."""
+
+    def test_top_rank_sizes_up(self) -> None:
+        assert _screener_rank_size_multiplier(1.0, 0.3) == pytest.approx(1.3)
+
+    def test_bottom_rank_sizes_down(self) -> None:
+        assert _screener_rank_size_multiplier(0.0, 0.3) == pytest.approx(0.7)
+
+    def test_midpoint_is_neutral(self) -> None:
+        assert _screener_rank_size_multiplier(0.5, 0.3) == pytest.approx(1.0)
+
+    def test_none_percentile_is_neutral(self) -> None:
+        assert _screener_rank_size_multiplier(None, 0.3) == pytest.approx(1.0)
+
+    def test_zero_bound_is_neutral(self) -> None:
+        assert _screener_rank_size_multiplier(1.0, 0.0) == pytest.approx(1.0)
+
+
+class TestScreenerRankRouterIntegration:
+    """Ships inert: screener_ranker_id is empty by default (config.py), so
+    author_trade_plan never even attempts the fetch unless an operator
+    deliberately configures it -- unlike regime, which is on by default."""
+
+    @staticmethod
+    def _llm() -> "_StubLlmClient":
+        return _StubLlmClient({
+            "direction": "long", "confidence": 0.7, "magnitude_pct": 0.03,
+            "magnitude_std": 0.01, "horizon_days": 3,
+        })
+
+    @staticmethod
+    def _pin_strong_tier(monkeypatch) -> None:
+        import vinu_research.trade_plan_authoring as tpa
+        from vinu_research.gates.trade_score_gate import TradeScoreVerdict
+
+        monkeypatch.setattr(
+            tpa, "check_trade_score_gate",
+            lambda *a, **k: TradeScoreVerdict(
+                eligible=True, result=TradeScoreResult(total_score=115.0, tier="strong"),
+            ),
+        )
+
+    async def test_unconfigured_ranker_id_never_calls_the_fetch(self, monkeypatch) -> None:
+        self._pin_strong_tier(monkeypatch)
+
+        class RaisingIfCalledTools(_StubTools):
+            async def fetch_screener_rank_percentile(self, ranker_id, symbol):
+                raise AssertionError("should never be called when screener_ranker_id is unset")
+
+        tools = RaisingIfCalledTools(returns=_positive_edge_returns(), angle_rows={})
+        config = ResearchConfig()  # screener_ranker_id defaults to ""
+
+        plan = await author_trade_plan("AAPL", "daily", config, tools, self._llm())
+
+        assert plan is not None
+        assert any("percentile=unranked" in r for r in plan.trade_score.reasons)
+
+    async def test_top_rank_sizes_larger_than_bottom_rank(self, monkeypatch) -> None:
+        self._pin_strong_tier(monkeypatch)
+        config = ResearchConfig(screener_ranker_id="core_starter")
+        top_tools = _StubTools(returns=_positive_edge_returns(), angle_rows={}, screener_percentile=1.0)
+        bottom_tools = _StubTools(returns=_positive_edge_returns(), angle_rows={}, screener_percentile=0.0)
+
+        top_plan = await author_trade_plan("AAPL", "daily", config, top_tools, self._llm())
+        bottom_plan = await author_trade_plan("AAPL", "daily", config, bottom_tools, self._llm())
+
+        assert top_plan.risk_bands.max_position_size_pct > bottom_plan.risk_bands.max_position_size_pct
+
+    async def test_reasons_records_the_multiplier(self, monkeypatch) -> None:
+        self._pin_strong_tier(monkeypatch)
+        config = ResearchConfig(screener_ranker_id="core_starter")
+        tools = _StubTools(returns=_positive_edge_returns(), angle_rows={}, screener_percentile=0.9)
+
+        plan = await author_trade_plan("AAPL", "daily", config, tools, self._llm())
+
+        assert any(r.startswith("screener_rank_size_multiplier=") for r in plan.trade_score.reasons)
+        assert any("percentile=0.9" in r for r in plan.trade_score.reasons)
+
+    async def test_fetch_failure_still_produces_a_plan(self, monkeypatch) -> None:
+        self._pin_strong_tier(monkeypatch)
+        config = ResearchConfig(screener_ranker_id="core_starter")
+        tools = _StubTools(
+            returns=_positive_edge_returns(), angle_rows={}, screener_raises=ConnectionError("screener down"),
+        )
+
+        plan = await author_trade_plan("AAPL", "daily", config, tools, self._llm())
+
+        assert plan is not None
+        assert any("percentile=unranked" in r for r in plan.trade_score.reasons)
+
+    async def test_zero_bound_config_disables_the_tilt(self, monkeypatch) -> None:
+        self._pin_strong_tier(monkeypatch)
+        config = ResearchConfig(screener_ranker_id="core_starter", screener_rank_size_tilt_bound=0.0)
+        top_tools = _StubTools(returns=_positive_edge_returns(), angle_rows={}, screener_percentile=1.0)
+        unranked_tools = _StubTools(returns=_positive_edge_returns(), angle_rows={}, screener_percentile=None)
+
+        top_plan = await author_trade_plan("AAPL", "daily", config, top_tools, self._llm())
+        neutral_plan = await author_trade_plan("AAPL", "daily", config, unranked_tools, self._llm())
+
+        assert top_plan.risk_bands.max_position_size_pct == pytest.approx(
             neutral_plan.risk_bands.max_position_size_pct
         )

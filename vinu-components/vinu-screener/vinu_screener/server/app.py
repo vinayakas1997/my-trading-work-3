@@ -31,6 +31,7 @@ from ..pipeline.hard_filter import HardFilterConfig
 from ..pipeline.scorer import FactorSpec
 from ..rankers.churn import RankerChurnStore, record_ranking
 from ..rankers.config import RankerConfig
+from ..rankers.holdings_client import fetch_held_symbols
 from ..rankers.runner import RankerRunner
 from ..rankers.snapshot_store import RankedSnapshotStore
 from ..rankers.store import RankerStore
@@ -57,6 +58,11 @@ DEFAULT_RANKER_CHURN_DB_PATH = os.environ.get(
 # consumer appends its own service's route prefix, same as
 # vinu_research.tools.ResearchTools does for this same upstream.
 DEFAULT_STOCK_API_URL = os.environ.get("VINU_STOCK_API_URL", "http://localhost:8081").rstrip("/") + "/stock"
+# Held-symbol awareness (RankerRunner.run()'s held_symbols param, see
+# risk_overlay.py's already_held RiskCheck): empty by default -- ships
+# inert, no fetch is ever attempted unless an operator explicitly points
+# this at vinu-agent's base URL.
+DEFAULT_AGENT_API_URL = os.environ.get("VINU_AGENT_API_URL", "")
 # The pairlist route (B20) is mounted inside this same app's `router`, which
 # `vinu_infra.server.create_app` wraps in `Depends(require_auth)` for the
 # WHOLE app whenever VINU_API_KEY is set -- so the same `Authorization`
@@ -268,7 +274,8 @@ def create_app(
         stored = rankers.get(ranker_id)
         if stored is None:
             raise HTTPException(status_code=404, detail="ranker not found")
-        result = _ranker_runner().run(stored.ranker)
+        held_symbols = fetch_held_symbols(DEFAULT_AGENT_API_URL)
+        result = _ranker_runner().run(stored.ranker, held_symbols=held_symbols)
         snapshot, events = record_ranking(ranker_snapshots, ranker_churn, ranker_id, result, now=time.time())
         body = snapshot.to_dict()
         body["churn"] = [e.to_dict() for e in events]
