@@ -8,6 +8,7 @@ an additional in-process cache layer to add here.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import time
 from dataclasses import dataclass, field
@@ -23,6 +24,15 @@ CREATE TABLE IF NOT EXISTS ranker_snapshots (
     top_json     TEXT NOT NULL
 );
 """
+
+MIGRATIONS = [
+    (
+        "ALTER TABLE ranker_snapshots ADD COLUMN trace_json TEXT NOT NULL DEFAULT '[]'",
+        "per-filter-stage before/after counts (PipelineResult.trace) -- "
+        "computed on every run but previously dropped before reaching this "
+        "store or the on-demand rank_now() response.",
+    ),
+]
 
 
 @dataclass(frozen=True)
@@ -46,6 +56,11 @@ class RankerSnapshot:
     ranker_id: str
     generated_at: float
     top: list[RankedCandidate]
+    # Per-filter-stage before/after counts (see StageCount, pipeline/
+    # rule_filters.py) -- the "why did 500 tickers become 12" signal,
+    # computed by ScreenPipeline.run() on every ranking but previously
+    # dropped between there and here.
+    trace: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -59,12 +74,14 @@ class RankerSnapshot:
                 }
                 for c in self.top
             ],
+            "trace": self.trace,
         }
 
 
 class RankedSnapshotStore(SQLiteBackend):
     SCHEMA = SCHEMA
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
+    MIGRATIONS = MIGRATIONS
 
     def set_latest(self, ranker_id: str, result: PipelineResult, *, now: float | None = None) -> RankerSnapshot:
         now = now if now is not None else time.time()
@@ -75,17 +92,22 @@ class RankedSnapshotStore(SQLiteBackend):
             )
             for c in result.top
         ]
-        snapshot = RankerSnapshot(ranker_id, now, top)
+        trace = [dataclasses.asdict(sc) for sc in result.trace]
+        snapshot = RankerSnapshot(ranker_id, now, top, trace)
         self.upsert(
             "ranker_snapshots",
-            {"ranker_id": ranker_id, "generated_at": now, "top_json": json.dumps(snapshot.to_dict()["top"])},
+            {
+                "ranker_id": ranker_id, "generated_at": now,
+                "top_json": json.dumps(snapshot.to_dict()["top"]),
+                "trace_json": json.dumps(trace),
+            },
             conflict_columns=["ranker_id"],
         )
         return snapshot
 
     def get_latest(self, ranker_id: str) -> RankerSnapshot | None:
         row = self._get_conn().execute(
-            "SELECT ranker_id, generated_at, top_json FROM ranker_snapshots WHERE ranker_id = ?", (ranker_id,),
+            "SELECT * FROM ranker_snapshots WHERE ranker_id = ?", (ranker_id,),
         ).fetchone()
         if row is None:
             return None
@@ -96,4 +118,10 @@ class RankedSnapshotStore(SQLiteBackend):
             )
             for t in json.loads(row["top_json"])
         ]
-        return RankerSnapshot(row["ranker_id"], float(row["generated_at"]), top)
+        # .keys() check: tolerate snapshots written before `trace_json` existed
+        # (pre-migration rows on an already-running instance mid-upgrade).
+        try:
+            trace = json.loads(row["trace_json"]) if "trace_json" in row.keys() and row["trace_json"] else []
+        except Exception:
+            trace = []
+        return RankerSnapshot(row["ranker_id"], float(row["generated_at"]), top, trace)

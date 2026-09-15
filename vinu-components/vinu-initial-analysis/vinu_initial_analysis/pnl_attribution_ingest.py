@@ -8,6 +8,7 @@ bars-driven `AngleRunner`.
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from vinu_initial_analysis.angles.pnl_attribution.compute import aggregate_pnl_attribution
@@ -18,14 +19,24 @@ def ingest_closed_positions(
     storage: AngleStorage,
     symbol: str,
     closed_positions: list[dict[str, Any]],
+    *,
+    run_log: Any = None,
 ) -> str:
     """Merge newly-pushed closed positions with prior history and re-store the aggregated
     pnl_attribution angle. Returns the new run_id.
 
     Dedupes by `position_id` so re-delivery of the same closed position (e.g. a retried
     feedback-loop cycle) never double-counts it.
+
+    `run_log`, when given, gets a `record_run` row for this ingest -- this push-fed path
+    used to be the only write into AngleStorage that never touched RunLog at all (every
+    bars-driven angle run in runner.py does), so nothing driven off RunLog (admin purge,
+    run-status lookups, a future narrator asking "when was this angle last updated, did
+    it error") could ever see a pnl_attribution ingest event. Best-effort: a RunLog write
+    failure must never break the actual data write, which already succeeded above.
     """
     symbol = symbol.upper()
+    t0 = time.perf_counter()
     prior_positions = _extract_prior_positions(storage.read_latest(symbol, "pnl_attribution"))
 
     by_id: dict[str, dict[str, Any]] = {
@@ -41,7 +52,22 @@ def ingest_closed_positions(
 
     combined = list(by_id.values()) + unkeyed
     result_df = aggregate_pnl_attribution(symbol, combined)
-    return storage.write(symbol, "pnl_attribution", result_df)
+    run_id = storage.write(symbol, "pnl_attribution", result_df)
+
+    if run_log is not None:
+        try:
+            run_log.record_run(
+                symbol=symbol,
+                angle_name="pnl_attribution",
+                run_id=run_id,
+                row_count=len(result_df),
+                duration_seconds=time.perf_counter() - t0,
+                granularity="event",
+            )
+        except Exception:
+            pass
+
+    return run_id
 
 
 def _extract_prior_positions(prior_df: Any) -> list[dict[str, Any]]:

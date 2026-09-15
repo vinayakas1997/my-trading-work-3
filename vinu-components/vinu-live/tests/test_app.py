@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from vinu_live.config import LiveConfig
 from vinu_live.server.app import create_app
 from vinu_live.trade_plan.rebalance_intake import RebalanceRequestQueue
+from vinu_infra.trade_audit_log import record_entry
 
 
 @pytest.fixture
@@ -91,3 +92,34 @@ class TestEmergencyRoutes:
         resp = test_client.post("/live/trade-plan/emergency-resume", json={"reason": "clear"})
         assert resp.status_code == 200
         assert resp.json()["reason"] == "clear"
+
+
+class TestTcaSlippageRoute:
+    """TCA rollup surfaced over HTTP -- slippage_bps was already recorded
+    per-trade but nothing aggregated it past the pass/fail
+    slippage_exceeded threshold. See the foundation-fixes audit in
+    missing-pieces-of-system/narating-agents/."""
+
+    def test_empty_log_returns_zero_count(self, client, tmp_path) -> None:
+        test_client, _config = client
+        log_path = tmp_path / "audit_never_written.jsonl"
+        with patch("vinu_infra.trade_audit_log.DEFAULT_LOG_PATH", str(log_path)):
+            resp = test_client.get("/live/tca/slippage")
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 0
+
+    def test_aggregates_recorded_entries_and_supports_symbol_filter(self, client, tmp_path) -> None:
+        test_client, _config = client
+        log_path = tmp_path / "trade_audit_log.jsonl"
+        record_entry("t1", "AAPL", {"slippage_bps": 10.0, "slippage_exceeded": False}, log_path=log_path)
+        record_entry("t2", "MSFT", {"slippage_bps": 50.0, "slippage_exceeded": True}, log_path=log_path)
+
+        with patch("vinu_infra.trade_audit_log.DEFAULT_LOG_PATH", str(log_path)):
+            resp_all = test_client.get("/live/tca/slippage")
+            resp_aapl = test_client.get("/live/tca/slippage", params={"symbol": "AAPL"})
+
+        assert resp_all.json()["count"] == 2
+        assert resp_aapl.json() == {
+            "count": 1, "mean_bps": 10.0, "median_bps": 10.0,
+            "max_abs_bps": 10.0, "exceeded_count": 0,
+        }

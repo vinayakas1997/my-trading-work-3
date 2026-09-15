@@ -172,7 +172,9 @@ def record_pnl_attribution(ticker: str, body: RecordPnlAttributionRequest) -> di
     """Phase 7's push-fed write path into the pnl_attribution angle (see
     angles/pnl_attribution/spec.yaml for why this doesn't go through /run/{ticker})."""
     svc = _get_svc()
-    run_id = ingest_closed_positions(svc.storage, ticker.upper(), body.closed_positions)
+    run_id = ingest_closed_positions(
+        svc.storage, ticker.upper(), body.closed_positions, run_log=svc.run_log,
+    )
     return {"symbol": ticker.upper(), "run_id": run_id, "n_recorded": len(body.closed_positions)}
 
 

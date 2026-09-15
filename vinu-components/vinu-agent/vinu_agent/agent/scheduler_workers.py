@@ -24,9 +24,11 @@ from typing import Any, Callable, Iterable
 from .notify_channels import HttpDiscordChannel, HttpTelegramChannel
 from .planner_triage_hook import PlannerTriage
 from .significance_triage import (
+    LLM_FAILURE_SENTINEL_TICKER,
     ChannelTarget,
     deliver_flag,
     detect_large_funding_pattern,
+    detect_llm_failure_pattern,
     detect_repeated_rejection_pattern,
     detect_thesis_contradiction_pattern,
 )
@@ -150,7 +152,7 @@ def make_summary_agent_fn(service: Any):
     previously both performed on same `source_run_id` (last-write-wins
     harmless but wasted LLM cost and DB write).
     """
-    from ..tools.angles_tool import GetAllAnglesTool
+    from ..tools.angles_tool import GetAllAnglesTool, build_angle_digest
     import time as _time
 
     def _fn(ticker: str) -> tuple[str, dict[str, Any]]:
@@ -168,6 +170,7 @@ def make_summary_agent_fn(service: Any):
                         return getattr(existing, "summary", "") or "", {
                             "angles_with_data": getattr(existing, "angles_with_data", 0),
                             "angle_count": getattr(existing, "angle_count", 0),
+                            "angle_digest": getattr(existing, "angle_digest", {}) or {},
                         }
                 except Exception:
                     pass
@@ -177,6 +180,7 @@ def make_summary_agent_fn(service: Any):
         angles_tool = GetAllAnglesTool()
         angles_tool._services_config = service.config.services
         angles_data = json.loads(angles_tool.execute(ticker=ticker))
+        angle_digest = build_angle_digest(angles_data)
 
         trust = _angle_trust(list((angles_data.get("angles") or {}).keys()))
         low_names = [e["angle"] for e in trust["low_trust"]]
@@ -203,6 +207,7 @@ def make_summary_agent_fn(service: Any):
             "low_trust_angles": low_names,
             "rated_angles": trust["rated"],
             "unrated_angles": trust["unrated"],
+            "angle_digest": angle_digest,
         }
 
     return _fn
@@ -377,6 +382,33 @@ async def run_significance_cycle(
             flags.append(flag)
 
     return flags
+
+
+async def run_llm_failure_check(
+    telemetry_store: Any, flag_store: Any, targets: list[ChannelTarget],
+) -> Any | None:
+    """Service-wide counterpart of `run_significance_cycle`'s per-ticker
+    detectors -- run once per significance-worker cycle (not once per
+    ticker), reading `vinu_infra.telemetry.TelemetryStore` instead of
+    `TickerLedgerStore`. See
+    missing-pieces-of-system/llm-configuration-settings-system/."""
+    try:
+        hit = detect_llm_failure_pattern(telemetry_store)
+    except Exception:
+        LOG.exception("LLM failure detection itself failed, skipping this cycle")
+        return None
+    if not hit:
+        return None
+
+    flag = flag_store.create_flag(
+        LLM_FAILURE_SENTINEL_TICKER, "llm_failure_rate",
+        f"{hit['count']} of {hit['checked']} LLM calls failed in the last {hit['window_hours']}h",
+    )
+    if targets:
+        await deliver_flag(flag, targets)
+    else:
+        LOG.warning("Significance flag %s created but no channel is configured to deliver it", flag.flag_id)
+    return flag
 
 
 def run_risk_gatekeeper_cycle(service: Any, *, cycle: int = 0) -> dict[str, Any]:

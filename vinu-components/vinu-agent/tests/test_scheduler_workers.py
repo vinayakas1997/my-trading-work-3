@@ -23,12 +23,18 @@ from vinu_agent.agent.scheduler_workers import (
     hypothesis_reader_for,
     make_planner_on_yes,
     make_summary_agent_fn,
+    run_llm_failure_check,
     run_significance_cycle,
     run_team_for_ticker,
 )
-from vinu_agent.agent.significance_triage import REJECTED_PATTERN_MIN_COUNT, SignificanceFlagStore
+from vinu_agent.agent.significance_triage import (
+    LLM_FAILURE_SENTINEL_TICKER,
+    REJECTED_PATTERN_MIN_COUNT,
+    SignificanceFlagStore,
+)
 from vinu_agent.config import AgentConfig
 from vinu_agent.storage.ticker_ledger import TickerLedgerStore
+from vinu_infra.telemetry import LLMCallRecord, TelemetryStore
 
 
 def _fake_service() -> MagicMock:
@@ -193,7 +199,7 @@ class TestMakeSummaryAgentFn:
         # all unrated: no calibration store in test env).
         assert meta == {"angles_with_data": 5, "angle_count": 28,
                         "low_trust_angles": [], "rated_angles": 0,
-                        "unrated_angles": 0}
+                        "unrated_angles": 0, "angle_digest": {}}
         mock_run.assert_called_once_with(service, "screener", "Ticker: AAPL", session_id="summary-refresh-AAPL")
 
     def test_incomplete_run_returns_empty_summary_not_partial_text(self) -> None:
@@ -208,7 +214,52 @@ class TestMakeSummaryAgentFn:
 
         assert summary_text == ""
         assert meta == {"angles_with_data": 0, "angle_count": 28,
-                        "low_trust_angles": [], "rated_angles": 0, "unrated_angles": 0}
+                        "low_trust_angles": [], "rated_angles": 0, "unrated_angles": 0,
+                        "angle_digest": {}}
+
+    def test_angle_digest_is_built_from_every_angle_with_data(self) -> None:
+        """Regression for the '2 of 28 angles' gate-conflict: angles_data
+        was fetched here all along, but only its two counts ever escaped
+        this function -- see high-expectations gate-conflict audit."""
+        service = _fake_service()
+        angles_json = json.dumps({
+            "ticker": "AAPL", "angle_count": 2, "angles_with_data": 2,
+            "angles": {
+                "trend_lifecycle": {"row_count": 1, "data": [{"stage": "mature"}]},
+                "regime_analysis": {"row_count": 1, "data": [{"regime": "bull"}]},
+            },
+        })
+
+        with patch("vinu_agent.tools.angles_tool.GetAllAnglesTool.execute", return_value=angles_json), \
+             patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker",
+                   return_value={"status": "completed", "content": "ok"}):
+            fn = make_summary_agent_fn(service)
+            _, meta = fn("AAPL")
+
+        assert meta["angle_digest"] == {
+            "trend_lifecycle": {"stage": "mature"},
+            "regime_analysis": {"regime": "bull"},
+        }
+
+    def test_dedupe_cache_hit_carries_stored_angle_digest_forward(self) -> None:
+        service = _fake_service()
+        from datetime import datetime, timezone
+
+        existing = MagicMock()
+        existing.updated_at = datetime.now(timezone.utc).isoformat()
+        existing.summary = "cached summary"
+        existing.angles_with_data = 2
+        existing.angle_count = 2
+        existing.angle_digest = {"trend_lifecycle": {"stage": "mature"}}
+        service.ticker_summary_store.get_summary.return_value = existing
+
+        with patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker") as mock_run:
+            fn = make_summary_agent_fn(service)
+            summary_text, meta = fn("AAPL")
+
+        assert summary_text == "cached summary"
+        assert meta["angle_digest"] == {"trend_lifecycle": {"stage": "mature"}}
+        mock_run.assert_not_called()
 
 
 class TestMakePlannerOnYes:
@@ -357,6 +408,27 @@ def flag_store():
         pass
 
 
+@pytest.fixture
+def telemetry_store():
+    path = Path(tempfile.mktemp(suffix=".db"))
+    store = TelemetryStore(path)
+    yield store
+    store.close()
+    try:
+        path.unlink(missing_ok=True)
+    except PermissionError:
+        pass
+
+
+def _record_llm_call(store: TelemetryStore, *, success: bool) -> None:
+    store.record_llm_call(LLMCallRecord(
+        service="test", model="test-model", base_url="http://fake/v1",
+        prompt_tokens=1, completion_tokens=1, total_tokens=2,
+        token_count_source="provider", retry_count=0, latency_sec=0.1,
+        success=success, outcome="completed" if success else "all_endpoints_failed",
+    ))
+
+
 class _FakeChannel:
     def __init__(self) -> None:
         self.sent: list[tuple[str, str]] = []
@@ -497,6 +569,48 @@ class TestRunSignificanceCycle:
         )
         assert len(flags) == 1
         assert flags[0].ticker == "MSFT"
+
+
+class TestRunLlmFailureCheck:
+    """Service-wide counterpart of TestRunSignificanceCycle -- see
+    missing-pieces-of-system/llm-configuration-settings-system/."""
+
+    def test_no_failures_raises_no_flag(self, telemetry_store, flag_store) -> None:
+        for _ in range(10):
+            _record_llm_call(telemetry_store, success=True)
+        flag = asyncio.run(run_llm_failure_check(telemetry_store, flag_store, []))
+        assert flag is None
+
+    def test_failure_pattern_raises_and_delivers_a_flag(self, telemetry_store, flag_store) -> None:
+        from vinu_agent.agent.significance_triage import ChannelTarget
+
+        for _ in range(5):
+            _record_llm_call(telemetry_store, success=False)
+        channel = _FakeChannel()
+        targets = [ChannelTarget(channel, "chat1")]
+
+        flag = asyncio.run(run_llm_failure_check(telemetry_store, flag_store, targets))
+
+        assert flag is not None
+        assert flag.ticker == LLM_FAILURE_SENTINEL_TICKER
+        assert flag.reason == "llm_failure_rate"
+        assert len(channel.sent) == 1
+        assert flag_store.get_flag(flag.flag_id) is not None
+
+    def test_flag_still_recorded_with_no_targets_configured(self, telemetry_store, flag_store) -> None:
+        for _ in range(5):
+            _record_llm_call(telemetry_store, success=False)
+        flag = asyncio.run(run_llm_failure_check(telemetry_store, flag_store, []))
+        assert flag is not None
+        assert flag_store.get_flag(flag.flag_id) is not None
+
+    def test_detection_failure_does_not_raise(self, flag_store) -> None:
+        class RaisingTelemetry:
+            def recent_llm_calls(self, limit=100, service=None):
+                raise RuntimeError("db down")
+
+        flag = asyncio.run(run_llm_failure_check(RaisingTelemetry(), flag_store, []))  # must not raise
+        assert flag is None
 
 
 class TestHypothesisReaderFor:

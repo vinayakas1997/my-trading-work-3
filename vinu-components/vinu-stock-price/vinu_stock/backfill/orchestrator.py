@@ -309,4 +309,18 @@ def run_backfill(
         summary=summary,
     )
 
+    try:
+        backend.catalog.record_backfill_run(
+            symbols=summary.symbols,
+            years_attempted=summary.years_attempted,
+            years_ok=summary.years_ok,
+            years_failed=summary.years_failed,
+            total_rows=summary.total_rows,
+            symbols_skipped=summary.symbols_skipped,
+            rows_rolled=summary.rows_rolled,
+            errors=summary.errors,
+        )
+    except Exception:
+        LOG.warning("Failed to persist backfill run summary", exc_info=True)
+
     return summary

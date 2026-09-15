@@ -206,6 +206,13 @@ class Artifact:
     # sweep/research env). Proves which config produced the artifact; full
     # file freeze via vinu_infra/freeze.py. Never backfilled.
     freeze_hash: str = ""
+    # Trading timeframe this artifact was designed for -- "intraday"/"daily"/
+    # "swing", matching vinu-agent's trade_plan_tool._INTERVAL_BY_TIMEFRAME.
+    # Written once at creation, same never-backfilled contract as regime_tag/
+    # freeze_hash. Default "daily" preserves today's behavior for every
+    # artifact created before this field existed. Replaces the regex-on-name
+    # guess vinu-portfolio's compute_daily_allocation used to fall back to.
+    timeframe: str = "daily"
 
     @classmethod
     def create(cls, type_: str, name: str, universe: list[str] | None = None) -> Artifact:

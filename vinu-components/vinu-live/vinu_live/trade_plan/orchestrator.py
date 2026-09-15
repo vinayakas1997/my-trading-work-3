@@ -51,6 +51,7 @@ from vinu_live.trade_plan.guards import (
 )
 from vinu_live.trade_plan.loss_classifier import classify_exit_cause
 from vinu_live.trade_plan.live_metrics import compute_live_metrics
+from vinu_live.trade_plan.correlation_monitor_store import CorrelationMonitorStore
 from vinu_live.trade_plan.rebalance_intake import RebalanceRequestQueue
 from vinu_infra.calibration_log import record as record_calibration
 from vinu_infra.risk_math import cvar_exceeds as _cvar_exceeds
@@ -63,6 +64,21 @@ LOG = logging.getLogger(__name__)
 
 _COVARIANCE_WINDOW = 63
 _RETURNS_LOOKBACK_DAYS = 90
+
+# Mirrors vinu-agent/vinu_agent/tools/trade_plan_tool.py's own
+# _INTERVAL_BY_TIMEFRAME -- a TradePlan's `timeframe` field (models.py:400)
+# was already being authored per-plan, but every price/ADV fetch in this
+# orchestrator hardcoded interval="1d" regardless, ignoring it. Duplicated
+# rather than imported: this file has no other dependency on vinu-agent's
+# package, only its HTTP contract elsewhere in this codebase.
+_INTERVAL_BY_TIMEFRAME = {"intraday": "15m", "daily": "1d", "swing": "1d"}
+
+
+def _interval_for_plan(plan: dict[str, Any]) -> str:
+    """Resolve a per-symbol candle interval from the trade plan's own
+    `timeframe`, falling back to daily (today's universal behavior) for a
+    plan authored before the field existed or with an unrecognized value."""
+    return _INTERVAL_BY_TIMEFRAME.get(str(plan.get("timeframe") or "daily"), "1d")
 
 # Sentinel distinguishing "no cached shock-cluster-correlation was passed"
 # from "a value was passed and it happens to be None" -- see
@@ -680,6 +696,7 @@ class TradePlanOrchestrator:
         config: LiveConfig | None = None,
         book: BookBackend | None = None,
         rebalance_queue: RebalanceRequestQueue | None = None,
+        correlation_store: CorrelationMonitorStore | None = None,
     ) -> None:
         self._config = config or load_config()
         try:
@@ -742,6 +759,13 @@ class TradePlanOrchestrator:
         # correlation-triggered reduce, so the monitor trims a name once and
         # then leaves it alone for RUNTIME_CORR_COOLDOWN_SEC.
         self._last_corr_reduce: dict[str, float] = {}
+        # Per-cycle history of _check_runtime_correlation's own output --
+        # previously recomputed and returned once per cycle, then dropped;
+        # see correlation_monitor_store.py. Injectable, same DI pattern as
+        # `book`/`rebalance_queue` above.
+        self._correlation_store = correlation_store or CorrelationMonitorStore(
+            str(self._config.data_root / "correlation_monitor.db"),
+        )
         # how-to-make-it-live.md #14 (Stage 4): broker-outage pause. Monotonic
         # time of the last successful /agent/broker/account probe (0.0 = never
         # confirmed yet, so a cold start with a dead broker pauses on the first
@@ -811,6 +835,7 @@ class TradePlanOrchestrator:
         await self._http.aclose()
         self._book.close()
         self._rebalance_queue.close()
+        self._correlation_store.close()
 
     def submit_rebalance_request(self, symbol: str, reason: str, critical: bool = False) -> None:
         """Called by whatever eventually implements capital_allocator's
@@ -853,7 +878,7 @@ class TradePlanOrchestrator:
         if plan is None:
             return None
 
-        prices = await self._fetch_prices([symbol])
+        prices = await self._fetch_prices([symbol], interval=_interval_for_plan(plan))
         price = prices.get(symbol)
         if price is None:
             return None
@@ -1021,6 +1046,18 @@ class TradePlanOrchestrator:
 
             corr_check = await self._check_runtime_correlation(prices)
             result["correlation_monitor"] = corr_check
+            if corr_check.get("checked"):
+                # Best-effort: a storage failure must never break the cycle.
+                # Only checked=True cycles are recorded -- disabled/fewer-
+                # than-2-symbols cycles would just fill the table with noise.
+                try:
+                    self._correlation_store.record_cycle(
+                        corr_check.get("n_flagged_pairs", 0),
+                        corr_check.get("flagged", []),
+                        corr_check.get("reductions", []),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    LOG.warning("Correlation monitor history write failed: %s", exc)
 
             # how-to-make-it-live.md #33 part 2: auto-OOD detector. Dormant
             # unless VINU_LIVE_OOD_DETECTOR is alert/halt/flatten. Runs last
@@ -1353,7 +1390,9 @@ class TradePlanOrchestrator:
         # fetch problem or a small order leaves `qty` untouched.
         artifact_id = plan.get("_artifact_id", "")
         try:
-            participation = await self._participation_pct(symbol, qty, price)
+            participation = await self._participation_pct(
+                symbol, qty, price, interval=_interval_for_plan(plan)
+            )
         except Exception as e:  # noqa: BLE001 -- fail-open, never blocks the entry
             LOG.debug("ADV participation check failed for %s, failing open: %s", symbol, e)
             participation = None
@@ -1603,7 +1642,7 @@ class TradePlanOrchestrator:
                     symbol, _age, PRICE_MAX_AGE_HOURS,
                 )
         previous_close = self._last_prices.get(symbol)
-        recent_prices = await self._fetch_recent_prices(symbol)
+        recent_prices = await self._fetch_recent_prices(symbol, interval=_interval_for_plan(plan))
         recent_returns = _simple_returns(recent_prices)
         # Perf: reuse the value cycle()'s shock-prioritization pass already
         # fetched for this symbol earlier in the same cycle, instead of
@@ -2412,7 +2451,7 @@ class TradePlanOrchestrator:
             LOG.warning("Order submission failed for %s: %s", symbol, e)
             return {"status": "error", "error": str(e)}
 
-    async def _fetch_prices(self, symbols: list[str]) -> dict[str, float]:
+    async def _fetch_prices(self, symbols: list[str], interval: str = "1d") -> dict[str, float]:
         # Perf: was a sequential per-symbol await loop -- N symbols meant N
         # round-trips back to back every cycle. _compute_covariance right
         # below already fetches per-symbol data the same way via
@@ -2424,7 +2463,7 @@ class TradePlanOrchestrator:
             try:
                 resp = await self._http.get(
                     f"{self._config.stock_price_api_url}/stock/candles/{symbol}",
-                    params={"interval": "1d", "days": 5, "adjusted": True},
+                    params={"interval": interval, "days": 5, "adjusted": True},
                 )
                 if resp.status_code == 200:
                     bars = resp.json().get("data", [])
@@ -2452,7 +2491,9 @@ class TradePlanOrchestrator:
         results = await asyncio.gather(*(_fetch_one(symbol) for symbol in symbols))
         return {symbol: price for symbol, price in results if price is not None}
 
-    async def _participation_pct(self, symbol: str, qty: float, price: float) -> float | None:
+    async def _participation_pct(
+        self, symbol: str, qty: float, price: float, interval: str = "1d"
+    ) -> float | None:
         """`qty / average daily share volume` over the last 5 trading days --
         the same `/stock/candles` endpoint _fetch_prices already calls, just
         reading `volume` instead of `close`. None (never blocks/slices) on
@@ -2461,7 +2502,7 @@ class TradePlanOrchestrator:
         try:
             resp = await self._http.get(
                 f"{self._config.stock_price_api_url}/stock/candles/{symbol}",
-                params={"interval": "1d", "days": 5, "adjusted": True},
+                params={"interval": interval, "days": 5, "adjusted": True},
             )
             if resp.status_code != 200:
                 return None
@@ -2478,11 +2519,13 @@ class TradePlanOrchestrator:
             return None
         return qty / adv
 
-    async def _fetch_recent_prices(self, symbol: str, days: int = _RETURNS_LOOKBACK_DAYS) -> list[float]:
+    async def _fetch_recent_prices(
+        self, symbol: str, days: int = _RETURNS_LOOKBACK_DAYS, interval: str = "1d"
+    ) -> list[float]:
         try:
             resp = await self._http.get(
                 f"{self._config.stock_price_api_url}/stock/candles/{symbol}",
-                params={"interval": "1d", "days": days, "adjusted": True},
+                params={"interval": interval, "days": days, "adjusted": True},
             )
             if resp.status_code == 200:
                 bars = resp.json().get("data", [])

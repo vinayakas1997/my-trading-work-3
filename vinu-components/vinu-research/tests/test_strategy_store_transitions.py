@@ -19,6 +19,25 @@ def artifact(strategy_store: SqliteStrategyStore) -> Artifact:
     return strategy_store.upsert_artifact(a)
 
 
+class TestTimeframeField:
+    """Regression for the timeframe foundation fix: Artifact.timeframe must
+    round-trip through storage so vinu-portfolio can read it directly
+    instead of regex-guessing an interval from the strategy name."""
+
+    def test_default_timeframe_is_daily(self, strategy_store: SqliteStrategyStore) -> None:
+        a = strategy_store.upsert_artifact(Artifact.create("strategy", "AAPL-untimed"))
+        assert a.timeframe == "daily"
+        fetched = strategy_store.get_artifact(a.artifact_id)
+        assert fetched.timeframe == "daily"
+
+    def test_explicit_timeframe_round_trips(self, strategy_store: SqliteStrategyStore) -> None:
+        a = Artifact.create("strategy", "AAPL-intraday")
+        a.timeframe = "intraday"
+        strategy_store.upsert_artifact(a)
+        fetched = strategy_store.get_artifact(a.artifact_id)
+        assert fetched.timeframe == "intraday"
+
+
 class TestValidTransitions:
     def test_created_to_benching(self, strategy_store: SqliteStrategyStore, artifact: Artifact) -> None:
         updated = strategy_store.mark_benching(artifact.artifact_id)

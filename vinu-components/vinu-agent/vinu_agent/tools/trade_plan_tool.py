@@ -76,6 +76,11 @@ class TradePlanTool(BaseTool):
     }
     is_readonly = True
     _ticker_summary_store: Any = None
+    # Declared so tools/__init__.py's injection loop actually populates it
+    # (tool._ticker_ledger_store = ticker_ledger_store) -- without this
+    # class attribute, injection silently skips this tool, same pattern
+    # AllocationTool/SubmitThesisTool already rely on.
+    _ticker_ledger_store: Any = None
 
     def __init__(self):
         self._services_config = {}
@@ -105,6 +110,7 @@ class TradePlanTool(BaseTool):
                 "source_run_id": str(getattr(row, "source_run_id", "") or ""),
                 "angles_with_data": getattr(row, "angles_with_data", "?"),
                 "angle_count": getattr(row, "angle_count", 28),
+                "angle_digest": getattr(row, "angle_digest", {}) or {},
             }
         except Exception:
             return None
@@ -588,7 +594,32 @@ class TradePlanTool(BaseTool):
         artifact = await asyncio.to_thread(
             freeze_trade_plan, get_strategy_store(), plan, summary_context,
         )
+        self._log_wait_decision(symbol, plan, artifact.artifact_id)
         return serialize_trade_plan_artifact(artifact)
+
+    def _log_wait_decision(self, symbol: str, plan: Any, artifact_id: str) -> None:
+        """A deliberate WAIT is persisted as a trade_plan Artifact either
+        way (freeze_trade_plan above, unconditional), but nothing wrote it
+        to TickerLedgerStore -- the one place everything else queryable as
+        "what happened on this ticker and why" lives (rejected/funded/
+        pendblocked all get an event; a non-action never did). Best-effort:
+        a logging failure must never break trade-plan authoring."""
+        if getattr(plan, "entry_decision", "") != "WAIT":
+            return
+        if self._ticker_ledger_store is None:
+            return
+        try:
+            trade_score = getattr(plan, "trade_score", None)
+            if trade_score is not None:
+                text = f"WAIT (tier={trade_score.tier}): " + "; ".join(trade_score.reasons)
+            else:
+                text = "WAIT: entry_decision=WAIT"
+            self._ticker_ledger_store.add_event(
+                ticker=symbol, stage="trade_plan", event_type="wait_decision",
+                text=text, ref_id=artifact_id,
+            )
+        except Exception as exc:  # noqa: BLE001 -- best-effort, never blocks authoring
+            logger.warning("Failed to log WAIT decision for %s: %s", symbol, exc)
 
     def _render_frozen_plan_block(self, frozen_plan: dict) -> str:
         artifact = frozen_plan.get("artifact", {})

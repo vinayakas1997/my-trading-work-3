@@ -8,6 +8,7 @@ pandas, so steady-state candle queries are milliseconds.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import warnings
@@ -21,6 +22,8 @@ from vinu_stock.query.aggregate import aggregate_bars, interval_to_seconds
 from vinu_stock.query.cache import get_cache
 from vinu_stock.query.indicators import apply_adjusted_prices, apply_indicators
 from vinu_stock.storage.paths import parquet_globs
+
+LOG = logging.getLogger(__name__)
 
 # symbol -> (file_signature, pandas DataFrame, last_signature_check_monotonic)
 _CACHED_FRAMES: dict[str, tuple[tuple, Any, float]] = {}
@@ -90,6 +93,14 @@ def _load_symbol_frame(data_root: Path, symbol: str) -> Any:
 
     good_files, bad_files = _expand_and_validate(patterns)
     if bad_files:
+        # A `warnings.warn` alone is easy to lose in production (filtered,
+        # deduped-per-location, or simply not surfaced by whatever captures
+        # stdout) -- this is real data-quality signal (a symbol silently
+        # missing data due to file corruption), so it also goes through the
+        # normal logging pipeline where it's actually queryable.
+        LOG.warning(
+            "Skipping %d unreadable parquet file(s) for %s: %s", len(bad_files), sym, bad_files,
+        )
         warnings.warn(
             f"Skipping {len(bad_files)} unreadable parquet file(s) for {sym}: {bad_files}",
             RuntimeWarning,

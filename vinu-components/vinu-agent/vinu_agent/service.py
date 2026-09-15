@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .agent.context import ContextBuilder
-from .agent.llm import create_llm, create_llm_from_config
+from .agent.llm import create_llm, create_llm_from_config, resolve_role_llm_config
 from .agent.skills import SkillsLoader
 from .config import AgentConfig, load_config
 from .facts import FactsRegistry, seed_if_empty
@@ -15,6 +15,7 @@ from .session.store import SessionStore
 from .storage.llm_calls import LlmCallLogStore
 from .storage.team_runs import TeamRunStore
 from .storage.ticker_ledger import TickerLedgerStore
+from .storage.ticker_snapshots import TickerSnapshotStore
 from .storage.ticker_summaries import TickerSummaryStore
 from .swarm.models import SwarmRun
 from .swarm.runtime import SwarmRuntime
@@ -27,13 +28,16 @@ class AgentService:
         self._config = config or load_config()
         self._llm = create_llm(self._config)
         # Independent LLM client for the orchestrator's own top-level loop
-        # -- only built if configured (VINU_ORCHESTRATOR_LLM_*), otherwise
+        # -- built if configured either via VINU_ORCHESTRATOR_LLM_* (wins
+        # if set, unchanged from before) or via vinu-infra's roles.json
+        # "orchestrator" role (see
+        # missing-pieces-of-system/llm-configuration-settings-system/,
+        # checked only when the env-based mechanism isn't set). Otherwise
         # the orchestrator transparently shares `self._llm` with teams/
-        # specialists, exactly as before this existed.
+        # specialists, exactly as before either of these existed.
+        orchestrator_cfg = self._config.orchestrator_llm or resolve_role_llm_config("orchestrator")
         self._orchestrator_llm = (
-            create_llm_from_config(self._config.orchestrator_llm)
-            if self._config.orchestrator_llm is not None
-            else self._llm
+            create_llm_from_config(orchestrator_cfg) if orchestrator_cfg is not None else self._llm
         )
         self._event_bus = EventBus()
         self._store = SessionStore(
@@ -63,6 +67,11 @@ class AgentService:
         # The screener team's durable per-ticker summary output -- see
         # storage/ticker_summaries.py and agent/screener_summary_writer.py.
         self._ticker_summary_store = TickerSummaryStore(data_root / "ticker_summaries.db")
+        # Dated per-day snapshots -- see storage/ticker_snapshots.py. Written
+        # alongside ticker_summary_store on every refresh (ticker_gate.py's
+        # RunLogTrigger.refresh_if_stale); the "yesterday" a narrating agent
+        # would read, which nothing else in this codebase persists.
+        self._ticker_snapshot_store = TickerSnapshotStore(data_root / "ticker_snapshots.db")
         # The narrative index of every ticker-relevant event across the
         # whole pipeline -- see storage/ticker_ledger.py and
         # New-talk-agents/new-thinking/new-restructure/phases/
@@ -128,6 +137,10 @@ class AgentService:
     def ticker_summary_store(self) -> TickerSummaryStore:
         return self._ticker_summary_store
 
+    @property
+    def ticker_snapshot_store(self) -> TickerSnapshotStore:
+        return self._ticker_snapshot_store
+
     async def create_session(self, title: str = "", as_of: str | None = None) -> Session:
         config = {"as_of": as_of} if as_of else None
         return await self._session_service.create_session(title=title, config=config)
@@ -162,6 +175,8 @@ class AgentService:
             self._strategy_store.close()
         if hasattr(self, "_ticker_summary_store"):
             self._ticker_summary_store.close()
+        if hasattr(self, "_ticker_snapshot_store"):
+            self._ticker_snapshot_store.close()
         if hasattr(self, "_ticker_ledger_store"):
             self._ticker_ledger_store.close()
         if hasattr(self, "_llm_call_store"):

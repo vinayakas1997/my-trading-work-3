@@ -136,3 +136,84 @@ def test_not_configured_provider_is_skipped_without_calling_it():
 
     assert alpaca.multi_calls == []
     assert results["AAPL"].success
+
+
+class _SpyCatalog:
+    """Records what would have been persisted -- a real CatalogStore is
+    exercised separately in test_catalog.py."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def record_fallback(self, symbol, *, role, winning_provider, skipped_errors):
+        self.calls.append({
+            "symbol": symbol, "role": role,
+            "winning_provider": winning_provider, "skipped_errors": skipped_errors,
+        })
+
+
+class TestFallbackRecording:
+    """A later provider succeeding after an earlier one failed used to be
+    absorbed silently -- see the foundation-fixes audit in
+    missing-pieces-of-system/narating-agents/."""
+
+    def test_records_when_fallback_actually_occurred(self):
+        catalog = _SpyCatalog()
+        registry = ProviderRegistry(catalog=catalog)
+        alpaca = _FakeMultiProvider("alpaca", data={})  # MSFT missing on first try
+        yahoo = _FakeSingleProvider("yahoo", data={"MSFT": [_bar("MSFT")]})
+        registry._providers["alpaca"] = alpaca
+        registry._providers["yahoo"] = yahoo
+        registry._configs = [
+            ProviderConfig("alpaca", True, 1, ("live",)),
+            ProviderConfig("yahoo", True, 2, ("live",)),
+        ]
+
+        registry.fetch_bars_multi_with_fallback(["MSFT"], 0, 100, role="live")
+
+        assert len(catalog.calls) == 1
+        assert catalog.calls[0]["symbol"] == "MSFT"
+        assert catalog.calls[0]["winning_provider"] == "yahoo"
+        assert "alpaca" in catalog.calls[0]["skipped_errors"][0]
+
+    def test_no_record_on_clean_first_try_success(self):
+        catalog = _SpyCatalog()
+        registry = ProviderRegistry(catalog=catalog)
+        alpaca = _FakeMultiProvider("alpaca", data={"AAPL": [_bar("AAPL")]})
+        registry._providers["alpaca"] = alpaca
+        registry._configs = [ProviderConfig("alpaca", True, 1, ("live",))]
+
+        registry.fetch_bars_multi_with_fallback(["AAPL"], 0, 100, role="live")
+
+        assert catalog.calls == []
+
+    def test_no_catalog_is_a_no_op_not_a_crash(self):
+        registry = ProviderRegistry()  # catalog=None default
+        alpaca = _FakeMultiProvider("alpaca", data={})
+        yahoo = _FakeSingleProvider("yahoo", data={"MSFT": [_bar("MSFT")]})
+        registry._providers["alpaca"] = alpaca
+        registry._providers["yahoo"] = yahoo
+        registry._configs = [
+            ProviderConfig("alpaca", True, 1, ("live",)),
+            ProviderConfig("yahoo", True, 2, ("live",)),
+        ]
+
+        results = registry.fetch_bars_multi_with_fallback(["MSFT"], 0, 100, role="live")  # must not raise
+        assert results["MSFT"].success
+
+    def test_single_fetch_records_fallback_too(self):
+        catalog = _SpyCatalog()
+        registry = ProviderRegistry(catalog=catalog)
+        alpaca = _FakeSingleProvider("alpaca", data={})  # always empty -> fails
+        yahoo = _FakeSingleProvider("yahoo", data={"AAPL": [_bar("AAPL")]})
+        registry._providers["alpaca"] = alpaca
+        registry._providers["yahoo"] = yahoo
+        registry._configs = [
+            ProviderConfig("alpaca", True, 1, ("backfill",)),
+            ProviderConfig("yahoo", True, 2, ("backfill",)),
+        ]
+
+        registry.fetch_bars_with_fallback("AAPL", 0, 100, role="backfill")
+
+        assert len(catalog.calls) == 1
+        assert catalog.calls[0]["winning_provider"] == "yahoo"

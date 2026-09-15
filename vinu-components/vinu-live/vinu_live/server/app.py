@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from vinu_infra.auth import require_auth
 from vinu_infra.runtime_settings import build_admin_settings_router
+from vinu_infra.trade_audit_log import slippage_stats
 from vinu_live.config import load_config
 from vinu_live.feedback_loop import FeedbackLoopWorker
 from vinu_live.scheduler import LiveScheduler
@@ -139,6 +140,15 @@ def create_app() -> FastAPI:
     @router.get("/status")
     async def status() -> dict[str, str]:
         return {"status": "idle", "service": "vinu-live"}
+
+    @router.get("/tca/slippage")
+    async def tca_slippage(symbol: str | None = None) -> dict[str, Any]:
+        """TCA rollup over recorded entry-fill slippage -- the raw
+        slippage_bps value was already computed and persisted per-trade by
+        the orchestrator but nothing aggregated it past the pass/fail
+        `slippage_exceeded` threshold. See the foundation-fixes audit in
+        missing-pieces-of-system/narating-agents/."""
+        return slippage_stats(symbol)
 
     # Live-tunable knobs (currently: the runtime correlation monitor's
     # threshold/reduce-pct/cooldown) -- GET/PATCH under /live/admin/settings,

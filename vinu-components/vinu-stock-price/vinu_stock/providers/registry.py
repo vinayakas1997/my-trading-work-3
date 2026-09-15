@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 
@@ -79,7 +79,7 @@ def load_provider_configs(path: Path | None = None) -> list[ProviderConfig]:
 
 
 class ProviderRegistry:
-    def __init__(self, config: VinuStockConfig | None = None) -> None:
+    def __init__(self, config: VinuStockConfig | None = None, catalog: Any = None) -> None:
         self._config = config or load_config()
         self._configs = load_provider_configs()
         self._providers: dict[str, PriceProvider] = {
@@ -89,6 +89,11 @@ class ProviderRegistry:
             "yfinance": YFinanceProvider(),
             "tushare": TushareProvider(),
         }
+        # Optional CatalogStore -- when given, a fallback within
+        # fetch_bars_with_fallback/fetch_bars_multi_with_fallback (a later
+        # provider succeeding after an earlier one failed) is recorded, not
+        # just silently absorbed into the winning result.
+        self._catalog = catalog
 
     def list_configs(self) -> list[ProviderConfig]:
         return list(self._configs)
@@ -135,15 +140,33 @@ class ProviderRegistry:
                 continue
             result = provider.fetch_bars(symbol, start_ts, end_ts)
             if result.success and result.bars:
+                self._record_fallback_if_any(symbol, role, provider.provider_id, errors)
                 return result
             errors.append(f"{provider.provider_id}: {result.error or 'empty'}")
         if role != "fallback":
             for provider in self.for_role("fallback"):
                 result = provider.fetch_bars(symbol, start_ts, end_ts)
                 if result.success and result.bars:
+                    self._record_fallback_if_any(symbol, role, provider.provider_id, errors)
                     return result
                 errors.append(f"{provider.provider_id}: {result.error or 'empty'}")
         return FetchBarsResult(False, [], "; ".join(errors))
+
+    def _record_fallback_if_any(
+        self, symbol: str, role: str, winning_provider: str, prior_errors: list[str],
+    ) -> None:
+        """Only worth a row when something upstream of the winner actually
+        failed -- a clean first-try success on the primary provider is not
+        a fallback event."""
+        if self._catalog is None or not prior_errors:
+            return
+        try:
+            self._catalog.record_fallback(
+                symbol, role=role, winning_provider=winning_provider,
+                skipped_errors=list(prior_errors),
+            )
+        except Exception:
+            pass
 
     def fetch_bars_multi_with_fallback(
         self,
@@ -184,6 +207,7 @@ class ProviderRegistry:
                         result = batch.get(s)
                         if result is not None and result.success and result.bars:
                             results[s] = result
+                            self._record_fallback_if_any(s, chain_role, provider.provider_id, errors[s])
                         else:
                             err = result.error if result is not None else "empty"
                             errors[s].append(f"{provider.provider_id}: {err or 'empty'}")
@@ -195,6 +219,7 @@ class ProviderRegistry:
                         result = provider.fetch_bars(s, start_ts, end_ts)
                         if result.success and result.bars:
                             results[s] = result
+                            self._record_fallback_if_any(s, chain_role, provider.provider_id, errors[s])
                         else:
                             errors[s].append(f"{provider.provider_id}: {result.error or 'empty'}")
                             still_missing.append(s)

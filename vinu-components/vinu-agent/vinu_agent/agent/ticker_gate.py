@@ -16,6 +16,7 @@ from typing import Any, Callable, Protocol
 
 from .. import config as _config_module
 from ..storage.ticker_ledger import TickerLedgerStore
+from ..storage.ticker_snapshots import TickerSnapshotStore
 from ..storage.ticker_summaries import TickerSummaryStore
 
 LOG = logging.getLogger(__name__)
@@ -82,10 +83,15 @@ class RunLogTrigger:
         run_log_reader: RunLogReader,
         ticker_summary_store: TickerSummaryStore,
         ticker_ledger_store: TickerLedgerStore,
+        ticker_snapshot_store: TickerSnapshotStore | None = None,
     ) -> None:
         self._reader = run_log_reader
         self._summaries = ticker_summary_store
         self._ledger = ticker_ledger_store
+        # Optional: None keeps every existing caller/test that constructs a
+        # RunLogTrigger without one working unchanged -- the dated snapshot
+        # is additive, not a required dependency of this trigger's core job.
+        self._snapshots = ticker_snapshot_store
 
     def check(self, ticker: str) -> RunLogTriggerResult:
         ticker = ticker.upper()
@@ -132,13 +138,27 @@ class RunLogTrigger:
         angles_with_data = int(meta.get("angles_with_data", 0))
         angle_count = int(meta.get("angle_count", 0))
         low_trust = list(meta.get("low_trust_angles") or [])
+        angle_digest = meta.get("angle_digest") or {}
         self._summaries.upsert_summary(
             ticker,
             summary_text,
             angles_with_data=angles_with_data,
             angle_count=angle_count,
             source_run_id=result.new_run_id or "",
+            angle_digest=angle_digest,
         )
+        if self._snapshots is not None:
+            try:
+                self._snapshots.record_daily_snapshot(
+                    ticker,
+                    summary=summary_text,
+                    angle_digest=angle_digest,
+                    angles_with_data=angles_with_data,
+                    angle_count=angle_count,
+                    source_run_id=result.new_run_id or "",
+                )
+            except Exception as exc:  # noqa: BLE001 -- best-effort, never blocks the refresh
+                LOG.warning("Daily snapshot write failed for %s: %s", ticker, exc)
         coverage_note = ""
         if angle_count and angles_with_data == 0:
             # A summary with zero grounded angles reads as success

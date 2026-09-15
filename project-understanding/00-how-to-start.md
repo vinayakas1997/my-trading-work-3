@@ -1,6 +1,6 @@
 ---
 name: how-to-start
-status: operational guide, matches the actual code/scripts as of 2026-09-11 (v3 — adds the pretrained-model-download step, verified against the real vinu-infra/models.py + docker-compose.yml mounts)
+status: operational guide, matches the actual code/scripts as of 2026-09-11 (v3 — adds the pretrained-model-download step, verified against the real vinu-infra/models.py + docker-compose.yml mounts). 2026-09-15 addendum: added the two new optional env-knob groups from that session's work (reserve fraction, role-based LLM config) -- everything else below unchanged/not re-verified in this pass.
 purpose: step-by-step to bring the vinu-components stack up from a clean machine, plus what to check once it's running.
 note: the "After it's running" and "Ongoing operational checklist" sections below are unchanged from v2 (2026-09-07) and reference some older decision/row IDs from that phase of the project that weren't re-verified in this pass -- Steps 1-8 above them (through the model-download and auth-verification steps) ARE freshly re-verified against the current code as of this edit.
 ---
@@ -69,6 +69,25 @@ New env knobs added 2026-09-07 (defaults already safe, no need to set unless tun
 - `VINU_AGENT_POSITION_SIZING_METHOD=fractional_kelly`, `VINU_AGENT_KELLY_FRACTION=0.25`, `VINU_AGENT_RISK_PER_TRADE_PCT=0.02`, `VINU_AGENT_ATR_STOP_MULTIPLE=2.0` — quarter-Kelly decided (Row 5)
 - `VINU_AGENT_CAPITAL_ALLOCATOR_INTERVAL=900`, `VINU_AGENT_PLANNER_INTERVAL=1800`, `VINU_RESEARCH_MAX_ITERATIONS=5` — caps `N/K` decided provisional (Row 7)
 - `VINU_STAGE1_START_DATE=2022-01-01` must stay — freeze manifest `vinu_infra/freeze.py` hashes `VINU_*` env + `*_DATA_ROOT` for lineage
+
+New env knobs added 2026-09-15 (all default to today's exact behavior — genuinely optional, not just "safe defaults"):
+- `VINU_PORTFOLIO_RESERVE_FRACTION` (default `0.0`) — holds back this
+  fraction of account equity from `compute_daily_allocation` before
+  sizing anything; `0.0` means deployable equity == full equity,
+  unchanged from before this existed.
+- `VINU_LLM_ROLES_PATH` (default: `vinu-infra/llm/roles.json`, which
+  ships with every role empty) — points the role-based LLM config
+  (`missing-pieces-of-system/llm-configuration-settings-system/`) at a
+  different file, e.g. to give the orchestrator tier a different
+  model/endpoint than teams/specialists without touching
+  `VINU_ORCHESTRATOR_LLM_*` (which still wins if set).
+- `VINU_LLM_ROLE_<ROLE>_BASE_URL` / `_MODEL` / `_API_KEY` / `_MAX_TOKENS`
+  / `_TIMEOUT_SEC` / `_RETRY_MAX` — per-role, per-field override, layered
+  on top of `roles.json`, layered on top of the existing plain
+  `VINU_LLM_*` defaults. Only takes effect for a role that actually gets
+  passed to `get_llm_config_for_role`/`ResearchLlmClient(role=...)` —
+  today that's `orchestrator` (vinu-agent) and `forecast_skill`
+  (vinu-research).
 
 ## Step 3 — bootstrap the secret files
 
@@ -267,6 +286,11 @@ After (or during), scan for failures:
 4. **Check Significance Triage delivery**, if you set Telegram/Discord
    credentials — trigger something notable (or wait for a real one) and
    confirm a message actually arrives, not just that the code path ran. Delivery is manual gate until creds observed (`decisions/09`).
+   As of 2026-09-15 this also includes a 4th, service-wide detector
+   (`llm_failure_rate`, ticker="SYSTEM") that fires if 5+ LLM calls fail
+   within an hour — worth deliberately breaking the LLM endpoint once to
+   confirm this actually alerts, since it's new and reads a table
+   (`telemetry.db`) nothing else in the system consumes yet.
 5. **Sanity-check the TickerLedger** is accumulating real events for tickers
    you're watching — taxonomy now pinned `stage/event_type/source` (`decisions/10`), append-only, `ref_id` points to real row. This is the ticker-keyed audit trail everything else in the design writes to.
 6. **(New) Run freeze manifest** for lineage: `python -c "from vinu_infra.freeze import freeze_manifest; freeze_manifest('freeze.json')"` — hashes `VINU_*` env + `*_DATA_ROOT` file hashes (`B21`, `vinu_infra/freeze.py`). Use `contamination_check(old,new)` between research and live to prove no data drift.

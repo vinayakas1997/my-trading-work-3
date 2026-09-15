@@ -1,10 +1,10 @@
 ---
 name: agentic-workflow-current-architecture
-status: v3 — 2026-09-11 — full rewrite against current reality, not a patch of v2.2. v2.2 (2026-09-09) described an earlier "21-gap build" (questions-answers/gaps-implementation, now removed from the repo) with its own cadences and decisions/05-12 references that no longer match the shipped code or the current tracking docs. This version replaces those with the real code (worker cadences, OrderGuard order, kill-switch mechanics — all re-verified this session, several directly via the `the-resaoning-ineffciency/scenarios-test/` scenarios) and the current tracking system (`complete-plan/00-index.md`, 81-item Stage 0-C tracker). Per-service internal step detail lives in `granularity-understanding/` — this file stays the cross-service pipeline/agent-role view, that folder is the "what actually happens inside each service" view.
-purpose: how the agentic pipeline actually runs today — the roles, the loop-backs, the cross-cutting safety mechanisms, and an honest statement of what's proven vs. still unverified. Supersedes v2.2 as the current source of truth for this diagram; v1/v2.2 stay in git history as snapshots of earlier phases.
+status: v4 — 2026-09-15 — targeted update on top of v3 (2026-09-11), not a full rewrite. v3's structure, diagram, and per-agent detail are still real and were not re-verified line-by-line this pass; what changed is specifically the two things a 2026-09-11 reader would now get wrong — the 28-vs-2-angle disconnect (v3's headline finding) is fixed, and a new cross-cutting LLM-reliability layer plus several new persisted stores were built this session as foundation work. See the two new sections below and the "Real gap... RESOLVED" callout for exactly what changed and why. v1/v2.2 stay in git history as snapshots of earlier phases.
+purpose: how the agentic pipeline actually runs today — the roles, the loop-backs, the cross-cutting safety mechanisms, and an honest statement of what's proven vs. still unverified. Supersedes v3 as the current source of truth for this diagram.
 ---
 
-# Agentic workflow — current architecture (v3, 2026-09-11)
+# Agentic workflow — current architecture (v4, 2026-09-15)
 
 ## The diagram
 
@@ -78,8 +78,9 @@ flowchart TB
     CAL -.->|"which angles to trust"| SA
 
     SHOCK(["shock_clustering /<br/>shock_personality angles"])
-    SHOCK -.->|"prioritizes cycle() order;<br/>ALSO the only 2 of 28 angles<br/>author_trade_plan's own LLM<br/>forecast call actually reads —<br/>see callout below"| MON
+    SHOCK -.->|"prioritizes cycle() order.<br/>(Was also the only 2 of 28<br/>angles the forecast call read —<br/>fixed 2026-09-14, see angle_digest<br/>callout below)"| MON
     SHOCK -.-> RE
+    SA -.->|"angle_digest — bounded,<br/>structured read of every<br/>angle-with-data, not just<br/>shock_*/free-text prose"| RE
 
     KS{{"Kill Switch<br/>(real filesystem file,<br/>/tmp/vinu-trading-halt —<br/>verified directly, not mocked,<br/>scenarios-test/07)"}}
     KS -.->|"OrderGuard.check() —<br/>reduce_only exempted ONLY<br/>when VINU_LIVE_HALT_POLICY<br/>=entries_only (the default)"| LS
@@ -103,27 +104,42 @@ flowchart TB
     HUMAN -.-> TL
 ```
 
-## The real gap this rewrite found: two separate 28-angle stories
+## RESOLVED (2026-09-14): the two separate 28-angle stories
 
-**Confirmed by reading both code paths directly, not assumed** (also
-recorded in `granularity-understanding/vinu-research.md`): the **Summary
-Agent** (step 1, `vinu-agent`) genuinely does survey all 28
-`vinu-initial-analysis` angles via `GetAllAnglesTool` — that part of the
-old v2.2 description is accurate. But when **Researcher/Executor** (step
-3) actually calls `author_trade_plan` to freeze the real trade plan, that
-function's own LLM forecast call
-(`forecast_skill.py::generate_forecast`) builds its prompt from
-`fetch_risk_state` (vol/VaR/CVaR/Kelly, computed fresh from raw prices —
-not read from any angle) plus `fetch_personality_features`, which reads
-**only 2 of the 28 angles**: `shock_personality` and `shock_clustering`.
-The Summary Agent's rich, all-28-angle narrative — already computed,
-already stored in `TickerSummaryStore` — is **not passed into the
-trade-plan forecast prompt at all**. Two separate LLM calls, two
-separate contexts; the one that actually becomes the numeric trade plan
-sees a small fraction of what the pipeline already knows. Not a bug per
-se — nothing crashes, nothing lies — but a real, previously-undocumented
-disconnect between "what the pipeline analyzed" and "what the decision
-that moves money actually looked at."
+**This was v3's headline finding — fixed this session, kept here as a
+record of what changed and why, not as an open gap anymore.** The
+original finding (verbatim from v3, still an accurate description of
+what the problem *was*): the Summary Agent genuinely surveys all 28
+`vinu-initial-analysis` angles via `GetAllAnglesTool`, but
+`author_trade_plan`'s own forecast call
+(`forecast_skill.py::generate_forecast`) built its prompt only from
+`fetch_risk_state` + `fetch_personality_features`, which read **only 2
+of the 28 angles** (`shock_personality`/`shock_clustering`) — the Summary
+Agent's rich, all-28-angle narrative never reached the actual
+money-moving decision.
+
+**The fix**: `vinu-agent/vinu_agent/tools/angles_tool.py` gained
+`build_angle_digest(angles_data)` — a generic, bounded (30-angle cap,
+200-char string cap per field, no per-field-count cap after the initial
+cap was deliberately removed) reduction of every angle-with-data into a
+structured dict, computed once by the Summary Agent
+(`agent/scheduler_workers.py::make_summary_agent_fn`) and stored
+alongside the existing free-text summary in `TickerSummaryStore`'s new
+`angle_digest` column. `trade_plan_authoring.py`'s
+`_normalize_summary_context` carries a bounded copy of it through to
+`forecast_skill.py::_build_forecast_prompt`, which now renders an
+`=== Angle Digest ===` section in the actual forecast prompt. The
+forecast call still also reads `fetch_risk_state`/
+`fetch_personality_features` for its sizing math (unchanged, and
+correctly so — sizing should come from real risk numbers, not angle
+prose) — what changed is that the *forecast reasoning itself* now sees
+structured data from every angle with real data, not just 2.
+
+Also fixed alongside this, same audit: `Forecast.reasoning` (the LLM's
+own justification) was write-only — persisted into `trade_plan_data` but
+never read back anywhere — now surfaced at the top level of the
+`GET`/`POST /trade-plan/{id}` API response
+(`vinu-research/vinu_research/server/routes_trade_plan.py`).
 
 ## Real worker cadences (verified against `config.py` defaults in both services, not a temporary override)
 
@@ -271,13 +287,48 @@ capped 75% — fixed this session from a flat 50%, `the-resaoning-ineffciency/00
 - **Significance Triage** — worker every 15 min, judges routine vs.
   unusual, fed by `capital_allocator`/Monitor/`risk_gatekeeper`
   rejections.
-- **Calibration log** (`vinu-infra/calibration_log.py`, new this
-  session) — a plain append-only JSONL observation log for genuinely
-  arbitrary threshold decisions (`bracket_partial`, `rebalance_protect`),
-  gated to a confirmed real broker connection so test runs never pollute
-  it. Not a decision store — nothing reads it back at runtime; it exists
-  purely so these numbers leave a record checkable against what actually
-  happened later.
+- **Calibration log** (`vinu-infra/calibration_log.py`) — a plain
+  append-only JSONL observation log for genuinely arbitrary threshold
+  decisions (`bracket_partial`, `rebalance_protect`), gated to a
+  confirmed real broker connection so test runs never pollute it. Not a
+  decision store — nothing reads it back at runtime; it exists purely so
+  these numbers leave a record checkable against what actually happened
+  later.
+- **LLM reliability layer** (new 2026-09-15,
+  `missing-pieces-of-system/llm-configuration-settings-system/`) — every
+  LLM call site (the shared `vinu-infra` JSON client and vinu-agent's
+  tool-calling `ChatLLM` classes) now shares one `tenacity`-based retry
+  policy (`vinu-infra/llm/retry.py`: backoff+jitter, Retry-After honored,
+  retry-on-parse-failure — previously nothing retried a malformed
+  response), one role-based model/endpoint config
+  (`vinu-infra/llm/roles.py` + `roles.json`, ships inert), and a real
+  failure-visibility path: `chat_json()` now raises `LlmCallFailed`
+  instead of silently returning `None`, closing the specific gap where
+  `forecast_skill.py` used to substitute a fake neutral forecast
+  indistinguishable from a genuine low-signal read. A new, service-wide
+  (not per-ticker) `detect_llm_failure_pattern` significance detector
+  reads `telemetry.db` (written to on every call, previously write-only)
+  and alerts via the existing Telegram/Discord path — an LLM outage or a
+  bad model swap is now actually visible in real time, not just sitting
+  in a log nobody queries.
+- **Persisted foundation for a future maturity/narrating agent** (new
+  2026-09-14/15, `missing-pieces-of-system/maturity-agentic-system/` and
+  `narating-agents/`) — several stores were added specifically so a
+  future self-evaluating agent has real history to read, not because
+  anything reads them yet: `TickerSnapshotStore` (per-ticker daily
+  angle-digest snapshots, vinu-agent), `AllocationHistoryStore`
+  (per-day portfolio allocation incl. per-strategy `vol_annualized`,
+  vinu-portfolio), `CorrelationMonitorStore` (per-cycle correlation-flag
+  history, vinu-live). All write-only today by design — see
+  `project-understanding/05-full-recorded-information/` for the full
+  inventory of what's stored where, and which stores are genuinely
+  consumed vs. built ahead of their reader.
+- **A real latent bug found and fixed**: `trade_score_gate.py`'s
+  approval-recheck used a fresh default-thresholds object instead of
+  `load_active_thresholds()` (the same calibrated thresholds authoring
+  itself uses) — meaning a plan could be authored against one bar and
+  approved against a silently different one. Fixed to use the same
+  calibrated thresholds at both points.
 
 ## Where things honestly stand — 2026-09-11
 
@@ -307,8 +358,8 @@ the way (`scenarios-test/01-07`, all 7 closed).
    coverage.
 3. **No live track record.** Every scenario so far is synthetic,
    deterministic, offline. Nothing here has survived a real incident.
-4. **The 28-vs-2-angle disconnect** documented above — not fixed, just
-   now accurately described.
+4. ~~The 28-vs-2-angle disconnect~~ — **fixed 2026-09-14**, see the
+   RESOLVED callout above. No open item here anymore.
 
 Two of the genuinely-arbitrary Category C thresholds from the reasoning
 audit have been fixed with real reasoning (scaled by a measured

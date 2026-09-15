@@ -36,3 +36,27 @@ CREATE TABLE IF NOT EXISTS ingest_log (
     ok          INTEGER NOT NULL DEFAULT 1,
     error       TEXT
 );
+
+CREATE TABLE IF NOT EXISTS provider_fallback_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol          TEXT NOT NULL,
+    role            TEXT NOT NULL,
+    winning_provider TEXT NOT NULL,
+    skipped_errors  TEXT NOT NULL DEFAULT '[]',
+    occurred_at     INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_fallback_log_symbol ON provider_fallback_log(symbol);
+
+CREATE TABLE IF NOT EXISTS backfill_runs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_at          INTEGER NOT NULL,
+    symbols         TEXT NOT NULL DEFAULT '[]',
+    years_attempted INTEGER NOT NULL DEFAULT 0,
+    years_ok        INTEGER NOT NULL DEFAULT 0,
+    years_failed    INTEGER NOT NULL DEFAULT 0,
+    total_rows      INTEGER NOT NULL DEFAULT 0,
+    symbols_skipped INTEGER NOT NULL DEFAULT 0,
+    rows_rolled     INTEGER NOT NULL DEFAULT 0,
+    errors          TEXT NOT NULL DEFAULT '[]'
+);

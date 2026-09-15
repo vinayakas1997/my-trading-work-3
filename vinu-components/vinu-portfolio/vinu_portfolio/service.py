@@ -86,9 +86,14 @@ class PortfolioService:
         # this now actually persists for the process lifetime (resets at UTC
         # midnight via DailyPositionTracker's own _check_reset()).
         self._risk_tracker = DailyPositionTracker()
+        # Dated allocation history -- vinu-portfolio's first piece of
+        # persistent storage of its own; see storage/allocation_history.py.
+        from vinu_portfolio.storage.allocation_history import AllocationHistoryStore
+        self._allocation_history = AllocationHistoryStore(self._config.data_root / "allocation_history.db")
 
     async def close(self) -> None:
         await self._http.aclose()
+        self._allocation_history.close()
 
     async def __aenter__(self) -> PortfolioService:
         return self
@@ -135,6 +140,9 @@ class PortfolioService:
                 "kind": "yaml",
                 "symbol": s.get("symbol", s.get("ticker", "")),
                 "weights_source": f"{self._config.strategy_api_url}/strategy/weights/{s.get('name', '')}",
+                # YAML registry strategies are all schedule:daily -- see the
+                # interval_sleeves comment in compute_daily_allocation.
+                "timeframe": "daily",
             }
             for s in data
         ]
@@ -166,6 +174,7 @@ class PortfolioService:
                 # Stage 2 (how-to-make-it-live.md #34): confidence-gradient
                 # sizing needs the promotion margin, not just pass/fail.
                 "deflated_sharpe": a.get("deflated_sharpe", 0.0),
+                "timeframe": a.get("timeframe", "daily"),
             }
             for a in data
         ]
@@ -179,7 +188,7 @@ class PortfolioService:
         return [
             {
                 "name": a.name, "artifact_id": a.artifact_id, "universe": a.universe,
-                "deflated_sharpe": a.deflated_sharpe,
+                "deflated_sharpe": a.deflated_sharpe, "timeframe": a.timeframe,
             }
             for a in artifacts
         ]
@@ -287,6 +296,16 @@ class PortfolioService:
             return []
 
         weights: dict[str, float] = {}
+        # Annualized vol per strategy, kept alongside the weight it produced
+        # so a caller can see *why* a strategy got a small allocation, not
+        # just the resulting number. Computed whenever returns_df has the
+        # column, regardless of which branch below actually set the weight
+        # (HRP still wants this for its own inputs).
+        vol_by_name: dict[str, float] = {}
+        if returns_df is not None and len(returns_df.columns) >= 1:
+            vol_series = returns_df.std() * np.sqrt(252)
+            vol_by_name = vol_series.to_dict()
+
         # Stage C (C11): HRP mode — correlation-aware, inversion-free. Falls
         # back to inverse-vol below when there isn't enough history to
         # cluster (hrp_weights returns None).
@@ -338,6 +357,9 @@ class PortfolioService:
                 # not just match by name string.
                 "artifact_id": s.get("artifact_id", ""),
                 "is_candidate": bool(s.get("is_candidate", False)),
+                "vol_annualized": (
+                    round(vol_by_name[s["name"]], 4) if s["name"] in vol_by_name else None
+                ),
             })
         return result
 
@@ -845,27 +867,40 @@ class PortfolioService:
         self._last_weights = {t["name"]: t["target_weight"] for t in tilted}
 
         equity = await self._fetch_account_equity()
-        if equity is not None:
-            tilted = apply_position_sizing(tilted, equity, target_vol=self._config.target_volatility)
+        # Reserve fund (restart/safety capital ordinary sizing can't touch):
+        # apply_position_sizing sizes against deployable_equity, never raw
+        # equity, once reserve_fraction is configured. Default 0.0 makes
+        # deployable_equity == equity, a no-op. account_equity in the
+        # response below stays the real total either way -- the reserve is
+        # visible, not silently subtracted.
+        deployable_equity = (
+            equity * (1.0 - self._config.reserve_fraction) if equity is not None else None
+        )
+        if deployable_equity is not None:
+            tilted = apply_position_sizing(tilted, deployable_equity, target_vol=self._config.target_volatility)
 
         # Sleeves (19 step3): subtotal weights by style tag AND by interval.
-        # Interval source: YAML registry strategies are all schedule:daily;
-        # llm_python artifacts carry interval in writer-9 names (-1d-/-1H-/
-        # -15min-). Unknown -> "unknown" bucket, never blocks.
-        import re as _re
-
+        # Interval source: Artifact.timeframe (vinu-research/vinu_research/
+        # models.py), read via `by_name` (already built above from
+        # base["strategies"]) -- replaces a regex-on-strategy-name guess
+        # (-1d-/-1H-/-15min-) that stood in for this before the field
+        # existed. Unknown/missing -> "daily", same fallback as before.
         tags = self._load_tags()
         sleeves: dict[str, float] = {}
         interval_sleeves: dict[str, float] = {}
         for t in tilted:
             _style = str((tags.get(t["name"]) or {}).get("style", "untagged"))
             sleeves[_style] = round(sleeves.get(_style, 0.0) + t["target_weight"], 4)
-            _nm = t["name"] or ""
-            _m = _re.search(r"-(1d|1H|15min)-", _nm)
-            _iv = _m.group(1) if _m else "daily"
+            _iv = str(by_name.get(t["name"], {}).get("timeframe") or "daily")
             interval_sleeves[_iv] = round(interval_sleeves.get(_iv, 0.0) + t["target_weight"], 4)
 
-        return {
+        reserve_amount = (
+            round(equity * self._config.reserve_fraction, 2) if equity is not None else None
+        )
+        deployable_equity_rounded = (
+            round(deployable_equity, 2) if deployable_equity is not None else None
+        )
+        result = {
             **base,
             "weights": tilted,
             "regime": regime_info,
@@ -873,7 +908,26 @@ class PortfolioService:
             "sleeves": sleeves,
             "interval_sleeves": interval_sleeves,
             "account_equity": equity,
+            "reserve_fraction": self._config.reserve_fraction,
+            "reserve_amount": reserve_amount,
+            "deployable_equity": deployable_equity_rounded,
         }
+
+        # Dated history (19 foundation-fixes follow-up): nothing calls this
+        # method on a guaranteed once-daily cadence, so the store's own
+        # same-day upsert is what makes recording on every call safe. Never
+        # allowed to break the response itself -- best-effort, same posture
+        # as every other audit writer in this codebase.
+        try:
+            self._allocation_history.record_daily_allocation(
+                weights=tilted, sleeves=sleeves, interval_sleeves=interval_sleeves,
+                account_equity=equity, reserve_fraction=self._config.reserve_fraction,
+                reserve_amount=reserve_amount, deployable_equity=deployable_equity_rounded,
+            )
+        except Exception as exc:  # noqa: BLE001 -- best-effort, never blocks the response
+            LOG.warning("Allocation history write failed: %s", exc)
+
+        return result
 
     async def compute_daily_game_plan(self) -> dict[str, Any]:
         allocation = await self.compute_daily_allocation()

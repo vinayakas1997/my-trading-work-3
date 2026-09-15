@@ -1,4 +1,60 @@
+from typing import Any
+
 from ..agent.tools import BaseTool
+
+# Per-angle digest bounds: each angle's own row schema is different (trend
+# fields, regime fields, backtest metrics, ...), so there's no single fixed
+# shape to parse -- this takes every scalar field the freshest row actually
+# has (no per-angle field cap: an early cap risks silently dropping an
+# angle's actual signal fields behind boilerplate like symbol/timestamp/id
+# that happens to come first in the row). Still bounded on the two axes
+# that guard against a genuinely pathological entry: an absurdly long
+# string field, and the total number of angles carried.
+_DIGEST_MAX_STRING_LEN = 200
+_DIGEST_MAX_ANGLES = 30
+
+
+def summarize_angle(angle_name: str, angle_result: dict) -> dict | None:
+    """Freshest-row, scalar-fields-only digest of one angle's `execute()`
+    entry. Returns None when there's nothing informative to add (no data,
+    an error entry, or a malformed row) -- best-effort, never raises."""
+    try:
+        if not isinstance(angle_result, dict):
+            return None
+        if angle_result.get("row_count", 0) <= 0 or angle_result.get("error"):
+            return None
+        rows = angle_result.get("data")
+        if not isinstance(rows, list) or not rows:
+            return None
+        last_row = rows[-1]
+        if not isinstance(last_row, dict):
+            return None
+        digest: dict[str, Any] = {}
+        for key, value in last_row.items():
+            if isinstance(value, bool) or isinstance(value, (int, float)):
+                digest[key] = value
+            elif isinstance(value, str) and len(value) <= _DIGEST_MAX_STRING_LEN:
+                digest[key] = value
+        return digest or None
+    except Exception:
+        return None
+
+
+def build_angle_digest(angles_data: dict) -> dict:
+    """Runs summarize_angle over every angle in a `GetAllAnglesTool.execute()`
+    result, keeping only the angles that had something to say."""
+    digest: dict[str, dict] = {}
+    try:
+        angles = angles_data.get("angles") or {}
+        for name, result in angles.items():
+            if len(digest) >= _DIGEST_MAX_ANGLES:
+                break
+            summarized = summarize_angle(name, result)
+            if summarized is not None:
+                digest[name] = summarized
+    except Exception:
+        return digest
+    return digest
 
 
 class GetAllAnglesTool(BaseTool):

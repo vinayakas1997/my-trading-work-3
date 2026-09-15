@@ -682,6 +682,26 @@ def _derive_entry_decision(forecast: Forecast, trade_score: TradeScoreResult | N
 
 
 _SUMMARY_CONTEXT_MAX_CHARS = 2000
+_ANGLE_DIGEST_MAX_ANGLES = 30
+
+
+def _bound_angle_digest(angle_digest: Any) -> dict[str, Any]:
+    """Defense-in-depth re-application of vinu_agent.tools.angles_tool's own
+    bounds -- summary_context crosses a process/repo boundary (vinu-agent's
+    stored digest -> vinu-research's forecast prompt), so this doesn't trust
+    the caller already enforced them. No per-angle field cap (matches
+    angles_tool.build_angle_digest): an early cap risks dropping an angle's
+    actual signal fields behind whatever happened to come first in its row."""
+    if not isinstance(angle_digest, dict):
+        return {}
+    bounded: dict[str, Any] = {}
+    for name, fields in angle_digest.items():
+        if len(bounded) >= _ANGLE_DIGEST_MAX_ANGLES:
+            break
+        if not isinstance(fields, dict):
+            continue
+        bounded[str(name)] = dict(fields)
+    return bounded
 
 
 def _normalize_summary_context(summary_context: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -706,6 +726,7 @@ def _normalize_summary_context(summary_context: dict[str, Any] | None) -> dict[s
         "source_run_id": str(summary_context.get("source_run_id") or ""),
         "angles_with_data": summary_context.get("angles_with_data", "?"),
         "angle_count": summary_context.get("angle_count", 28),
+        "angle_digest": _bound_angle_digest(summary_context.get("angle_digest")),
     }
 
 
@@ -966,7 +987,13 @@ def approve_trade_plan(
         plan_for_score_check = TradePlan.from_json(artifact.trade_plan_data)
         if plan_for_score_check.trade_score is not None:
             tier = plan_for_score_check.trade_score.tier
-            if not tier_meets_minimum(tier, TradeScoreThresholds().min_tradeable_tier):
+            # Same calibrated-thresholds resolution author_trade_plan() itself
+            # uses (line ~862 above) -- a fresh plain TradeScoreThresholds()
+            # here would silently diverge from authoring's own gate the
+            # moment tier-cutoff calibration is added (trade_score_calibration.
+            # py deliberately never touches min_tradeable_tier yet, which is
+            # the only reason this was harmless until now).
+            if not tier_meets_minimum(tier, load_active_thresholds().min_tradeable_tier):
                 reasons = [
                     f"trade score tier {tier!r} "
                     f"({plan_for_score_check.trade_score.total_score:.1f}) is below the "

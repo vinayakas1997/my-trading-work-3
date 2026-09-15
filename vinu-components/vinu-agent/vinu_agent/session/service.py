@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -7,6 +8,8 @@ from ..agent.context import ContextBuilder
 from .events import EventBus, SSEEvent
 from .models import Attempt, Message, Session
 from .store import SessionStore
+
+logger = logging.getLogger(__name__)
 
 
 class SessionService:
@@ -167,6 +170,36 @@ class SessionService:
                 session_id=session_id,
             ))
 
+    def _run_debrief_check(
+        self, build_broker: Callable, position_close_detector_cls: Any,
+        as_of: Optional[str], session_id: str, data_root: str, digest_state_file: str, registry: Any,
+    ) -> None:
+        """Best-effort, silent-on-failure by design (a debrief miss must
+        never break the turn it's attached to) -- extracted from
+        _run_with_agent so this specific behavior is unit-testable without
+        driving that whole method. `check_and_debrief`'s return value used
+        to be discarded here entirely; now logged so a closed position's
+        summary actually surfaces somewhere, not just its side effects
+        (evidence write, thesis_contradicted ledger event)."""
+        import os
+
+        try:
+            broker = build_broker(as_of, session_id)
+            if broker.is_configured():
+                state_path = os.path.join(data_root, "debrief_state", digest_state_file)
+                debrief_detector = position_close_detector_cls(
+                    registry=registry, state_path=state_path,
+                    services_config=self._services_config,
+                    ticker_ledger_store=self._ticker_ledger_store,
+                )
+                debrief_results = debrief_detector.check_and_debrief(broker, session_id=session_id)
+                if debrief_results:
+                    logger.info(
+                        "debrief closed %d position(s): %s", len(debrief_results), debrief_results,
+                    )
+        except Exception:
+            pass
+
     def _run_with_agent(self, session_id: str, attempt: Attempt) -> Dict:
         import os
 
@@ -228,18 +261,9 @@ class SessionService:
             state_path=os.path.join(data_root, "research_digest_state", digest_state_file),
         )
 
-        try:
-            broker = _build_broker(as_of, session_id)
-            if broker.is_configured():
-                state_path = os.path.join(data_root, "debrief_state", digest_state_file)
-                debrief_detector = PositionCloseDetector(
-                    registry=registry, state_path=state_path,
-                    services_config=self._services_config,
-                    ticker_ledger_store=self._ticker_ledger_store,
-                )
-                debrief_detector.check_and_debrief(broker, session_id=session_id)
-        except Exception:
-            pass
+        self._run_debrief_check(
+            _build_broker, PositionCloseDetector, as_of, session_id, data_root, digest_state_file, registry,
+        )
 
         context_builder = ContextBuilder(
             registry=registry,

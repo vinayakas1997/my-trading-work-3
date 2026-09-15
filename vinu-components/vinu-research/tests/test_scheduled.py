@@ -170,8 +170,18 @@ class TestScheduledExecutor:
         assert loaded.last_run_id == 42
         assert loaded.last_summary == "Tried momentum, Sharpe 1.4, promoted."
 
-    def test_lazy_service_initialization(self):
+    def test_lazy_service_initialization(self, monkeypatch):
+        """`executor.service`'s lazy-init path constructs a real
+        `ResearchService()` with zero args, which resolves its data_root via
+        `load_config()` -> `VINU_RESEARCH_DATA_ROOT` (config.py) falling back
+        to `Path.cwd() / "data"` -- a dataclass default evaluated once at
+        import time, so it reflects whatever cwd was when vinu_research.
+        config was first imported in this test session, not this test's own
+        cwd. Environment-dependent (observed resolving to the
+        non-writable "/data" outside a container that mounts it), so the
+        env var is pinned here rather than left to ambient cwd state."""
         tmp = Path(tempfile.mkdtemp())
+        monkeypatch.setenv("VINU_RESEARCH_DATA_ROOT", str(tmp))
         store = ScheduledResearchJobStore(tmp / "jobs.json")
         executor = ScheduledResearchExecutor(store)
         assert executor._service is None

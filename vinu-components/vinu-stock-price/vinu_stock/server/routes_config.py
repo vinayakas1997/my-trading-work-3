@@ -157,6 +157,16 @@ def backfill_status(job_id: str) -> dict:
     return job
 
 
+@router.get("/backfill/runs")
+def backfill_runs(limit: int = 50) -> dict:
+    """Persisted run-level summaries -- previously only printed via
+    format_report() or returned once in the trigger response body, lost
+    once the process/response exited. See the foundation-fixes audit in
+    missing-pieces-of-system/narating-agents/."""
+    rows = get_service().get_backfill_runs(limit=limit)
+    return {"count": len(rows), "data": rows}
+
+
 @router.post("/ingest/trigger", response_model=TriggerResponse)
 def trigger_ingest() -> TriggerResponse:
     if not _ingest_lock.acquire(blocking=False):

@@ -17,6 +17,7 @@ import pytest
 
 from vinu_agent.agent.ticker_gate import ChangeGate, RunLogTrigger, run_gate_cycle
 from vinu_agent.storage.ticker_ledger import TickerLedgerStore
+from vinu_agent.storage.ticker_snapshots import TickerSnapshotStore
 from vinu_agent.storage.ticker_summaries import TickerSummaryStore
 
 
@@ -73,6 +74,15 @@ def stores():
         p.unlink(missing_ok=True)
 
 
+@pytest.fixture
+def snapshot_store():
+    path = Path(tempfile.mktemp(suffix=".db"))
+    store = TickerSnapshotStore(path)
+    yield store
+    store.close()
+    path.unlink(missing_ok=True)
+
+
 class TestRunLogTrigger:
     def test_no_new_run_id_skips_summary_agent(self, stores) -> None:
         summaries, ledger = stores
@@ -121,6 +131,84 @@ class TestRunLogTrigger:
 
         assert len(calls) == 1
         assert summaries.get_summary("AAPL").source_run_id == "run-4"
+
+    def test_angle_digest_from_meta_is_persisted(self, stores) -> None:
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old summary", source_run_id="run-1")
+        reader = FakeRunLogReader({"AAPL": "run-2"})
+        trigger = RunLogTrigger(reader, summaries, ledger)
+
+        digest = {"trend_lifecycle": {"stage": "mature"}}
+
+        def summary_agent_fn(ticker: str):
+            return "new summary", {"angles_with_data": 1, "angle_count": 2, "angle_digest": digest}
+
+        trigger.refresh_if_stale("AAPL", summary_agent_fn)
+
+        assert summaries.get_summary("AAPL").angle_digest == digest
+
+    def test_missing_angle_digest_in_meta_defaults_to_empty(self, stores) -> None:
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old summary", source_run_id="run-1")
+        reader = FakeRunLogReader({"AAPL": "run-2"})
+        trigger = RunLogTrigger(reader, summaries, ledger)
+
+        trigger.refresh_if_stale("AAPL", lambda t: ("new summary", {"angles_with_data": 0, "angle_count": 0}))
+
+        assert summaries.get_summary("AAPL").angle_digest == {}
+
+    def test_no_snapshot_store_configured_still_works(self, stores) -> None:
+        """Optional param, defaults to None -- existing callers that never
+        pass a snapshot store must keep working unchanged."""
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old", source_run_id="run-1")
+        reader = FakeRunLogReader({"AAPL": "run-2"})
+        trigger = RunLogTrigger(reader, summaries, ledger)  # no snapshot store
+
+        result = trigger.refresh_if_stale("AAPL", lambda t: ("new summary", {}))
+
+        assert result.should_refresh is True
+        assert summaries.get_summary("AAPL").summary == "new summary"
+
+    def test_refresh_writes_both_summary_and_dated_snapshot(self, stores, snapshot_store) -> None:
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old", source_run_id="run-1")
+        reader = FakeRunLogReader({"AAPL": "run-2"})
+        trigger = RunLogTrigger(reader, summaries, ledger, ticker_snapshot_store=snapshot_store)
+        digest = {"trend_lifecycle": {"stage": "mature"}}
+
+        def summary_agent_fn(ticker: str):
+            return "new summary", {"angles_with_data": 1, "angle_count": 2, "angle_digest": digest}
+
+        trigger.refresh_if_stale("AAPL", summary_agent_fn)
+
+        assert summaries.get_summary("AAPL").summary == "new summary"
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        snap = snapshot_store.get_snapshot("AAPL", today)
+        assert snap is not None
+        assert snap.summary == "new summary"
+        assert snap.angle_digest == digest
+        assert snap.source_run_id == "run-2"
+
+    def test_snapshot_write_failure_does_not_break_the_refresh(self, stores) -> None:
+        """Best-effort: a broken snapshot store must not prevent the
+        summary refresh (the pre-existing, higher-priority write) from
+        succeeding."""
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old", source_run_id="run-1")
+        reader = FakeRunLogReader({"AAPL": "run-2"})
+
+        class _BrokenSnapshotStore:
+            def record_daily_snapshot(self, *a, **kw):
+                raise RuntimeError("disk full")
+
+        trigger = RunLogTrigger(reader, summaries, ledger, ticker_snapshot_store=_BrokenSnapshotStore())
+
+        result = trigger.refresh_if_stale("AAPL", lambda t: ("new summary", {}))
+
+        assert result.should_refresh is True
+        assert summaries.get_summary("AAPL").summary == "new summary"
 
     def test_runlog_unreachable_logs_distinct_failure_not_confused_with_no_change(self, stores) -> None:
         summaries, ledger = stores

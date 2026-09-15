@@ -5,6 +5,7 @@ import pytest
 from vinu_research.config import ResearchConfig
 from vinu_research.forecast_skill import (
     ForecastSkillConfig,
+    _build_forecast_prompt,
     compute_angle_calibration,
     compute_brier_score,
     compute_calibration,
@@ -120,8 +121,11 @@ class _StubLlmClient:
         self._response = response
         self.calls: list[tuple[str, str]] = []
 
-    async def chat_json(self, system: str, user: str) -> dict | None:
+    async def chat_json(self, system: str, user: str, *, raise_on_failure: bool = False) -> dict | None:
         self.calls.append((system, user))
+        if self._response is None and raise_on_failure:
+            from vinu_infra.llm.retry import LlmCallFailed
+            raise LlmCallFailed("stub: no response configured")
         return self._response
 
 
@@ -145,13 +149,20 @@ class TestGenerateForecast:
         assert forecast.horizon_days == 5
         assert len(stub.calls) == 1
 
-    async def test_llm_failure_falls_back_to_neutral(self) -> None:
+    async def test_llm_failure_raises_instead_of_faking_a_neutral_forecast(self) -> None:
+        """A real LLM failure used to be silently substituted with a fake
+        neutral forecast (direction="neutral", confidence=0.0) that was
+        numerically indistinguishable from a genuine low-signal read --
+        a real trade-plan decision could be shaped by a forecast that
+        never actually happened. See
+        missing-pieces-of-system/llm-configuration-settings-system/."""
+        from vinu_infra.llm.retry import LlmCallFailed
+
         stub = _StubLlmClient(None)
-        forecast = await generate_forecast(
-            "AAPL", {}, {"status": "insufficient_data"}, ResearchConfig(), llm_client=stub,
-        )
-        assert forecast.direction == "neutral"
-        assert forecast.confidence == 0.0
+        with pytest.raises(LlmCallFailed):
+            await generate_forecast(
+                "AAPL", {}, {"status": "insufficient_data"}, ResearchConfig(), llm_client=stub,
+            )
 
     async def test_confidence_clamped_to_unit_interval(self) -> None:
         stub = _StubLlmClient({
@@ -165,3 +176,46 @@ class TestGenerateForecast:
             "AAPL", {}, {"status": "ok"}, ResearchConfig(), llm_client=stub,
         )
         assert forecast.confidence == 1.0
+
+    async def test_angle_digest_reaches_the_prompt(self) -> None:
+        """Regression for the '2 of 28 angles' gate-conflict: forecast_skill
+        used to only ever see shock_personality/shock_clustering as
+        structured input, with every other angle collapsed into free-text
+        prose -- see high-expectations gate-conflict audit."""
+        stub = _StubLlmClient({
+            "direction": "long", "confidence": 0.6, "magnitude_pct": 0.01,
+            "magnitude_std": 0.01, "horizon_days": 1,
+        })
+        summary_context = {
+            "summary": "AAPL looks constructive.",
+            "angles_with_data": 2, "angle_count": 2, "source_run_id": "run-1",
+            "angle_digest": {"trend_lifecycle": {"stage": "mature"}, "regime_analysis": {"regime": "bull"}},
+        }
+        await generate_forecast(
+            "AAPL", {}, {"status": "ok"}, ResearchConfig(), llm_client=stub,
+            summary_context=summary_context,
+        )
+        prompt = stub.calls[0][1]
+        assert "=== Angle Digest ===" in prompt
+        assert "trend_lifecycle.stage: mature" in prompt
+        assert "regime_analysis.regime: bull" in prompt
+
+
+class TestBuildForecastPromptAngleDigest:
+    def test_no_digest_omits_the_section(self) -> None:
+        prompt = _build_forecast_prompt("AAPL", {}, {}, summary_context=None)
+        assert "=== Angle Digest ===" not in prompt
+
+    def test_empty_digest_omits_the_section(self) -> None:
+        prompt = _build_forecast_prompt(
+            "AAPL", {}, {}, summary_context={"summary": "x", "angle_digest": {}},
+        )
+        assert "=== Angle Digest ===" not in prompt
+
+    def test_non_dict_angle_entries_are_skipped_not_raised(self) -> None:
+        prompt = _build_forecast_prompt(
+            "AAPL", {}, {},
+            summary_context={"summary": "x", "angle_digest": {"broken": "not-a-dict", "ok": {"a": 1}}},
+        )
+        assert "ok.a: 1" in prompt
+        assert "broken" not in prompt

@@ -4,6 +4,7 @@ import pytest
 
 from vinu_screener.pipeline.candidate import Candidate
 from vinu_screener.pipeline.pipeline import PipelineResult
+from vinu_screener.pipeline.rule_filters import StageCount, SupportsBacktesting
 from vinu_screener.rankers.snapshot_store import RankedSnapshotStore
 
 
@@ -77,3 +78,49 @@ class TestSetAndGet:
 
         snap = store.get_latest("r1")
         assert snap.top[0].fields == {}
+
+
+class TestTraceRoundTrip:
+    """Regression: PipelineResult.trace was computed on every run and
+    dropped before reaching this store or the on-demand rank_now()
+    response -- see the foundation-fixes audit in
+    missing-pieces-of-system/narating-agents/."""
+
+    def test_trace_round_trips(self, store) -> None:
+        trace = [
+            StageCount(stage="hard_filter", supports_backtesting=SupportsBacktesting.YES, before=500, after=120),
+            StageCount(stage="risk_veto", supports_backtesting=SupportsBacktesting.NO, before=120, after=12),
+        ]
+        result = PipelineResult(ranked=[], trace=trace, top=[])
+        store.set_latest("r1", result, now=1.0)
+
+        snap = store.get_latest("r1")
+        assert snap.trace == [
+            {"stage": "hard_filter", "supports_backtesting": "YES", "before": 500, "after": 120},
+            {"stage": "risk_veto", "supports_backtesting": "NO", "before": 120, "after": 12},
+        ]
+
+    def test_empty_trace_round_trips(self, store) -> None:
+        store.set_latest("r1", _result([("AAPL", 1.0)]), now=1.0)
+        assert store.get_latest("r1").trace == []
+
+    def test_to_dict_includes_trace(self, store) -> None:
+        trace = [StageCount(stage="hard_filter", supports_backtesting=SupportsBacktesting.YES, before=10, after=5)]
+        result = PipelineResult(ranked=[], trace=trace, top=[])
+        store.set_latest("r1", result, now=1.0)
+        snap = store.get_latest("r1")
+        assert snap.to_dict()["trace"] == [
+            {"stage": "hard_filter", "supports_backtesting": "YES", "before": 10, "after": 5},
+        ]
+
+    def test_pre_migration_row_with_no_trace_json_defaults_to_empty_list(self, store) -> None:
+        """A row written by a version of this store before trace_json
+        existed (or a column value that's somehow empty/NULL) must fail
+        open to [], not raise."""
+        store.set_latest("r1", _result([("AAPL", 1.0)]), now=1.0)
+        conn = store._get_conn()
+        conn.execute("UPDATE ranker_snapshots SET trace_json = '' WHERE ranker_id = ?", ("r1",))
+        conn.commit()
+
+        snap = store.get_latest("r1")
+        assert snap.trace == []

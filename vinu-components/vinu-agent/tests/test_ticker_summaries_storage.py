@@ -88,3 +88,28 @@ class TestTickerSummaryStore:
         fetched = store.get_summary("AAPL")
         assert fetched.last_checked_run_id == "run-2"
         assert fetched.last_checked_artifact_signature == "sig-b"
+
+
+class TestAngleDigest:
+    """Regression for the '2 of 28 angles' gate-conflict fix: the
+    structured per-angle digest must round-trip through storage, and a
+    row with no digest (pre-migration / never set) must fail open to {}
+    rather than error."""
+
+    def test_angle_digest_round_trips(self, store: TickerSummaryStore) -> None:
+        digest = {"trend_lifecycle": {"stage": "mature"}, "regime_analysis": {"regime": "bull"}}
+        store.upsert_summary("AAPL", "summary text", angle_digest=digest)
+        fetched = store.get_summary("AAPL")
+        assert fetched.angle_digest == digest
+
+    def test_no_digest_passed_defaults_to_empty_dict(self, store: TickerSummaryStore) -> None:
+        store.upsert_summary("AAPL", "summary text")
+        fetched = store.get_summary("AAPL")
+        assert fetched.angle_digest == {}
+
+    def test_record_gate_check_on_ticker_with_no_summary_yet_has_empty_digest(
+        self, store: TickerSummaryStore
+    ) -> None:
+        store.record_gate_check("AAPL", run_id="run-1", artifact_signature="sig-a")
+        fetched = store.get_summary("AAPL")
+        assert fetched.angle_digest == {}

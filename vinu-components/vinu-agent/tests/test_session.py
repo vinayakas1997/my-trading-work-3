@@ -2,6 +2,7 @@ import asyncio
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -225,3 +226,81 @@ class TestSessionService:
 
     def test_cancel_current_on_fresh_service_is_false_not_a_crash(self, service) -> None:
         assert service.cancel_current("some-session-id") is False
+
+
+class TestRunDebriefCheck:
+    """Regression: check_and_debrief's return value (a list of
+    {symbol, realized_pnl, theses_updated}) was discarded at its only call
+    site -- important side effects (evidence write, thesis_contradicted
+    ledger event) already happened inside the detector, but the per-turn
+    summary itself never surfaced anywhere. See the foundation-fixes audit
+    in missing-pieces-of-system/narating-agents/."""
+
+    @pytest.fixture
+    def service(self):
+        tmp = Path(tempfile.mkdtemp())
+        store = SessionStore(tmp)
+        bus = EventBus()
+        loop = asyncio.new_event_loop()
+        bus.set_loop(loop)
+        from vinu_agent.session.service import SessionService
+        svc = SessionService(store=store, event_bus=bus)
+        yield svc
+        loop.close()
+
+    @staticmethod
+    def _broker(configured: bool) -> MagicMock:
+        broker = MagicMock()
+        broker.is_configured.return_value = configured
+        return broker
+
+    def test_non_empty_result_logs_a_summary(self, service, caplog) -> None:
+        import logging as _logging
+
+        broker = self._broker(True)
+        build_broker = MagicMock(return_value=broker)
+        detector_cls = MagicMock()
+        detector_cls.return_value.check_and_debrief.return_value = [
+            {"symbol": "AAPL", "realized_pnl": 40.0, "theses_updated": 1},
+        ]
+
+        with caplog.at_level(_logging.INFO, logger="vinu_agent.session.service"):
+            service._run_debrief_check(
+                build_broker, detector_cls, None, "sess-1", "/tmp/data", "live.json", MagicMock(),
+            )
+
+        assert any("debrief closed 1 position" in r.message for r in caplog.records)
+
+    def test_empty_result_logs_nothing(self, service, caplog) -> None:
+        import logging as _logging
+
+        broker = self._broker(True)
+        build_broker = MagicMock(return_value=broker)
+        detector_cls = MagicMock()
+        detector_cls.return_value.check_and_debrief.return_value = []
+
+        with caplog.at_level(_logging.INFO, logger="vinu_agent.session.service"):
+            service._run_debrief_check(
+                build_broker, detector_cls, None, "sess-1", "/tmp/data", "live.json", MagicMock(),
+            )
+
+        assert caplog.records == []
+
+    def test_broker_not_configured_skips_debrief_entirely(self, service) -> None:
+        broker = self._broker(False)
+        build_broker = MagicMock(return_value=broker)
+        detector_cls = MagicMock()
+
+        service._run_debrief_check(
+            build_broker, detector_cls, None, "sess-1", "/tmp/data", "live.json", MagicMock(),
+        )
+
+        detector_cls.assert_not_called()
+
+    def test_exception_is_swallowed_exactly_as_before(self, service) -> None:
+        build_broker = MagicMock(side_effect=RuntimeError("broker down"))
+        detector_cls = MagicMock()
+
+        service._run_debrief_check(  # must not raise
+            build_broker, detector_cls, None, "sess-1", "/tmp/data", "live.json", MagicMock(),
+        )

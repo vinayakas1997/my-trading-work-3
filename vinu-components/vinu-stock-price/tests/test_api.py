@@ -20,6 +20,11 @@ from vinu_stock.storage.paths import archive_year_path
 def client(tmp_path: Path) -> TestClient:
     data_root = tmp_path / "data"
     os.environ["VINU_STOCK_DATA_ROOT"] = str(data_root)
+    # The real .env sets VINU_SHARED_WATCHLIST_PATH to the Docker-mounted
+    # /shared/watchlist.json, not writable on a dev machine -- add_watchlist_
+    # tickers() below exports there unconditionally when set, so it must be
+    # redirected to a tmp path here.
+    os.environ["VINU_SHARED_WATCHLIST_PATH"] = str(tmp_path / "shared_watchlist.json")
 
     # Seed parquet with recent timestamps aligned to 5m buckets
     now = int(time.time())
@@ -69,6 +74,20 @@ def test_catalog(client: TestClient) -> None:
     resp = client.get("/stock/catalog/AAPL")
     assert resp.status_code == 200
     assert resp.json()["data"][0]["symbol"] == "AAPL"
+
+
+def test_catalog_fallbacks_route_is_registered_before_symbol_route(client: TestClient) -> None:
+    """/catalog/fallbacks must not be swallowed by /catalog/{symbol} -- see
+    the foundation-fixes audit in missing-pieces-of-system/narating-agents/."""
+    resp = client.get("/stock/catalog/fallbacks")
+    assert resp.status_code == 200
+    assert resp.json() == {"count": 0, "data": []}
+
+
+def test_backfill_runs_route_empty_by_default(client: TestClient) -> None:
+    resp = client.get("/stock/backfill/runs")
+    assert resp.status_code == 200
+    assert resp.json() == {"count": 0, "data": []}
 
 
 def test_ui_page(client: TestClient) -> None:

@@ -32,7 +32,10 @@ async def _fake_author_trade_plan(symbol, timeframe, config, tools, llm_client=N
         timeframe=timeframe,
         direction="long",
         position_size_pct=0.04,
-        forecast=Forecast(direction="long", confidence=0.6, magnitude_pct=0.02),
+        forecast=Forecast(
+            direction="long", confidence=0.6, magnitude_pct=0.02,
+            reasoning="Momentum plus earnings beat support a long thesis.",
+        ),
         # Stage A (A9): freeze_trade_plan refuses a plan with none.
         invalidation_conditions=[
             InvalidationCondition(
@@ -53,6 +56,14 @@ class TestGenerateTradePlan:
         assert data["universe"] == ["AAPL"]
         assert data["trade_plan_data"]
 
+    def test_surfaces_forecast_reasoning_at_top_level(self, client, monkeypatch) -> None:
+        """forecast.reasoning was already fully persisted inside
+        trade_plan_data but nothing read it back out -- see the
+        foundation-fixes audit in missing-pieces-of-system/narating-agents/."""
+        monkeypatch.setattr(routes_trade_plan, "author_trade_plan", _fake_author_trade_plan)
+        resp = client.post("/research/trade-plan/AAPL", json={"timeframe": "daily"})
+        assert resp.json()["reasoning"] == "Momentum plus earnings beat support a long thesis."
+
     def test_rejects_bad_timeframe(self, client, monkeypatch) -> None:
         monkeypatch.setattr(routes_trade_plan, "author_trade_plan", _fake_author_trade_plan)
         resp = client.post("/research/trade-plan/AAPL", json={"timeframe": "yearly"})
@@ -70,6 +81,7 @@ class TestGetTradePlan:
         resp = client.get(f"/research/trade-plan/{created['artifact_id']}")
         assert resp.status_code == 200
         assert resp.json()["artifact_id"] == created["artifact_id"]
+        assert resp.json()["reasoning"] == "Momentum plus earnings beat support a long thesis."
 
 
 class TestApproveTradePlan:

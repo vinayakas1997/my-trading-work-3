@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS artifacts (
     approved_size REAL NOT NULL DEFAULT 0.0,
     origin_angles TEXT NOT NULL DEFAULT '[]',
     regime_tag TEXT NOT NULL DEFAULT '',
-    freeze_hash TEXT NOT NULL DEFAULT ''
+    freeze_hash TEXT NOT NULL DEFAULT '',
+    timeframe TEXT NOT NULL DEFAULT 'daily'
 );
 
 CREATE TABLE IF NOT EXISTS bench_history (
@@ -184,6 +185,7 @@ class SqliteStrategyStore:
             ("origin_angles", "TEXT NOT NULL DEFAULT '[]'"),
             ("regime_tag", "TEXT NOT NULL DEFAULT ''"),
             ("freeze_hash", "TEXT NOT NULL DEFAULT ''"),
+            ("timeframe", "TEXT NOT NULL DEFAULT 'daily'"),
         ]
         for name, typedef in migrations:
             if name not in cols:
@@ -216,8 +218,8 @@ class SqliteStrategyStore:
                 strategy_code, source_run_id, initial_sharpe, initial_max_dd, deflated_sharpe,
                 holdout_passed, stress_test_passed, pbo,
                 last_validated_ts, revalidation_count, last_revalidation_verdict,
-                trade_plan_data, approved_size, origin_angles, regime_tag, freeze_hash)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                trade_plan_data, approved_size, origin_angles, regime_tag, freeze_hash, timeframe)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 artifact.artifact_id,
                 artifact.type,
@@ -246,6 +248,7 @@ class SqliteStrategyStore:
                 json.dumps(artifact.origin_angles),
                 artifact.regime_tag or "",
                 artifact.freeze_hash or "",
+                artifact.timeframe or "daily",
             ),
         )
         conn.commit()
@@ -625,6 +628,7 @@ class SqliteStrategyStore:
             ),
             regime_tag=row["regime_tag"] if "regime_tag" in row.keys() and row["regime_tag"] else "",
             freeze_hash=row["freeze_hash"] if "freeze_hash" in row.keys() and row["freeze_hash"] else "",
+            timeframe=row["timeframe"] if "timeframe" in row.keys() and row["timeframe"] else "daily",
         )
 
     @staticmethod

@@ -1,9 +1,10 @@
 import json
 import logging
-import random
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Generator, Optional
+
+from vinu_infra.llm.retry import build_retry
 
 from ..config import AgentConfig, LLMConfig
 
@@ -153,66 +154,43 @@ class OpenAIChatLLM(ChatLLM):
             params["tools"] = tools
             params["tool_choice"] = "auto"
 
-        last_error: Exception | None = None
-        for attempt in range(self._retry_max):
-            try:
-                response = self._client.chat.completions.create(**params)
-            except Exception as e:
-                last_error = e
-                if attempt < self._retry_max - 1 and _is_transient_openai_error(e):
-                    delay = (2 ** attempt) * 1.0
-                    status = getattr(e, "status_code", None)
-                    if status == 429:
-                        # Free-tier provider rate limit: parallel Stage-1
-                        # workers make fixed-step backoff a thundering herd
-                        # -- honor Retry-After when present, cap it, and add
-                        # jitter so concurrent tickers don't retry in lockstep.
-                        delay = min(delay, 120.0)
-                        resp = getattr(e, "response", None)
-                        try:
-                            retry_after = float(
-                                (resp.headers.get("retry-after") or "").strip() or 0
-                            ) if resp is not None else 0
-                            delay = min(max(delay, retry_after), 120.0)
-                        except (ValueError, AttributeError):
-                            pass
-                        delay += random.uniform(0, 1.0)
-                    LOG.warning(
-                        "OpenAI LLM call failed (%s), retrying in %.1fs (attempt %d/%d)",
-                        type(e).__name__, delay, attempt + 1, self._retry_max,
-                    )
-                    time.sleep(delay)
-                    continue
-                raise RuntimeError(
-                    f"OpenAI LLM call failed after {attempt + 1} attempt(s): {e}"
-                ) from e
+        attempts = {"n": 0}
 
-            result: dict[str, Any] = {
-                "content": response.choices[0].message.content or "",
-                "retry_count": attempt,
-            }
-            tool_calls = response.choices[0].message.tool_calls
-            if tool_calls:
-                result["tool_calls"] = [
-                    {
-                        "id": tc.id,
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in tool_calls
-                ]
-            usage = getattr(response, "usage", None)
-            if usage is not None:
-                result["usage"] = {
-                    "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
-                    "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
-                    "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+        def _attempt():
+            attempts["n"] += 1
+            return self._client.chat.completions.create(**params)
+
+        try:
+            response = build_retry(self._retry_max, _is_transient_openai_error)(_attempt)
+        except Exception as e:
+            raise RuntimeError(
+                f"OpenAI LLM call failed after {attempts['n']} attempt(s): {e}"
+            ) from e
+
+        result: dict[str, Any] = {
+            "content": response.choices[0].message.content or "",
+            "retry_count": attempts["n"] - 1,
+        }
+        tool_calls = response.choices[0].message.tool_calls
+        if tool_calls:
+            result["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
                 }
-            return result
-
-        raise RuntimeError(f"OpenAI LLM call failed after {self._retry_max} attempt(s): {last_error}") from last_error
+                for tc in tool_calls
+            ]
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            result["usage"] = {
+                "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+            }
+        return result
 
 
 class DeepSeekChatLLM(OpenAIChatLLM):
@@ -339,57 +317,58 @@ class OllamaChatLLM(ChatLLM):
         if tools:
             payload["tools"] = tools
 
-        last_error: Exception | None = None
-        for attempt in range(self._retry_max):
-            try:
-                resp = requests.post(
-                    f"{self._base_url}/api/chat",
-                    json=payload,
-                    timeout=self._timeout,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                result: dict[str, Any] = {
-                    "content": data.get("message", {}).get("content", ""),
-                    "retry_count": attempt,
-                }
-                tool_calls = data.get("message", {}).get("tool_calls")
-                if tool_calls:
-                    result["tool_calls"] = [
-                        {
-                            "id": tc.get("id", f"call_{i}"),
-                            "function": {
-                                "name": tc["function"]["name"],
-                                "arguments": json.dumps(tc["function"]["arguments"]),
-                            },
-                        }
-                        for i, tc in enumerate(tool_calls)
-                    ]
-                # Ollama returns these when the backing model reports them —
-                # real tokenizer counts, not an estimate.
-                if "prompt_eval_count" in data or "eval_count" in data:
-                    prompt_tokens = data.get("prompt_eval_count", 0) or 0
-                    completion_tokens = data.get("eval_count", 0) or 0
-                    result["usage"] = {
-                        "prompt_tokens": prompt_tokens,
-                        "completion_tokens": completion_tokens,
-                        "total_tokens": prompt_tokens + completion_tokens,
-                    }
-                return result
-            except (requests.ConnectionError, requests.Timeout) as e:
-                last_error = e
-                if attempt < self._retry_max - 1:
-                    time.sleep((2 ** attempt) * 1.0)
-                    continue
-            except requests.RequestException as e:
-                last_error = e
-                status = e.response.status_code if hasattr(e, 'response') and e.response is not None else None
-                if status is not None and (status == 429 or status >= 500) and attempt < self._retry_max - 1:
-                    time.sleep((2 ** attempt) * 1.0)
-                    continue
-                raise RuntimeError(f"Ollama LLM call failed: {e}") from e
+        def _should_retry(exc: BaseException) -> bool:
+            if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+                return True
+            if isinstance(exc, requests.RequestException):
+                status = exc.response.status_code if getattr(exc, "response", None) is not None else None
+                return status is not None and (status == 429 or status >= 500)
+            return False
 
-        raise RuntimeError(f"Ollama LLM call failed after {self._retry_max} attempts: {last_error}")
+        attempts = {"n": 0}
+
+        def _attempt():
+            attempts["n"] += 1
+            resp = requests.post(
+                f"{self._base_url}/api/chat",
+                json=payload,
+                timeout=self._timeout,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+        try:
+            data = build_retry(self._retry_max, _should_retry)(_attempt)
+        except Exception as e:
+            raise RuntimeError(f"Ollama LLM call failed after {attempts['n']} attempt(s): {e}") from e
+
+        result: dict[str, Any] = {
+            "content": data.get("message", {}).get("content", ""),
+            "retry_count": attempts["n"] - 1,
+        }
+        tool_calls = data.get("message", {}).get("tool_calls")
+        if tool_calls:
+            result["tool_calls"] = [
+                {
+                    "id": tc.get("id", f"call_{i}"),
+                    "function": {
+                        "name": tc["function"]["name"],
+                        "arguments": json.dumps(tc["function"]["arguments"]),
+                    },
+                }
+                for i, tc in enumerate(tool_calls)
+            ]
+        # Ollama returns these when the backing model reports them —
+        # real tokenizer counts, not an estimate.
+        if "prompt_eval_count" in data or "eval_count" in data:
+            prompt_tokens = data.get("prompt_eval_count", 0) or 0
+            completion_tokens = data.get("eval_count", 0) or 0
+            result["usage"] = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            }
+        return result
 
 
 def _estimate_tokens_for_logging(text: str) -> int:
@@ -578,6 +557,32 @@ class FallbackChatLLM(ChatLLM):
         raise RuntimeError(
             f"All LLM providers failed ({', '.join(tried)}): {last_error}"
         ) from last_error
+
+
+def resolve_role_llm_config(role: str) -> Optional[LLMConfig]:
+    """Maps vinu-infra's role-based `LlmConfig` (roles.json, shared with
+    vinu-research -- see
+    missing-pieces-of-system/llm-configuration-settings-system/) onto
+    this package's own `LLMConfig` shape, only when `role` actually has
+    configuration of its own (`has_role_override`). Returns `None`
+    otherwise, so a caller can fall back to whatever it did before this
+    existed -- this function never invents a value out of nothing.
+
+    OpenAI-compatible only for now (roles.json's fields assume that wire
+    format): provider is always "openai" here, matching the standing
+    decision not to build native-Anthropic role support yet."""
+    from vinu_infra.llm.roles import get_llm_config_for_role, has_role_override
+
+    if not has_role_override(role):
+        return None
+    role_cfg = get_llm_config_for_role(role)
+    return LLMConfig(
+        provider="openai",
+        model_name=role_cfg.model,
+        api_key=role_cfg.api_key or "",
+        base_url=role_cfg.base_url,
+        timeout=int(role_cfg.timeout_sec),
+    )
 
 
 def create_llm_from_config(llm_config: LLMConfig) -> ChatLLM:

@@ -4,9 +4,12 @@ import pytest
 from fastapi import HTTPException, Request
 
 
-def _make_request(headers: dict[str, str]) -> Request:
+def _make_request(headers: dict[str, str], path: str = "/some/route") -> Request:
     encoded = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
-    scope = {"type": "http", "headers": encoded}
+    scope = {
+        "type": "http", "headers": encoded, "path": path,
+        "method": "GET", "query_string": b"",
+    }
     return Request(scope)
 
 

@@ -15,17 +15,20 @@ import pytest
 
 from vinu_agent.agent.significance_triage import (
     ChannelTarget,
+    LLM_FAILURE_SENTINEL_TICKER,
     REJECTED_PATTERN_MIN_COUNT,
     REJECTED_PATTERN_WINDOW_HOURS,
     SignificanceFlagStore,
     deliver_flag,
     detect_large_funding_pattern,
+    detect_llm_failure_pattern,
     detect_repeated_rejection_pattern,
     detect_thesis_contradiction_pattern,
     format_flag_message,
     record_human_override,
 )
 from vinu_agent.storage.ticker_ledger import TickerLedgerStore
+from vinu_infra.telemetry import LLMCallRecord, TelemetryStore
 
 _HEX12 = re.compile(r"^[0-9a-f]{12}$")
 
@@ -52,6 +55,27 @@ def ticker_ledger_store():
         path.unlink(missing_ok=True)
     except PermissionError:
         pass
+
+
+@pytest.fixture
+def telemetry_store():
+    path = Path(tempfile.mktemp(suffix=".db"))
+    store = TelemetryStore(path)
+    yield store
+    store.close()
+    try:
+        path.unlink(missing_ok=True)
+    except PermissionError:
+        pass
+
+
+def _record_call(store: TelemetryStore, *, success: bool) -> None:
+    store.record_llm_call(LLMCallRecord(
+        service="test", model="test-model", base_url="http://fake/v1",
+        prompt_tokens=1, completion_tokens=1, total_tokens=2,
+        token_count_source="provider", retry_count=0, latency_sec=0.1,
+        success=success, outcome="completed" if success else "all_endpoints_failed",
+    ))
 
 
 class TestSignificanceFlagStore:
@@ -232,6 +256,53 @@ class TestDetectThesisContradictionPattern:
         )
         result = detect_thesis_contradiction_pattern("AAPL", ticker_ledger_store)
         assert result is None
+
+
+class TestDetectLlmFailurePattern:
+    """Service-wide, not per-ticker -- reads `telemetry.db` (already
+    written to on every LLM call) instead of `TickerLedgerStore`. See
+    missing-pieces-of-system/llm-configuration-settings-system/."""
+
+    def test_no_failures_not_flagged(self, telemetry_store) -> None:
+        for _ in range(10):
+            _record_call(telemetry_store, success=True)
+        assert detect_llm_failure_pattern(telemetry_store) is None
+
+    def test_below_min_count_not_flagged(self, telemetry_store) -> None:
+        for _ in range(4):  # LLM_FAILURE_MIN_COUNT default is 5
+            _record_call(telemetry_store, success=False)
+        assert detect_llm_failure_pattern(telemetry_store) is None
+
+    def test_at_min_count_flagged(self, telemetry_store) -> None:
+        for _ in range(5):
+            _record_call(telemetry_store, success=False)
+        result = detect_llm_failure_pattern(telemetry_store)
+        assert result is not None
+        assert result["count"] == 5
+
+    def test_custom_thresholds_respected(self, telemetry_store) -> None:
+        for _ in range(2):
+            _record_call(telemetry_store, success=False)
+        assert detect_llm_failure_pattern(telemetry_store, min_count=2) is not None
+        assert detect_llm_failure_pattern(telemetry_store, min_count=3) is None
+
+    def test_old_failures_outside_window_are_not_counted(self, telemetry_store) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        from vinu_infra.telemetry import LLMCallRecord
+
+        old_ts = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+        for _ in range(10):
+            telemetry_store.record_llm_call(LLMCallRecord(
+                service="test", model="test-model", base_url="http://fake/v1",
+                prompt_tokens=0, completion_tokens=0, total_tokens=0,
+                token_count_source="provider", retry_count=0, latency_sec=0.1,
+                success=False, outcome="all_endpoints_failed", ts=old_ts,
+            ))
+        assert detect_llm_failure_pattern(telemetry_store, window_hours=1.0) is None
+
+    def test_sentinel_ticker_is_a_stable_constant(self) -> None:
+        assert LLM_FAILURE_SENTINEL_TICKER == "SYSTEM"
 
 
 class TestFlagNeverBlocksTheUnderlyingAction:

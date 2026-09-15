@@ -55,6 +55,7 @@ class _FakeCatalog:
         self.fail_symbols = fail_symbols
         self.job_statuses: dict[tuple[str, int], dict] = {}
         self.upserts: list[tuple[str, dict]] = []
+        self.recorded_runs: list[dict] = []
 
     def get_symbol(self, sym):
         if sym in self.fail_symbols:
@@ -72,6 +73,9 @@ class _FakeCatalog:
 
     def set_job_status(self, sym, year, status, **kwargs):
         self.job_statuses[(sym, year)] = {"status": status, **kwargs}
+
+    def record_backfill_run(self, **kwargs):
+        self.recorded_runs.append(kwargs)
 
 
 class _FakeBackend:
@@ -147,3 +151,47 @@ def test_explicit_to_year_is_still_respected(monkeypatch, tmp_path):
     )
 
     assert captured["end_year"] == 2023
+
+
+def test_run_summary_is_persisted_via_catalog(monkeypatch, tmp_path):
+    """The aggregate run summary used to be printed/returned once and then
+    lost -- see the foundation-fixes audit in
+    missing-pieces-of-system/narating-agents/."""
+    catalog = _FakeCatalog()
+    backend = _FakeBackend(catalog)
+    registry = _no_op_registry()
+
+    monkeypatch.setattr(
+        orchestrator, "run_year_job",
+        lambda sym, year, **kw: (True, 10, "yahoo", ""),
+    )
+
+    current_year = datetime.now(timezone.utc).year
+    summary = orchestrator.run_backfill(
+        ["AAPL"], data_root=tmp_path, backend=backend, registry=registry, to_year=current_year,
+    )
+
+    assert len(catalog.recorded_runs) == 1
+    recorded = catalog.recorded_runs[0]
+    assert recorded["symbols"] == summary.symbols
+    assert recorded["total_rows"] == summary.total_rows
+    assert recorded["years_failed"] == summary.years_failed
+
+
+def test_run_summary_persistence_failure_does_not_break_run(monkeypatch, tmp_path):
+    class _BoomCatalog(_FakeCatalog):
+        def record_backfill_run(self, **kwargs):
+            raise RuntimeError("db boom")
+
+    backend = _FakeBackend(_BoomCatalog())
+    registry = _no_op_registry()
+    monkeypatch.setattr(
+        orchestrator, "run_year_job",
+        lambda sym, year, **kw: (True, 1, "yahoo", ""),
+    )
+
+    summary = orchestrator.run_backfill(  # must not raise
+        ["AAPL"], data_root=tmp_path, backend=backend, registry=registry,
+        to_year=datetime.now(timezone.utc).year,
+    )
+    assert summary.years_ok >= 1

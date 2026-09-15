@@ -18,6 +18,7 @@ from vinu_research.models import (
 )
 from vinu_research.trade_plan_authoring import (
     TradePlanApprovalError,
+    _normalize_summary_context,
     _regime_size_multiplier,
     approve_trade_plan,
     author_trade_plan,
@@ -80,7 +81,7 @@ class _StubLlmClient:
     def __init__(self, response: dict) -> None:
         self._response = response
 
-    async def chat_json(self, system, user):
+    async def chat_json(self, system, user, *, raise_on_failure: bool = False):
         return self._response
 
 
@@ -123,6 +124,45 @@ class TestFetchPersonalityFeatures:
         tools = _StubTools(returns=None, angle_rows={})
         features = await fetch_personality_features(tools, "AAPL")
         assert features == {"shock_personality": {}, "shock_clustering": {}}
+
+
+class TestNormalizeSummaryContextAngleDigest:
+    """Regression for the '2 of 28 angles' gate-conflict fix: angle_digest
+    must survive normalization (bounded, defense-in-depth against a
+    caller from a different repo/process not already enforcing the
+    bounds), and its absence must not break the existing summary-only
+    path -- see high-expectations gate-conflict audit."""
+
+    def test_angle_digest_passes_through(self) -> None:
+        result = _normalize_summary_context({
+            "summary": "AAPL looks constructive.",
+            "angle_digest": {"trend_lifecycle": {"stage": "mature"}},
+        })
+        assert result["angle_digest"] == {"trend_lifecycle": {"stage": "mature"}}
+
+    def test_missing_angle_digest_defaults_to_empty(self) -> None:
+        result = _normalize_summary_context({"summary": "AAPL looks constructive."})
+        assert result["angle_digest"] == {}
+
+    def test_angle_count_is_capped(self) -> None:
+        digest = {f"angle_{i}": {"v": i} for i in range(40)}
+        result = _normalize_summary_context({"summary": "x", "angle_digest": digest})
+        assert len(result["angle_digest"]) == 30
+
+    def test_field_count_per_angle_is_not_capped(self) -> None:
+        digest = {"angle_a": {f"f{i}": i for i in range(10)}}
+        result = _normalize_summary_context({"summary": "x", "angle_digest": digest})
+        assert len(result["angle_digest"]["angle_a"]) == 10
+
+    def test_non_dict_angle_digest_fails_open_to_empty(self) -> None:
+        result = _normalize_summary_context({"summary": "x", "angle_digest": "not-a-dict"})
+        assert result["angle_digest"] == {}
+
+    def test_no_summary_still_returns_none_regardless_of_digest(self) -> None:
+        """The existing fail-open rule (no summary text -> None entirely)
+        must not be bypassed just because a digest is present."""
+        result = _normalize_summary_context({"summary": "", "angle_digest": {"a": {"x": 1}}})
+        assert result is None
 
 
 class TestRegimeSizeMultiplier:
@@ -935,6 +975,34 @@ class TestFreezeAndApprove:
 
         approved = approve_trade_plan(strategy_store, artifact.artifact_id)
         assert approved.status == ArtifactStatus.ACTIVE
+
+    def test_approval_recheck_uses_calibrated_thresholds_not_a_fresh_default(
+        self, strategy_store, monkeypatch,
+    ) -> None:
+        """Regression: approve_trade_plan's tier re-check used to instantiate
+        a fresh plain TradeScoreThresholds() instead of resolving the same
+        calibrated thresholds author_trade_plan() itself uses -- harmless
+        only while tier-cutoff calibration didn't exist yet. Here a
+        calibrated threshold that requires "moderate" (raising the bar past
+        the "watch" default) must actually be enforced at approval time."""
+        import vinu_research.trade_plan_authoring as tpa
+        from vinu_research.config import TradeScoreThresholds
+
+        strategy = Artifact.create(type_="strategy", name="s1", universe=["AAPL"])
+        strategy.status = ArtifactStatus.ACTIVE
+        strategy_store.upsert_artifact(strategy)
+
+        plan = self._sample_plan()
+        plan.trade_score = TradeScoreResult(total_score=75.0, tier="watch")
+        artifact = freeze_trade_plan(strategy_store, plan)
+
+        monkeypatch.setattr(
+            tpa, "load_active_thresholds",
+            lambda: TradeScoreThresholds(min_tradeable_tier="moderate"),
+        )
+
+        with pytest.raises(TradePlanApprovalError, match="watch"):
+            approve_trade_plan(strategy_store, artifact.artifact_id)
 
     def test_force_approves_despite_no_trade_tier(self, strategy_store) -> None:
         plan = self._sample_plan()

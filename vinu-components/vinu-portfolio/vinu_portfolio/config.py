@@ -88,6 +88,12 @@ class PortfolioConfig:
     min_calibration_entries_for_tilt: int = 5
     tags_path: Path = DEFAULT_TAGS_PATH
     game_plan_readiness_threshold: float = 0.5
+    # Fraction of account equity held back from sizing entirely -- a
+    # restart/safety fund ordinary position sizing cannot touch. 0.0
+    # (default) is a no-op: every existing deployment sizes against full
+    # equity exactly as before until this is explicitly set. Env:
+    # VINU_PORTFOLIO_RESERVE_FRACTION.
+    reserve_fraction: float = 0.0
 
     @classmethod
     def from_env(cls) -> PortfolioConfig:
@@ -124,6 +130,7 @@ class PortfolioConfig:
             game_plan_readiness_threshold=float(
                 os.getenv("VINU_PORTFOLIO_GAME_PLAN_READINESS_THRESHOLD", "0.5")
             ),
+            reserve_fraction=float(os.getenv("VINU_PORTFOLIO_RESERVE_FRACTION", "0.0")),
         )
 
 

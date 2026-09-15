@@ -158,6 +158,52 @@ def test_format_angle_context_lines_empty():
     assert format_angle_context_lines(None) == []
 
 
+class TestResearchLlmClientRoleWiring:
+    """`role=` resolves vinu-infra's roles.json config -- but only when
+    that role actually has configuration; otherwise ResearchConfig's own
+    llm_* fields must pass through unchanged. See
+    missing-pieces-of-system/llm-configuration-settings-system/."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_roles_file(self, monkeypatch, tmp_path):
+        from vinu_infra.llm import roles as roles_module
+        monkeypatch.setenv("VINU_LLM_ROLES_PATH", str(tmp_path / "roles.json"))
+        roles_module._loaded_path = None
+        roles_module._loaded_data = None
+        yield
+        roles_module._loaded_path = None
+        roles_module._loaded_data = None
+
+    def test_default_role_uses_research_config_unchanged(self):
+        config = ResearchConfig(llm_base_url="http://research-configured/v1", llm_model="research-model")
+        client = ResearchLlmClient(config)
+        assert client._client._config.base_url == "http://research-configured/v1"
+        assert client._client._config.model == "research-model"
+
+    def test_unconfigured_role_uses_research_config_unchanged(self):
+        config = ResearchConfig(llm_base_url="http://research-configured/v1", llm_model="research-model")
+        client = ResearchLlmClient(config, role="forecast_skill")
+        assert client._client._config.base_url == "http://research-configured/v1"
+        assert client._client._config.model == "research-model"
+
+    def test_configured_role_overrides_research_config(self, tmp_path, monkeypatch):
+        import json
+        (tmp_path / "roles.json").write_text(
+            json.dumps({"default": {}, "roles": {"forecast_skill": {"model": "gpt-4o"}}}),
+            encoding="utf-8",
+        )
+        from vinu_infra.llm import roles as roles_module
+        roles_module._loaded_path = None
+        roles_module._loaded_data = None
+
+        config = ResearchConfig(llm_base_url="http://research-configured/v1", llm_model="research-model")
+        client = ResearchLlmClient(config, role="forecast_skill")
+        assert client._client._config.model == "gpt-4o"
+
+        other = ResearchLlmClient(config, role="some_other_role")
+        assert other._client._config.model == "research-model"
+
+
 class TestLlmCache:
     def test_cache_miss(self, tmp_path):
         cache = LlmCache(tmp_path / "test_cache.db", 3600)

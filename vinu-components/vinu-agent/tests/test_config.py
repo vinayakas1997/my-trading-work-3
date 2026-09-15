@@ -21,6 +21,16 @@ def _clear_orchestrator_llm_env(monkeypatch):
 
 class TestLoadConfigWatchlistSeedTickers:
     def test_defaults_to_empty_list(self, monkeypatch) -> None:
+        """load_config() calls load_dotenv() unconditionally on every call
+        (no "already loaded" guard) -- this repo's real .env sets
+        VINU_AGENT_WATCHLIST_SEED_TICKERS to a genuine configured watchlist,
+        so delenv alone isn't enough: load_dotenv would just refill the var
+        right back in from that real file (python-dotenv only skips
+        already-set vars, and delenv just unset it). Blocking load_dotenv
+        for this test isolates "what load_config defaults to when the var
+        is absent" from this developer machine's real, populated .env."""
+        import vinu_agent.config as config_module
+        monkeypatch.setattr(config_module, "load_dotenv", lambda *a, **kw: None)
         monkeypatch.delenv("VINU_AGENT_WATCHLIST_SEED_TICKERS", raising=False)
         assert load_config().watchlist_seed_tickers == []
 

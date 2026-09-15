@@ -147,6 +147,47 @@ class TestIngestClosedPositions:
             df = storage.read_latest("AAPL", "pnl_attribution")
             assert df.iloc[0]["n_trades"] == 1
 
+    def test_run_log_records_the_ingest_when_given(self) -> None:
+        """This push-fed path used to be the only AngleStorage writer that
+        never touched RunLog at all -- see the foundation-fixes audit in
+        missing-pieces-of-system/narating-agents/."""
+
+        class _SpyRunLog:
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+
+            def record_run(self, **kwargs):
+                self.calls.append(kwargs)
+
+        with TemporaryDirectory() as tmp:
+            storage = AngleStorage(tmp)
+            run_log = _SpyRunLog()
+            run_id = ingest_closed_positions(
+                storage, "AAPL", [_closed_position("p1", 50.0)], run_log=run_log,
+            )
+            assert len(run_log.calls) == 1
+            assert run_log.calls[0]["symbol"] == "AAPL"
+            assert run_log.calls[0]["angle_name"] == "pnl_attribution"
+            assert run_log.calls[0]["run_id"] == run_id
+
+    def test_no_run_log_is_a_no_op_not_a_crash(self) -> None:
+        with TemporaryDirectory() as tmp:
+            storage = AngleStorage(tmp)
+            ingest_closed_positions(storage, "AAPL", [_closed_position("p1", 50.0)])  # run_log=None default
+
+    def test_run_log_write_failure_does_not_break_ingest(self) -> None:
+        class _BoomRunLog:
+            def record_run(self, **kwargs):
+                raise RuntimeError("db boom")
+
+        with TemporaryDirectory() as tmp:
+            storage = AngleStorage(tmp)
+            ingest_closed_positions(  # must not raise
+                storage, "AAPL", [_closed_position("p1", 50.0)], run_log=_BoomRunLog(),
+            )
+            df = storage.read_latest("AAPL", "pnl_attribution")
+            assert df.iloc[0]["n_trades"] == 1
+
 
 class TestRoutes:
     @pytest.fixture
@@ -171,6 +212,28 @@ class TestRoutes:
         assert angle_resp.status_code == 200
         rows = angle_resp.json()["data"]
         assert rows[-1]["n_trades"] == 1
+
+    def test_record_endpoint_writes_a_run_log_row(self, tmp_path: Path) -> None:
+        """The route wires svc.run_log through to ingest_closed_positions --
+        previously nothing did, so a RunLog-driven lookup could never see a
+        pnl_attribution ingest event."""
+        config = VinuInitialAnalysisConfig(
+            data_root=tmp_path, runs_db_path=tmp_path / "vinu_initial_analysis_runs.db"
+        )
+        service = InitialAnalysisService(config)
+        client = TestClient(create_app(service))
+
+        resp = client.post(
+            "/analysis/pnl-attribution/AAPL/record",
+            json={"closed_positions": [_closed_position("p1", 50.0)]},
+        )
+        assert resp.status_code == 200
+        run_id = resp.json()["run_id"]
+
+        runs = service.run_log.get_runs(symbol="AAPL", angle_name="pnl_attribution")
+        assert len(runs) == 1
+        assert runs[0]["run_id"] == run_id
+        assert runs[0]["status"] == "completed"
 
     def test_run_with_angle_names_does_not_error(self, client: TestClient) -> None:
         resp = client.post("/analysis/run/AAPL", params={"angle_names": "shock_personality,shock_clustering"})

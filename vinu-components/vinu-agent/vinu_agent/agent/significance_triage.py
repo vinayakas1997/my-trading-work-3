@@ -53,6 +53,16 @@ REJECTED_PATTERN_WINDOW_HOURS = 24.0
 LARGE_FUNDING_WINDOW_HOURS = 24.0
 THESIS_CONTRADICTION_WINDOW_HOURS = 24.0
 THESIS_CONTRADICTION_MIN_COUNT = 1
+LLM_FAILURE_MIN_COUNT = 5
+LLM_FAILURE_WINDOW_HOURS = 1.0
+
+# detect_llm_failure_pattern is service-wide, not per-ticker (unlike the
+# three detectors above) -- SignificanceFlag/create_flag() requires a
+# ticker regardless, so this sentinel value stands in for "the system
+# itself," reusing the existing storage/delivery path rather than adding
+# a new one. See
+# missing-pieces-of-system/llm-configuration-settings-system/.
+LLM_FAILURE_SENTINEL_TICKER = "SYSTEM"
 
 _AMOUNT_RE = re.compile(r"amount=([0-9.]+)")
 
@@ -67,6 +77,19 @@ def _new_flag_id() -> str:
 
 def _hours_ago_iso(hours: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - hours * 3600))
+
+
+def _hours_ago_isoformat(hours: float) -> str:
+    """Same idea as `_hours_ago_iso`, but matching `datetime.isoformat()`
+    (with a numeric UTC offset, microsecond precision) -- the format
+    `vinu_infra.telemetry.LLMCallRecord.ts` actually uses, distinct from
+    TickerLedger's `%Y-%m-%dT%H:%M:%SZ` convention. The two are not
+    string-comparable with each other, so `detect_llm_failure_pattern`
+    (the only telemetry.db-backed detector) uses this instead of
+    `_hours_ago_iso`."""
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +317,39 @@ def detect_thesis_contradiction_pattern(
     )
     if count >= min_count:
         return {"ticker": ticker.upper(), "count": count, "window_hours": window_hours}
+    return None
+
+
+class LlmTelemetryReader(Protocol):
+    def recent_llm_calls(self, limit: int = 100, service: str | None = None) -> list[dict[str, Any]]: ...
+
+
+def detect_llm_failure_pattern(
+    telemetry_store: LlmTelemetryReader,
+    *,
+    min_count: int = LLM_FAILURE_MIN_COUNT,
+    window_hours: float = LLM_FAILURE_WINDOW_HOURS,
+) -> dict[str, Any] | None:
+    """Service-wide, not per-ticker -- an LLM outage or a bad model swap
+    used to have no real-time alerting path at all, just the write-only
+    `llm_calls` table `vinu_infra.telemetry.TelemetryStore` already
+    records every call to (successes and failures both). This is the
+    first real reader of that table. See
+    missing-pieces-of-system/llm-configuration-settings-system/.
+
+    Reads a bounded recent window (`recent_llm_calls`'s own `limit`, not
+    a full table scan) rather than a rate over the whole table's history,
+    so this stays cheap to call once per significance-worker cycle."""
+    since = _hours_ago_isoformat(window_hours)
+    recent = [
+        row for row in telemetry_store.recent_llm_calls(limit=500)
+        if row.get("ts", "") >= since
+    ]
+    failures = [row for row in recent if not row.get("success")]
+    if len(failures) >= min_count:
+        return {
+            "count": len(failures), "checked": len(recent), "window_hours": window_hours,
+        }
     return None
 
 

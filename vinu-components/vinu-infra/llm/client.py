@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +15,7 @@ from vinu_infra.llm.config import LlmConfig
 from vinu_infra.llm.docker import alternative_urls, is_running_in_docker
 from vinu_infra.llm.cost import CostEntry, TokenUsage, get_global_cost_tracker
 from vinu_infra.llm.providers import detect_provider, get_capabilities
+from vinu_infra.llm.retry import LlmCallFailed, LlmParseError, build_retry
 from vinu_infra.rate_limit import TokenBucket
 from vinu_infra.telemetry import LLMCallRecord, record_llm_call_safe
 
@@ -72,6 +72,21 @@ def _parse_json_content(content: str) -> dict[str, Any]:
     return json.loads(text)
 
 
+def _should_retry(exc: BaseException) -> bool:
+    """Connection errors and transient HTTP (429/5xx) always retry, same
+    as before; LlmParseError now also retries -- a malformed response
+    used to be treated as final on the first occurrence, no second
+    chance the way a dropped connection already got."""
+    if isinstance(exc, LlmParseError):
+        return True
+    if isinstance(exc, requests.ConnectionError):
+        return True
+    if isinstance(exc, requests.RequestException):
+        status = exc.response.status_code if getattr(exc, "response", None) is not None else None
+        return status is not None and (status == 429 or status >= 500)
+    return False
+
+
 class LlmClient:
     def __init__(
         self,
@@ -103,10 +118,15 @@ class LlmClient:
     def is_configured(self) -> bool:
         return bool(self._config.base_url and self._config.model)
 
-    def chat_json(self, system: str, user: str) -> dict[str, Any] | None:
+    def chat_json(self, system: str, user: str) -> dict[str, Any]:
+        """Raises `LlmCallFailed` (never returns `None`) once every
+        candidate endpoint has exhausted its retries -- callers must
+        handle the failure explicitly instead of being able to mistake a
+        `None` for a real, empty answer."""
         if not self.is_configured():
-            LOG.warning("LLM not configured (VINU_LLM_BASE_URL / VINU_LLM_MODEL)")
-            return None
+            msg = "LLM not configured (VINU_LLM_BASE_URL / VINU_LLM_MODEL)"
+            LOG.warning(msg)
+            raise LlmCallFailed(msg)
 
         cache_key = hashlib.md5((system + user).encode()).hexdigest()
         if self._config.ttl_sec > 0:
@@ -142,130 +162,86 @@ class LlmClient:
 
         last_error: Exception | None = None
         total_attempts = 0
+
         for candidate_base in candidates:
             url = candidate_base.rstrip("/") + "/chat/completions"
-            for attempt in range(self._config.retry_max):
-                total_attempts += 1
+            attempts_this_candidate = {"n": 0}
+
+            def _attempt() -> tuple[dict[str, Any], TokenUsage]:
+                attempts_this_candidate["n"] += 1
+                resp = self._session.post(
+                    url, headers=headers, json=payload, timeout=self._config.timeout_sec,
+                )
+                resp.raise_for_status()
+                data = resp.json()
                 try:
-                    resp = self._session.post(
-                        url,
-                        headers=headers,
-                        json=payload,
-                        timeout=self._config.timeout_sec,
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
                     content = data["choices"][0]["message"]["content"]
                     parsed = _parse_json_content(content)
-
-                    token_usage = TokenUsage.from_api_response(data)
-                    cost = self._caps.estimate_cost(
-                        self._config.model, token_usage.prompt_tokens, token_usage.completion_tokens,
-                    ) if self._caps else 0.0
-
-                    if self._config.ttl_sec > 0:
-                        self._cache.set(cache_key, parsed)
-                    _log_llm_call(
-                        self._log_path, self._service, self._config.model, candidate_base,
-                        system, user, time.perf_counter() - start, parsed, True, None,
-                        token_usage=token_usage, estimated_cost=cost,
-                    )
-                    get_global_cost_tracker().record(CostEntry(
-                        ts=datetime.now(timezone.utc).isoformat(),
-                        service=self._service,
-                        model=self._config.model,
-                        provider=self._provider,
-                        prompt_tokens=token_usage.prompt_tokens,
-                        completion_tokens=token_usage.completion_tokens,
-                        total_tokens=token_usage.total_tokens,
-                        estimated_cost_usd=cost,
-                        duration_sec=time.perf_counter() - start,
-                        success=True,
-                    ))
-                    record_llm_call_safe(
-                        LLMCallRecord(
-                            service=self._service,
-                            model=self._config.model,
-                            base_url=candidate_base,
-                            prompt_tokens=token_usage.prompt_tokens,
-                            completion_tokens=token_usage.completion_tokens,
-                            total_tokens=token_usage.total_tokens,
-                            token_count_source="provider",
-                            retry_count=total_attempts - 1,
-                            latency_sec=time.perf_counter() - start,
-                            success=True,
-                            outcome="completed",
-                        ),
-                        db_path=self._telemetry_db_path,
-                    )
-                    return parsed
-                except requests.ConnectionError as e:
-                    last_error = e
-                    LOG.debug("LLM connection failed to %s: %s", candidate_base, e)
-                    if attempt < self._config.retry_max - 1:
-                        delay = (2 ** attempt) * 1.0
-                        LOG.warning("LLM retrying in %.1fs (attempt %d/%d)", delay, attempt + 1, self._config.retry_max)
-                        time.sleep(delay)
-                        continue
-                    break
-                except requests.RequestException as e:
-                    last_error = e
-                    status = e.response.status_code if hasattr(e, 'response') and e.response is not None else None
-                    is_transient = status is not None and (status == 429 or status >= 500)
-                    if is_transient and attempt < self._config.retry_max - 1:
-                        delay = (2 ** attempt) * 1.0
-                        if status == 429:
-                            # Honor Retry-After + jitter (see client_async.py):
-                            # fixed steps herd parallel workers into lockstep.
-                            try:
-                                resp = getattr(e, "response", None)
-                                retry_after = float(
-                                    (resp.headers.get("retry-after") or "").strip() or 0
-                                ) if resp is not None else 0
-                                delay = min(max(delay, retry_after), 120.0)
-                            except (ValueError, AttributeError):
-                                pass
-                            delay += random.uniform(0, 1.0)
-                        LOG.warning("LLM HTTP %d on %s, retrying in %.1fs (attempt %d/%d)",
-                                    status, candidate_base, delay, attempt + 1, self._config.retry_max)
-                        time.sleep(delay)
-                        continue
-                    LOG.warning("LLM request failed to %s: %s", candidate_base, e)
-                    break
                 except (KeyError, json.JSONDecodeError) as e:
-                    last_error = e
-                    LOG.warning("LLM response parse failed: %s", e)
-                    error_msg = str(e)
-                    _log_llm_call(
-                        self._log_path, self._service, self._config.model, candidate_base,
-                        system, user, time.perf_counter() - start, None, False, error_msg,
-                    )
-                    record_llm_call_safe(
-                        LLMCallRecord(
-                            service=self._service,
-                            model=self._config.model,
-                            base_url=candidate_base,
-                            prompt_tokens=0,
-                            completion_tokens=0,
-                            total_tokens=0,
-                            token_count_source="provider",
-                            retry_count=total_attempts - 1,
-                            latency_sec=time.perf_counter() - start,
-                            success=False,
-                            outcome="parse_error",
-                            error=error_msg,
-                        ),
-                        db_path=self._telemetry_db_path,
-                    )
-                    return None
+                    raise LlmParseError(str(e)) from e
+                return parsed, TokenUsage.from_api_response(data)
 
+            try:
+                parsed, token_usage = build_retry(self._config.retry_max, _should_retry)(_attempt)
+            except Exception as e:
+                last_error = e
+                total_attempts += attempts_this_candidate["n"]
+                LOG.debug(
+                    "LLM call to %s failed after %d attempt(s): %s",
+                    candidate_base, attempts_this_candidate["n"], e,
+                )
+                continue
+
+            total_attempts += attempts_this_candidate["n"]
+            cost = self._caps.estimate_cost(
+                self._config.model, token_usage.prompt_tokens, token_usage.completion_tokens,
+            ) if self._caps else 0.0
+
+            if self._config.ttl_sec > 0:
+                self._cache.set(cache_key, parsed)
+            _log_llm_call(
+                self._log_path, self._service, self._config.model, candidate_base,
+                system, user, time.perf_counter() - start, parsed, True, None,
+                token_usage=token_usage, estimated_cost=cost,
+            )
+            get_global_cost_tracker().record(CostEntry(
+                ts=datetime.now(timezone.utc).isoformat(),
+                service=self._service,
+                model=self._config.model,
+                provider=self._provider,
+                prompt_tokens=token_usage.prompt_tokens,
+                completion_tokens=token_usage.completion_tokens,
+                total_tokens=token_usage.total_tokens,
+                estimated_cost_usd=cost,
+                duration_sec=time.perf_counter() - start,
+                success=True,
+            ))
+            record_llm_call_safe(
+                LLMCallRecord(
+                    service=self._service,
+                    model=self._config.model,
+                    base_url=candidate_base,
+                    prompt_tokens=token_usage.prompt_tokens,
+                    completion_tokens=token_usage.completion_tokens,
+                    total_tokens=token_usage.total_tokens,
+                    token_count_source="provider",
+                    retry_count=total_attempts - 1,
+                    latency_sec=time.perf_counter() - start,
+                    success=True,
+                    outcome="completed",
+                ),
+                db_path=self._telemetry_db_path,
+            )
+            return parsed
+
+        error_msg = str(last_error) if last_error else "all endpoints failed"
         _log_llm_call(
             self._log_path, self._service, self._config.model, self._config.base_url,
-            system, user, time.perf_counter() - start, None, False,
-            str(last_error) if last_error else "all endpoints failed",
+            system, user, time.perf_counter() - start, None, False, error_msg,
         )
-        LOG.warning("LLM call failed after trying %d endpoints x %d retries: %s",
+        LOG.warning("LLM call failed after trying %d endpoint(s) x %d retries: %s",
                     len(candidates), self._config.retry_max, last_error)
+        outcome = "parse_error" if isinstance(last_error, LlmParseError) else "all_endpoints_failed"
         record_llm_call_safe(
             LLMCallRecord(
                 service=self._service,
@@ -278,12 +254,12 @@ class LlmClient:
                 retry_count=total_attempts - 1,
                 latency_sec=time.perf_counter() - start,
                 success=False,
-                outcome="all_endpoints_failed",
-                error=str(last_error) if last_error else "all endpoints failed",
+                outcome=outcome,
+                error=error_msg,
             ),
             db_path=self._telemetry_db_path,
         )
-        return None
+        raise LlmCallFailed(error_msg, last_error=last_error)
 
     def close(self) -> None:
         self._session.close()

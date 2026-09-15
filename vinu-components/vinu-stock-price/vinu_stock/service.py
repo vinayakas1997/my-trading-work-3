@@ -52,7 +52,7 @@ class StockService:
         self._config = config or load_config()
         self._backend = backend or MetaBackend(self._config.meta_db_path)
         self._owns_backend = backend is None
-        self._registry = ProviderRegistry(self._config)
+        self._registry = ProviderRegistry(self._config, catalog=self._backend.catalog)
         # how-to-make-it-live.md #13: order-time NBBO reads for vinu-live's
         # spread gate. Cached with a short TTL below so a burst of entry
         # attempts in one cycle collapses to a single upstream call.
@@ -158,6 +158,12 @@ class StockService:
             entry = self._backend.catalog.get_symbol(symbol)
             return [entry.to_dict()] if entry else []
         return [e.to_dict() for e in self._backend.catalog.list_symbols()]
+
+    def get_provider_fallbacks(self, symbol: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        return self._backend.catalog.list_recent_fallbacks(symbol, limit=limit)
+
+    def get_backfill_runs(self, limit: int = 50) -> list[dict[str, Any]]:
+        return self._backend.catalog.list_recent_backfill_runs(limit=limit)
 
     def run_backfill(
         self,

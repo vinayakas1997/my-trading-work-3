@@ -11,6 +11,7 @@ from vinu_agent.agent.llm import (
     create_llm,
     create_llm_from_config,
     resolve_context_window,
+    resolve_role_llm_config,
     wrap_with_logging,
 )
 from vinu_agent.config import AgentConfig, LLMConfig
@@ -221,6 +222,46 @@ class FakeCallStore:
 
     def record(self, record):
         self.records.append(record)
+
+
+class TestResolveRoleLlmConfig:
+    """See missing-pieces-of-system/llm-configuration-settings-system/."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_roles_file(self, monkeypatch, tmp_path):
+        from vinu_infra.llm import roles as roles_module
+        monkeypatch.setenv("VINU_LLM_ROLES_PATH", str(tmp_path / "roles.json"))
+        roles_module._loaded_path = None
+        roles_module._loaded_data = None
+        yield tmp_path / "roles.json"
+        roles_module._loaded_path = None
+        roles_module._loaded_data = None
+
+    def test_returns_none_when_role_has_no_configuration(self):
+        assert resolve_role_llm_config("orchestrator") is None
+
+    def test_maps_role_config_onto_llm_config_shape(self, _isolated_roles_file):
+        import json
+        _isolated_roles_file.write_text(
+            json.dumps({
+                "default": {},
+                "roles": {"orchestrator": {"base_url": "http://custom/v1", "model": "gpt-4o-mini"}},
+            }),
+            encoding="utf-8",
+        )
+        cfg = resolve_role_llm_config("orchestrator")
+        assert cfg is not None
+        assert cfg.provider == "openai"
+        assert cfg.base_url == "http://custom/v1"
+        assert cfg.model_name == "gpt-4o-mini"
+
+    def test_unrelated_role_stays_unconfigured(self, _isolated_roles_file):
+        import json
+        _isolated_roles_file.write_text(
+            json.dumps({"default": {}, "roles": {"orchestrator": {"model": "gpt-4o-mini"}}}),
+            encoding="utf-8",
+        )
+        assert resolve_role_llm_config("summary_agent") is None
 
 
 class TestWrapWithLogging:

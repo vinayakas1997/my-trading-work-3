@@ -143,6 +143,33 @@ class TestAllocateRiskParity:
         assert weights["dom"] <= 0.30 + 1e-4
         assert sum(weights.values()) == pytest.approx(1.0, abs=1e-3)
 
+    def test_vol_annualized_is_none_without_returns_df(self) -> None:
+        svc = _service()
+        strategies = [{"name": "a", "kind": "yaml"}, {"name": "b", "kind": "yaml"}]
+        result = svc.allocate_risk_parity(strategies, returns_df=None)
+        assert all(r["vol_annualized"] is None for r in result)
+
+    def test_vol_annualized_reflects_the_lower_vol_strategy(self) -> None:
+        """The intermediate vol Series used to compute inverse-vol weights
+        was previously discarded once the weight itself was produced -- a
+        future narrator explaining a small allocation had nothing to point
+        at. See the foundation-fixes audit in
+        missing-pieces-of-system/narating-agents/."""
+        svc = _service(max_per_strategy_weight=1.0)
+        strategies = [{"name": "steady", "kind": "yaml"}, {"name": "volatile", "kind": "yaml"}]
+        dates = pd.date_range("2024-01-01", periods=30)
+        rng = np.random.default_rng(0)
+        returns_df = pd.DataFrame(
+            {
+                "steady": rng.normal(0, 0.001, size=30),
+                "volatile": rng.normal(0, 0.05, size=30),
+            },
+            index=dates,
+        )
+        result = {r["name"]: r for r in svc.allocate_risk_parity(strategies, returns_df=returns_df)}
+        assert result["steady"]["vol_annualized"] < result["volatile"]["vol_annualized"]
+        assert result["steady"]["vol_annualized"] > 0
+
 
 class TestComputeCorrelationMatrix:
     def test_fewer_than_two_strategies_with_data_returns_none(self) -> None:
@@ -369,6 +396,35 @@ class TestListActiveStrategies:
         assert len(llm_entries) == 1
         assert llm_entries[0]["artifact_id"] == active.artifact_id
         assert llm_entries[0]["symbol"] == "MSFT"
+
+    def test_yaml_strategies_default_to_daily_timeframe(self) -> None:
+        svc = _service()
+        svc._http.get = AsyncMock(
+            side_effect=[_resp(200, [{"name": "yaml_strat", "symbol": "AAPL"}]), _resp(200, [])]
+        )
+        with _force_research_link_unavailable():
+            result = asyncio.run(svc.list_active_strategies())
+        assert result[0]["timeframe"] == "daily"
+
+    def test_llm_strategy_timeframe_read_from_real_artifact_field(self) -> None:
+        from vinu_research.models import Artifact, ArtifactStatus
+        from vinu_research.storage.strategy_store import SqliteStrategyStore
+        import tempfile
+        from pathlib import Path
+
+        store = SqliteStrategyStore(Path(tempfile.mktemp(suffix=".db")))
+        active = Artifact.create("strategy", "llm_strat", universe=["MSFT"])
+        active.status = ArtifactStatus.ACTIVE
+        active.timeframe = "intraday"
+        store.upsert_artifact(active)
+
+        svc = _service()
+        svc._http.get = AsyncMock(return_value=_resp(200, []))
+        with patch("vinu_portfolio.research_link.get_strategy_store", return_value=store):
+            result = asyncio.run(svc.list_active_strategies())
+
+        llm_entries = [s for s in result if s["kind"] == "llm_python"]
+        assert llm_entries[0]["timeframe"] == "intraday"
 
 
 class TestFetchBenchmarkRegime:
@@ -745,6 +801,110 @@ class TestComputeDailyAllocation:
         assert result["weights"][0]["position_size"] == pytest.approx(100_000.0, rel=0.01)
         assert result["account_equity"] == 100_000.0
 
+    def test_default_reserve_fraction_is_a_no_op(self) -> None:
+        """reserve_fraction=0.0 (default) must size against full equity,
+        identical to today's behavior -- regression guard for the reserve
+        fund fix."""
+        svc = _service()
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [{"name": "a", "kind": "yaml"}],
+            "weights": [{"name": "a", "kind": "yaml", "symbol": "", "target_weight": 1.0}],
+            "correlation_matrix": None,
+        })
+        svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
+        svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
+        svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+
+        result = asyncio.run(svc.compute_daily_allocation())
+        assert result["weights"][0]["position_size"] == pytest.approx(100_000.0, rel=0.01)
+        assert result["account_equity"] == 100_000.0
+        assert result["reserve_amount"] == pytest.approx(0.0)
+        assert result["deployable_equity"] == pytest.approx(100_000.0)
+
+    def test_reserve_fraction_reduces_deployed_capital_not_reported_equity(self) -> None:
+        svc = _service(reserve_fraction=0.3)
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [{"name": "a", "kind": "yaml"}],
+            "weights": [{"name": "a", "kind": "yaml", "symbol": "", "target_weight": 1.0}],
+            "correlation_matrix": None,
+        })
+        svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
+        svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
+        svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+
+        result = asyncio.run(svc.compute_daily_allocation())
+        # 30% held back -> only $70,000 sized against, not the full $100,000.
+        assert result["weights"][0]["position_size"] == pytest.approx(70_000.0, rel=0.01)
+        # account_equity stays the real total -- the reserve is visible, not
+        # silently subtracted from what's reported.
+        assert result["account_equity"] == 100_000.0
+        assert result["reserve_amount"] == pytest.approx(30_000.0)
+        assert result["deployable_equity"] == pytest.approx(70_000.0)
+
+    def test_reserve_fraction_with_no_equity_available_stays_none(self) -> None:
+        svc = _service(reserve_fraction=0.3)
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [{"name": "a", "kind": "yaml"}],
+            "weights": [{"name": "a", "kind": "yaml", "symbol": "", "target_weight": 1.0}],
+            "correlation_matrix": None,
+        })
+        svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
+        svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
+        svc._fetch_account_equity = AsyncMock(return_value=None)
+
+        result = asyncio.run(svc.compute_daily_allocation())
+        assert result["account_equity"] is None
+        assert result["reserve_amount"] is None
+        assert result["deployable_equity"] is None
+        assert "position_size" not in result["weights"][0]
+
+    def test_interval_sleeves_reads_real_timeframe_field_not_name_regex(self) -> None:
+        """Regression for the timeframe foundation fix: interval_sleeves
+        used to regex-guess an interval from the strategy name string
+        (-1d-/-1H-/-15min-); it must now read Artifact.timeframe directly,
+        via the same `timeframe` key list_active_strategies() now returns."""
+        svc = _service(regime_tilt_bound=0.0, outcome_tilt_bound=0.0, confidence_tilt_bound=0.0)
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [
+                # Deliberately no -1d-/-1H-/-15min- substring in the name --
+                # the old regex would have silently fallen back to "daily"
+                # for "swing_strategy_v2" too, masking a real intraday tag.
+                {"name": "swing_strategy_v2", "kind": "llm_python", "timeframe": "intraday"},
+                {"name": "core_book", "kind": "yaml", "timeframe": "daily"},
+            ],
+            "weights": [
+                {"name": "swing_strategy_v2", "kind": "llm_python", "symbol": "", "target_weight": 0.5},
+                {"name": "core_book", "kind": "yaml", "symbol": "", "target_weight": 0.5},
+            ],
+            "correlation_matrix": None,
+        })
+        svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
+        svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
+        svc._fetch_account_equity = AsyncMock(return_value=None)
+
+        result = asyncio.run(svc.compute_daily_allocation())
+        assert result["interval_sleeves"]["intraday"] == pytest.approx(0.5)
+        assert result["interval_sleeves"]["daily"] == pytest.approx(0.5)
+
+    def test_interval_sleeves_missing_timeframe_defaults_to_daily(self) -> None:
+        svc = _service(regime_tilt_bound=0.0, outcome_tilt_bound=0.0, confidence_tilt_bound=0.0)
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [{"name": "legacy", "kind": "yaml"}],  # no "timeframe" key at all
+            "weights": [{"name": "legacy", "kind": "yaml", "symbol": "", "target_weight": 1.0}],
+            "correlation_matrix": None,
+        })
+        svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
+        svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
+        svc._fetch_account_equity = AsyncMock(return_value=None)
+
+        result = asyncio.run(svc.compute_daily_allocation())
+        assert result["interval_sleeves"] == {"daily": 1.0}
+
     def test_confidence_gradient_tilts_llm_python_strategies(self) -> None:
         """Stage 2 (#34): two llm_python strategies with equal base weight
         but different promotion margins must end up with different final
@@ -822,6 +982,47 @@ class TestComputeDailyAllocation:
         assert weights["favored"]["target_weight"] <= 0.30 + 1e-9
         total = sum(w["target_weight"] for w in result["weights"])
         assert total == pytest.approx(1.0)
+
+    def test_persists_a_dated_allocation_history_row(self, tmp_path) -> None:
+        """Regression for the never-persisted allocation gap: a future
+        narrating agent needs "what was yesterday's allocation" -- see
+        foundation-fixes audit in missing-pieces-of-system/narating-agents/."""
+        svc = _service(data_root=tmp_path)
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [{"name": "a", "kind": "yaml"}],
+            "weights": [{"name": "a", "kind": "yaml", "symbol": "", "target_weight": 1.0}],
+            "correlation_matrix": None,
+        })
+        svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
+        svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
+        svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+
+        asyncio.run(svc.compute_daily_allocation())
+
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        row = svc._allocation_history.get_allocation(today)
+        assert row is not None
+        assert row.account_equity == 100_000.0
+
+    def test_allocation_history_write_failure_does_not_break_the_response(self, tmp_path) -> None:
+        svc = _service(data_root=tmp_path)
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [{"name": "a", "kind": "yaml"}],
+            "weights": [{"name": "a", "kind": "yaml", "symbol": "", "target_weight": 1.0}],
+            "correlation_matrix": None,
+        })
+        svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
+        svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
+        svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+        svc._allocation_history.record_daily_allocation = MagicMock(side_effect=RuntimeError("disk full"))
+
+        result = asyncio.run(svc.compute_daily_allocation())  # must not raise
+
+        assert result["status"] == "ok"
+        assert result["account_equity"] == 100_000.0
 
 
 class TestFetchAccountEquity:

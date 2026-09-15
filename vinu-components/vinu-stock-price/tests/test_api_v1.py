@@ -26,6 +26,7 @@ def _iso(ts: int) -> str:
 def client(tmp_path: Path) -> TestClient:
     data_root = tmp_path / "data"
     os.environ["VINU_STOCK_DATA_ROOT"] = str(data_root)
+    os.environ["VINU_SHARED_WATCHLIST_PATH"] = str(tmp_path / "shared_watchlist.json")
 
     now = int(time.time())
     base_ts = (now // 300) * 300 - 10 * 60

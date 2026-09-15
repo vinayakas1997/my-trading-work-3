@@ -11,6 +11,7 @@ from typing import Any
 
 from vinu_infra.debug import debug_log
 from vinu_infra.llm import AsyncLlmClient as SharedAsyncLlmClient, LlmConfig
+from vinu_infra.llm.roles import get_llm_config_for_role, has_role_override
 from vinu_research.angle_context import format_angle_context_lines
 from vinu_research.config import ResearchConfig
 from vinu_research.models import BacktestResult, CriticFeedback
@@ -355,12 +356,35 @@ class ResearchTraceWriter:
 
 
 class ResearchLlmClient:
-    def __init__(self, config: ResearchConfig) -> None:
+    def __init__(self, config: ResearchConfig, *, role: str = "default") -> None:
+        """`role` (e.g. "forecast_skill") resolves per-call-site model/
+        endpoint config from vinu-infra's roles.json -- see
+        missing-pieces-of-system/llm-configuration-settings-system/.
+        Additive only: the role's config is used only when that role
+        actually has configuration of its own (`has_role_override`);
+        otherwise `ResearchConfig`'s own `llm_*` fields pass through
+        unchanged, which is also exactly what happens for `role="default"`
+        or any role nobody has configured yet -- this never changes
+        existing behavior until an operator deliberately configures a
+        role in roles.json."""
         self._config = config
+        # ResearchConfig.llm_base_url/llm_model always carry a non-empty
+        # default (from its own env-driven from_env()), so an `or`-based
+        # fallback would never actually reach the role's value -- only
+        # override when the role genuinely has configuration of its own;
+        # otherwise ResearchConfig's existing value passes through
+        # unchanged, which is also what happens today for the default
+        # (unconfigured) role since both resolve the same VINU_LLM_* env
+        # vars to the same fallback constants.
+        if has_role_override(role):
+            role_cfg = get_llm_config_for_role(role)
+            base_url, model, api_key = role_cfg.base_url, role_cfg.model, role_cfg.api_key
+        else:
+            base_url, model, api_key = config.llm_base_url, config.llm_model, config.llm_api_key
         llm_cfg = LlmConfig(
-            base_url=config.llm_base_url,
-            model=config.llm_model,
-            api_key=config.llm_api_key,
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
             max_tokens=config.llm_max_tokens,
             timeout_sec=config.llm_timeout_sec,
             ttl_sec=config.llm_ttl_sec,
@@ -387,9 +411,28 @@ class ResearchLlmClient:
         call_type: str,
         system: str,
         user: str,
+        *,
+        raise_on_failure: bool = False,
     ) -> dict[str, Any] | None:
+        """The underlying shared client (`vinu_infra.llm.AsyncLlmClient`)
+        now raises `LlmCallFailed` on exhaustion instead of returning
+        `None` (see missing-pieces-of-system/llm-configuration-settings-system/)
+        -- caught here and folded back into this method's original
+        `None`-on-failure contract by default, so every existing caller
+        of chat_json/diagnose_failure/suggest_pivot/etc. keeps working
+        unchanged. `raise_on_failure=True` opts a specific caller
+        (forecast_skill.py, which used to substitute a fake neutral
+        forecast indistinguishable from a real one) into seeing the
+        failure explicitly instead."""
+        from vinu_infra.llm.retry import LlmCallFailed
+
         start = time.perf_counter()
-        result = await self._client.chat_json(system, user)
+        error: str | None = None
+        try:
+            result = await self._client.chat_json(system, user)
+        except LlmCallFailed as exc:
+            result = None
+            error = str(exc)
         latency_ms = (time.perf_counter() - start) * 1000
         if self._trace:
             self._trace.log_call(
@@ -404,15 +447,17 @@ class ResearchLlmClient:
             )
         debug_log(f"{call_type}: latency={latency_ms:.0f}ms success={result is not None}", level=1)
         if result is None:
-            debug_log(f"{call_type}: LLM returned None", level=1)
+            debug_log(f"{call_type}: LLM returned None ({error or 'no result'})", level=1)
         debug_log(f"{call_type} system prompt:\n{system}", level=2)
         debug_log(f"{call_type} user prompt:\n{user}", level=2)
         if result is not None:
             debug_log(f"{call_type} response:\n{json.dumps(result, indent=2, default=str)}", level=2)
+        if result is None and raise_on_failure:
+            raise LlmCallFailed(error or f"{call_type}: LLM call failed")
         return result
 
-    async def chat_json(self, system: str, user: str) -> dict[str, Any] | None:
-        return await self._traced_chat("chat_json", system, user)
+    async def chat_json(self, system: str, user: str, *, raise_on_failure: bool = False) -> dict[str, Any] | None:
+        return await self._traced_chat("chat_json", system, user, raise_on_failure=raise_on_failure)
 
     async def diagnose_failure(
         self,

@@ -11,6 +11,7 @@ needed.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -30,7 +31,7 @@ CREATE TABLE IF NOT EXISTS ticker_summaries (
 CREATE INDEX IF NOT EXISTS idx_ticker_summaries_updated_at ON ticker_summaries(updated_at);
 """
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MIGRATIONS: list[tuple[str, str]] = [
     # Phase 0's change-gate (GATE) state: "what did the gate last see for
     # this ticker" -- kept as columns on the existing one-row-per-ticker
@@ -51,6 +52,12 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE ticker_summaries ADD COLUMN last_checked_artifact_signature TEXT NOT NULL DEFAULT ''",
         "phase-0 -- change-gate state, see phases/phase-0-foundation-plumbing/01-plan.md",
     ),
+    (
+        "ALTER TABLE ticker_summaries ADD COLUMN angle_digest TEXT NOT NULL DEFAULT '{}'",
+        "structured per-angle digest (JSON) from build_angle_digest -- closes the "
+        "gate-conflict gap where forecast_skill only ever saw 2 of ~28 angles as "
+        "structured input, everything else discarded after computing counts.",
+    ),
 ]
 
 
@@ -69,9 +76,20 @@ class TickerSummary:
     updated_at: str = ""
     last_checked_run_id: str = ""
     last_checked_artifact_signature: str = ""
+    angle_digest: dict[str, Any] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.angle_digest is None:
+            self.angle_digest = {}
 
     @classmethod
     def from_row(cls, row: dict[str, Any]) -> "TickerSummary":
+        try:
+            angle_digest = json.loads(row.get("angle_digest") or "{}")
+            if not isinstance(angle_digest, dict):
+                angle_digest = {}
+        except Exception:
+            angle_digest = {}
         return cls(
             ticker=row["ticker"],
             summary=row.get("summary", ""),
@@ -82,6 +100,7 @@ class TickerSummary:
             updated_at=row.get("updated_at", ""),
             last_checked_run_id=row.get("last_checked_run_id", ""),
             last_checked_artifact_signature=row.get("last_checked_artifact_signature", ""),
+            angle_digest=angle_digest,
         )
 
 
@@ -98,11 +117,13 @@ class TickerSummaryStore(SQLiteBackend):
         angles_with_data: int = 0,
         angle_count: int = 0,
         source_run_id: str = "",
+        angle_digest: dict[str, Any] | None = None,
     ) -> TickerSummary:
         ticker = ticker.upper()
         now = _now()
         existing = self.get_summary(ticker)
         created_at = existing.created_at if existing else now
+        angle_digest = angle_digest or {}
         self.upsert(
             "ticker_summaries",
             {
@@ -113,13 +134,14 @@ class TickerSummaryStore(SQLiteBackend):
                 "source_run_id": source_run_id,
                 "created_at": created_at,
                 "updated_at": now,
+                "angle_digest": json.dumps(angle_digest),
             },
             conflict_columns=["ticker"],
         )
         return TickerSummary(
             ticker=ticker, summary=summary, angles_with_data=angles_with_data,
             angle_count=angle_count, source_run_id=source_run_id,
-            created_at=created_at, updated_at=now,
+            created_at=created_at, updated_at=now, angle_digest=angle_digest,
         )
 
     def get_summary(self, ticker: str) -> Optional[TickerSummary]:

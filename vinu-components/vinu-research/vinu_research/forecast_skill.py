@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from vinu_infra.llm.retry import LlmCallFailed
 from vinu_research.config import ResearchConfig
 from vinu_research.models import (
     AngleCalibrationEntry,
@@ -193,23 +194,31 @@ async def generate_forecast(
     if llm_client is None:
         from vinu_research.llm import ResearchLlmClient
 
-        llm_client = ResearchLlmClient(config)
+        llm_client = ResearchLlmClient(config, role="forecast_skill")
 
     prompt = _build_forecast_prompt(
         symbol, personality_features, risk_state, summary_context=summary_context,
     )
 
-    data = await llm_client.chat_json(_FORECAST_SYSTEM_PROMPT, prompt)
+    # raise_on_failure=True: an LLM failure here used to be silently
+    # substituted with a fake neutral forecast (direction="neutral",
+    # confidence=0.0) that was numerically indistinguishable from a
+    # genuine low-signal read -- a real trade-plan decision could be
+    # shaped by a forecast that never actually happened. This is the one
+    # call site in vinu-research where that mattered enough to raise
+    # instead of degrade; both real callers (the HTTP trade-plan route,
+    # which turns an unhandled exception into a 500, and vinu-agent's
+    # trade_plan_tool.py, which already wraps author_trade_plan in a
+    # try/except that falls back to an explicit status="error") handle
+    # this correctly already. See
+    # missing-pieces-of-system/llm-configuration-settings-system/.
+    data = await llm_client.chat_json(_FORECAST_SYSTEM_PROMPT, prompt, raise_on_failure=True)
     if not isinstance(data, dict):
-        logger.warning("LLM forecast call failed for %s — using neutral default", symbol)
-        data = {
-            "direction": "neutral",
-            "confidence": 0.0,
-            "magnitude_pct": 0.0,
-            "magnitude_std": 0.0,
-            "horizon_days": 1,
-            "reasoning": "LLM call returned no usable output",
-        }
+        # Belt-and-suspenders: raise_on_failure=True should make this
+        # unreachable for a real ResearchLlmClient (it raises instead),
+        # but a caller-supplied llm_client (tests, or a future client
+        # implementation) might still return a bare None/non-dict.
+        raise LlmCallFailed(f"LLM forecast call for {symbol} returned no usable output")
 
     return Forecast(
         direction=data.get("direction", "neutral"),
@@ -235,6 +244,16 @@ def _build_forecast_prompt(
         lines.append(f"=== Ticker Summary ({awd} of {ac} angles, run {run}) ===")
         lines.append(str(summary_context["summary"]).strip())
         lines.append("")
+    if isinstance(summary_context, dict):
+        angle_digest = summary_context.get("angle_digest")
+        if isinstance(angle_digest, dict) and angle_digest:
+            lines.append("=== Angle Digest ===")
+            for angle_name, fields in angle_digest.items():
+                if not isinstance(fields, dict):
+                    continue
+                for k, v in fields.items():
+                    lines.append(f"  {angle_name}.{k}: {v}")
+            lines.append("")
     lines.append("=== Personality Features ===")
     for k, v in _flatten_dict(personality).items():
         lines.append(f"  {k}: {v}")

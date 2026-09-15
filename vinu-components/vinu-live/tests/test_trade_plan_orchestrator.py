@@ -12,6 +12,7 @@ from vinu_live.book.positions import init_book, list_open_positions, open_positi
 from vinu_live.book.quantize import qty_float
 from vinu_live.breaker.engine import BreakerVerdict
 from vinu_live.config import LiveConfig
+from vinu_live.trade_plan.correlation_monitor_store import CorrelationMonitorStore
 from vinu_live.trade_plan.orchestrator import TradePlanOrchestrator, trailing_stop_for
 from vinu_live.trade_plan.rebalance_intake import RebalanceRequestQueue
 
@@ -30,10 +31,13 @@ def book():
 def _make_orchestrator(book, **config_overrides) -> TradePlanOrchestrator:
     config = LiveConfig(**config_overrides)
     # In-memory, per-test-isolated -- config.data_root's real
-    # rebalance_requests.db would otherwise be shared (and polluted)
-    # across every test using this helper, since none of them override
-    # data_root.
-    orch = TradePlanOrchestrator(config, book=book, rebalance_queue=RebalanceRequestQueue(":memory:"))
+    # rebalance_requests.db/correlation_monitor.db would otherwise be shared
+    # (and polluted) across every test using this helper, since none of them
+    # override data_root.
+    orch = TradePlanOrchestrator(
+        config, book=book, rebalance_queue=RebalanceRequestQueue(":memory:"),
+        correlation_store=CorrelationMonitorStore(":memory:"),
+    )
     orch._http = MagicMock()
     return orch
 
@@ -888,6 +892,42 @@ class TestDataFreshnessGuard:
         assert action["action"] == "invalidation_exit"
         assert list_open_positions(book, symbol="AAPL") == []
 
+    def test_fetch_prices_default_interval_unchanged(self, book) -> None:
+        orch = _make_orchestrator(book)
+        get_mock, _ = _router(get_routes={"/candles/AAPL": {"data": [{"close": 150.0}]}})
+        orch._http.get = get_mock
+
+        asyncio.run(orch._fetch_prices(["AAPL"]))
+
+        assert get_mock.call_args_list[0].kwargs["params"]["interval"] == "1d"
+
+    def test_fetch_prices_forwards_explicit_interval(self, book) -> None:
+        orch = _make_orchestrator(book)
+        get_mock, _ = _router(get_routes={"/candles/AAPL": {"data": [{"close": 150.0}]}})
+        orch._http.get = get_mock
+
+        asyncio.run(orch._fetch_prices(["AAPL"], interval="15m"))
+
+        assert get_mock.call_args_list[0].kwargs["params"]["interval"] == "15m"
+
+    def test_fetch_recent_prices_forwards_explicit_interval(self, book) -> None:
+        orch = _make_orchestrator(book)
+        get_mock, _ = _router(get_routes={"/candles/AAPL": {"data": [{"close": 150.0}]}})
+        orch._http.get = get_mock
+
+        asyncio.run(orch._fetch_recent_prices("AAPL", interval="15m"))
+
+        assert get_mock.call_args_list[0].kwargs["params"]["interval"] == "15m"
+
+    def test_participation_pct_forwards_explicit_interval(self, book) -> None:
+        orch = _make_orchestrator(book)
+        get_mock, _ = _router(get_routes={"/candles/AAPL": {"data": [{"volume": 1000.0}]}})
+        orch._http.get = get_mock
+
+        asyncio.run(orch._participation_pct("AAPL", 10.0, 150.0, interval="15m"))
+
+        assert get_mock.call_args_list[0].kwargs["params"]["interval"] == "15m"
+
     def test_fetch_prices_populates_last_price_ts(self, book) -> None:
         orch = _make_orchestrator(book)
         recent = self._epoch_hours_ago(1)
@@ -1286,6 +1326,75 @@ class TestRuntimeCorrelationMonitor:
         assert second["reductions"] == []            # but cooled down, no trim
         assert list_open_positions(book, symbol="AAA")[0].qty == qty_float(75.0)
 
+    @staticmethod
+    def _cycle_routes():
+        # cycle() short-circuits to "skipped_no_active_plans" with no
+        # active trade plan at all -- an AAA plan gets it past that gate so
+        # the correlation check (which itself reads the book directly,
+        # independent of plans) actually runs.
+        plan = {**_SAMPLE_PLAN, "symbol": "AAA"}
+        return {
+            "/research/artifacts": [{"artifact_id": "art_1", "status": "ACTIVE", "type": "trade_plan"}],
+            "/research/trade-plan/art_1": {"artifact_id": "art_1", "trade_plan_data": json.dumps(plan)},
+            "/candles/AAA": {"data": [{"close": 10.0}]},
+            "/broker/positions": [{"symbol": "AAA", "qty": 100.0}, {"symbol": "BBB", "qty": 50.0}],
+            "/broker/account": {"configured": True, "equity": 100000.0},
+        }
+
+    def test_checked_true_cycle_persists_a_history_row(self, book) -> None:
+        """Regression: _check_runtime_correlation was recomputed every cycle
+        and returned once, never persisted -- see correlation_monitor_store.
+        py and the foundation-fixes audit in missing-pieces-of-system/
+        narating-agents/."""
+        open_position(book, "AAA", "long", 100.0, 10.0)
+        open_position(book, "BBB", "long", 50.0, 10.0)
+        orch = _make_orchestrator(book)
+        orch._compute_covariance = AsyncMock(return_value=self._cov(0.95))
+        get_mock, post_mock = _router(
+            get_routes=self._cycle_routes(),
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        asyncio.run(orch.cycle())
+
+        rows = orch._correlation_store.list_recent()
+        assert len(rows) == 1
+        assert rows[0].n_flagged == 1
+        assert rows[0].flagged[0]["pair"] == ["AAA", "BBB"]
+
+    def test_checked_false_cycle_persists_nothing(self, book, monkeypatch) -> None:
+        import vinu_live.trade_plan.orchestrator as m
+        monkeypatch.setattr(m, "RUNTIME_CORR_ENABLED", False)
+        open_position(book, "AAA", "long", 100.0, 10.0)
+        open_position(book, "BBB", "long", 50.0, 10.0)
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes=self._cycle_routes(),
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        asyncio.run(orch.cycle())
+
+        assert orch._correlation_store.list_recent() == []
+
+    def test_history_write_failure_does_not_break_the_cycle(self, book) -> None:
+        open_position(book, "AAA", "long", 100.0, 10.0)
+        open_position(book, "BBB", "long", 50.0, 10.0)
+        orch = _make_orchestrator(book)
+        orch._compute_covariance = AsyncMock(return_value=self._cov(0.95))
+        orch._correlation_store.record_cycle = MagicMock(side_effect=RuntimeError("disk full"))
+        get_mock, post_mock = _router(
+            get_routes=self._cycle_routes(),
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+
+        result = asyncio.run(orch.cycle())  # must not raise
+
+        assert result["correlation_monitor"]["checked"] is True
+
 
 class TestSignalConflictDetection:
     """how-to-make-it-live.md #3/#5 (Stage 3): more than one ACTIVE plan can
@@ -1461,6 +1570,56 @@ class TestSpreadGate:
 
         assert action["action"] == "invalidation_exit"
         assert list_open_positions(book, symbol="AAPL") == []
+
+
+class TestIntervalForPlan:
+    """Regression for the timeframe foundation fix: TradePlan.timeframe was
+    already authored per-plan (models.py) but every price/ADV fetch in this
+    orchestrator ignored it, hardcoding interval="1d" always -- see
+    missing-pieces-of-system/narating-agents/ foundation-fixes audit."""
+
+    def test_daily_timeframe_resolves_to_1d(self) -> None:
+        from vinu_live.trade_plan.orchestrator import _interval_for_plan
+        assert _interval_for_plan({"timeframe": "daily"}) == "1d"
+
+    def test_swing_timeframe_resolves_to_1d(self) -> None:
+        from vinu_live.trade_plan.orchestrator import _interval_for_plan
+        assert _interval_for_plan({"timeframe": "swing"}) == "1d"
+
+    def test_intraday_timeframe_resolves_to_15m(self) -> None:
+        from vinu_live.trade_plan.orchestrator import _interval_for_plan
+        assert _interval_for_plan({"timeframe": "intraday"}) == "15m"
+
+    def test_missing_timeframe_fails_open_to_1d(self) -> None:
+        from vinu_live.trade_plan.orchestrator import _interval_for_plan
+        assert _interval_for_plan({}) == "1d"
+
+    def test_unrecognized_timeframe_falls_back_to_1d(self) -> None:
+        from vinu_live.trade_plan.orchestrator import _interval_for_plan
+        assert _interval_for_plan({"timeframe": "nonsense"}) == "1d"
+
+    def test_maybe_enter_uses_plans_own_timeframe_for_adv_fetch(self, book) -> None:
+        """End-to-end: an intraday plan's entry-time ADV check must hit
+        /candles with interval=15m, not the old hardcoded 1d."""
+        orch = _make_orchestrator(book)
+        get_mock, post_mock = _router(
+            get_routes={
+                "/broker/positions": [],
+                "/candles/AAPL": {"data": [{"close": 150.0, "volume": 10_000_000}]},
+            },
+            post_routes={"/broker/order": {"status": "submitted", "order_id": "o1"}},
+        )
+        orch._http.get, orch._http.post = get_mock, post_mock
+        intraday_plan = {**_SAMPLE_PLAN, "timeframe": "intraday"}
+
+        asyncio.run(orch._maybe_enter(intraday_plan, "AAPL", 150.0, 100000.0))
+
+        candle_calls = [
+            c for c in get_mock.call_args_list if "/candles/AAPL" in c.args[0]
+        ]
+        assert candle_calls
+        intervals = [c.kwargs["params"]["interval"] for c in candle_calls]
+        assert "15m" in intervals, intervals
 
 
 class TestExecutionSlicing:

@@ -124,3 +124,51 @@ def read_all(*, log_path: str | Path | None = None) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
     return entries
+
+
+def slippage_stats(
+    symbol: str | None = None, *, log_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """TCA (transaction cost analysis) rollup over every entry row's
+    `slippage_bps` -- that value was already recorded per-trade by
+    orchestrator.py's record_entry() call but nothing aggregated it past
+    the boolean `slippage_exceeded` threshold. Optionally filtered to one
+    `symbol`; `count` is the number of entry rows with a usable
+    slippage_bps value, not the number of trades overall."""
+    values: list[float] = []
+    exceeded_count = 0
+    for row in read_all(log_path=log_path):
+        if row.get("event") != "entry":
+            continue
+        if symbol is not None and row.get("symbol") != symbol:
+            continue
+        bps = row.get("slippage_bps")
+        if bps is None:
+            continue
+        try:
+            bps = float(bps)
+        except (TypeError, ValueError):
+            continue
+        values.append(bps)
+        if row.get("slippage_exceeded"):
+            exceeded_count += 1
+
+    if not values:
+        return {
+            "count": 0, "mean_bps": None, "median_bps": None,
+            "max_abs_bps": None, "exceeded_count": 0,
+        }
+
+    sorted_vals = sorted(values)
+    mid = len(sorted_vals) // 2
+    median = (
+        sorted_vals[mid] if len(sorted_vals) % 2
+        else (sorted_vals[mid - 1] + sorted_vals[mid]) / 2.0
+    )
+    return {
+        "count": len(values),
+        "mean_bps": sum(values) / len(values),
+        "median_bps": median,
+        "max_abs_bps": max(abs(v) for v in values),
+        "exceeded_count": exceeded_count,
+    }

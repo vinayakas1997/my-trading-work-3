@@ -230,6 +230,7 @@ class TestSignificanceWorkerMain:
              patch("vinu_agent.cli.build_channel_targets", return_value=[]) as mock_targets, \
              patch("vinu_agent.cli.run_significance_cycle", new=AsyncMock(return_value=[])) as mock_cycle, \
              patch("vinu_agent.cli.time.sleep", side_effect=KeyboardInterrupt):
+            MockFlagStore.return_value.response_rate.return_value = {"total": 0, "responded": 0, "rate": None}
             significance_worker_main(argparse.Namespace(interval_sec=None))
 
         mock_targets.assert_called_once_with(config)
@@ -240,3 +241,79 @@ class TestSignificanceWorkerMain:
         # never a number invented in cli.py itself.
         assert mock_cycle.call_args[1]["funding_threshold"] == 50000.0
         MockFlagStore.return_value.close.assert_called_once()
+
+    def test_logs_the_significance_response_rate_each_cycle(self, tmp_path: Path, caplog) -> None:
+        """Regression: SignificanceFlagStore.response_rate() was implemented
+        and tested since day one but never called in production -- the
+        alert-fatigue feedback loop it exists for never ran. See the
+        foundation-fixes audit in missing-pieces-of-system/narating-agents/."""
+        import logging as _logging
+
+        memory_dir = tmp_path / "data" / "memory"
+        memory_dir.parent.mkdir(parents=True, exist_ok=True)
+        config = AgentConfig(memory_dir=str(memory_dir), significance_worker_interval_sec=1)
+
+        fake_service = MagicMock()
+        fake_service.ticker_summary_store.list_summaries.return_value = []
+        fake_service.__enter__.return_value = fake_service
+        fake_service.__exit__.return_value = False
+
+        with patch("vinu_agent.cli.load_config", return_value=config), \
+             patch("vinu_agent.cli.AgentService", return_value=fake_service), \
+             patch("vinu_agent.cli.SignificanceFlagStore") as MockFlagStore, \
+             patch("vinu_agent.cli.build_channel_targets", return_value=[]), \
+             patch("vinu_agent.cli.run_significance_cycle", new=AsyncMock(return_value=[])), \
+             patch("vinu_agent.cli.time.sleep", side_effect=KeyboardInterrupt), \
+             caplog.at_level(_logging.INFO, logger="vinu.agent.significance_worker"):
+            MockFlagStore.return_value.response_rate.return_value = {"total": 4, "responded": 2, "rate": 0.5}
+            significance_worker_main(argparse.Namespace(interval_sec=None))
+
+        MockFlagStore.return_value.response_rate.assert_called_once()
+        rate_records = [r for r in caplog.records if r.message == "significance response rate"]
+        assert len(rate_records) == 1
+        assert rate_records[0].vinu_ctx["rate"] == 0.5
+        assert rate_records[0].vinu_ctx["total"] == 4
+
+    def test_calls_the_llm_failure_check_once_per_cycle(self, tmp_path: Path) -> None:
+        """See missing-pieces-of-system/llm-configuration-settings-system/
+        -- an LLM outage used to have no real-time alerting path at all."""
+        memory_dir = tmp_path / "data" / "memory"
+        memory_dir.parent.mkdir(parents=True, exist_ok=True)
+        config = AgentConfig(memory_dir=str(memory_dir), significance_worker_interval_sec=1)
+
+        fake_service = MagicMock()
+        fake_service.ticker_summary_store.list_summaries.return_value = []
+        fake_service.__enter__.return_value = fake_service
+        fake_service.__exit__.return_value = False
+
+        with patch("vinu_agent.cli.load_config", return_value=config), \
+             patch("vinu_agent.cli.AgentService", return_value=fake_service), \
+             patch("vinu_agent.cli.SignificanceFlagStore") as MockFlagStore, \
+             patch("vinu_agent.cli.build_channel_targets", return_value=[]), \
+             patch("vinu_agent.cli.run_significance_cycle", new=AsyncMock(return_value=[])), \
+             patch("vinu_agent.cli.run_llm_failure_check", new=AsyncMock(return_value=None)) as mock_check, \
+             patch("vinu_agent.cli.time.sleep", side_effect=KeyboardInterrupt):
+            MockFlagStore.return_value.response_rate.return_value = {"total": 0, "responded": 0, "rate": None}
+            significance_worker_main(argparse.Namespace(interval_sec=None))
+
+        mock_check.assert_called_once()
+
+    def test_llm_failure_check_exception_does_not_crash_the_worker(self, tmp_path: Path) -> None:
+        memory_dir = tmp_path / "data" / "memory"
+        memory_dir.parent.mkdir(parents=True, exist_ok=True)
+        config = AgentConfig(memory_dir=str(memory_dir), significance_worker_interval_sec=1)
+
+        fake_service = MagicMock()
+        fake_service.ticker_summary_store.list_summaries.return_value = []
+        fake_service.__enter__.return_value = fake_service
+        fake_service.__exit__.return_value = False
+
+        with patch("vinu_agent.cli.load_config", return_value=config), \
+             patch("vinu_agent.cli.AgentService", return_value=fake_service), \
+             patch("vinu_agent.cli.SignificanceFlagStore") as MockFlagStore, \
+             patch("vinu_agent.cli.build_channel_targets", return_value=[]), \
+             patch("vinu_agent.cli.run_significance_cycle", new=AsyncMock(return_value=[])), \
+             patch("vinu_agent.cli.run_llm_failure_check", new=AsyncMock(side_effect=RuntimeError("boom"))), \
+             patch("vinu_agent.cli.time.sleep", side_effect=KeyboardInterrupt):
+            MockFlagStore.return_value.response_rate.return_value = {"total": 0, "responded": 0, "rate": None}
+            significance_worker_main(argparse.Namespace(interval_sec=None))  # must not raise

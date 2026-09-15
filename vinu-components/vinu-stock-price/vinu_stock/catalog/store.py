@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import time
@@ -250,6 +251,114 @@ class CatalogStore:
                 ),
             )
             self._conn.commit()
+
+    def record_backfill_run(
+        self,
+        *,
+        symbols: list[str],
+        years_attempted: int,
+        years_ok: int,
+        years_failed: int,
+        total_rows: int,
+        symbols_skipped: int,
+        rows_rolled: int,
+        errors: list[str],
+    ) -> None:
+        """The aggregate summary of one run_backfill() call (which symbols
+        failed together, why) used to only be printed via format_report()
+        or returned once in an HTTP response body -- lost once the process
+        or response exits. Best-effort: a write failure here must never
+        fail a backfill run. Per-symbol/year outcomes are still the
+        durable source of truth in backfill_jobs; this is the run-level
+        rollup that had nowhere to live."""
+        try:
+            with self._lock:
+                self._conn.execute(
+                    """
+                    INSERT INTO backfill_runs (
+                        run_at, symbols, years_attempted, years_ok, years_failed,
+                        total_rows, symbols_skipped, rows_rolled, errors
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(time.time()), json.dumps(symbols), years_attempted, years_ok,
+                        years_failed, total_rows, symbols_skipped, rows_rolled,
+                        json.dumps(errors),
+                    ),
+                )
+                self._conn.commit()
+        except Exception:
+            pass
+
+    def list_recent_backfill_runs(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM backfill_runs ORDER BY run_at DESC LIMIT ?", (limit,),
+            ).fetchall()
+        out = []
+        for row in rows:
+            d = dict(row)
+            for field in ("symbols", "errors"):
+                try:
+                    d[field] = json.loads(d.get(field) or "[]")
+                except (TypeError, ValueError):
+                    d[field] = []
+            out.append(d)
+        return out
+
+    def record_fallback(
+        self,
+        symbol: str,
+        *,
+        role: str,
+        winning_provider: str,
+        skipped_errors: list[str],
+    ) -> None:
+        """A provider chain fell through to `winning_provider` after one or
+        more earlier providers failed -- `skipped_errors` (the per-provider
+        failure reasons) used to be built then discarded once a later
+        provider succeeded, so there was no way to see how often or why
+        fallback occurred. Best-effort: a write failure here must never
+        break a bar fetch."""
+        try:
+            with self._lock:
+                self._conn.execute(
+                    """
+                    INSERT INTO provider_fallback_log
+                        (symbol, role, winning_provider, skipped_errors, occurred_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        symbol.strip().upper(), role, winning_provider,
+                        json.dumps(skipped_errors), int(time.time()),
+                    ),
+                )
+                self._conn.commit()
+        except Exception:
+            pass
+
+    def list_recent_fallbacks(self, symbol: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self._lock:
+            if symbol:
+                rows = self._conn.execute(
+                    "SELECT * FROM provider_fallback_log WHERE symbol = ? "
+                    "ORDER BY occurred_at DESC LIMIT ?",
+                    (symbol.strip().upper(), limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM provider_fallback_log ORDER BY occurred_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        out = []
+        for row in rows:
+            d = dict(row)
+            try:
+                d["skipped_errors"] = json.loads(d.get("skipped_errors") or "[]")
+            except (TypeError, ValueError):
+                d["skipped_errors"] = []
+            out.append(d)
+        return out
 
     @staticmethod
     def _row_to_entry(row: sqlite3.Row) -> SymbolCatalogEntry:

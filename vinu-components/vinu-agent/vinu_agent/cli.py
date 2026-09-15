@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from vinu_infra.debug import setup_logging
+from vinu_infra.telemetry import get_telemetry_store
 
 from .agent.planner_triage_hook import PlannerTriage
 from .agent.scheduler_workers import (
@@ -17,6 +18,7 @@ from .agent.scheduler_workers import (
     make_planner_on_yes,
     make_summary_agent_fn,
     run_capital_allocator_cycle,
+    run_llm_failure_check,
     run_risk_gatekeeper_cycle,
     run_significance_cycle,
 )
@@ -362,6 +364,7 @@ def planner_worker_main(args: argparse.Namespace) -> None:
         run_log_trigger = RunLogTrigger(
             HttpRunLogReader(config.services.get("vinu_initial_analysis")),
             service.ticker_summary_store, service.ticker_ledger,
+            ticker_snapshot_store=service.ticker_snapshot_store,
         )
         change_gate = ChangeGate(service.ticker_summary_store, service._strategy_store, service.ticker_ledger)
         triage = PlannerTriage(service._strategy_store, hypothesis_reader_for(service), service.ticker_ledger)
@@ -437,6 +440,7 @@ def significance_worker_main(args: argparse.Namespace) -> None:
 
     data_root = Path(config.memory_dir).parent
     flag_store = SignificanceFlagStore(data_root / "significance_flags.db")
+    telemetry_store = get_telemetry_store(data_root / "telemetry.db")
     try:
         with AgentService() as service:
             try:
@@ -465,6 +469,28 @@ def significance_worker_main(args: argparse.Namespace) -> None:
                             }
                         },
                     )
+                    # Alert-fatigue signal (02-guard-rail.md): implemented
+                    # and tested since day one but never actually called in
+                    # production -- the "does the threshold need tightening"
+                    # feedback loop it exists for never ran. Visibility
+                    # only (logging); no auto-tightening policy here.
+                    log.info(
+                        "significance response rate",
+                        extra={"vinu_ctx": {"worker": "significance-worker", **flag_store.response_rate()}},
+                    )
+                    # Service-wide (not per-ticker), once per cycle: an LLM
+                    # outage or a bad model swap used to have no real-time
+                    # alerting path at all, just a write-only telemetry
+                    # table nobody read. Best-effort -- must never crash
+                    # this loop. See
+                    # missing-pieces-of-system/llm-configuration-settings-system/.
+                    try:
+                        asyncio.run(run_llm_failure_check(telemetry_store, flag_store, targets))
+                    except Exception:
+                        log.exception(
+                            "LLM failure check itself failed",
+                            extra={"vinu_ctx": {"worker": "significance-worker"}},
+                        )
                     time.sleep(interval)
             except KeyboardInterrupt:
                 print("\n[significance-worker] Stopped by user.")

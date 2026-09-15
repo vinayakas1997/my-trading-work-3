@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -39,6 +40,20 @@ class GenerateTradePlanRequest(BaseModel):
     )
 
 
+def _forecast_reasoning(trade_plan_data: str | None) -> str:
+    """Surfaces the LLM's free-text forecast justification at the top level
+    of the API response -- it was already fully persisted inside the
+    trade_plan_data JSON blob (forecast.reasoning) but nothing ever read it
+    back out, making it effectively unreachable. See the foundation-fixes
+    audit in missing-pieces-of-system/narating-agents/."""
+    if not trade_plan_data:
+        return ""
+    try:
+        return (json.loads(trade_plan_data).get("forecast") or {}).get("reasoning", "")
+    except Exception:
+        return ""
+
+
 def _artifact_to_dict(artifact: Any) -> dict[str, Any]:
     return {
         "artifact_id": artifact.artifact_id,
@@ -49,6 +64,7 @@ def _artifact_to_dict(artifact: Any) -> dict[str, Any]:
         "created_at": artifact.created_at,
         "updated_at": artifact.updated_at,
         "trade_plan_data": artifact.trade_plan_data,
+        "reasoning": _forecast_reasoning(artifact.trade_plan_data),
     }
 
 

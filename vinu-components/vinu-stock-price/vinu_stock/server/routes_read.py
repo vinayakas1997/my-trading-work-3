@@ -51,6 +51,21 @@ def list_catalog() -> DataResponse:
     return DataResponse(count=len(rows), data=rows)
 
 
+@router.get("/catalog/fallbacks", response_model=DataResponse)
+def provider_fallbacks(
+    symbol: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> DataResponse:
+    """Recent provider-chain fallback events (a later provider succeeded
+    after an earlier one failed) -- previously computed inside
+    ProviderRegistry.fetch_bars_with_fallback and thrown away once a bar
+    fetch succeeded. See the foundation-fixes audit in
+    missing-pieces-of-system/narating-agents/. Registered before
+    /catalog/{symbol} so "fallbacks" isn't swallowed as a symbol name."""
+    rows = get_service().get_provider_fallbacks(symbol, limit=limit)
+    return DataResponse(count=len(rows), data=rows)
+
+
 @router.get("/catalog/{symbol}", response_model=DataResponse)
 def symbol_catalog(symbol: str) -> DataResponse:
     rows = get_service().get_catalog(symbol)

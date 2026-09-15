@@ -235,6 +235,17 @@ class TestRankOnDemand:
     def test_rank_now_on_unknown_ranker_is_404(self, client: TestClient) -> None:
         assert client.post("/screener/rankers/ghost/rank").status_code == 404
 
+    def test_rank_now_response_includes_the_filter_trace(self, client: TestClient) -> None:
+        """Regression: PipelineResult.trace was computed on every run but
+        dropped before reaching this response -- see the foundation-fixes
+        audit in missing-pieces-of-system/narating-agents/."""
+        client.put("/screener/rankers/r1", json=_RANKER_BODY)
+        resp = client.post("/screener/rankers/r1/rank")
+        body = resp.json()
+        assert "trace" in body
+        assert len(body["trace"]) >= 1
+        assert {"stage", "supports_backtesting", "before", "after"} <= set(body["trace"][0].keys())
+
     def test_latest_is_404_before_any_run(self, client: TestClient) -> None:
         client.put("/screener/rankers/r1", json=_RANKER_BODY)
         assert client.get("/screener/rankers/r1/latest").status_code == 404
