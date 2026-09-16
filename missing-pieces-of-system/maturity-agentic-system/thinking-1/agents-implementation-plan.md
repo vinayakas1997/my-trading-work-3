@@ -4,35 +4,41 @@
 
 This is the concrete follow-through on two earlier docs in this folder:
 
-- `data-driven-analysis-opportunities.md` — the 21 cross-package
-  analyses (A–U) that are buildable today with zero new instrumentation,
+- `data-driven-analysis-opportunities.md` — the 25 cross-package
+  analyses (A–Y) that are buildable today with zero new instrumentation,
   because every signal they need is already being written to one of the
   55 stores cataloged in `project-understanding/05-full-recorded-information/README.md`.
+  V–Y were added 2026-09-16 after auditing the original A–U pass
+  directly against that catalog and finding four genuinely unused
+  stores (`paper_performance`, `calibration_log.jsonl`, the screener's
+  condition-rule `WatchAuditStore`, and the `events` earnings calendar).
 - `../maturity-agentic-system-explanation.md` — the original
   `MaturityAssessor` design (one deterministic module, zero-to-one LLM
   calls, no agent hierarchy).
 
 This doc answers the question that came next in conversation: **given
-21 analyses, how many agentic pieces does this actually need, how do
+25 analyses, how many agentic pieces does this actually need, how do
 they relate to each other, and what does "maturity" become once they
 exist?** It also lays out a concrete build order — not just the shape,
 but the sequence.
 
-## The headline shape: 6 analyst modules + 1 brain, not 21 and not 1
+## The headline shape: 6 analyst modules + 1 brain, not 25 and not 1
 
-Grouping the 21 analyses by *the kind of question they answer* produces
+Grouping the 25 analyses by *the kind of question they answer* produces
 six natural clusters — and those clusters land almost exactly on the
 system's own existing package boundaries, which is a strong signal
-they're the right seams rather than an arbitrary split.
+they're the right seams rather than an arbitrary split. The four
+analyses added 2026-09-16 (V–Y) each slotted cleanly into an existing
+cluster below — none of them required a 7th.
 
-| # | Analyst | Answers | Owns (from A–U) | Primary source packages |
+| # | Analyst | Answers | Owns (from A–Y) | Primary source packages |
 |---|---|---|---|---|
 | 1 | **Forecast Intelligence** | How good are our forecasts, and why | A, Q, P, G, S | vinu-research, vinu-initial-analysis, vinu-stock-price |
-| 2 | **Regime & Risk Coverage** | Where are the blind spots, where is risk quietly building | B, E, N | vinu-research, vinu-live, vinu-portfolio |
-| 3 | **Execution & Money-Flow** | Why do we actually lose money, mechanically | C, U | vinu-infra, vinu-live |
+| 2 | **Regime & Risk Coverage** | Where are the blind spots, where is risk quietly building | B, E, N, V | vinu-research, vinu-live, vinu-portfolio, vinu-agent |
+| 3 | **Execution & Money-Flow** | Why do we actually lose money, mechanically | C, U, Y | vinu-infra, vinu-live, vinu-stock-price |
 | 4 | **Decision-Process / Cognition** | Is our own reasoning process actually good | D, L, K, M | vinu-agent, vinu-infra |
-| 5 | **Governance & Freshness** | Is our own bureaucracy helping or hurting | O, R, F | vinu-agent |
-| 6 | **External-Signal Cross-Check** | Do our other independent systems agree with the main pipeline | I, J, T | vinu-screener, vinu-live |
+| 5 | **Governance & Freshness** | Is our own bureaucracy helping or hurting | O, R, F, W | vinu-agent, vinu-infra |
+| 6 | **External-Signal Cross-Check** | Do our other independent systems agree with the main pipeline | I, J, T, X | vinu-screener, vinu-live |
 
 Each analyst is **not an LLM team** — it is the same category of thing
 `MaturityAssessor` already is: a deterministic module, same shape as
@@ -127,19 +133,17 @@ read out — not a team, not a debate pattern.
 
 ### Do not build a second brain
 
-The already-planned narrating agent (`missing-pieces-of-system/narating-agents/`)
-was explicitly decided to be a single agent, not a team, doing exactly
-this kind of cross-cutting synthesis to decide "how aggressively should
-I trade, given what the system currently knows." That is the same seat.
-**Recommendation: the System Reflection brain and the narrating agent
-should be the same agent**, not two agents independently synthesizing
-the same picture — building both would recreate exactly the
-"two copies of the truth" risk `maturity-agentic-system-explanation.md`
-already flagged as the failure mode to avoid for the DB itself.
-
-This needs to be confirmed against `narating-agents/narrating-agent-explanation.md`'s
-actual content before being locked in — flagged here as an open item,
-not assumed.
+An earlier "narrating agent" concept (a single agent, not a team, doing
+exactly this kind of cross-cutting synthesis to decide "how aggressively
+should I trade, given what the system currently knows") occupies this
+same seat. **Settled: the System Reflection brain absorbs the narrating
+agent — one agent, not two** independently synthesizing the same
+picture. Building both would recreate exactly the "two copies of the
+truth" risk `maturity-agentic-system-explanation.md` already flagged as
+the failure mode to avoid for the DB itself. (The narrating agent's own
+original folder was deleted during an earlier documentation
+consolidation pass — the concept survives here, merged into the brain,
+rather than as a separate doc.)
 
 ## What "maturity" becomes once this exists
 
@@ -191,25 +195,23 @@ don't let Opinion-network confidence outrun what's actually been earned
 
 ## Build order, end to end
 
-1. **Confirm the merge** — read `narating-agents/narrating-agent-explanation.md`
-   in full; decide definitively whether the brain and the narrating
-   agent are one agent (recommended) or two.
-2. **Layer 0** — build `reflection_findings` (or equivalent), the shared
+1. **Layer 0** — build `reflection_findings` (or equivalent), the shared
    schema every analyst writes to, `SQLiteBackend`-based like everything
    else.
-3. **Layer 1, analysts 1–2** — Decision-Process (owns D) and
+2. **Layer 1, analysts 1–2** — Decision-Process (owns D) and
    External-Signal Cross-Check (owns I) first: zero new writers needed,
    fastest proof the pattern works end to end.
-4. **Layer 1, analysts 3–6** — Regime & Risk Coverage, Forecast
+3. **Layer 1, analysts 3–6** — Regime & Risk Coverage, Forecast
    Intelligence, then Execution & Money-Flow / Governance & Freshness,
    in that order.
-5. **Layer 2** — build the single synthesis agent (or extend the
-   narrating agent, per step 1's answer) to read across all six
-   clusters' latest findings and `MaturityAssessor`'s tier.
-6. **Wire consumers** — Planner's forecast prompt, `risk_gatekeeper`'s
+4. **Layer 2** — build the single synthesis agent (the brain, absorbing
+   the narrating agent concept per the settled decision above) to read
+   across all six clusters' latest findings and `MaturityAssessor`'s
+   tier.
+5. **Wire consumers** — Planner's forecast prompt, `risk_gatekeeper`'s
    portfolio-fit bar, `capital_allocator`'s `reserve_fraction`, each
    reading the specific maturity axis relevant to their decision.
-7. **Recursive self-trust tracking** — log the brain's own synthesis
+6. **Recursive self-trust tracking** — log the brain's own synthesis
    predictions against later observed outcomes, gate how much weight its
    narrative carries by its own accumulated sample size.
 

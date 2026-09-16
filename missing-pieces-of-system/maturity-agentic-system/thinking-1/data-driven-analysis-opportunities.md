@@ -1,4 +1,4 @@
-# What the existing data already lets us build — eight cross-package analyses
+# What the existing data already lets us build — twenty-five cross-package analyses
 
 ## Context
 
@@ -106,7 +106,11 @@ structurally blind to, because each cycle only ever looks at itself.
 
 **Join**: `significance_flags`' `response_rate()`, `resolved`,
 `response_text` × Thesis Intake's human-sourced theories in
-`HypothesisRegistry` × downstream outcomes for those tickers.
+`HypothesisRegistry` (`vinu_research/hypothesis_registry.py`, real,
+lock-protected `hypotheses.json` — genuinely not in the 55-store catalog
+at `project-understanding/05-full-recorded-information/README.md`, a gap
+in that catalog rather than a mistake here, verified 2026-09-16) ×
+downstream outcomes for those tickers.
 
 **What it buys**: turns "a human looked at it" from an assumption into
 evidence. Does human override actually improve results, and on which
@@ -132,7 +136,11 @@ other exists.
 ## H. Self-consistency / lineage intelligence
 
 **Join**: `freeze_manifest`/`contamination_check` (currently a one-off,
-manually-triggered research-vs-live comparison, `vinu_infra/freeze.py`)
+manually-triggered research-vs-live comparison, `vinu_infra/freeze.py`
+— real functions, verified 2026-09-16; absent from the 55-store catalog
+because the manifest is an on-demand diagnostic snapshot with a
+caller-supplied output path, not a store with a default persisted
+location)
 generalized into a *continuous* drift detector tracked longitudinally,
 rather than spot-checked — plus `skill_edit_audit`'s content-hash change
 history (currently orphaned, zero production readers) joined against
@@ -255,8 +263,11 @@ everything else.
 ### P. Does raw ingest health predict forecast quality, upstream of provider choice
 
 **Join**: `symbol_catalog`'s `gap_count`/`has_adj_data`/`backfill_status`
-+ `backfill_runs`' `rows_rolled`/errors × `angle_calibration_entries`
-for the same symbol/window.
++ `backfill_runs`' `rows_rolled`/errors + `ingest_log`'s per-attempt
+`ok`/`error` history (added 2026-09-16 — a finer-grained signal than
+`backfill_runs`' run-level rollup alone: catches a symbol with a string
+of quietly-failing individual ingest attempts that never surfaces in the
+aggregate) × `angle_calibration_entries` for the same symbol/window.
 
 One layer earlier than G (which only looked at *which provider* served
 the data) — this looks at whether the underlying data was ever gappy,
@@ -329,9 +340,88 @@ data already logged on both ends.
 
 ---
 
+## Third pass (added 2026-09-16): four real gaps found by auditing A–U against the actual 55-store catalog
+
+A–U's own closing claim — "nearly every one of the 55 cataloged stores
+now has at least one concrete, joinable use" — was checked directly
+against `project-understanding/05-full-recorded-information/README.md`
+rather than taken on faith. Most of it holds (~48 of 55 genuinely
+joined), but four stores turned up completely unused with no analysis
+covering them, and one existing analysis (P) was thinner than the data
+available to it. Each of the four gaps below slots into an *existing*
+cluster in `agents-implementation-plan.md` (same folder) — none of them
+justify a 7th analyst.
+
+### V. Does paper performance actually predict live performance
+
+**Join**: `paper_performance` (store #8, vinu-agent — per-artifact daily
+paper-trading returns, `record_daily_return`/`get_daily_returns`) ×
+the same artifact's realized live returns post-promotion
+(`trade_score_calibration_history`/`calibration_entries`).
+
+**What it buys**: this is the exact data needed to check whether
+Shadow's `min_paper_days` promotion gate is actually calibrated — does
+an artifact's paper-trading track record correlate with how it performs
+once real capital is behind it, or is paper performance a weak/no
+predictor of live performance? If the correlation is weak, that's
+evidence the promotion bar itself needs rethinking, not just enforcing
+harder. Completely unused across the original 21 despite being
+purpose-built for exactly this question. Owner: **Regime & Risk
+Coverage** (cluster 2, per `agents-implementation-plan.md`).
+
+### W. Were the system's own hand-picked (never-measured) thresholds ever right
+
+**Join**: `calibration_log.jsonl` (store #30, vinu-infra — reasoning-picked,
+not measured, threshold decisions: rebalance-protect gain threshold,
+bracket take-fraction, thesis-duplicate similarity cutoff) × the
+realized outcome of whatever those thresholds gated.
+
+**What it buys**: every other threshold in this system (TradeScore,
+regime tilts, mandate limits) has some calibration mechanism checking it
+against reality. This store exists specifically to record the handful
+that don't — it's explicitly documented as "offline-only by design,"
+meaning nobody has ever closed the loop on whether these particular
+hand-picked numbers were ever actually right. Owner: **Governance &
+Freshness** (cluster 5).
+
+### X. Does the screener's *other* engine (condition-rule alerts) predict anything either
+
+**Join**: `WatchAuditStore`'s `fired_watches` (store #38 — permanent
+record of every condition-rule alert firing) × the main pipeline's
+independent read on the same tickers around the same time (same shape
+as I, but for the alert-rule half of `vinu-screener` instead of the
+ranker half).
+
+**What it buys**: `vinu-screener` actually ships two independent
+engines — the factor ranker (validated by I and J above) and a separate
+condition-based `ScanMonitor` alert-rule engine, which has zero
+validation coverage in the original pass. Same question I already asks
+for the ranker, asked of the half that was missed: when a condition rule
+fires, does the main pipeline independently agree it mattered? Owner:
+**External-Signal Cross-Check** (cluster 6) — a direct sibling of I,
+not a new category.
+
+### Y. Do trades held through an earnings/macro event lose more
+
+**Join**: `events`/`events_meta` (store #49, vinu-stock-price — the
+earnings/macro calendar `GET .../events/{symbol}` already serves) ×
+`trade_audit_log.jsonl`'s per-trade entry/exit timestamps and realized
+P&L (store #29).
+
+**What it buys**: a classic, high-value, obvious question that was
+simply absent from the original 21 despite both sides of the join
+already existing and already being live-served — does a position held
+through a known upcoming earnings/macro release lose more on average
+than one that wasn't? If yes, that's direct evidence for tightening the
+entry guard around event windows; if no, that's equally useful evidence
+the current guard is already sufficient. Owner: **Execution &
+Money-Flow** (cluster 3).
+
+---
+
 ## The unifying point
 
-Every one of these twenty-one is a **join across packages that doesn't
+Every one of these twenty-five is a **join across packages that doesn't
 happen today**, not a new instrument, not new telemetry. That's the
 difference between "adequate" and genuinely rich: this isn't inventing
 measurement, it's finally letting measurement that already exists talk
@@ -341,9 +431,15 @@ vinu-infra boundary, where today each package only ever reads its own
 tables. A–H drew from the core calibration/decay/execution stores; I–U
 extend the same rule into the screener's isolated signal, the agent's
 own process/cognition data, the mandate/governance layer, and the raw
-ingest pipeline upstream of any forecast — between the two passes,
-nearly every one of the 55 cataloged stores now has at least one
-concrete, joinable use.
+ingest pipeline upstream of any forecast; V–Y (third pass) close four
+gaps found by auditing that claim directly against the real catalog
+rather than assuming it — between all three passes, every store in the
+55-item catalog with genuine time-series/outcome content now has at
+least one concrete, joinable use (the handful left out — `vinu_settings`,
+`ParquetStore`, `angle_run_status`, dead/superseded code, and stores with
+no production data yet, like the effectively-unwired Shadow account
+profiles — have no real content to join in the first place, not an
+oversight).
 
 Together, these become the actual *content* of the Opinion/Observation
 layer described in the reflective-loop thinking that followed
@@ -375,7 +471,14 @@ From the second pass, two more stand out the same way:
   check to add, since both sides of the comparison already regenerate on
   every batch; it costs nothing but a diff.
 
-All four (and every analysis above) would need the exact schema/query-
+From the third pass, one more stands out the same way:
+
+- **Y (earnings/macro-event vs. loss)** — both sides of the join
+  (`events`, `trade_audit_log.jsonl`) already exist and are already
+  live-served; like S, this costs nothing but a diff, and answers a
+  question anyone would ask first about a live trading system.
+
+All seven (and every analysis above) would need the exact schema/query-
 level scoping that `maturity-agentic-system-explanation.md` §3 did for
 `MaturityAssessor` before being buildable — this doc stops short of that
 on purpose, to keep the "what's possible" survey separate from "what we
