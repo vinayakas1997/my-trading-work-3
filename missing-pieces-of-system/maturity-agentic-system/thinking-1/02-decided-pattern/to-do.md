@@ -64,6 +64,24 @@ whether anything gets written to Layer 0 or Hindsight at all.
 **Depends on #2** — can't set a threshold for a query that doesn't
 exist yet. Scope both together, per analysis, not as separate passes.
 
+**Load-bearing rule to pin down alongside every threshold, not an
+afterthought**: the "changed since when" comparison must always be
+computed against the full raw history in the real source tables
+(`CorrelationMonitorStore`, `decay_snapshots`, `angle_calibration_entries`,
+etc. — written unconditionally every cycle, independent of this gate),
+**never** against `reflection_beliefs`'/`reflection_findings_history`'s
+own already-gated rows. The "correlation must climb by ≥0.15 over 3+
+consecutive weekly checks" example above is ambiguous on exactly this
+point — if "checks" means 3 raw computations from the source table
+(always available), it's correct; if it gets implemented as 3
+consecutive `reflection_findings_history` rows (which only exist once
+something was already significant), that's circular and would let a
+genuine slow-boil pattern (exactly what analysis E exists to catch in
+the trading data itself) stay under the bar indefinitely, because the
+reflection layer's own memory of "last time" would itself be gated.
+Write the rule explicitly per analysis; don't leave it to be decided
+implicitly while coding.
+
 ## 4. No analyst plug-in interface
 
 `six-agents-critique-and-hindsight-memory-resolution.md` names the
@@ -87,7 +105,7 @@ an inference from "we're copying vinu-agent's pattern."
 
 ## 6. No Hindsight bank lifecycle details
 
-Two concrete open questions: (a) who creates a ticker's Hindsight bank
+Three concrete open questions: (a) who creates a ticker's Hindsight bank
 the first time that ticker enters the watchlist — does
 `bootstrap_new_tickers` (vinu-agent, already exists) also need to
 provision a bank, or does the first `retain()` call implicitly create
@@ -96,7 +114,15 @@ one? (b) the exact tag *key* schema — `other-findings-methods.md` and
 `source_analyst`) but never a locked, final list of tag keys every
 `retain()` call must populate consistently, which matters because
 `observation_scopes` (shared vs. per-tag-combination) depends on
-exactly which tags are present.
+exactly which tags are present. (c) **the teardown case, not just
+creation**: what happens to a ticker's bank when that ticker leaves the
+watchlist (delisted, dropped, no longer tracked)? Hindsight never prunes
+raw facts on its own (confirmed in `other-findings-methods.md`), so an
+unbounded number of orphaned, permanently-growing banks for
+no-longer-watched tickers is a real long-run cost if this isn't decided
+now — e.g. an explicit bank-delete on watchlist removal, or an accepted
+"orphaned banks are cheap enough to leave" decision, but a decision
+either way, not silence.
 
 ## 7. No failure-isolation restated as a concrete requirement
 
@@ -114,12 +140,48 @@ Step 9 of `decided-pattern.md` describes logging the brain's own
 synthesis predictions against later observed outcomes, gating how much
 weight its narrative carries by its own accumulated sample size — but
 no table exists for this yet. Needed: a store (same `SQLiteBackend`
-pattern again) holding at minimum `synthesis_id, computed_at,
-prediction_json, observed_outcome_json NULL, resolved_at NULL` — written
-when the brain synthesizes, updated later when the predicted outcome is
-actually known. This is lower priority than 1–4 since it only matters
-once the brain itself exists (step 8), which is last in the build
-order anyway.
+pattern again), `reflection_synthesis_outcomes`, 12 columns:
+
+```
+synthesis_id PK, computed_at,
+trigger_reason (scheduled | new_significant_finding | consumer_requested),
+inputs_snapshot (JSON — the specific reflection_beliefs rows read for
+  this synthesis, so reasoning quality is auditable separately from
+  outcome luck: a good call can have a bad outcome, and vice versa),
+prediction_json (the synthesized judgment: maturity profile, narrative,
+  any proposed action),
+proposed_action_type NULL (threshold_nudge | significance_flag |
+  narrative_only — a pure narrative and an actionable proposal need
+  different grading criteria),
+resolution_criteria TEXT (what counts as "right" — written at
+  PREDICTION time, never decided after the fact, to avoid the same
+  look-ahead bias freeze_manifest/contamination_check already guards
+  against elsewhere in this system),
+resolve_by (when to check back),
+observed_outcome_json NULL (filled in at resolution, same shape as
+  prediction_json so the two can be diffed directly),
+outcome_match NULL (correct | partially_correct | incorrect |
+  inconclusive — a queryable summary so accuracy doesn't require
+  re-diffing JSON every time),
+resolved_at NULL,
+evidence_count_at_synthesis (the evidence backing the analysts this
+  synthesis drew on — a synthesis made on thin evidence shouldn't move
+  the brain's track record as much as one made on deep evidence)
+```
+
+Written when the brain synthesizes; updated later by a resolution
+worker (see below) once the predicted outcome is actually known. This
+is lower priority than 1–4 since it only matters once the brain itself
+exists (step 8), which is last in the build order anyway.
+
+**Also needed, not just the schema**: something has to actually *check*
+for resolvable predictions and fill in `observed_outcome_json` — this
+doesn't happen passively. The natural shape is a periodic pass over
+unresolved `synthesis_id` rows past their resolution window, the same
+"scan for what's now answerable" role `significance-worker` already
+plays for unresolved `significance_flags` rows. Without this, the
+self-trust table would accumulate `NULL`-outcome rows forever and never
+actually gate anything.
 
 ---
 

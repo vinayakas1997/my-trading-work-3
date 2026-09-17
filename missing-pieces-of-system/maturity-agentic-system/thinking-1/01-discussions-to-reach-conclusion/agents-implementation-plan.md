@@ -51,20 +51,56 @@ this codebase (see the vision doc's "why this isn't a new idea" section).
 
 ## Layer 0: a shared finding schema, before anything else is built
 
-All six analysts should write to the same shape, in the same store
-pattern every other SQLite store in this system already uses
+**Updated 2026-09-16** to match the settled design in
+`decided-pattern/decided-pattern.md` and `decided-pattern/to-do.md`
+(same folder) — the version below supersedes an earlier flat,
+single-table draft that had no ticker/scope dimension and no growth
+control. Two tables, not one, both in the same store pattern every
+other SQLite store in this system already uses
 (`vinu_infra.sqlite.SQLiteBackend` — WAL mode, thread-local connections,
-`SCHEMA_VERSION` + `MIGRATIONS`). One new table, e.g. `reflection_findings`:
+`SCHEMA_VERSION` + `MIGRATIONS`):
 
 ```
-finding_id PK, analyst_name, cluster, computed_at,
-signal_json (JSON — the real numbers: counts, ratios, deltas),
-evidence_count (INTEGER — how many real rows backed this finding),
-severity (routine | notable | significant),
-narrative TEXT NULL (optional, only if that analyst's finding warrants
-  a one-line human-readable gloss — still no LLM required to write this;
-  a templated string off signal_json covers most cases)
+reflection_findings_history (raw, append-only, pruned over time
+  the same way vinu-initial-analysis's tier3 angle results already are):
+  finding_id PK, analyst_name, cluster, scope_type
+    (system | ticker | ticker_pair | regime | strategy_family | angle),
+  scope_key, computed_at,
+  signal_json (JSON — the real numbers: counts, ratios, deltas),
+  evidence_count (INTEGER — how many real rows backed this finding),
+  severity (routine | notable | significant),
+  narrative TEXT NULL (optional; a templated string off signal_json
+    covers most cases, no LLM required to write it)
+
+reflection_beliefs (current state, OVERWRITTEN on update, not appended
+  — same relationship ticker_summaries has to ticker_daily_snapshots):
+  PRIMARY KEY (analyst_name, scope_type, scope_key),
+  computed_at, signal_json, evidence_count, severity, narrative,
+  trend (improving | stable | degrading, derived from the last few
+    `reflection_findings_history` rows for this key)
 ```
+
+Both tables only ever receive a row when a finding passes **the gate**
+(`decided-pattern.md` step 4 — "is this new, meaningfully changed, or
+degraded"): most cycles, for most scopes, produce nothing, and that's
+the correct outcome, not a gap. This is what actually controls growth —
+not retention policy after the fact, but not writing the noise in the
+first place.
+
+**Load-bearing requirement, not an implementation detail to improvise
+later**: the gate's "changed since when" comparison must always be
+computed against the full raw history in the real source tables
+(`CorrelationMonitorStore`, `decay_snapshots`, `angle_calibration_entries`,
+etc. — all written unconditionally, every cycle, independent of this
+gate), **never** against `reflection_beliefs`'/`reflection_findings_history`'s
+own already-gated rows. If an analyst instead compared only against its
+own last *written* finding, a genuine slow-boil pattern (exactly what
+analysis E exists to catch in the trading data itself — concentration
+risk building gradually, no single cycle crossing threshold alone)
+could stay under the bar indefinitely purely because the reflection
+layer's own memory of "last time" is itself gated. This must be pinned
+down as an explicit rule per analyst, not left ambiguous — see
+`decided-pattern/to-do.md` #3.
 
 The `evidence_count` field is load-bearing, not decorative — it's what
 lets the brain (Layer 2 below) refuse to synthesize a confident
@@ -99,8 +135,13 @@ re-synthesizing more often.
 4. **Forecast Intelligence** (owns A, plus S as a free add-on check) —
    largest cluster, most moving parts (angle × regime × ticker
    cross-tab), build after 1–3 have proven the finding-schema pattern.
-5. **Execution & Money-Flow**, **Governance & Freshness** — round these
-   out last; both are real but lower-urgency than the four above.
+5. **Execution & Money-Flow** (owns C, U, plus **Y** — earnings/macro-event
+   loss — flagged in `data-driven-analysis-opportunities.md`'s own
+   closing section as "costs nothing but a diff," same tier as D/I/S),
+   **Governance & Freshness** — round these out last; both are real but
+   lower-urgency than the four above. **V** (paper-vs-live performance,
+   owned by Regime & Risk Coverage) is worth folding into step 3 above
+   for the same zero-new-instrumentation reason.
 
 ## Layer 2: the brain — one synthesis agent, not a hierarchy
 
@@ -195,7 +236,8 @@ don't let Opinion-network confidence outrun what's actually been earned
 
 ## Build order, end to end
 
-1. **Layer 0** — build `reflection_findings` (or equivalent), the shared
+1. **Layer 0** — build `reflection_findings_history` + `reflection_beliefs`
+   (see the updated Layer 0 section above), the shared, scope-dimensioned
    schema every analyst writes to, `SQLiteBackend`-based like everything
    else.
 2. **Layer 1, analysts 1–2** — Decision-Process (owns D) and
