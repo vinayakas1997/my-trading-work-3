@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from vinu_portfolio.shock_correlation import dcc_shock_correlation
+from vinu_portfolio.shock_correlation import _gerber_correlation, dcc_shock_correlation
 
 
 def _returns_df(symbols: list[str], n_days: int = 252, seed: int = 42) -> pd.DataFrame:
@@ -94,3 +94,43 @@ class TestDccShockCorrelation:
         result = dcc_shock_correlation(df)
         crisis = np.array(result["crisis_correlation"])
         assert crisis[0, 1] > 0.9
+
+
+class TestGerberCorrelation:
+    def test_diagonal_is_exactly_one(self) -> None:
+        rng = np.random.default_rng(3)
+        returns = rng.normal(0.0, 0.01, (200, 4))
+        corr = _gerber_correlation(returns)
+        assert np.allclose(np.diag(corr), 1.0)
+
+    def test_symmetric_and_bounded(self) -> None:
+        rng = np.random.default_rng(4)
+        returns = rng.normal(0.0, 0.01, (200, 3))
+        corr = _gerber_correlation(returns)
+        assert np.allclose(corr, corr.T)
+        assert np.all(corr <= 1.0 + 1e-9) and np.all(corr >= -1.0 - 1e-9)
+
+    def test_highly_correlated_series_score_near_one(self) -> None:
+        rng = np.random.default_rng(5)
+        common = rng.normal(0.001, 0.02, 300)
+        returns = np.column_stack(
+            [common + rng.normal(0, 0.0005, 300), common + rng.normal(0, 0.0005, 300)]
+        )
+        corr = _gerber_correlation(returns)
+        assert corr[0, 1] > 0.8
+
+    def test_ignores_small_fluctuations_below_threshold(self) -> None:
+        # Two series that only ever move together on large days, and
+        # disagree on small/noisy days below the Gerber threshold — the
+        # whole point of Gerber vs. raw correlation is that small noise
+        # shouldn't dominate the co-movement read the way it can with a
+        # raw Pearson correlation on noisy small moves.
+        rng = np.random.default_rng(6)
+        n = 400
+        std = 0.01
+        big_days = rng.random(n) < 0.1
+        a = np.where(big_days, rng.choice([-1, 1], n) * std * 2, rng.normal(0, std * 0.1, n))
+        b = np.where(big_days, a, rng.normal(0, std * 0.1, n) * -1)
+        returns = np.column_stack([a, b])
+        corr = _gerber_correlation(returns)
+        assert corr[0, 1] > 0.5

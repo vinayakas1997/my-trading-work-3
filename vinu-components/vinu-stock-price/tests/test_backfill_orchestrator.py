@@ -122,7 +122,7 @@ def test_end_year_defaults_to_current_year_not_previous(monkeypatch, tmp_path):
     be included in the backfill range by default."""
     captured: dict = {}
 
-    def fake_backfill_symbol(sym, *, data_root, backend, registry, from_year, end_year, summary_lock, summary):
+    def fake_backfill_symbol(sym, *, data_root, backend, registry, from_year, end_year, summary_lock, summary, **_kw):
         captured["end_year"] = end_year
 
     monkeypatch.setattr(orchestrator, "_backfill_symbol", fake_backfill_symbol)
@@ -138,7 +138,7 @@ def test_end_year_defaults_to_current_year_not_previous(monkeypatch, tmp_path):
 def test_explicit_to_year_is_still_respected(monkeypatch, tmp_path):
     captured: dict = {}
 
-    def fake_backfill_symbol(sym, *, data_root, backend, registry, from_year, end_year, summary_lock, summary):
+    def fake_backfill_symbol(sym, *, data_root, backend, registry, from_year, end_year, summary_lock, summary, **_kw):
         captured["end_year"] = end_year
 
     monkeypatch.setattr(orchestrator, "_backfill_symbol", fake_backfill_symbol)

@@ -19,6 +19,7 @@ def _config(*, api_key: str = "key", api_secret: str = "secret") -> VinuStockCon
         alpaca_api_secret=api_secret,
         alpaca_data_base_url="https://data.alpaca.markets",
         shared_watchlist_path=None,
+        shared_root=None,
         finnhub_api_key="",
         events_macro_enabled=False,
         events_refresh_hours=24.0,

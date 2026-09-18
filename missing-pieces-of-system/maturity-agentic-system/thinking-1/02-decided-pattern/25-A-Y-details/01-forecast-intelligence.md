@@ -37,6 +37,18 @@ separately per `regime_tag` bucket for the regime-conditioned view.
 independent of watchlist size — deliberately **not** per-ticker despite
 touching per-ticker data (see `00-index.md`'s manageability headline).
 
+**Built 2026-09-19**: `vinu-reflection/vinu_reflection/reflection/angle_trust.py`.
+**Implementation note**: the "trailing-30 mean moves outside the
+trailing-90 P10/P90 band" Condition was implemented as two
+non-overlapping windows (current = latest 30 entries, reference = up to
+90 immediately before them) compared via the same shared PSI machinery
+every other analyst in `vinu-reflection` already uses, rather than a
+second, bespoke percentile-band function — see that module's own
+docstring for the reasoning. `ticker_cluster_breakdown` was not
+implemented (scoped down to `regime_breakdown` only); one new reader
+method added to `vinu-research`'s `SqliteStrategyStore`
+(`distinct_angle_names()`, same pattern as `LlmCallLogStore.distinct_roles()`).
+
 ---
 
 ## Q. Weight-lineage staleness
@@ -66,6 +78,21 @@ recorded under the current `weights_ref`.
 **Manageability**: ≤7 angles × N tickers — linear, further cut hard by
 the significance gate (staleness is a slow, rare event per ticker).
 
+**Deferred, 2026-09-19 — not attempted this pass.** `WeightsStore` lives
+in `vinu-initial-analysis`, the one service already flagged (twice, in
+`02-analyst-interface.md`'s history and the original
+mount-vs-ticker-profile design discussion) as too dependency-heavy
+(torch/xgboost/chronos-forecasting/timesfm) to mount-and-import the way
+`vinu-reflection` currently does for vinu-agent/vinu-research. Building
+Q the same way D/L/M/A were built would reintroduce exactly the problem
+the shared ticker-profile mechanism (`vinu-infra/TICKER_PROFILE.md`)
+exists to avoid — and the ticker-profile file's own
+`vinu_initial_analysis` key today only carries `timeframe`/`tier`/
+`run_id`/`row_count` per angle, not `weights_ref`/checkpoint age, so it
+can't answer Q's Condition either without a producer-side change. Not a
+hard blocker like K/P/G (no missing data, just a real dependency-cost
+tradeoff) — worth a deliberate decision before building, not a default.
+
 ---
 
 ## P. Ingest health → forecast quality
@@ -92,6 +119,30 @@ in the trailing window.
 
 **Manageability**: ≤N tickers, linear.
 
+**Blocked, 2026-09-19 — not implementable as scoped, needs a new
+writer.** Checked the real schema/writers: `CalibrationEntry.timestamp`
+(`vinu-research/vinu_research/storage/strategy_store.py`'s
+`calibration_entries` table) is `TEXT NOT NULL` with no default, and
+**no real writer anywhere in the codebase ever sets it** —
+`calibration.py`'s `add_entry()` (the only real construction site,
+`vinu_research/calibration.py:61-84`) leaves it at the dataclass default
+(`""`). Every real calibration entry's `timestamp` column is an empty
+string today. `ingest_log.run_at`/`provider_fallback_log.occurred_at`
+(vinu-stock-price) are real Unix timestamps, but with nothing real to
+compare them against on the calibration side, "brier_score for windows
+served by a fallback / with a gap, vs. this symbol's own clean-period
+baseline" — a **within-symbol, time-windowed** comparison — cannot
+actually be computed. (`angle_trust.py`'s implementation of A sidesteps
+this same gap by using insertion order, not `timestamp`, as its time
+proxy — that works for A's "most recent N entries" framing but not for
+P's "which specific entries overlapped a gap/error window," which needs
+real calendar time on both sides.) Same two ways forward as K: (a) add a
+real writer -- populate `timestamp` at calibration-entry creation time
+(a small, real, probably worthwhile fix regardless of P), or (b) rescope
+P to a cross-sectional comparison (symbols with vs. without any
+recorded ingest degradation, not before/after) and accept it answers a
+different, related question. Left undecided.
+
 ---
 
 ## G. Data provenance → forecast quality
@@ -116,6 +167,13 @@ no added signal. `signal_json` on P's row gains
 the # `provider_fallback_log` rows in the window.
 
 **Manageability**: no additional row fan-out beyond P.
+
+**Blocked, 2026-09-19 — same reason as P above** (they merge into one
+row, so they share the same blocker): G needs the identical
+within-symbol, time-windowed comparison ("brier_score when served by a
+fallback provider... vs. this symbol's own primary-provider baseline"),
+which needs `calibration_entries.timestamp` to actually be populated.
+Not attempted separately from P.
 
 ---
 
@@ -145,3 +203,17 @@ claims compared this cycle.
 
 **Manageability**: ≤N tickers, linear — but cheap per row (a diff, not
 a statistical join), so low compute cost regardless of watchlist size.
+
+**Not attempted, 2026-09-19.** Different kind of gap from Q/P/G — this
+one needs a real spec, not a missing writer: "extract the numeric claims
+the deterministic fact sheet makes and check whether the LLM summary's
+prose contains a materially different number for the same claim" is a
+genuine text-extraction problem (matching a number in Markdown against
+the same number paraphrased in LLM prose) that has no existing parser
+anywhere in this codebase to reuse, unlike every other analysis built so
+far (D/L/M/A all reused real, already-written query/store code). Writing
+one now would mean inventing new, untested numeric-claim-matching logic
+under this session's time budget — exactly the kind of thin,
+un-vetted implementation this whole design otherwise avoids. Left for a
+dedicated pass once there's a real extraction approach to build against,
+not a default "skip."

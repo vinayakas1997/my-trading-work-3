@@ -231,6 +231,23 @@ class TeamRunStore(SQLiteBackend):
         ).fetchall()
         return [TeamRun.from_row(dict(r)) for r in rows]
 
+    def get_latest_verdict_by_session_id(self, session_id: str) -> Optional[str]:
+        """Best-available join key from an `llm_calls` row back to the
+        team run it happened inside -- `llm_calls` only carries
+        `session_id`, not `run_id`, so this is an approximation (a
+        session can trigger more than one run; the most recent one with
+        a non-empty verdict wins). Used by Decision-Process (analysis D)
+        to compare downstream verdict quality against `llm_calls.retry_count`.
+        Returns None when no run for this session has a verdict yet --
+        not an error, just "nothing to compare this call against"."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT verdict FROM team_runs WHERE triggered_by_session_id = ? "
+            "AND verdict != '' ORDER BY created_at DESC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        return row["verdict"] if row is not None else None
+
     def get_run(self, run_id: str) -> Optional[TeamRun]:
         conn = self._get_conn()
         row = conn.execute("SELECT * FROM team_runs WHERE run_id = ?", (run_id,)).fetchone()

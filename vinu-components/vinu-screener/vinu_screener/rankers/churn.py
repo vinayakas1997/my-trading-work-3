@@ -17,9 +17,11 @@ it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vinu_infra.sqlite import SQLiteBackend
+from vinu_infra.ticker_profile import write_ticker_profile_key
 
 from .snapshot_store import RankedSnapshotStore, RankerSnapshot
 
@@ -91,6 +93,7 @@ def record_ranking(
     result: "PipelineResult",
     *,
     now: float,
+    shared_root: Path | str | None = None,
 ) -> tuple[RankerSnapshot, list[ChurnEvent]]:
     """The one shared path both `RankerScheduler.tick()` and the on-demand
     `POST /screener/rankers/{id}/rank` route call -- reads the PREVIOUS
@@ -105,6 +108,19 @@ def record_ranking(
 
     snapshot = snapshot_store.set_latest(ranker_id, result, now=now)
     current_symbols = [c.symbol for c in snapshot.top]
+
+    if shared_root:
+        top_n = max(len(snapshot.top), 1)
+        for i, candidate in enumerate(snapshot.top):
+            write_ticker_profile_key(
+                shared_root, candidate.symbol, "vinu_screener",
+                {
+                    "ranker_id": ranker_id,
+                    "final_score": candidate.final_score,
+                    "risk_flags": candidate.risk_flags,
+                    "rank_percentile": 1.0 - (i / top_n),
+                },
+            )
 
     events = diff_rankings(ranker_id, previous_symbols, current_symbols, now=now)
     if churn_store is not None and events:

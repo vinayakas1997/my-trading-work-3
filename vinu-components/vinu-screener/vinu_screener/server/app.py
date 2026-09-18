@@ -63,6 +63,10 @@ DEFAULT_STOCK_API_URL = os.environ.get("VINU_STOCK_API_URL", "http://localhost:8
 # inert, no fetch is ever attempted unless an operator explicitly points
 # this at vinu-agent's base URL.
 DEFAULT_AGENT_API_URL = os.environ.get("VINU_AGENT_API_URL", "")
+# Shared ticker-profile writes (churn.py's record_ranking): empty by
+# default -- ships inert, no write ever attempted unless an operator
+# points this at the shared data mount.
+DEFAULT_SHARED_ROOT = os.environ.get("VINU_SHARED_ROOT", "") or None
 # The pairlist route (B20) is mounted inside this same app's `router`, which
 # `vinu_infra.server.create_app` wraps in `Depends(require_auth)` for the
 # WHOLE app whenever VINU_API_KEY is set -- so the same `Authorization`
@@ -276,7 +280,10 @@ def create_app(
             raise HTTPException(status_code=404, detail="ranker not found")
         held_symbols = fetch_held_symbols(DEFAULT_AGENT_API_URL)
         result = _ranker_runner().run(stored.ranker, held_symbols=held_symbols)
-        snapshot, events = record_ranking(ranker_snapshots, ranker_churn, ranker_id, result, now=time.time())
+        snapshot, events = record_ranking(
+            ranker_snapshots, ranker_churn, ranker_id, result,
+            now=time.time(), shared_root=DEFAULT_SHARED_ROOT,
+        )
         body = snapshot.to_dict()
         body["churn"] = [e.to_dict() for e in events]
         return body

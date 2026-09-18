@@ -4,6 +4,34 @@ import numpy as np
 import pandas as pd
 
 
+def _gerber_correlation(returns: np.ndarray, threshold: float = 0.5) -> np.ndarray:
+    """Gerber (2022) PSD-variant robust co-movement correlation.
+
+    Ported from skfolio's ``GerberCovariance`` (``psd_variant=True``),
+    BSD-3-Clause, https://github.com/skfolio/skfolio
+    (src/skfolio/moments/covariance/_gerber_covariance.py). Ignores
+    fluctuations below ``threshold * std`` per asset while capping the
+    effect of extreme moves, positive-semi-definite by construction —
+    unlike a raw sample correlation, which is what this replaces here.
+    Reference: Gerber, S., B. Javid, H. Markowitz, P. Sargen, and
+    D. Starer (2022), "The Gerber Statistic", Journal of Portfolio
+    Management.
+    """
+    std = returns.std(axis=0).reshape((-1, 1))
+    u = returns >= std.T * threshold
+    d = returns <= -std.T * threshold
+    n = (np.invert(u) & np.invert(d)).astype(int)
+    u = u.astype(int)
+    d = d.astype(int)
+    concordant = u.T @ u + d.T @ d
+    discordant = u.T @ d + d.T @ u
+    h = concordant - discordant
+    n_observations = returns.shape[0]
+    corr = h / (n_observations - n.T @ n)
+    np.fill_diagonal(corr, 1.0)
+    return np.clip(corr, -1.0, 1.0)
+
+
 def _garch_conditional_variance(
     returns: np.ndarray,
 ) -> np.ndarray:
@@ -70,7 +98,7 @@ def dcc_shock_correlation(
             "status": "insufficient_data",
         }
 
-    calm_corr = returns_df.loc[valid_rows].corr().values
+    calm_corr = _gerber_correlation(returns_df.loc[valid_rows].values)
 
     Q_bar = np.cov(z.T)
     Q_t = Q_bar.copy()

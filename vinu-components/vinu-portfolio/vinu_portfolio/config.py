@@ -94,6 +94,10 @@ class PortfolioConfig:
     # equity exactly as before until this is explicitly set. Env:
     # VINU_PORTFOLIO_RESERVE_FRACTION.
     reserve_fraction: float = 0.0
+    # Shared ticker-profile writes (compute_daily_allocation's per-symbol
+    # target weight): None (default) is a no-op -- ships inert, no write
+    # ever attempted. Env: VINU_SHARED_ROOT.
+    shared_root: Path | None = None
 
     @classmethod
     def from_env(cls) -> PortfolioConfig:
@@ -131,6 +135,7 @@ class PortfolioConfig:
                 os.getenv("VINU_PORTFOLIO_GAME_PLAN_READINESS_THRESHOLD", "0.5")
             ),
             reserve_fraction=float(os.getenv("VINU_PORTFOLIO_RESERVE_FRACTION", "0.0")),
+            shared_root=(Path(_shared) if (_shared := os.getenv("VINU_SHARED_ROOT", "").strip()) else None),
         )
 
 

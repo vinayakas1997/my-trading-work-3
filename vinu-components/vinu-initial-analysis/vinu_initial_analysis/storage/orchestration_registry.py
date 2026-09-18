@@ -63,6 +63,7 @@ from uuid import uuid4
 
 import pandas as pd
 
+from vinu_infra.ticker_profile import read_ticker_profile, write_ticker_profile_key
 from vinu_initial_analysis.angles._tagging import tag_row
 from vinu_initial_analysis.angles.arima.backtest import MIN_OBSERVATIONS as _ARIMA_MIN_OBS
 from vinu_initial_analysis.angles.arima.backtest import arima_step, run_arima_backtest
@@ -399,6 +400,7 @@ def _persist_result_and_write_factsheet(
     df: Any,
     *,
     tier: str = "tier2",
+    shared_root: str | None = None,
 ) -> None:
     """Real storage/RunLog write for one job's result, then a fresh fact
     sheet for it -- the file being "there right after the angle runs"
@@ -442,6 +444,20 @@ def _persist_result_and_write_factsheet(
         duration_seconds=time.perf_counter() - t0,
     )
     write_factsheet(data_root, symbol, angle_name, run_log, storage, tier=tier)
+    if shared_root:
+        existing_angles = read_ticker_profile(shared_root, symbol).get("vinu_initial_analysis", {}).get("angles", {})
+        write_ticker_profile_key(
+            shared_root, symbol, "vinu_initial_analysis",
+            {
+                "angles": {
+                    **existing_angles,
+                    angle_name: {
+                        "timeframe": timeframe, "tier": tier,
+                        "run_id": run_id, "row_count": len(df),
+                    },
+                },
+            },
+        )
 
 
 def run_batch_with_parallel_harness(
@@ -464,6 +480,7 @@ def run_batch_with_parallel_harness(
     positions_by_symbol: dict[str, list[dict]] | None = None,
     run_log: RunLog | None = None,
     tier: str = "tier2",
+    shared_root: str | None = None,
 ) -> dict[str, Any]:
     """Same real contract as orchestration.run_batch (every job registered
     up front for full visibility, batch rows deleted only once every job
@@ -535,7 +552,7 @@ def run_batch_with_parallel_harness(
                         storage = AngleStorage(data_root, run_log=run_log)
                         _persist_result_and_write_factsheet(
                             storage, run_log, data_root, symbol, angle_name,
-                            timeframe, results[key], tier=tier,
+                            timeframe, results[key], tier=tier, shared_root=shared_root,
                         )
 
     if sequential_names:
@@ -559,7 +576,8 @@ def run_batch_with_parallel_harness(
             for key, df in seq_summary["results"].items():
                 symbol, angle_name = key.split(":", 1)
                 _persist_result_and_write_factsheet(
-                    storage, run_log, data_root, symbol, angle_name, timeframe, df, tier=tier,
+                    storage, run_log, data_root, symbol, angle_name, timeframe, df,
+                    tier=tier, shared_root=shared_root,
                 )
     elif tracker.is_batch_complete(batch_id):
         tracker.delete_batch(batch_id)

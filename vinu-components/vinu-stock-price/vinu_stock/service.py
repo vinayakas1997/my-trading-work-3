@@ -185,6 +185,7 @@ class StockService:
             registry=self._registry,
             from_year=from_year,
             to_year=to_year,
+            shared_root=self._config.shared_root,
         )
         return BackfillCycleResult(summary=summary)
 

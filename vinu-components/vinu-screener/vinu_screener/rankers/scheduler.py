@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 from typing import Callable
 
 from .churn import RankerChurnStore, record_ranking
@@ -31,12 +32,14 @@ class RankerScheduler:
         snapshot_store: RankedSnapshotStore | None = None,
         churn_store: RankerChurnStore | None = None,
         held_symbols_fetcher: Callable[[], "frozenset[str]"] | None = None,
+        shared_root: Path | str | None = None,
     ) -> None:
         self._ranker_store = ranker_store
         self._runner = runner
         self._snapshots = snapshot_store
         self._churn = churn_store
         self._held_symbols_fetcher = held_symbols_fetcher
+        self._shared_root = shared_root
         self._last_run_at: dict[str, float] = {}
 
     def _due(self, stored: StoredRanker, now: float) -> bool:
@@ -75,7 +78,10 @@ class RankerScheduler:
                     # any entered/exited events -- the same shared path the
                     # on-demand /rank route uses, so a manual re-run can't
                     # create a gap or a double-count in the churn history.
-                    record_ranking(self._snapshots, self._churn, stored.ranker.ranker_id, result, now=now)
+                    record_ranking(
+                        self._snapshots, self._churn, stored.ranker.ranker_id, result,
+                        now=now, shared_root=self._shared_root,
+                    )
                 except Exception:  # noqa: BLE001 -- a snapshot/churn-write failure must not crash the scheduler
                     LOG.exception("ranker scheduler: failed to persist snapshot/churn for %s", stored.ranker.ranker_id)
             ran.append(stored.ranker.ranker_id)

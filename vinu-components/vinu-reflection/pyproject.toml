@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vinu-reflection"
+version = "0.1.0"
+description = "The reflection/Hindsight worker: 6 analysts, 25 analyses, one shared severity/trend write path -- see missing-pieces-of-system/maturity-agentic-system/thinking-1/02-decided-pattern/."
+requires-python = ">=3.10, <3.14"
+dependencies = [
+    "vinu-infra",
+    # Direct, in-process link to vinu-agent's own storage classes
+    # (LlmCallLogStore, TeamRunStore, ...) -- same "mount-and-import,
+    # not HTTP" posture vinu-agent/broker/research_link.py already
+    # established for vinu-research. Requires VINU_AGENT_DATA_ROOT-
+    # equivalent mount to actually resolve to real data -- see
+    # config.py / docker-compose.yml.
+    "vinu-agent",
+    # Same posture, for E's pair-correlation piece: reads vinu-live's
+    # BookBackend/CorrelationMonitorStore in-process against a mounted
+    # copy of its data root. vinu-tools comes along as vinu-live's own
+    # prerequisite (see vinu-live/Dockerfile's install order).
+    "vinu-live",
+    # Same posture, for I/X's screener cross-checks: reads
+    # RankerStore/RankerChurnStore/WatchAuditStore in-process.
+    "vinu-screener",
+    # Same posture, for E's concentration piece: reads
+    # AllocationHistoryStore in-process. Already depends on vinu-research
+    # itself, already installed via the vinu-agent chain above.
+    "vinu-portfolio",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+vinu-reflection = "vinu_reflection.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["vinu_reflection*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

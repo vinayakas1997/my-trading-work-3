@@ -2,11 +2,11 @@
 
 ## Context
 
-`../to-do.md` item #2 named this as the single largest remaining gap:
+`../05-to-do.md` item #2 named this as the single largest remaining gap:
 every analysis in `data-driven-analysis-opportunities.md` was still one
 paragraph — "join X × Y × Z" — not a real, runnable spec. This folder
 closes that gap for all 25, one file per analyst cluster (matching
-`agents-implementation-plan.md`'s grouping), each analysis broken into
+`personal-important/01-discussions-to-reach-conclusion/agents-implementation-plan.md`'s grouping), each analysis broken into
 four parts:
 
 - **Source stores** — the real table/file names and real column names
@@ -18,7 +18,7 @@ four parts:
   below — this is a formula, not a hand-picked number).
 - **Storage** — `scope_type` / `scope_key` / what `signal_json` holds /
   what counts as `evidence_count`, per the schema in
-  `../../agents-implementation-plan.md`'s Layer 0 section.
+  `personal-important/01-discussions-to-reach-conclusion/agents-implementation-plan.md`'s Layer 0 section.
 - **Manageability** — how this analysis's row count behaves as the
   watchlist grows (linear in ticker count, bounded/structural regardless
   of ticker count, or the one quadratic case).
@@ -34,7 +34,7 @@ relative rule**: does this cycle's raw value fall outside that same
 metric's own trailing distribution for that `scope_key` (a percentile
 band or a standard-deviation band), computed fresh from the real source
 tables every time — never against this reflection layer's own
-already-gated rows (the rule fixed in `../to-do.md` #3, to avoid
+already-gated rows (the rule fixed in `../05-to-do.md` #3, to avoid
 recreating analysis E's own "slow boil invisible to a single check"
 problem one layer up). The only conditions with an absolute number are
 ones with a real domain-defined bound (Brier score ∈ [0,1], correlation
@@ -47,7 +47,7 @@ the same way `calibration_log.jsonl` logs everything else unmeasured,
 so it's checkable against real outcomes later, not assumed correct
 because it's written down here.
 
-## The six files
+## The seven files
 
 | File | Cluster | Owns |
 |---|---|---|
@@ -55,8 +55,9 @@ because it's written down here.
 | `02-regime-risk-coverage.md` | Regime & Risk Coverage | B, E, N, V |
 | `03-execution-money-flow.md` | Execution & Money-Flow | C, U, Y |
 | `04-decision-process-cognition.md` | Decision-Process / Cognition | D, L, K, M |
-| `05-governance-freshness.md` | Governance & Freshness | O, R, F, W |
+| `05-governance-freshness.md` | Governance & Freshness | O, R, F, W, H |
 | `06-external-signal-cross-check.md` | External-Signal Cross-Check | I, J, T, X |
+| `07-implementation-plan-status.md` | *(all clusters)* | Not a spec file — the implementation status/continuation doc. Read this one first if you're picking the build back up. |
 
 ## The manageability headline, restated here since it spans all six files
 
@@ -71,9 +72,11 @@ full watchlist (see `02-regime-risk-coverage.md`).
 
 ## Scope note
 
-Like everything in this folder, this is a design and a specification,
-not an implementation. Nothing described here has been built. Per
-`../../agents-implementation-plan.md`'s build order, only **D**'s file
-(`04-decision-process-cognition.md`) needs to be fully correct before
-the first real code gets written — the rest can be refined as their
-turn in the build order approaches.
+Files `00`–`06` are a design and a specification, not an
+implementation. **As of 2026-09-19, 9 of the 25 analyses described here
+have actually been built and tested** (in the separate `vinu-reflection`
+service) — see `07-implementation-plan-status.md` for exactly which
+ones, what's still not built and why, and where to continue. The design
+files themselves are kept current too: every built or investigated
+analysis has a dated note in its own section recording what was found
+and (where real data didn't support the original design) what changed.

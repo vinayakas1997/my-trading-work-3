@@ -34,6 +34,17 @@ wanting a per-ticker answer joins at read time: look up which
 `(strategy_family, regime_tag)` a candidate ticker matches, then read
 B's belief for that cell.
 
+**Not attempted, 2026-09-19 — needs a new categorical scheme first.**
+Grepped the whole codebase for `strategy_family`/`family`: no such
+categorical concept exists anywhere. `Artifact.type` is a coarse
+artifact-kind flag (`"strategy"`/`"trade_plan"`/etc, not a style
+taxonomy); `signal_definition` is free text, not categorical. Building
+B would mean inventing a brand-new classification scheme (e.g.
+keyword-parsing `signal_definition`) from scratch, not reading one that
+already exists -- a different, bigger decision than the "drop the field
+that has no real substitute" scoping-downs already applied to C/H. Left
+for a dedicated design pass, not silently invented here.
+
 ---
 
 ## E. Cross-package systemic risk (correlation + concentration) — the one real scaling risk in the whole set
@@ -58,7 +69,7 @@ consecutive weekly checks by more than this pair's own trailing 8-week
 P90 delta — computed directly from `correlation_monitor_history`'s full
 unbroken raw history, **never** from `reflection_beliefs`'/
 `reflection_findings_history`'s own already-gated rows (the rule fixed
-in `../to-do.md` #3 specifically to stop this exact analysis's own
+in `../05-to-do.md` #3 specifically to stop this exact analysis's own
 detection method from reintroducing the slow-boil blind spot it exists
 to catch).
 
@@ -75,6 +86,17 @@ streak.
 `system`), `scope_key=sleeve_name`. `signal_json`:
 `{vol_annualized_trend, weight_trend}`.
 
+**Concentration piece built 2026-09-19**: `vinu-reflection/vinu_reflection/
+reflection/concentration_coverage.py`. **Real data-shape correction**:
+checked `AllocationHistoryStore`'s one real writer
+(`vinu-portfolio/vinu_portfolio/service.py`'s `compute_daily_allocation()`)
+— `sleeves` is `{style_tag: summed_target_weight}`, a real persisted
+weight-concentration series; no per-sleeve `vol_annualized` is tracked
+anywhere. Implemented against the weight-concentration signal (the
+design doc's own "`vol_annualized` or weight concentration" already
+anticipated this). New `vinu-portfolio` dependency + `./data/portfolio`
+mount added to `vinu-reflection`.
+
 **Manageability — read this one carefully**: a naive "check every pair
 in the watchlist" is quadratic — 200 tickers is ~20,000 possible pairs.
 **The mitigation, load-bearing, not optional**: scope pair-checks to
@@ -83,6 +105,26 @@ watchlist — typically 10–30 concurrent positions, so
 `(portfolio_size choose 2)` instead of `(watchlist_size choose 2)`, a
 difference of orders of magnitude. The concentration piece is separately
 bounded by sleeve count (small, fixed) regardless.
+
+**Pair piece built 2026-09-19**: `vinu-reflection/vinu_reflection/reflection/correlation_coverage.py`.
+Concentration piece also built, same day (see its own entry below).
+**Real data-shape correction found while implementing the pair piece**:
+`correlation_monitor_history`'s `flagged` JSON list only ever contains a
+pair's correlation value for cycles where that pair had already crossed
+`runtime_corr_threshold` — a pair sitting below threshold leaves no
+value in this store at all, so a pair's true continuous correlation
+history (what "trailing 8-week P90" implies) can't be reconstructed,
+only the sequence of already-flagged values. Implemented against that
+real signal instead (most recent 3 flagged occurrences vs. prior up to
+8, reusing the design's own numbers as occurrence-counts rather than
+calendar weeks) — this **cannot** catch the literal "slow boil while
+staying under threshold" scenario the analysis exists for; that would
+need a new writer recording every pair's raw correlation every cycle,
+not just flagged ones. Left as a real, documented gap, not silently
+papered over. New `vinu-live` dependency added to `vinu-reflection`
+(mount-and-import, same posture as vinu-agent) — no new docker-compose
+mount needed, reuses the `/live-data` mount `loss_attribution.py`
+already added for C.
 
 ---
 
@@ -112,6 +154,19 @@ date.
 **Manageability**: negligible volume — driven by rare real events, not
 a cadence.
 
+**Deferred, 2026-09-19 — not attempted this pass.** `safety_ledger.jsonl`
+(`HashChainedLedger`, `vinu_agent/broker/audit_ledger.py`) is confirmed
+real and genuinely append-only (hash-chained, fsync'd, a real reader
+already exists) -- not the blocker. The blocker is the same one already
+flagged for Q: `shock_clustering`/`shock_personality` angle results live
+as Parquet files under vinu-initial-analysis, the one service too
+dependency-heavy (torch/xgboost/chronos/timesfm) to mount-and-import the
+way every other analyst in this service does. Building N would
+reintroduce that exact cost. Worth a deliberate decision (a lightweight
+Parquet-only reader that doesn't import the full package? a new
+producer-side projection into the ticker-profile mechanism?) before
+building, not a default.
+
 ---
 
 ## V. Paper-vs-live performance predictor
@@ -139,3 +194,20 @@ gating philosophy.
 `evidence_count` = # artifacts with both paper and live history.
 
 **Manageability**: bounded by the number of strategy families.
+
+**Not attempted, 2026-09-19 — needs more investigation, not blocked.**
+Checked `paper_performance` (`vinu-agent/vinu_agent/broker/performance_store.py`)
+directly: PK is `artifact_id`, both `record_daily_returns`/`record_meta`
+upsert on it, confirming it's overwrite-only (the full `returns_json`
+accumulates under one row, but only a single last-write-wins
+`updated_at` -- no per-return timestamps). No `promoted_at` marker
+exists in this file, and a grep for a real promotion-timestamp field
+elsewhere (`ArtifactStatus.ACTIVE` transitions in
+`trade_plan_authoring.py`/`service.py`) found only inline `artifact.status
+= ArtifactStatus.ACTIVE` assignments with no dedicated timestamp write —
+`Artifact.updated_at` is the closest proxy but isn't exclusive to
+promotion (other updates bump it too), so it's not yet clear this
+cleanly splits "paper-period" from "live-period" returns. Also still
+needs a real Pearson-correlation helper (nothing in this codebase
+computes one yet — every analyst so far only needed PSI). Worth a
+closer look before building, not attempted this pass.

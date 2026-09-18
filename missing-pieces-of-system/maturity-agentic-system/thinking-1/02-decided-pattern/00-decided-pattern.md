@@ -3,19 +3,33 @@
 ## Context
 
 This is the settled, end-to-end narrative that came out of the
-conversation following `data-driven-analysis-opportunities.md`,
+conversation following `25-A-Y-details/data-driven-analysis-opportunities.md`
+(same folder), and three docs now relocated to
+`personal-important/01-discussions-to-reach-conclusion/`:
 `agents-implementation-plan.md`, `six-agents-critique-and-hindsight-memory-resolution.md`,
-and `other-findings-methods.md` (all same folder). Those four docs each
-cover one piece in depth; this doc exists to walk the whole pipeline in
-one place, in plain language, with a worked example — specifically to
-answer the question "at which exact step does data reach Hindsight, and
-where does Graphiti fit in" precisely, since that was the piece that
-needed a concrete trace to actually land.
+and `other-findings-methods.md`. Those four docs each cover one piece in
+depth; this doc exists to walk the whole pipeline in one place, in plain
+language, with a worked example — specifically to answer the question
+"at which exact step does data reach Hindsight, and where does Graphiti
+fit in" precisely, since that was the piece that needed a concrete
+trace to actually land.
 
-Like every doc in this folder: **this is the design, not the
-implementation.** Nothing below has been built. `agents-implementation-plan.md`'s
+Like every doc in this folder: **this is the design**, and as of
+2026-09-19 the first real slice of the implementation exists too --
+`personal-important/01-discussions-to-reach-conclusion/agents-implementation-plan.md`'s
 build order (Layer 0 → Decision-Process analyst → the rest → the brain)
-is still the actual next step, in that order.
+has its first two steps done: Layer 0 (`vinu-infra/reflection.py`) plus
+a real worker loop to run it, both living in their own `vinu-reflection`
+service, not inside vinu-agent (`05-to-do.md` #5's 2026-09-19 update
+explains why, and why moving it back later would be cheap if that turns
+out to be the better call). **10 of the 25 analyses are built on top of
+it**, one per cluster's easiest real slice plus the whole implementable
+Decision-Process set — every remaining analysis was checked against real
+code, not left unexamined. **For the full per-analysis status, why each
+unbuilt one isn't, and where to continue, see
+`25-A-Y-details/07-implementation-plan-status.md` — the single
+reference for implementation status, kept current going forward instead
+of this paragraph.**
 
 ## The 9 steps
 
@@ -55,12 +69,30 @@ is still the actual next step, in that order.
 
 6. **Hindsight (long-term memory) — same moment as step 5, not a later
    step.** If (and only if) a finding passed step 4's gate, it's *also*
-   sent to Hindsight right then, into the relevant permanent bank
-   (per-ticker today), tagged by date/regime/source-analyst. Hindsight
-   never gets the full daily output of every analyst — only what
-   already cleared the significance bar. It refines its own internal
-   belief per tag combination on its own; that's Hindsight's job, not
-   something built by hand.
+   sent to Hindsight right then, into the relevant permanent bank,
+   tagged by date/regime/source-analyst. Hindsight never gets the full
+   daily output of every analyst — only what already cleared the
+   significance bar. It refines its own internal belief per tag
+   combination on its own; that's Hindsight's job, not something built
+   by hand.
+
+   **Three bank types, not one** — routed the same way as step 7 below,
+   by the finding's own `scope_type`, never by which analyst wrote it:
+   - `scope_type=ticker` → that ticker's own permanent bank (the TSLA
+     example below).
+   - `scope_type=ticker_pair` → the portfolio/correlation bank —
+     structurally the same routing rule as Graphiti below, so today,
+     before Graphiti exists, a pair finding goes to SQLite only (see
+     the AAPL↔MSFT example below); once the portfolio bank is real,
+     pair findings move there instead.
+   - `scope_type=system` / `strategy_family` / `angle` → the
+     **system-process bank** — one shared bank for every finding that
+     isn't tied to a single ticker or a pair (D, K, L, M, N, F, O, and
+     H's governance piece). This bank type is easy to lose track of
+     because none of it is ticker-shaped, but it's a real, separate
+     part of the resolved design, not an afterthought — a Decision-
+     Process finding about LLM call quality belongs here, never
+     invented as a fake "ticker" to force it into a per-ticker bank.
 
 7. **Graphiti — reserved, not built, for one specific kind of finding.**
    See the dedicated section below — this is the step most worth
@@ -91,7 +123,7 @@ This is the part that needed a concrete trace, so here it is precisely.
 
 **The short version**: Graphiti never receives anything today, because
 it isn't built. When it *is* built (a deliberately deferred, later
-step — see `other-findings-methods.md`), it only ever receives
+step — see `personal-important/01-discussions-to-reach-conclusion/other-findings-methods.md`), it only ever receives
 **pair/relational** findings — never single-ticker findings, which
 always go to Hindsight instead.
 
@@ -159,13 +191,14 @@ flowchart TB
     S1 --> J1 --> A1 & A2 & A3 & A4 & A5 & A6 --> G1
     G1 -- no --> G2
 
-    G1 -- yes, single-ticker --> SQL["Step 5 — SQLite (Layer 0)<br/>reflection_findings_history +<br/>reflection_beliefs"]
+    G1 -- yes, any scope --> SQL["Step 5 — SQLite (Layer 0)<br/>reflection_findings_history +<br/>reflection_beliefs"]
     G1 -- yes, single-ticker --> HS["Step 6 — Hindsight<br/>per-ticker bank, tagged"]
-    G1 -- yes, PAIR/relational --> SQL
+    G1 -- "yes, system/strategy_family/angle" --> SP["Step 6 — Hindsight<br/>system-process bank, tagged"]
     G1 -. "yes, PAIR/relational<br/>(no home yet)" .-> GR["Step 7 — Graphiti<br/>portfolio bank<br/>(NOT BUILT — deferred)"]
 
     SQL --> BRAIN["Step 8 — the brain<br/>(one synthesis agent,<br/>absorbs the narrating agent)"]
     HS --> BRAIN
+    SP --> BRAIN
     GR -. future .-> BRAIN
 
     BRAIN --> C1["Step 9 — consumers<br/>Planner / risk_gatekeeper /<br/>capital_allocator"]
@@ -206,6 +239,18 @@ one → **passes the gate too**, but routes differently:
 - It does **not** go to Graphiti either — not built yet. Today, it has
   nowhere to go but SQLite. Once the portfolio bank exists, this exact
   finding is the shape that would move there instead.
+
+**Same cycle, a third finding — this time from Decision-Process ("D"),
+not Regime & Risk Coverage:** the `forecast_skill` LLM role's
+retry-rejection delta moved outside its own trailing band this week.
+This is a `scope_type=system` fact — not TSLA's, not a pair's — so it
+routes to the third bank type:
+- `reflection_beliefs` gets a new row, `scope_type=system,
+  scope_key=llm_role:forecast_skill`.
+- It's sent to the **system-process bank** — not TSLA's bank (this
+  finding has nothing to do with TSLA specifically), not the portfolio
+  bank (it's not a relational fact between two tickers). One shared
+  bank for every finding shaped like this one.
 
 **Step 8, next brain cycle:** the brain reads `reflection_beliefs` and
 sees both the TSLA degradation and the AAPL/MSFT correlation climb in

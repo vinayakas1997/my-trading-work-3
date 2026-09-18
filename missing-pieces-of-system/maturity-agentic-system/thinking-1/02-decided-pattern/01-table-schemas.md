@@ -15,7 +15,7 @@ Raw, append-only. Every analyst writes here. Pruned over time (same way
 | `finding_id` (PK) | unique row id |
 | `analyst_name` | which of the 6 analysts wrote this |
 | `cluster` | which analyst cluster (Forecast Intelligence, etc.) |
-| `scope_type` | `system` \| `ticker` \| `ticker_pair` \| `regime` \| `strategy_family` \| `angle` |
+| `scope_type` | `system` \| `ticker` \| `ticker_pair` \| `strategy_family` \| `angle` (no `regime` value — none of the 25 scoped analyses use it as a top-level scope; regime always lives nested inside `signal_json` instead, see `02-analyst-interface.md`) |
 | `scope_key` | what this row is about (a symbol, a pair, a checkpoint name...) |
 | `computed_at` | when this finding was computed |
 | `signal_json` | the real numbers — different shape per analysis, e.g. `{"brier_trend": ...}` for A, `{"correlation_trend": ...}` for E |

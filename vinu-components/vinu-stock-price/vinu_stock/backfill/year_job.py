@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from vinu_infra.ticker_profile import write_ticker_profile_key
 from vinu_stock.catalog.gap_validation import count_session_gaps
 from vinu_stock.catalog.store import CatalogStore
 from vinu_stock.providers.registry import ProviderRegistry
@@ -19,6 +20,7 @@ def run_year_job(
     data_root: Path,
     catalog: CatalogStore,
     registry: ProviderRegistry,
+    shared_root: Path | None = None,
 ) -> tuple[bool, int, str, str]:
     """Returns (ok, rows_written, provider_id, error)."""
     sym = symbol.strip().upper()
@@ -51,6 +53,17 @@ def run_year_job(
         has_adj_data=has_adj,
         gap_count=gap_count,
         last_validation_at=now,
+    )
+    write_ticker_profile_key(
+        shared_root,
+        sym,
+        "vinu_stock_price",
+        {
+            "provider": provider_id,
+            "archive_through": year,
+            "has_adj_data": bool(has_adj),
+            "gap_count": gap_count,
+        },
     )
     if gap_count > 0:
         catalog.log_ingest(

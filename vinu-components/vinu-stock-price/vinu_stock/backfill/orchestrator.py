@@ -87,6 +87,7 @@ def _backfill_symbol(
     end_year: int,
     summary_lock: threading.Lock,
     summary: BackfillSummary,
+    shared_root: Path | None = None,
 ) -> None:
     # Resolve the catalog store in *this* worker thread — SQLiteBackend
     # hands out one connection per thread via threading.local(), but only
@@ -132,6 +133,7 @@ def _backfill_symbol(
             data_root=data_root,
             catalog=catalog,
             registry=registry,
+            shared_root=shared_root,
         )
         if ok:
             with summary_lock:
@@ -258,6 +260,7 @@ def run_backfill(
     registry: ProviderRegistry,
     from_year: int | None = None,
     to_year: int | None = None,
+    shared_root: Path | None = None,
 ) -> BackfillSummary:
     summary = BackfillSummary(symbols=[s.strip().upper() for s in symbols])
     if not summary.symbols:
@@ -289,6 +292,7 @@ def run_backfill(
                 end_year=end_year,
                 summary_lock=summary_lock,
                 summary=summary,
+                shared_root=shared_root,
             ): sym
             for sym in summary.symbols
         }

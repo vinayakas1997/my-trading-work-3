@@ -52,7 +52,7 @@ this codebase (see the vision doc's "why this isn't a new idea" section).
 ## Layer 0: a shared finding schema, before anything else is built
 
 **Updated 2026-09-16** to match the settled design in
-`decided-pattern/decided-pattern.md` and `decided-pattern/to-do.md`
+`decided-pattern/00-decided-pattern.md` and `decided-pattern/05-to-do.md`
 (same folder) — the version below supersedes an earlier flat,
 single-table draft that had no ticker/scope dimension and no growth
 control. Two tables, not one, both in the same store pattern every
@@ -81,7 +81,7 @@ reflection_beliefs (current state, OVERWRITTEN on update, not appended
 ```
 
 Both tables only ever receive a row when a finding passes **the gate**
-(`decided-pattern.md` step 4 — "is this new, meaningfully changed, or
+(`00-decided-pattern.md` step 4 — "is this new, meaningfully changed, or
 degraded"): most cycles, for most scopes, produce nothing, and that's
 the correct outcome, not a gap. This is what actually controls growth —
 not retention policy after the fact, but not writing the noise in the
@@ -100,7 +100,7 @@ risk building gradually, no single cycle crossing threshold alone)
 could stay under the bar indefinitely purely because the reflection
 layer's own memory of "last time" is itself gated. This must be pinned
 down as an explicit rule per analyst, not left ambiguous — see
-`decided-pattern/to-do.md` #3.
+`decided-pattern/05-to-do.md` #3.
 
 The `evidence_count` field is load-bearing, not decorative — it's what
 lets the brain (Layer 2 below) refuse to synthesize a confident

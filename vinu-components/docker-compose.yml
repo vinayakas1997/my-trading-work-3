@@ -99,6 +99,7 @@ services:
       - "127.0.0.1:8095:8095"
     volumes:
       - ./data/screener:/data
+      - ./data/shared:/shared
     cap_drop:
       - ALL
     cap_add:
@@ -183,6 +184,7 @@ services:
     volumes:
       - ./data/initial-analysis:/data
       - ./data/models:/models:ro
+      - ./data/shared:/shared
     cap_drop:
       - ALL
     cap_add:
@@ -288,6 +290,7 @@ services:
     volumes:
       - ./data/portfolio:/data
       - ./data/research:/research-data
+      - ./data/shared:/shared
     cap_drop:
       - ALL
     cap_add:
@@ -339,6 +342,7 @@ services:
     volumes:
       - ./data/research:/data
       - ./data/research:/research-data
+      - ./data/shared:/shared
     cap_drop:
       - ALL
     cap_add:
@@ -381,12 +385,21 @@ services:
       context: .
       dockerfile: vinu-live/Dockerfile
     env_file: .env
+    environment:
+      # Without this, trade_audit_log.py's DEFAULT_LOG_PATH falls back to
+      # $HOME/.vinu/trade_audit_log.jsonl inside the container -- NOT the
+      # mounted /data volume -- so the file was silently lost on every
+      # container restart/recreate. Found while wiring analysis C
+      # (Loss-cause/slippage attribution, vinu-reflection) -- it needs
+      # this file to actually persist across cycles to read anything.
+      VINU_TRADE_AUDIT_LOG: /data/trade_audit_log.jsonl
     secrets:
       - vinu_api_key
     ports:
       - "127.0.0.1:8091:8091"
     volumes:
       - ./data/live:/data
+      - ./data/shared:/shared
     cap_drop:
       - ALL
     cap_add:
@@ -450,6 +463,7 @@ services:
     volumes:
       - ./data/agent:/data
       - ./data/research:/research-data
+      - ./data/shared:/shared
       - ./vinu-agent/skills:/app/vinu-agent/skills:ro
     cap_drop:
       - ALL
@@ -488,6 +502,68 @@ services:
       quant-core-api:
         condition: service_healthy
       research-api:
+        condition: service_healthy
+
+  # =========================================================================
+  # vinu-reflection -- the maturity-agentic reflection worker (no HTTP port;
+  # a background loop only, per missing-pieces-of-system/maturity-agentic-
+  # system/thinking-1/02-decided-pattern/05-to-do.md). Split into its own
+  # service rather than living inside vinu-agent (2026-09-19 update to
+  # to-do.md #5) -- kept easy to merge back later since it only ever reads
+  # vinu-agent's storage classes in-process, same as research_link.py.
+  # =========================================================================
+  reflection-worker:
+    build:
+      context: .
+      dockerfile: vinu-reflection/Dockerfile
+    env_file: .env
+    environment:
+      VINU_LIVE_TRADE_AUDIT_LOG: /live-data/trade_audit_log.jsonl
+      # Real bug found 2026-09-19: angle_trust.py/debate_value.py/
+      # process_mining.py (all built earlier in this same pass) already
+      # call vinu-agent's research_link.get_strategy_store(), which
+      # resolves VINU_RESEARCH_DATA_ROOT from THIS container's own
+      # environment -- unset here until now, so it was silently
+      # defaulting to Path.cwd()/data (empty inside the container) and
+      # every one of those analysts would read/write nothing in a real
+      # deployment. Same variable + mount agent-api already sets for the
+      # identical reason.
+      VINU_RESEARCH_DATA_ROOT: /research-data
+      VINU_SCREENER_DATA_ROOT: /screener-data
+      VINU_REFLECTION_PORTFOLIO_DATA_ROOT: /portfolio-data
+    volumes:
+      - ./data/reflection:/data
+      - ./data/agent:/agent-data:ro
+      - ./data/live:/live-data:ro
+      - ./data/research:/research-data:ro
+      - ./data/screener:/screener-data:ro
+      - ./data/portfolio:/portfolio-data:ro
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/app/.cache
+      - /nonexistent:rw,mode=1777,exec
+    mem_limit: 512m
+    cpus: 1
+    pids_limit: 128
+    restart: unless-stopped
+    depends_on:
+      agent-api:
+        condition: service_healthy
+      live-api:
+        condition: service_healthy
+      research-api:
+        condition: service_healthy
+      screener-api:
+        condition: service_healthy
+      portfolio-api:
         condition: service_healthy
 
 # =========================================================================

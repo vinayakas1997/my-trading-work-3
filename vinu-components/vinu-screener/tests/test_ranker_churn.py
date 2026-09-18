@@ -134,6 +134,20 @@ class TestRecordRanking:
         snapshot, events = record_ranking(snapshots, None, "r1", _result(["MSFT"]), now=2.0)
         assert {(e.symbol, e.kind) for e in events} == {("AAPL", "exited"), ("MSFT", "entered")}
 
+    def test_ships_inert_when_shared_root_unset(self, snapshots, churn, tmp_path) -> None:
+        record_ranking(snapshots, churn, "r1", _result(["AAPL"]), now=1.0)
+        assert not (tmp_path / "ticker-profiles").exists()
+
+    def test_writes_ticker_profile_per_candidate_when_shared_root_set(self, snapshots, churn, tmp_path) -> None:
+        record_ranking(snapshots, churn, "r1", _result(["AAPL", "MSFT"]), now=1.0, shared_root=tmp_path)
+
+        from vinu_infra.ticker_profile import read_ticker_profile
+        aapl = read_ticker_profile(tmp_path, "AAPL")["vinu_screener"]
+        msft = read_ticker_profile(tmp_path, "MSFT")["vinu_screener"]
+        assert aapl["ranker_id"] == "r1"
+        assert aapl["rank_percentile"] == 1.0  # rank 1 of 2
+        assert msft["rank_percentile"] == 0.5  # rank 2 of 2
+
     def test_three_consecutive_runs_each_diff_against_the_immediately_prior_one(self, snapshots, churn) -> None:
         record_ranking(snapshots, churn, "r1", _result(["A", "B"]), now=1.0)
         record_ranking(snapshots, churn, "r1", _result(["A", "C"]), now=2.0)  # B exits, C enters

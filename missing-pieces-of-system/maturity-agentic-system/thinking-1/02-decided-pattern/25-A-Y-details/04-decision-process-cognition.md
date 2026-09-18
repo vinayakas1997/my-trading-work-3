@@ -3,7 +3,7 @@
 See `00-index.md` for the four-part format and the "no hand-picked
 numbers" rule every Condition below follows.
 
-**Build this cluster first** — per `../../agents-implementation-plan.md`'s
+**Build this cluster first** — per `personal-important/01-discussions-to-reach-conclusion/agents-implementation-plan.md`'s
 build order, **D** specifically is the recommended starting point: both
 its source stores are fully-built, fully-written, zero-reader today, so
 this is a pure read + join with no new writer needed anywhere.
@@ -37,6 +37,13 @@ noise from a handful of calls.
 **Manageability**: bounded by the fixed role list in `roles.json` —
 small, never scales with watchlist size.
 
+**Built 2026-09-18**: `vinu-reflection/vinu_reflection/reflection/decision_process.py`.
+`latency_rejection_correlation` was not implemented (only
+`retry_rejection_delta`) — scoped down during implementation, see that
+module's own history for why. `telemetry.db` was not joined either;
+`llm_calls`/`team_runs` alone were sufficient for the real Condition
+being checked.
+
 ---
 
 ## L. Process-mining the agent's own reasoning traces
@@ -59,6 +66,18 @@ P25 by more than a self-calibrated band.
 `evidence_count` = # attempts analyzed for this team.
 
 **Manageability**: bounded by the number of teams — small, fixed.
+
+**Built 2026-09-19**: `vinu-reflection/vinu_reflection/reflection/process_mining.py`.
+**Correction found while implementing**: `Attempt` (the Session/Attempt
+store's real dataclass) has no `team_name` field — the actual join to a
+team is via `Attempt.session_id == TeamRun.triggered_by_session_id`
+(same best-available-approximate-join posture already documented for D's
+`TeamRunStore.get_latest_verdict_by_session_id`), not a direct FK. Outcome
+quality is `calibration_entries.directional_correct`, meaned per artifact
+— `trade_audit_log.jsonl` was not joined (calibration_entries alone gave
+a clean, already-computed quality signal). `flagged_tool_sequences` (the
+second half of the original `signal_json` shape) was not implemented —
+scoped down to the trace-length half of the Condition only.
 
 ---
 
@@ -84,6 +103,26 @@ runs compared.
 
 **Manageability**: bounded, tiny — only 2 `scope_key` values.
 
+**Blocked, 2026-09-19 — not implementable as scoped, needs a new
+writer.** Checked against the real prompt-injection path
+(`vinu-agent/vinu_agent/agent/context.py`, the block that calls
+`facts_registry.active_facts_for(...)` / `unified_memory.list_by_symbol(...)`):
+the results are formatted straight into the prompt's free-text
+`user_message` — **no structured record of which specific
+`memory_entries.id` / `facts.id` were actually selected is written
+anywhere** (not on `Attempt`, not on `Session.config`, no sidecar
+table). The only trace is the full prompt text itself, which would need
+lossy text-matching against `memory_entries.title`/`facts.statement` to
+reconstruct — not a real queryable link, and not what "per session
+metadata" in this analysis's own Fetch description implies exists.
+Two ways forward, neither attempted yet: (a) add a real writer — record
+selected memory/fact IDs onto the session or a new sidecar table at
+injection time in `context.py` (turns K into a normal read+join
+afterward, same shape as every other analysis here), or (b) rescope K
+to the lossy text-match approximation and accept it's not a real FK-style
+join. Left undecided — this is a real product/priority call (is K worth
+a new writer), not a design detail to just pick silently.
+
 ---
 
 ## M. Does the investment-committee debate earn its cost
@@ -92,6 +131,19 @@ runs compared.
 `<base_dir>/<run_id>.json`, `status`, final report) × the realized
 outcome of the linked artifact (via `trade_plan_data`/`origin_angles`
 referencing the swarm `run_id`, folded in by `trade_plan_authoring.py`).
+
+**Correction, 2026-09-19**: the swarm `run_id` is never actually
+persisted into `trade_plan_data`/`origin_angles` (`SignalEntry`, the
+model that lands in `trade_plan_data.forecast.signals`, has no `run_id`
+field; `origin_angles` is a distinct, unrelated field — initial-analysis
+angle names, never swarm run ids). The real, available join needs no
+swarm-store read at all: `trade_plan_authoring.py`'s `fetch_debate_signal`
+(gated on `config.debate_signal_enabled`) appends one `SignalEntry` with
+`source="investment_committee"` into `forecast.signals` before the plan
+freezes into `Artifact.trade_plan_data` — presence/absence of that one
+signal, per artifact, **is** "did vs. didn't fold in a debate," a real
+ID-free join. `vinu_agent/swarm/store.py` is not read by the built
+implementation below at all.
 
 **Fetch**: compare outcome quality for artifacts that did vs. didn't
 fold in a completed `investment_committee` debate before authoring.
@@ -105,3 +157,6 @@ debated artifacts).
 n_debated}`. `evidence_count` = # debated artifacts to date.
 
 **Manageability**: bounded, effectively a single row.
+
+**Built 2026-09-19**: `vinu-reflection/vinu_reflection/reflection/debate_value.py`,
+using the corrected join above.

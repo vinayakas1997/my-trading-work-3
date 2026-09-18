@@ -53,6 +53,7 @@ def scan_main(args: argparse.Namespace) -> None:
         DEFAULT_RANKER_DB_PATH,
         DEFAULT_RANKER_SNAPSHOT_DB_PATH,
         DEFAULT_RULE_DB_PATH,
+        DEFAULT_SHARED_ROOT,
         DEFAULT_STOCK_API_URL,
     )
 
@@ -69,6 +70,7 @@ def scan_main(args: argparse.Namespace) -> None:
     ranker_scheduler = RankerScheduler(
         ranker_store, RankerRunner(data_source), snapshot_store=ranker_snapshots, churn_store=ranker_churn,
         held_symbols_fetcher=(lambda: fetch_held_symbols(agent_api_url)) if agent_api_url else None,
+        shared_root=DEFAULT_SHARED_ROOT,
     )
     ranker_thread = threading.Thread(
         target=ranker_scheduler.run_forever, kwargs={"poll_sec": args.ranker_poll_sec}, daemon=True,

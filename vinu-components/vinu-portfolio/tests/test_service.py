@@ -740,6 +740,71 @@ class TestConfidenceGradientMultiplier:
         assert bare < strong
 
 
+class TestComputeDailyAllocationTickerProfile:
+    def _svc_with_two_symbols(self, **overrides):
+        svc = _service(**overrides)
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [
+                {"name": "s1", "kind": "yaml"},
+                {"name": "s2", "kind": "yaml"},
+            ],
+            "weights": [
+                {"name": "s1", "kind": "yaml", "symbol": "AAPL", "target_weight": 0.5},
+                {"name": "s2", "kind": "yaml", "symbol": "MSFT", "target_weight": 0.5},
+            ],
+            "correlation_matrix": None,
+        })
+        svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "ok", "regime": None})
+        svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
+        svc._fetch_account_equity = AsyncMock(return_value=None)
+        return svc
+
+    def test_ships_inert_when_shared_root_unset(self, tmp_path) -> None:
+        svc = self._svc_with_two_symbols()
+        asyncio.run(svc.compute_daily_allocation())
+        assert not (tmp_path / "ticker-profiles").exists()
+
+    def test_writes_ticker_profile_per_symbol_when_shared_root_set(self, tmp_path) -> None:
+        svc = self._svc_with_two_symbols(shared_root=tmp_path)
+        result = asyncio.run(svc.compute_daily_allocation())
+        assert result["status"] == "ok"
+
+        from vinu_infra.ticker_profile import read_ticker_profile
+        aapl = read_ticker_profile(tmp_path, "AAPL")["vinu_portfolio"]
+        msft = read_ticker_profile(tmp_path, "MSFT")["vinu_portfolio"]
+        assert aapl["target_weight"] == pytest.approx(0.5)
+        assert msft["target_weight"] == pytest.approx(0.5)
+
+    def test_empty_symbol_falls_back_to_strategy_name(self, tmp_path) -> None:
+        """Matches this file's own existing convention (the per-symbol-regime
+        block above already does `w.get("symbol") or w.get("name", "")`) --
+        a weight with no real ticker symbol still gets written, keyed by its
+        strategy name."""
+        svc = self._svc_with_two_symbols(shared_root=tmp_path)
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [{"name": "s1", "kind": "yaml"}],
+            "weights": [{"name": "s1", "kind": "yaml", "symbol": "", "target_weight": 1.0}],
+            "correlation_matrix": None,
+        })
+        asyncio.run(svc.compute_daily_allocation())
+
+        from vinu_infra.ticker_profile import read_ticker_profile
+        assert read_ticker_profile(tmp_path, "S1")["vinu_portfolio"]["target_weight"] == pytest.approx(1.0)
+
+    def test_truly_unnamed_weight_is_skipped_not_written(self, tmp_path) -> None:
+        svc = self._svc_with_two_symbols(shared_root=tmp_path)
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [{"name": "", "kind": "yaml"}],
+            "weights": [{"name": "", "kind": "yaml", "symbol": "", "target_weight": 1.0}],
+            "correlation_matrix": None,
+        })
+        asyncio.run(svc.compute_daily_allocation())
+        assert not (tmp_path / "ticker-profiles").exists()
+
+
 class TestComputeDailyAllocation:
     def test_passes_through_empty_base_portfolio(self) -> None:
         svc = _service()

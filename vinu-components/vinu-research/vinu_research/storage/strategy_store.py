@@ -505,6 +505,21 @@ class SqliteStrategyStore:
         ).fetchall()
         return [self._row_to_angle_calibration_entry(r) for r in rows]
 
+    def distinct_angle_names(self) -> list[str]:
+        """The real, currently-scored angle names -- what Angle Trust
+        Trajectories (analysis A, `vinu-reflection` service's
+        `vinu_reflection/reflection/angle_trust.py`, reading this table
+        in-process via `research_link.get_strategy_store()`) iterates
+        over instead of trusting a static ~29-angle registry to be
+        exhaustive (an angle with no calibration entries yet has no
+        evidence to analyze regardless). Same pattern as
+        `LlmCallLogStore.distinct_roles()` in vinu-agent."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT DISTINCT angle_name FROM angle_calibration_entries ORDER BY angle_name"
+        ).fetchall()
+        return [r["angle_name"] for r in rows]
+
     def save_snapshot(self, snapshot: DecaySnapshot) -> DecaySnapshot:
         conn = self._get_conn()
         conn.execute(

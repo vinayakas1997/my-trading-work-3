@@ -17,9 +17,9 @@ Of the 19, **6 turned out redundant or low-value once compared against what the 
 | vn.py / VeighNa | Its main strength (multi-broker gateway abstraction) isn't needed — Vina is single-broker (Alpaca) by design. Its factor pipeline overlaps Qlib's more mature expression engine. |
 | TradeMaster | Academic RL benchmark, no live/broker code at all. Its one useful idea (data-derived regime labeling) is a fancier version of what FinRL's turbulence index already gives cheaply. |
 
-**13 kept** — each contributed at least one pattern nothing else did. Table below is renumbered with the 13 keepers first, the 6 cut repos listed last for the record.
+**13 kept** from the original 19-repo audit — each contributed at least one pattern nothing else did. Table below is renumbered with the 13 keepers first, the 6 cut repos listed last for the record. skfolio was added separately (2026-09-18) as entry #15, following the same clone-and-audit process as Vibe-Trading (#14, see below) — full writeup at `comprison-other-vinu/15-skfolio.md`.
 
-## Kept (13) — cloned in `other-repos-world/repos/`
+## Kept (13 + skfolio) — cloned in `other-repos-world/repos/`
 
 | # | Repo | GitHub Link | Stars (Sep 2026) | First Released | Last Updated | Description |
 |---|---|---|---|---|---|---|
@@ -36,6 +36,9 @@ Of the 19, **6 turned out redundant or low-value once compared against what the 
 | 11 | PyPortfolioOpt | https://github.com/robertmartin8/PyPortfolioOpt | ~3.4K | 2018-05-29 | 2026-07-07 | Efficient frontier, Black-Litterman, shrinkage, HRP, L2 regularization, objective functions for portfolio construction. |
 | 12 | pysystemtrade | https://github.com/robcarver17/pysystemtrade | ~2K | 2015-11-27 | 2026-07-18 | Rob Carver's "Systematic Trading" framework: forecast → position → portfolio rules pipeline. |
 | 13 | FinceptTerminal | https://github.com/Fincept-Corporation/FinceptTerminal | 31.3K | 2024-08-29 | 2026-09-08 | Full C++/Qt financial terminal. Has a mature scan engine under `fincept-qt/src/algo_engine/` (`ConditionEvaluator`, `ScanMonitor`, `RealtimeScanRunner`, `AlgoScanner`) — the closest match found to "set a rule, set a frequency, get notified" for `vinu-screener`. Note: June 2026 maintenance notice (moving to monthly public updates, team refocused on a paid private edition) — still actively pushed as of Sep 2026. |
+| 15* | skfolio | https://github.com/skfolio/skfolio | 2.4K | 2023-12-14 | 2026-09-16 | Scikit-learn-compatible portfolio optimization library: robust/denoised covariance estimators (GerberCovariance, DenoiseCovariance, DetoneCovariance), EWMu/ShrunkMu expected-returns estimators, risk-measure-generalized HierarchicalRiskParity, RiskBudgeting, CombinatorialPurgedCV/WalkForward CV splitters. Backed by Skfolio Labs (enterprise support). Full writeup: `comprison-other-vinu/15-skfolio.md`. |
+
+\* skfolio's "#15" is a Kept-table sequence number (13 original keepers + Vibe-Trading as an unnumbered 14th, per the "Not on this ranked list" section below + skfolio as 15th) — it is unrelated to, and numerically coincides with, "#15 best-of-algorithmic-trading" in the separate Cut (6) table below, which uses the original 19-repo audit's own numbering.
 
 ## Cut (6) — deleted from `other-repos-world/repos/`, kept here for the record only
 

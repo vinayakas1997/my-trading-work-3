@@ -13,6 +13,17 @@ Built from a full-repo pass across `vinu-agent`, `vinu-research`,
 Real table/file names, real column names, real function names throughout
 — nothing paraphrased.
 
+## A cross-cutting layer added since this catalog was written
+
+`vinu-infra/TICKER_PROFILE.md` (built 2026-09-18) documents a shared,
+per-ticker JSON projection written by 5 of the stores below
+(`symbol_catalog` #42, `WeightsStore`/fact sheets #53-54,
+`RankedSnapshotStore` #40, the position book #33, target weights
+computed in `vinu-portfolio/service.py`) — not a 56th store, and never
+a source of truth on its own; see that file for what it is, what it
+deliberately doesn't cover (history, pairwise/portfolio-wide facts),
+and how to read/write it.
+
 ## How to read this doc
 
 Each store gets the same 5 fields:

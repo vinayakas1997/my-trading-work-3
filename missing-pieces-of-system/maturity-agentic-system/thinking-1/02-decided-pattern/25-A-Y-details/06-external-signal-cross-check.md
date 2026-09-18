@@ -33,6 +33,17 @@ churn events are per-symbol, because the actionable question is "is
 this ranker worth trusting," not "was this specific symbol correctly
 called."
 
+**Built 2026-09-19**: `vinu-reflection/vinu_reflection/reflection/screener_agreement.py`
+(implements I and X together — same shape, one module). The real
+"main pipeline independently flagged this symbol" signal: the Planner
+triage hook writes a `candidate_proposed` event
+(`CANDIDATE_PROPOSED_EVENT_TYPE`, `vinu_agent/agent/thesis_intake_gate.py`)
+into `ticker_ledger` — real, checkable, per-symbol, per-timestamp, not
+invented for this. "Within a trailing window" implemented as a
+symmetric ±48h window (the design doc doesn't specify a direction).
+New `vinu-screener` dependency + `./data/screener` mount added to
+`vinu-reflection`.
+
 ---
 
 ## J. Screener churn rate as a regime-change leading indicator
@@ -53,6 +64,19 @@ regime transitions analyzed.
 
 **Manageability**: bounded, small — system-wide by nature, never
 per-ticker.
+
+**Blocked, 2026-09-19 — not implementable as scoped.** Checked where
+`regime_tag` actually gets written (`Artifact.regime_tag`): exactly one
+assignment site in the whole codebase
+(`vinu-agent/vinu_agent/agent/research_artifact_writer.py:159`), set
+once at artifact-creation time and never updated afterward. There is no
+"regime relabeling event" anywhere — `regime_tag` is a static per-artifact
+attribute, not a continuously-tracked system state that transitions over
+time. J's entire premise ("compare churn-volume spikes to the timing of
+subsequent `regime_tag` relabeling events") assumes an event stream that
+doesn't exist in this codebase. Would need a new writer that actually
+tracks system-wide regime transitions as events, not a read of existing
+data.
 
 ---
 
@@ -80,6 +104,10 @@ are already summary judgments rather than raw metrics.
 **Manageability**: bounded, effectively a single row, and only
 meaningful once `MaturityAssessor` exists — low cadence by nature.
 
+**Structurally blocked, confirmed 2026-09-19** — not a data gap, the
+doc's own text already says why: `MaturityAssessor` doesn't exist yet.
+Nothing to check until it's built.
+
 ---
 
 ## X. Does the screener's condition-rule alert engine predict anything either
@@ -104,3 +132,9 @@ this rule to date.
 
 **Manageability**: bounded by the number of active rules (`RuleStore`,
 small) — a direct sibling of I, not a new category.
+
+**Built 2026-09-19**: same module as I, `screener_agreement.py` (see
+I's own entry above for the shared implementation detail) — reads
+`WatchAuditStore.history()` (genuinely append-only, confirmed via
+`vinu-screener/vinu_screener/audit/watch_history.py`'s own docstring:
+"a fire is written here once and never mutated or reset").

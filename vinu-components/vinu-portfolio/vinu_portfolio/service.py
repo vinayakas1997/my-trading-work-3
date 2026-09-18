@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from vinu_infra.ticker_profile import write_ticker_profile_key
 from vinu_portfolio.config import PortfolioConfig, load_config
 from vinu_portfolio.game_plan import DailyGamePlan, SymbolPlan
 from vinu_portfolio.regime import classify_current_regime
@@ -926,6 +927,21 @@ class PortfolioService:
             )
         except Exception as exc:  # noqa: BLE001 -- best-effort, never blocks the response
             LOG.warning("Allocation history write failed: %s", exc)
+
+        if self._config.shared_root:
+            for t in tilted:
+                sym = (t.get("symbol") or t.get("name", "")).upper()
+                if not sym:
+                    continue
+                write_ticker_profile_key(
+                    self._config.shared_root, sym, "vinu_portfolio",
+                    {
+                        "target_weight": t["target_weight"],
+                        "base_weight": t.get("base_weight"),
+                        "regime_multiplier": t.get("regime_multiplier"),
+                        "outcome_multiplier": t.get("outcome_multiplier"),
+                    },
+                )
 
         return result
 

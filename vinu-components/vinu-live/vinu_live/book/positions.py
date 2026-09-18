@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 from typing import Any
 
 from vinu_infra.sqlite import SQLiteBackend
+from vinu_infra.ticker_profile import write_ticker_profile_key
 from vinu_live.book.quantize import (
     money_float,
     qty_float,
@@ -95,6 +97,32 @@ def _conn(backend: BookBackend):
     return backend._get_conn()
 
 
+def _write_position_profile(pos: "Position", *, is_open: bool, realized_pnl: float | None = None) -> None:
+    """Best-effort shared ticker-profile write, same posture as vinu-stock-
+    price/vinu-initial-analysis/vinu-screener's producers -- resolved
+    directly from VINU_SHARED_ROOT (empty/unset = ships inert, no write
+    attempted) rather than threaded through every caller, since this
+    module's write functions have no existing config-DI chain to hook
+    into. Never raises: write_ticker_profile_key is already best-effort
+    internally."""
+    shared_root = os.environ.get("VINU_SHARED_ROOT", "").strip() or None
+    if not shared_root:
+        return
+    write_ticker_profile_key(
+        shared_root, pos.symbol, "vinu_live",
+        {
+            "position_id": pos.position_id,
+            "side": pos.side,
+            "qty": pos.qty,
+            "avg_entry": pos.avg_entry,
+            "realized_pnl": realized_pnl if realized_pnl is not None else pos.realized_pnl,
+            "stop_loss": pos.stop_loss,
+            "take_profit": pos.take_profit,
+            "is_open": is_open,
+        },
+    )
+
+
 def open_position(
     backend: BookBackend,
     symbol: str,
@@ -131,7 +159,10 @@ def open_position(
     conn.commit()
 
     LOG.info("Opened %s %s %s @ %.2f", side, qty, symbol.upper(), price)
-    return get_position(backend, pid)
+    opened_pos = get_position(backend, pid)
+    if opened_pos is not None:
+        _write_position_profile(opened_pos, is_open=True)
+    return opened_pos
 
 
 def _validate_side(side: str) -> str:
@@ -178,7 +209,10 @@ def add_to_position(
         [fid, pos.symbol, "buy" if pos.side == "long" else "sell", qty_float(add_qty), money_float(price), filled_at, position_id, money_float(commission)],
     )
     conn.commit()
-    return get_position(backend, position_id)
+    added_pos = get_position(backend, position_id)
+    if added_pos is not None:
+        _write_position_profile(added_pos, is_open=True)
+    return added_pos
 
 
 def reduce_position(
@@ -214,6 +248,7 @@ def reduce_position(
     if remaining <= 0:
         _close_position(conn, pos, price, new_realized)
         conn.commit()
+        _write_position_profile(pos, is_open=False, realized_pnl=float(new_realized))
         return None
 
     conn.execute(
@@ -228,7 +263,10 @@ def reduce_position(
         [fid, pos.symbol, "sell" if pos.side == "long" else "buy", float(r_qty), money_float(price), filled_at, position_id, float(commission)],
     )
     conn.commit()
-    return get_position(backend, position_id)
+    reduced_pos = get_position(backend, position_id)
+    if reduced_pos is not None:
+        _write_position_profile(reduced_pos, is_open=True)
+    return reduced_pos
 
 
 def close_position(
@@ -250,6 +288,7 @@ def close_position(
     conn = _conn(backend)
     _close_position(conn, pos, close_price, total_realized)
     conn.commit()
+    _write_position_profile(pos, is_open=False, realized_pnl=float(total_realized))
     return pos
 
 

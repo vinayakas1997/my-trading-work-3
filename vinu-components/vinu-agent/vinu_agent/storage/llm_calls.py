@@ -154,6 +154,7 @@ class LlmCallLogStore(SQLiteBackend):
         tier: Optional[str] = None,
         team: Optional[str] = None,
         session_id: Optional[str] = None,
+        role: Optional[str] = None,
         limit: int = 100,
     ) -> list[LlmCallRecord]:
         conn = self._get_conn()
@@ -168,12 +169,29 @@ class LlmCallLogStore(SQLiteBackend):
         if session_id:
             conditions.append("session_id = ?")
             params.append(session_id)
+        if role:
+            conditions.append("role = ?")
+            params.append(role)
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         params.append(limit)
         rows = conn.execute(
             f"SELECT * FROM llm_calls {where} ORDER BY created_at DESC LIMIT ?", params,
         ).fetchall()
         return [LlmCallRecord.from_row(dict(r)) for r in rows]
+
+    def distinct_roles(self) -> list[str]:
+        """The real, currently-in-use `role` values -- what
+        Decision-Process (analysis D, `vinu-reflection` service's
+        `vinu_reflection/reflection/decision_process.py`, reading this
+        table in-process via a mounted copy of this service's data root)
+        iterates over instead of trusting a static roles.json list to be
+        exhaustive (a role that's never actually been called yet has no
+        evidence to analyze regardless)."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT DISTINCT role FROM llm_calls WHERE role != '' ORDER BY role"
+        ).fetchall()
+        return [r["role"] for r in rows]
 
     def total_tokens_by_tier(self) -> dict[str, int]:
         """Answers the actual question this store exists for: how much

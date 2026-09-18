@@ -78,6 +78,27 @@ class SessionStore:
         )
         return Attempt.from_dict(self._read_json(path))
 
+    def list_all_attempts(self, limit: int = 10_000) -> List[Attempt]:
+        """Every attempt across every session, newest-created first --
+        what Process-Mining (analysis L, `vinu-reflection` service's
+        `vinu_reflection/reflection/process_mining.py`) scans instead of
+        looking up one session at a time. No index/manifest of attempts
+        exists (each session dir has to be walked), so this is O(sessions)
+        -- acceptable for a periodic reflection cycle, not for a hot path."""
+        attempts: List[Attempt] = []
+        for session_dir in self.base_dir.iterdir():
+            if not session_dir.is_dir():
+                continue
+            attempts_dir = session_dir / "attempts"
+            if not attempts_dir.is_dir():
+                continue
+            for attempt_dir in attempts_dir.iterdir():
+                attempt_file = attempt_dir / "attempt.json"
+                if attempt_file.exists():
+                    attempts.append(Attempt.from_dict(self._read_json(attempt_file)))
+        attempts.sort(key=lambda a: a.created_at, reverse=True)
+        return attempts[:limit]
+
     @staticmethod
     def _write_json(path: Path, data: dict) -> None:
         tmp = path.with_suffix(".tmp")
