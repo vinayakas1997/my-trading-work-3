@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS artifacts (
     origin_angles TEXT NOT NULL DEFAULT '[]',
     regime_tag TEXT NOT NULL DEFAULT '',
     freeze_hash TEXT NOT NULL DEFAULT '',
-    timeframe TEXT NOT NULL DEFAULT 'daily'
+    timeframe TEXT NOT NULL DEFAULT 'daily',
+    strategy_family TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS bench_history (
@@ -186,6 +187,7 @@ class SqliteStrategyStore:
             ("regime_tag", "TEXT NOT NULL DEFAULT ''"),
             ("freeze_hash", "TEXT NOT NULL DEFAULT ''"),
             ("timeframe", "TEXT NOT NULL DEFAULT 'daily'"),
+            ("strategy_family", "TEXT NOT NULL DEFAULT ''"),
         ]
         for name, typedef in migrations:
             if name not in cols:
@@ -218,8 +220,9 @@ class SqliteStrategyStore:
                 strategy_code, source_run_id, initial_sharpe, initial_max_dd, deflated_sharpe,
                 holdout_passed, stress_test_passed, pbo,
                 last_validated_ts, revalidation_count, last_revalidation_verdict,
-                trade_plan_data, approved_size, origin_angles, regime_tag, freeze_hash, timeframe)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                trade_plan_data, approved_size, origin_angles, regime_tag, freeze_hash, timeframe,
+                strategy_family)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 artifact.artifact_id,
                 artifact.type,
@@ -249,6 +252,7 @@ class SqliteStrategyStore:
                 artifact.regime_tag or "",
                 artifact.freeze_hash or "",
                 artifact.timeframe or "daily",
+                artifact.strategy_family or "",
             ),
         )
         conn.commit()
@@ -644,6 +648,7 @@ class SqliteStrategyStore:
             regime_tag=row["regime_tag"] if "regime_tag" in row.keys() and row["regime_tag"] else "",
             freeze_hash=row["freeze_hash"] if "freeze_hash" in row.keys() and row["freeze_hash"] else "",
             timeframe=row["timeframe"] if "timeframe" in row.keys() and row["timeframe"] else "daily",
+            strategy_family=row["strategy_family"] if "strategy_family" in row.keys() and row["strategy_family"] else "",
         )
 
     @staticmethod

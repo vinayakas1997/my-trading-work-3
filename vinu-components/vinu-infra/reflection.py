@@ -140,6 +140,34 @@ def population_stability_index(
     return psi
 
 
+def pearson_correlation(xs: list[float], ys: list[float]) -> float:
+    """Standard Pearson product-moment correlation coefficient, in
+    [-1, 1]. First real user: V (`02-regime-risk-coverage.md`'s
+    paper-vs-live performance predictor) -- nothing in this codebase
+    computed a correlation coefficient before it.
+
+    Returns 0.0 (no claimed relationship) for degenerate inputs -- fewer
+    than 2 paired observations, or either series has zero variance, which
+    would make the coefficient undefined (division by zero) -- rather
+    than raising. Same "no evidence, no claim" posture
+    `population_stability_index`'s own empty-input handling uses. Callers
+    gate on their own minimum-sample floor separately before this is ever
+    meaningful, same convention as every other cross-analyst metric here.
+    """
+    n = min(len(xs), len(ys))
+    if n < 2:
+        return 0.0
+    xs, ys = xs[:n], ys[:n]
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    covariance = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    var_x = sum((x - mean_x) ** 2 for x in xs)
+    var_y = sum((y - mean_y) ** 2 for y in ys)
+    if var_x == 0 or var_y == 0:
+        return 0.0
+    return covariance / math.sqrt(var_x * var_y)
+
+
 def classify_severity(psi: float, *, domain_floor_breached: bool = False) -> Optional[str]:
     """`03-severity-and-trend.md`'s three-way split. Returns None for
     `routine` (PSI < 0.1, matching the design's own "most cycles produce

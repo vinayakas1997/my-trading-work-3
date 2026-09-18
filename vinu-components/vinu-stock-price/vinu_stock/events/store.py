@@ -53,6 +53,26 @@ class EventsStore(SQLiteBackend):
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
     );
+
+    -- Permanent history of every event this store has ever seen --
+    -- `events` above is deliberately just "the current lookahead
+    -- snapshot" (replace_kind() deletes a kind's rows every pull), so by
+    -- the time a trade that overlapped an event actually closes, the
+    -- event row is very likely already gone (25-A-Y-details/
+    -- 03-execution-money-flow.md, analysis Y). This table is the new
+    -- writer that closes that gap: rows are copied here right before
+    -- `events` deletes them, and never removed afterward.
+    CREATE TABLE IF NOT EXISTS events_archive (
+        symbol      TEXT    NOT NULL,
+        kind        TEXT    NOT NULL,
+        event_ts    REAL    NOT NULL,
+        title       TEXT    NOT NULL DEFAULT '',
+        severity    INTEGER NOT NULL DEFAULT 1,
+        pulled_at   REAL    NOT NULL,
+        archived_at REAL    NOT NULL,
+        PRIMARY KEY (symbol, kind, event_ts, title)
+    );
+    CREATE INDEX IF NOT EXISTS idx_events_archive_symbol_ts ON events_archive (symbol, event_ts);
     """
     SCHEMA_VERSION = 1
 
@@ -86,10 +106,20 @@ class EventsStore(SQLiteBackend):
         """Atomically swap every row of `kind` for `records`. A calendar pull
         is a full snapshot of the lookahead window, so a stale row (event
         cancelled / rescheduled) must not survive -- delete-then-insert, not
-        upsert."""
+        upsert. Every row about to be deleted is archived into
+        `events_archive` first (INSERT OR IGNORE: a still-upcoming event
+        seen across several pulls in a row is already archived from its
+        first pull, and must not be re-inserted with a fresher, wrong
+        `archived_at`)."""
         pulled_at = time.time()
         rows = [r.as_row(pulled_at) for r in records if r.kind == kind]
         conn = self._get_conn()
+        conn.execute(
+            "INSERT OR IGNORE INTO events_archive "
+            "(symbol, kind, event_ts, title, severity, pulled_at, archived_at) "
+            "SELECT symbol, kind, event_ts, title, severity, pulled_at, ? FROM events WHERE kind = ?",
+            (time.time(), kind),
+        )
         conn.execute("DELETE FROM events WHERE kind = ?", (kind,))
         if rows:
             conn.executemany(
@@ -119,3 +149,17 @@ class EventsStore(SQLiteBackend):
     def count(self) -> int:
         conn = self._get_conn()
         return int(conn.execute("SELECT COUNT(*) FROM events").fetchone()[0])
+
+    def archived_overlapping(self, symbol: str, from_ts: float, to_ts: float) -> list[dict[str, Any]]:
+        """Same shape as `upcoming()` but reads the permanent archive
+        instead of the current lookahead snapshot -- for a closed trade
+        whose `[entry_ts, exit_ts]` window is in the past, this is the
+        only place that overlap can still be checked (analysis Y)."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT symbol, kind, event_ts, title, severity FROM events_archive "
+            "WHERE (symbol = ? OR symbol = ?) AND event_ts >= ? AND event_ts <= ? "
+            "ORDER BY event_ts ASC",
+            (symbol.strip().upper(), MACRO_SYMBOL, float(from_ts), float(to_ts)),
+        ).fetchall()
+        return [dict(r) for r in rows]

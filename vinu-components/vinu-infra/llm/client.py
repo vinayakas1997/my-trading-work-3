@@ -17,7 +17,7 @@ from vinu_infra.llm.cost import CostEntry, TokenUsage, get_global_cost_tracker
 from vinu_infra.llm.providers import detect_provider, get_capabilities
 from vinu_infra.llm.retry import LlmCallFailed, LlmParseError, build_retry
 from vinu_infra.rate_limit import TokenBucket
-from vinu_infra.telemetry import LLMCallRecord, record_llm_call_safe
+from vinu_infra.telemetry import LLMCallRecord, get_telemetry_store, record_llm_call_safe
 
 LOG = logging.getLogger(__name__)
 
@@ -264,3 +264,9 @@ class LlmClient:
     def close(self) -> None:
         self._session.close()
         self._cache.close()
+        # TelemetryStore.close() exists specifically to release telemetry.db
+        # (Windows won't delete a file with an open sqlite connection, which
+        # breaks TemporaryDirectory cleanup in tests) -- it was never wired
+        # up here, so every LlmClient using the default cached store left
+        # its telemetry connection open on close().
+        get_telemetry_store(self._telemetry_db_path).close()

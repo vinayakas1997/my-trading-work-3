@@ -121,6 +121,44 @@ class TickerLedgerStore(SQLiteBackend):
         ).fetchall()
         return [TickerLedgerEvent.from_row(dict(r)) for r in rows]
 
+    def list_events_by_type(self, event_type: str, *, limit: int = 100_000) -> list[TickerLedgerEvent]:
+        """Every event of one type across ALL tickers, oldest first --
+        what a reflection analyst needs (system-wide, not per-ticker) and
+        no existing method here provides (`get_events`/`count_events` are
+        both scoped to one ticker). Pure read, same posture as
+        `LlmCallLogStore.distinct_roles()` in vinu-agent.
+
+        Ordered by SQLite's own `rowid`, not `timestamp`: `timestamp` is
+        second-resolution (`_now()`'s `strftime`), so several events
+        written within the same second -- routine under a burst of
+        triage cycles, and the common case in any test that doesn't
+        sleep between writes -- would otherwise come back in an
+        unspecified order among themselves. `rowid` reflects true
+        insertion order with no such ties."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM ticker_ledger WHERE event_type = ? ORDER BY rowid ASC LIMIT ?",
+            (event_type, limit),
+        ).fetchall()
+        return [TickerLedgerEvent.from_row(dict(r)) for r in rows]
+
+    def list_events_by_types(self, event_types: list[str], *, limit: int = 100_000) -> list[TickerLedgerEvent]:
+        """Same as `list_events_by_type` but across several types in one
+        query, in one true insertion-ordered stream -- needed whenever
+        the relative order *between* two types matters (e.g. analysis R
+        merging fresh/stale triage events into one chronological trend),
+        which two separate `list_events_by_type` calls re-merged by
+        `timestamp` could not guarantee under same-second writes."""
+        if not event_types:
+            return []
+        conn = self._get_conn()
+        placeholders = ",".join("?" for _ in event_types)
+        rows = conn.execute(
+            f"SELECT * FROM ticker_ledger WHERE event_type IN ({placeholders}) ORDER BY rowid ASC LIMIT ?",
+            (*event_types, limit),
+        ).fetchall()
+        return [TickerLedgerEvent.from_row(dict(r)) for r in rows]
+
     def verify_ref_id(self, ref_id: str, *, strategy_store: Any | None = None, hypothesis_registry: Any | None = None) -> bool:
         """H: join verification — checks ref_id points to a real record.
         Fail-open (returns True, logs) if stores unavailable — never blocks

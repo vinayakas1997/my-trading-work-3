@@ -110,3 +110,38 @@ class TestContextMemoryIntegration:
         content = messages[-1]["content"]
         memory_blocks = content.count("<memory symbol=AAPL>")
         assert memory_blocks <= 1, "budget should limit to at most one block"
+
+
+class TestLastInjectedMemoryIds:
+    """Analysis K (25-A-Y-details/04-decision-process-cognition.md) needs a
+    structured record of which memory entries were actually injected --
+    before this, only the free-text prompt itself had that information."""
+
+    def test_injected_memory_ids_are_captured(self, store: UnifiedMemoryStore, builder: ContextBuilder) -> None:
+        store.add_entry(_make_memory("research", "AAPL", "Strong trend", "content"))
+        builder.build_messages([], "What about AAPL?")
+        assert builder.last_injected_memory_ids == ["research-AAPL-test"]
+
+    def test_no_ids_when_nothing_was_injected(self, store: UnifiedMemoryStore, builder: ContextBuilder) -> None:
+        builder.build_messages([], "What about TSLA?")
+        assert builder.last_injected_memory_ids == []
+
+    def test_ids_reset_between_calls(self, store: UnifiedMemoryStore, builder: ContextBuilder) -> None:
+        store.add_entry(_make_memory("research", "AAPL", "Strong trend", "content"))
+        builder.build_messages([], "What about AAPL?")
+        assert builder.last_injected_memory_ids == ["research-AAPL-test"]
+
+        builder.build_messages([], "What about TSLA?")
+        assert builder.last_injected_memory_ids == []
+
+    def test_truncated_block_only_records_ids_that_actually_fit(self, store: UnifiedMemoryStore) -> None:
+        registry = ToolRegistry()
+        builder = ContextBuilder(registry=registry, unified_memory=store, max_memory_tokens=50)
+        for i in range(5):
+            store.add_entry(_make_memory("research", "AAPL", f"Entry {i}", "x " * 30))
+        builder.build_messages([], "Analyze AAPL please")
+        content = builder.build_messages([], "Analyze AAPL please")[-1]["content"]
+        injected_titles_in_prompt = sum(
+            1 for i in range(5) if f"Entry {i}" in content
+        )
+        assert len(builder.last_injected_memory_ids) == injected_titles_in_prompt

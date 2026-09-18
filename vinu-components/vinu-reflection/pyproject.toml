@@ -28,6 +28,13 @@ dependencies = [
     # AllocationHistoryStore in-process. Already depends on vinu-research
     # itself, already installed via the vinu-agent chain above.
     "vinu-portfolio",
+    # Same posture, for P/G's ingest-health/fallback cross-checks: reads
+    # CatalogStore (symbol_catalog/ingest_log/provider_fallback_log)
+    # in-process. Already installed transitively via vinu-agent's own
+    # vinu-research chain (Dockerfile installs it before vinu-research) --
+    # listed explicitly here for the same documentation reasons as the
+    # other direct-import dependencies above.
+    "vinu-stock-price",
 ]
 
 [project.optional-dependencies]

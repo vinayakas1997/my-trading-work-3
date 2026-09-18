@@ -16,6 +16,9 @@ import pytest
 
 from vinu_agent.agent.planner_triage_hook import PlannerTriageResult
 from vinu_agent.agent.scheduler_workers import (
+    TRIAGE_FRESHNESS_FRESH,
+    TRIAGE_FRESHNESS_STALE,
+    TRIAGE_FRESHNESS_UNKNOWN,
     _map_parallel,
     bootstrap_new_tickers,
     build_channel_targets,
@@ -357,6 +360,105 @@ class TestMakePlannerOnYes:
         triage.on_propose.assert_called_once_with(
             "AAPL", result, ref_id="run_42", debate_run_id="",
         )
+
+
+class TestPlannerTriageFreshnessLogging:
+    """Analysis R (25-A-Y-details/05-governance-freshness.md): logs, at
+    each real Planner triage event, whether the run it acted on was
+    already stale/errored -- checked live, since `ticker_summaries` is
+    deliberately never versioned and can't answer this after the fact."""
+
+    def test_no_reader_means_no_freshness_logging(self) -> None:
+        service = _fake_service()
+        triage = MagicMock()
+        triage.check.return_value = PlannerTriageResult("AAPL", False, "at K-cap")
+
+        on_yes = make_planner_on_yes(service, triage)  # run_log_reader defaults to None
+        on_yes("AAPL", MagicMock(run_id_seen="run_1"))
+
+        freshness_calls = [
+            c for c in service.ticker_ledger.add_event.call_args_list
+            if c.kwargs.get("event_type") in {
+                TRIAGE_FRESHNESS_FRESH, TRIAGE_FRESHNESS_STALE, TRIAGE_FRESHNESS_UNKNOWN,
+            }
+        ]
+        assert freshness_calls == []
+
+    def test_logs_fresh_when_run_ids_match(self) -> None:
+        service = _fake_service()
+        triage = MagicMock()
+        triage.check.return_value = PlannerTriageResult("AAPL", False, "at K-cap")
+        reader = MagicMock()
+        reader.latest_run_id.return_value = "run_5"
+
+        on_yes = make_planner_on_yes(service, triage, run_log_reader=reader)
+        on_yes("AAPL", MagicMock(run_id_seen="run_5"))
+
+        call = service.ticker_ledger.add_event.call_args_list[0]
+        assert call.kwargs["event_type"] == TRIAGE_FRESHNESS_FRESH
+        assert "fresh" in call.kwargs["text"]
+        assert "STALE" not in call.kwargs["text"]
+
+    def test_logs_stale_when_latest_run_differs(self) -> None:
+        service = _fake_service()
+        triage = MagicMock()
+        triage.check.return_value = PlannerTriageResult("AAPL", False, "at K-cap")
+        reader = MagicMock()
+        reader.latest_run_id.return_value = "run_9"
+
+        on_yes = make_planner_on_yes(service, triage, run_log_reader=reader)
+        on_yes("AAPL", MagicMock(run_id_seen="run_5"))
+
+        call = service.ticker_ledger.add_event.call_args_list[0]
+        assert call.kwargs["event_type"] == TRIAGE_FRESHNESS_STALE
+        assert "STALE" in call.kwargs["text"]
+        assert "run_5" in call.kwargs["text"]
+        assert "run_9" in call.kwargs["text"]
+
+    def test_reader_exception_logs_unknown_and_does_not_raise(self) -> None:
+        service = _fake_service()
+        triage = MagicMock()
+        triage.check.return_value = PlannerTriageResult("AAPL", False, "at K-cap")
+        reader = MagicMock()
+        reader.latest_run_id.side_effect = RuntimeError("vinu-initial-analysis down")
+
+        on_yes = make_planner_on_yes(service, triage, run_log_reader=reader)
+        on_yes("AAPL", MagicMock(run_id_seen="run_5"))  # must not raise
+
+        call = service.ticker_ledger.add_event.call_args_list[0]
+        assert call.kwargs["event_type"] == TRIAGE_FRESHNESS_UNKNOWN
+        assert "failed" in call.kwargs["text"]
+
+    def test_freshness_logged_even_when_triage_declines_to_propose(self) -> None:
+        """The freshness question is about the triage EVENT (did Planner
+        look at this ticker at all), not about whether it proposed
+        something -- must fire even on a "no" from PlannerTriage."""
+        service = _fake_service()
+        triage = MagicMock()
+        triage.check.return_value = PlannerTriageResult("AAPL", False, "at K-cap")
+        reader = MagicMock()
+        reader.latest_run_id.return_value = "run_5"
+
+        on_yes = make_planner_on_yes(service, triage, run_log_reader=reader)
+        on_yes("AAPL", MagicMock(run_id_seen="run_5"))
+
+        assert service.ticker_ledger.add_event.call_count == 1
+
+    def test_ledger_write_failure_does_not_block_the_real_triage(self) -> None:
+        service = _fake_service()
+        service.ticker_ledger.add_event.side_effect = RuntimeError("db locked")
+        triage = MagicMock()
+        result = PlannerTriageResult("AAPL", True, "2 in flight", recipe_name="macd_cross")
+        triage.check.return_value = result
+        reader = MagicMock()
+        reader.latest_run_id.return_value = "run_5"
+
+        with patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker",
+                   return_value={"run_id": "run_42"}) as mock_run:
+            on_yes = make_planner_on_yes(service, triage, run_log_reader=reader)
+            on_yes("AAPL", MagicMock(run_id_seen="run_5"))  # must not raise
+
+        mock_run.assert_called_once()
 
 
 class TestBuildChannelTargets:

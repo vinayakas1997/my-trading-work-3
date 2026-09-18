@@ -1,6 +1,5 @@
-import os
-
 import pytest
+from pathlib import Path
 
 from vinu_infra.secrets_loader import load_secret, require_secret, secrets_dir
 
@@ -56,9 +55,13 @@ class TestRequireSecret:
 
 class TestSecretsDir:
     def test_default_is_run_secrets(self, monkeypatch):
+        # Compared as Path, not string: the deployed value is always a POSIX
+        # container path ("/run/secrets"), but Path() normalizes separators
+        # per-platform, so a raw string comparison fails on Windows dev
+        # machines even though the resolution logic is correct there too.
         monkeypatch.delenv("VINU_SECRETS_DIR", raising=False)
-        assert os.fspath(secrets_dir()) == "/run/secrets"
+        assert secrets_dir() == Path("/run/secrets")
 
     def test_env_override(self, monkeypatch):
         monkeypatch.setenv("VINU_SECRETS_DIR", "/tmp/custom-secrets")
-        assert os.fspath(secrets_dir()) == "/tmp/custom-secrets"
+        assert secrets_dir() == Path("/tmp/custom-secrets")

@@ -34,6 +34,22 @@ CREATE TABLE IF NOT EXISTS rebalance_requests (
     requested_at REAL NOT NULL,
     critical     INTEGER NOT NULL DEFAULT 0
 );
+
+-- Append-only history of every consumed request -- `rebalance_requests`
+-- above is a one-row-per-symbol working queue (consume() deletes the row),
+-- so it can never answer "how did past critical bypasses turn out"
+-- (25-A-Y-details/03-execution-money-flow.md, analysis U). This table is
+-- the new writer that closes that gap: one row per consume(), never
+-- updated or deleted.
+CREATE TABLE IF NOT EXISTS rebalance_request_history (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol       TEXT NOT NULL,
+    reason       TEXT NOT NULL,
+    requested_at REAL NOT NULL,
+    critical     INTEGER NOT NULL DEFAULT 0,
+    consumed_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rebalance_history_symbol ON rebalance_request_history(symbol);
 """
 
 
@@ -92,7 +108,54 @@ class RebalanceRequestQueue(SQLiteBackend):
     def consume(self, symbol: str) -> None:
         """Removes a pending request once the orchestrator has evaluated
         it (whether honored or declined) -- a request is considered once,
-        not re-evaluated identically every cycle forever."""
+        not re-evaluated identically every cycle forever. Archives the row
+        into `rebalance_request_history` first so a later analysis can
+        still look up "was this symbol's request critical" even though the
+        working queue itself no longer holds it."""
         conn = self._get_conn()
-        conn.execute("DELETE FROM rebalance_requests WHERE symbol = ?", (symbol.upper(),))
+        symbol = symbol.upper()
+        row = conn.execute(
+            "SELECT reason, requested_at, critical FROM rebalance_requests WHERE symbol = ?", (symbol,),
+        ).fetchone()
+        if row is not None:
+            conn.execute(
+                "INSERT INTO rebalance_request_history "
+                "(symbol, reason, requested_at, critical, consumed_at) VALUES (?,?,?,?,?)",
+                (symbol, row["reason"], row["requested_at"], row["critical"], time.time()),
+            )
+        conn.execute("DELETE FROM rebalance_requests WHERE symbol = ?", (symbol,))
         conn.commit()
+
+    def history_for(self, symbol: str, limit: int = 200) -> list[RebalanceRequest]:
+        """All past consumed requests for a symbol, most recent first --
+        the read side of the history writer above."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT symbol, reason, requested_at, critical FROM rebalance_request_history "
+            "WHERE symbol = ? ORDER BY consumed_at DESC LIMIT ?",
+            (symbol.upper(), limit),
+        ).fetchall()
+        return [
+            RebalanceRequest(
+                symbol=r["symbol"], reason=r["reason"],
+                requested_at=r["requested_at"], critical=bool(r["critical"]),
+            )
+            for r in rows
+        ]
+
+    def all_history(self, limit: int = 5000) -> list[RebalanceRequest]:
+        """Every consumed request across all symbols, most recent first --
+        what analysis U actually needs (per-symbol AND system rollup)."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT symbol, reason, requested_at, critical FROM rebalance_request_history "
+            "ORDER BY consumed_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            RebalanceRequest(
+                symbol=r["symbol"], reason=r["reason"],
+                requested_at=r["requested_at"], critical=bool(r["critical"]),
+            )
+            for r in rows
+        ]

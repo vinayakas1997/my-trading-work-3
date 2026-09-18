@@ -33,6 +33,10 @@ class ReflectionConfig:
     #: same mount-not-HTTP posture. See
     #: vinu_reflection/reflection/concentration_coverage.py.
     portfolio_data_root: Path
+    #: where vinu-stock-price's vinu_stock_price.db can be read from --
+    #: same mount-not-HTTP posture. See
+    #: vinu_reflection/reflection/ingest_health.py.
+    stock_data_root: Path
     worker_interval_sec: int
 
 
@@ -53,6 +57,9 @@ def load_config() -> ReflectionConfig:
     portfolio_data_root = Path(
         os.environ.get("VINU_REFLECTION_PORTFOLIO_DATA_ROOT", str(Path.cwd() / "portfolio-data"))
     )
+    stock_data_root = Path(
+        os.environ.get("VINU_REFLECTION_STOCK_DATA_ROOT", str(Path.cwd() / "stock-data"))
+    )
     interval = int(
         os.environ.get("VINU_REFLECTION_WORKER_INTERVAL_SEC", str(DEFAULT_WORKER_INTERVAL_SEC))
     )
@@ -62,5 +69,6 @@ def load_config() -> ReflectionConfig:
         live_trade_audit_log_path=live_trade_audit_log_path,
         screener_data_root=screener_data_root,
         portfolio_data_root=portfolio_data_root,
+        stock_data_root=stock_data_root,
         worker_interval_sec=interval,
     )

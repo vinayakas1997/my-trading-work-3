@@ -33,6 +33,7 @@ class SessionService:
         strategy_store: Any = None,
         ticker_summary_store: Any = None,
         ticker_ledger_store: Any = None,
+        injected_context_log_store: Any = None,
     ) -> None:
         self.store = store
         self.event_bus = event_bus
@@ -52,6 +53,7 @@ class SessionService:
         self._strategy_store = strategy_store
         self._ticker_summary_store = ticker_summary_store
         self._ticker_ledger_store = ticker_ledger_store
+        self._injected_context_log_store = injected_context_log_store
         self._orchestrator_prompt = self._load_orchestrator_prompt(orchestrator_dir)
         self._active_loops: Dict[str, Any] = {}
         self._context_builder: Optional[ContextBuilder] = None
@@ -311,6 +313,12 @@ class SessionService:
             messages_with_system = context_builder.build_messages(
                 history[:-1], user_msg, session_id=session_id,
             )
+            if self._injected_context_log_store is not None:
+                self._injected_context_log_store.record(
+                    session_id,
+                    fact_ids=context_builder.last_injected_fact_ids,
+                    memory_ids=context_builder.last_injected_memory_ids,
+                )
             result = agent_loop.run(
                 messages=messages_with_system,
                 session_id=session_id,

@@ -78,3 +78,20 @@ def test_no_facts_registry_means_no_block_and_no_crash():
     messages = builder.build_messages([], "JNJ check")
     assert not any(ContextBuilder.is_known_constraints_msg(m) for m in messages)
     assert builder.last_facts_msg is None
+
+
+def test_injected_fact_id_is_captured(registry: FactsRegistry, builder: ContextBuilder):
+    """Analysis K (25-A-Y-details/04-decision-process-cognition.md) needs
+    the real fact ID, not just the rendered text -- add_fact() assigns and
+    returns one when none is given."""
+    fact_id = registry.add_fact(
+        Fact(id="", statement="JNJ price was fabricated once", kind="known-bug", symbols=["JNJ"])
+    )
+    builder.build_messages([], "What's happening with JNJ today?")
+    assert builder.last_injected_fact_ids == [fact_id]
+
+
+def test_no_matching_fact_means_no_injected_ids(registry: FactsRegistry, builder: ContextBuilder):
+    registry.add_fact(Fact(id="", statement="MSFT-only fact", kind="proven", symbols=["MSFT"]))
+    builder.build_messages([], "What's happening with JNJ today?")
+    assert builder.last_injected_fact_ids == []

@@ -69,6 +69,9 @@ class TestApprove:
         assert art.source_run_id == r.id
         assert art.initial_sharpe == 1.8
         assert art.initial_max_dd == -0.12
+        # B (02-regime-risk-coverage.md): classified once at creation from
+        # the run's user_idea ("test SMA crossover on AAPL" -> momentum).
+        assert art.strategy_family == "momentum"
 
         history = service.strategy_store.get_bench_history(art.artifact_id)
         assert len(history) == 1

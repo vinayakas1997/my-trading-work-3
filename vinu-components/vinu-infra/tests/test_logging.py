@@ -89,3 +89,12 @@ def test_setup_logging_writes_structured_jsonl_with_context_and_exception():
         assert error["level"] == "ERROR"
         assert error["exc_type"] == "ZeroDivisionError"
         assert "ZeroDivisionError" in error["traceback"]
+
+        # setup_logging() attaches a FileHandler on the structured log path.
+        # The `_reset_root_logging` fixture above closes it too, but only in
+        # its teardown, which runs *after* this `with` block's __exit__ has
+        # already tried (and, on Windows, failed) to delete `tmp` while the
+        # handler still held the file open. Close it here, before that exit.
+        for h in list(logging.getLogger().handlers):
+            h.close()
+            logging.getLogger().removeHandler(h)

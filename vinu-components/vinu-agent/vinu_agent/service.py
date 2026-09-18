@@ -12,6 +12,7 @@ from .session.events import EventBus
 from .session.models import Session
 from .session.service import SessionService
 from .session.store import SessionStore
+from .storage.injected_context_log import InjectedContextLogStore
 from .storage.llm_calls import LlmCallLogStore
 from .storage.team_runs import TeamRunStore
 from .storage.ticker_ledger import TickerLedgerStore
@@ -58,6 +59,9 @@ class AgentService:
         )
         self._team_run_store = TeamRunStore(data_root / "team_runs.db")
         self._llm_call_store = LlmCallLogStore(data_root / "llm_calls.db")
+        # New writer for 25-A-Y-details/04-decision-process-cognition.md's
+        # analysis K -- see storage/injected_context_log.py's own docstring.
+        self._injected_context_log_store = InjectedContextLogStore(data_root / "injected_context_log.db")
         # The SAME real vinu-research strategy_store.db OrderGuard already
         # reads (see broker/research_link.py) -- one shared storage, not a
         # second copy, so a research-team PASS is visible to the same
@@ -96,6 +100,7 @@ class AgentService:
             strategy_store=self._strategy_store,
             ticker_summary_store=self._ticker_summary_store,
             ticker_ledger_store=self._ticker_ledger_store,
+            injected_context_log_store=self._injected_context_log_store,
         )
         self._swarm_store = SwarmStore(
             Path(self._config.sessions_dir) / ".." / "swarm"
@@ -128,6 +133,10 @@ class AgentService:
     @property
     def team_run_store(self) -> TeamRunStore:
         return self._team_run_store
+
+    @property
+    def injected_context_log_store(self) -> InjectedContextLogStore:
+        return self._injected_context_log_store
 
     @property
     def strategy_store(self):
@@ -181,6 +190,8 @@ class AgentService:
             self._ticker_ledger_store.close()
         if hasattr(self, "_llm_call_store"):
             self._llm_call_store.close()
+        if hasattr(self, "_injected_context_log_store"):
+            self._injected_context_log_store.close()
 
     def __enter__(self):
         return self

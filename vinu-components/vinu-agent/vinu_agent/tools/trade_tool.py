@@ -310,6 +310,11 @@ class TradeTool(BaseTool):
                 "symbol": symbol, "side": side, "qty": qty,
                 "reason": result.reason,
                 "reason_code": getattr(getattr(result, "code", None), "value", None),
+                # 25-A-Y-details/05-governance-freshness.md, analysis O:
+                # real join key instead of a weak symbol+time-window match.
+                # Empty for every rejection reason except the operator-limit
+                # ones (see OrderGuard._blocked_artifact_ids's own docstring).
+                "blocked_artifact_ids": getattr(result, "blocked_artifact_ids", []),
             }, session_id=session_id, symbol=symbol)
             return json.dumps({
                 "status": "rejected",
@@ -377,6 +382,7 @@ class TradeTool(BaseTool):
                     AuditLogger.log("order_rejected", {
                         "symbol": symbol, "side": side, "qty": qty,
                         "reason": pre_result.reason,
+                        "blocked_artifact_ids": getattr(pre_result, "blocked_artifact_ids", []),
                     }, session_id=session_id, symbol=symbol)
                     return json.dumps({
                         "status": "rejected",

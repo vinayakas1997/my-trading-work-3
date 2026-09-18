@@ -231,6 +231,19 @@ class TeamRunStore(SQLiteBackend):
         ).fetchall()
         return [TeamRun.from_row(dict(r)) for r in rows]
 
+    def distinct_session_ids_with_verdict(self) -> list[str]:
+        """Every session that ever triggered a run which reached a real
+        verdict -- the session universe analysis K (25-A-Y-details/
+        04-decision-process-cognition.md) compares against
+        `injected_context_log`'s "had relevant memory" sessions. Pure
+        read, same posture as `LlmCallLogStore.distinct_roles()`."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT DISTINCT triggered_by_session_id FROM team_runs "
+            "WHERE triggered_by_session_id != '' AND verdict != ''"
+        ).fetchall()
+        return [r["triggered_by_session_id"] for r in rows]
+
     def get_latest_verdict_by_session_id(self, session_id: str) -> Optional[str]:
         """Best-available join key from an `llm_calls` row back to the
         team run it happened inside -- `llm_calls` only carries

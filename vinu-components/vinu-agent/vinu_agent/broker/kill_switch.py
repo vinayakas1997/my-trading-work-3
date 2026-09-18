@@ -234,3 +234,31 @@ class AuditLogger:
                     continue
         matches.reverse()
         return matches[:limit]
+
+    @classmethod
+    def read_all(cls, *, action: str | None = None, log_path: str | Path | None = None) -> list[dict]:
+        """Every recorded entry, optionally filtered by `action` -- for
+        offline analysis (e.g. vinu-reflection's analysts reading a
+        mounted copy of this log). `log_path` overrides `cls.LOG_PATH`,
+        same convention `vinu_infra.trade_audit_log.read_all(log_path=...)`
+        already established, since a reader in a different service/process
+        needs a different root than this class's own env-resolved default.
+        Pure read, same fail-open-on-read posture as `search()`: a missing
+        log file returns an empty list, not an error."""
+        path = Path(log_path) if log_path is not None else cls.LOG_PATH
+        if not path.exists():
+            return []
+        entries: list[dict] = []
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if action is not None and entry.get("action") != action:
+                    continue
+                entries.append(entry)
+        return entries

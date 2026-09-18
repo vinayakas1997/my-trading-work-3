@@ -213,6 +213,26 @@ class Artifact:
     # artifact created before this field existed. Replaces the regex-on-name
     # guess vinu-portfolio's compute_daily_allocation used to fall back to.
     timeframe: str = "daily"
+    # Strategy style category (B, 02-regime-risk-coverage.md), classified once
+    # at creation time from the research run's `user_idea` via
+    # `vinu_research.strategy_family.classify_strategy_family()` -- never
+    # backfilled, same contract as regime_tag/freeze_hash/timeframe above.
+    # Not derived from `signal_definition` (the design doc's original guess):
+    # confirmed no real writer anywhere ever sets that field on a real
+    # Artifact, it stays at its dataclass default for every artifact that
+    # exists today. `user_idea` (ResearchRunRecord) is the one field that's
+    # both always populated (required, or auto-proposed when omitted -- see
+    # ResearchService._propose_idea) and short/descriptive enough for a
+    # keyword classifier, confirmed against real values in this codebase
+    # ("SMA crossover", "momentum breakout", "mean reversion using bollinger
+    # bands strategy", "Trend-following strategy for {stage} stage...").
+    # Default "" (not "unclassified") deliberately -- distinguishes a
+    # pre-existing artifact this field never ran against from a real run
+    # that genuinely stated no recognizable style keyword (e.g. refresh/
+    # refine runs like "Refresh {strategy_id}"); the classifier itself
+    # returns the literal string "unclassified" for the latter, a real,
+    # honest bucket, not a classification failure.
+    strategy_family: str = ""
 
     @classmethod
     def create(cls, type_: str, name: str, universe: list[str] | None = None) -> Artifact:

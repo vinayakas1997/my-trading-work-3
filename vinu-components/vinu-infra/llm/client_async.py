@@ -18,7 +18,7 @@ from vinu_infra.llm.cost import CostEntry, TokenUsage, get_global_cost_tracker
 from vinu_infra.llm.providers import detect_provider, get_capabilities
 from vinu_infra.llm.retry import LlmCallFailed, LlmParseError, build_async_retry
 from vinu_infra.rate_limit import TokenBucket
-from vinu_infra.telemetry import LLMCallRecord, record_llm_call_safe
+from vinu_infra.telemetry import LLMCallRecord, get_telemetry_store, record_llm_call_safe
 
 LOG = logging.getLogger(__name__)
 
@@ -268,3 +268,7 @@ class AsyncLlmClient:
     async def close(self) -> None:
         await self._http.aclose()
         self._cache.close()
+        # See LlmClient.close() (client.py) -- same fix: TelemetryStore.close()
+        # exists to release telemetry.db's sqlite connection (Windows won't
+        # delete a file with an open connection) but was never wired up here.
+        get_telemetry_store(self._telemetry_db_path).close()

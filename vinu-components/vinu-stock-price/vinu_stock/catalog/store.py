@@ -252,6 +252,24 @@ class CatalogStore:
             )
             self._conn.commit()
 
+    def list_ingest_log(self, symbol: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        """`ingest_log` was write-only anywhere else in the codebase until
+        now (`log_ingest` above, called from the live ingest cycle, had no
+        matching read path) -- added for the reflection worker's P/G
+        analysis, same "add the read side that was missing" posture as
+        `get_trade_plan_calibration`'s own docstring in vinu-research."""
+        with self._lock:
+            if symbol:
+                rows = self._conn.execute(
+                    "SELECT * FROM ingest_log WHERE symbol = ? ORDER BY run_at DESC LIMIT ?",
+                    (symbol.strip().upper(), limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM ingest_log ORDER BY run_at DESC LIMIT ?", (limit,),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
     def record_backfill_run(
         self,
         *,

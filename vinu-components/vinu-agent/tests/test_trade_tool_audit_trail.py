@@ -151,3 +151,54 @@ class TestAuditLoggerSearch:
 
         with patch.object(AuditLogger, "LOG_PATH", tmp_path / "never_written.log"):
             assert AuditLogger.search("anything") == []
+
+
+class TestAuditLoggerReadAll:
+    """Analysis O (25-A-Y-details/05-governance-freshness.md) needs a bulk
+    read, unlike `search()`'s ref-id substring match."""
+
+    def test_returns_every_entry_in_written_order(self, tmp_path) -> None:
+        from vinu_agent.broker.kill_switch import AuditLogger
+
+        log_path = tmp_path / "trade_audit.log"
+        with patch.object(AuditLogger, "LOG_PATH", log_path):
+            AuditLogger.log("order_placed", {"seq": 0}, symbol="AAPL")
+            AuditLogger.log("order_rejected", {"seq": 1}, symbol="MSFT")
+            entries = AuditLogger.read_all()
+
+        assert [e["details"]["seq"] for e in entries] == [0, 1]
+
+    def test_filters_by_action(self, tmp_path) -> None:
+        from vinu_agent.broker.kill_switch import AuditLogger
+
+        log_path = tmp_path / "trade_audit.log"
+        with patch.object(AuditLogger, "LOG_PATH", log_path):
+            AuditLogger.log("order_placed", {}, symbol="AAPL")
+            AuditLogger.log("order_rejected", {"reason": "x"}, symbol="MSFT")
+            AuditLogger.log("order_rejected", {"reason": "y"}, symbol="AAPL")
+            entries = AuditLogger.read_all(action="order_rejected")
+
+        assert len(entries) == 2
+        assert all(e["action"] == "order_rejected" for e in entries)
+
+    def test_missing_log_file_returns_empty_list_not_error(self, tmp_path) -> None:
+        from vinu_agent.broker.kill_switch import AuditLogger
+
+        with patch.object(AuditLogger, "LOG_PATH", tmp_path / "never_written.log"):
+            assert AuditLogger.read_all() == []
+
+    def test_log_path_override_reads_a_different_file_than_the_class_default(self, tmp_path) -> None:
+        """The override a reader in a different process/service needs --
+        same convention as `vinu_infra.trade_audit_log.read_all(log_path=...)`."""
+        from vinu_agent.broker.kill_switch import AuditLogger
+
+        real_log = tmp_path / "real.log"
+        other_log = tmp_path / "other.log"
+        with patch.object(AuditLogger, "LOG_PATH", real_log):
+            AuditLogger.log("order_rejected", {"which": "real"})
+        with patch.object(AuditLogger, "LOG_PATH", other_log):
+            AuditLogger.log("order_rejected", {"which": "other"})
+
+        entries = AuditLogger.read_all(log_path=other_log)
+        assert len(entries) == 1
+        assert entries[0]["details"]["which"] == "other"

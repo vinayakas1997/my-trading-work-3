@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from vinu_infra.reflection import (
     Finding,
     POLARITY_HIGHER_IS_WORSE,
@@ -12,6 +14,7 @@ from vinu_infra.reflection import (
     TREND_STABLE,
     classify_severity,
     compute_trend,
+    pearson_correlation,
     population_stability_index,
     write_finding,
     write_findings,
@@ -54,6 +57,36 @@ class TestPopulationStabilityIndex:
         reference = [1.0, 2.0, 3.0, 4.0, 5.0] * 20
         current = [1.0, 1.5, 2.5, 3.5, 4.5] * 20
         assert population_stability_index(reference, current) >= 0.0
+
+
+class TestPearsonCorrelation:
+    def test_perfect_positive_correlation(self):
+        xs = [1.0, 2.0, 3.0, 4.0, 5.0]
+        ys = [2.0, 4.0, 6.0, 8.0, 10.0]
+        assert pearson_correlation(xs, ys) == pytest.approx(1.0, abs=1e-9)
+
+    def test_perfect_negative_correlation(self):
+        xs = [1.0, 2.0, 3.0, 4.0, 5.0]
+        ys = [5.0, 4.0, 3.0, 2.0, 1.0]
+        assert pearson_correlation(xs, ys) == pytest.approx(-1.0, abs=1e-9)
+
+    def test_no_relationship_is_near_zero(self):
+        xs = [1.0, 2.0, 3.0, 4.0]
+        ys = [3.0, 3.0, 3.0, 3.0001]
+        assert abs(pearson_correlation(xs, ys)) < 1.0
+
+    def test_fewer_than_two_points_returns_zero(self):
+        assert pearson_correlation([], []) == 0.0
+        assert pearson_correlation([1.0], [2.0]) == 0.0
+
+    def test_zero_variance_series_returns_zero(self):
+        assert pearson_correlation([1.0, 1.0, 1.0], [1.0, 2.0, 3.0]) == 0.0
+        assert pearson_correlation([1.0, 2.0, 3.0], [5.0, 5.0, 5.0]) == 0.0
+
+    def test_mismatched_lengths_uses_shorter(self):
+        xs = [1.0, 2.0, 3.0, 4.0, 5.0]
+        ys = [2.0, 4.0, 6.0]
+        assert pearson_correlation(xs, ys) == pytest.approx(1.0, abs=1e-9)
 
 
 class TestClassifySeverity:

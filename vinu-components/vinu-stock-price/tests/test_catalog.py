@@ -74,6 +74,46 @@ class TestProviderFallbackLog:
         conn.close()
 
 
+class TestIngestLog:
+    """`ingest_log` was write-only anywhere else in the codebase -- see
+    the reflection worker's P/G analysis (`vinu-reflection/vinu_reflection/
+    reflection/ingest_health.py`), the first real reader."""
+
+    def test_record_and_list_round_trip(self, tmp_path: Path) -> None:
+        conn = open_catalog_db(tmp_path / "meta.db")
+        store = CatalogStore(conn)
+        store.init_schema(_SCHEMA)
+
+        store.log_ingest("aapl", bars_added=5, from_ts=1, to_ts=2, ok=True)
+        store.log_ingest("aapl", bars_added=0, from_ts=None, to_ts=None, ok=False, error="timeout")
+
+        rows = store.list_ingest_log("AAPL")
+        assert len(rows) == 2
+        assert rows[0]["symbol"] == "AAPL"
+        assert {r["ok"] for r in rows} == {0, 1}
+        conn.close()
+
+    def test_filters_by_symbol(self, tmp_path: Path) -> None:
+        conn = open_catalog_db(tmp_path / "meta.db")
+        store = CatalogStore(conn)
+        store.init_schema(_SCHEMA)
+
+        store.log_ingest("AAPL", bars_added=1, from_ts=None, to_ts=None, ok=True)
+        store.log_ingest("MSFT", bars_added=1, from_ts=None, to_ts=None, ok=True)
+
+        rows = store.list_ingest_log("AAPL")
+        assert len(rows) == 1
+        assert rows[0]["symbol"] == "AAPL"
+        conn.close()
+
+    def test_empty_store_returns_empty_list(self, tmp_path: Path) -> None:
+        conn = open_catalog_db(tmp_path / "meta.db")
+        store = CatalogStore(conn)
+        store.init_schema(_SCHEMA)
+        assert store.list_ingest_log("AAPL") == []
+        conn.close()
+
+
 class TestBackfillRunLog:
     """The aggregate run summary used to be printed once and lost -- see
     the foundation-fixes audit in missing-pieces-of-system/narating-agents/."""

@@ -18,6 +18,7 @@ from vinu_research.storage import ResearchStorage
 from vinu_research.storage.models import ResearchRunRecord, STATUS_DONE, STATUS_FAILED, STATUS_PENDING, STATUS_RUNNING
 from vinu_research.storage.strategy_store import SqliteStrategyStore
 from vinu_research.gates.correlation_gate import CorrelationVerdict, check_correlation_gate
+from vinu_research.strategy_family import classify_strategy_family
 from vinu_research.tools import ResearchTools
 from vinu_research.walk_forward import deflated_sharpe_ratio
 
@@ -391,6 +392,7 @@ class ResearchService:
         artifact.status = status
         artifact.last_validated_ts = datetime.now(timezone.utc).isoformat()
         artifact.strategy_code = record.strategy_code
+        artifact.strategy_family = classify_strategy_family(record.user_idea)
         artifact.source_run_id = record.id
         artifact.initial_sharpe = record.best_sharpe
         artifact.initial_max_dd = record.best_max_dd

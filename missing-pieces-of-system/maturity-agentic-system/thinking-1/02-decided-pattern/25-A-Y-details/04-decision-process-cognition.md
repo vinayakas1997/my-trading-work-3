@@ -103,25 +103,38 @@ runs compared.
 
 **Manageability**: bounded, tiny — only 2 `scope_key` values.
 
-**Blocked, 2026-09-19 — not implementable as scoped, needs a new
-writer.** Checked against the real prompt-injection path
+**Built 2026-09-20**, once the user explicitly decided K's new writer
+was worth adding (the product/priority call this file left open
+2026-09-19). Checked against the real prompt-injection path
 (`vinu-agent/vinu_agent/agent/context.py`, the block that calls
-`facts_registry.active_facts_for(...)` / `unified_memory.list_by_symbol(...)`):
-the results are formatted straight into the prompt's free-text
-`user_message` — **no structured record of which specific
-`memory_entries.id` / `facts.id` were actually selected is written
-anywhere** (not on `Attempt`, not on `Session.config`, no sidecar
-table). The only trace is the full prompt text itself, which would need
-lossy text-matching against `memory_entries.title`/`facts.statement` to
-reconstruct — not a real queryable link, and not what "per session
-metadata" in this analysis's own Fetch description implies exists.
-Two ways forward, neither attempted yet: (a) add a real writer — record
-selected memory/fact IDs onto the session or a new sidecar table at
-injection time in `context.py` (turns K into a normal read+join
-afterward, same shape as every other analysis here), or (b) rescope K
-to the lossy text-match approximation and accept it's not a real FK-style
-join. Left undecided — this is a real product/priority call (is K worth
-a new writer), not a design detail to just pick silently.
+`facts_registry.active_facts_for(...)` / `unified_memory.list_by_symbol(...)`)
+and confirmed the original finding: the results were formatted straight
+into the prompt's free-text `user_message` with no structured record of
+which specific `memory_entries.id` / `facts.id` were actually selected.
+Closed via option (a) from the two choices this file previously left
+undecided: `ContextBuilder.build_messages()` now captures the real IDs
+it already has in hand (`Fact.id`, `MemoryEntry.id`) into
+`_last_injected_fact_ids`/`_last_injected_memory_ids` (exposed as
+`last_injected_fact_ids`/`last_injected_memory_ids` properties, same
+pattern as the pre-existing `last_facts_msg` etc.), including the
+token-budget-trimmed case (only IDs whose line actually made it into
+the trimmed block are recorded). `vinu_agent/storage/injected_context_log.py`
+(new file, `InjectedContextLogStore`) is the new writer: one row per
+`build_messages()` call, keyed by `session_id`, written from
+`session/service.py` right after the call (best-effort — only writes a
+row when something was actually injected, since "no row" already means
+"nothing available" for K's join). No `docker-compose.yml` change
+needed: the new `injected_context_log.db` lands in the same vinu-agent
+data root already mounted read-only into `reflection-worker`.
+`vinu_reflection/reflection/memory_effectiveness.py` (new file) is K
+itself — same `TeamRunStore.get_latest_verdict_by_session_id` join key
+analysis D already established, joined against "did this session ever
+have a fact/memory injected" (a new pure-read `TeamRunStore.
+distinct_session_ids_with_verdict()` supplies the session universe).
+Two independent findings, one per `scope_key` (`facts_registry` /
+`unified_memory`), each comparing verdict quality (1 - reject rate)
+between sessions that had that source injected vs. sessions that
+didn't. See that module's own docstring for the full reasoning.
 
 ---
 

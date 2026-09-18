@@ -13,7 +13,28 @@ Named `07-` (not `06-`) because `06-external-signal-cross-check.md`
 already owns that number — reading order in this folder is
 `00` → `06` (the spec), then this file.
 
-Status as of **2026-09-19** (update: W and H-consistency built).
+Status as of **2026-09-20** (update: also fixed all 21 pre-existing
+Windows-only test failures across `vinu-infra`/`vinu-agent` for real,
+root-caused rather than left as known-bad -- see the test-count table's
+footnote history below; then, on explicit user sign-off, built K's new
+writer (`injected_context_log.py`) and the analyst itself, plus U's, Y's,
+O's, and R's new writers (`rebalance_request_history`, `events_archive`,
+`GuardResult.blocked_artifact_ids`, the live Planner-triage freshness
+hook). U/Y/O/R's analysts were initially left unbuilt on the reasoning
+that all four data sources start empty and need real production time to
+accumulate anything worth analyzing -- then built anyway once asked
+"can't we just build it so it's ready when it starts working," since
+that reasoning only argued against *findings appearing soon*, never
+against writing and testing the analyzer code itself (every analyst here
+started at zero real evidence once; each one's own `MIN_EVIDENCE_COUNT`
+gate is exactly the mechanism that makes writing it early safe). All 25
+analyses now have real code for every implementable one.
+
+Prior update, 2026-09-19: W, H-consistency, P+G, V, and B built — P/G's
+earlier "blocked" verdict was a documentation error, corrected the same
+day; V's two blockers both turned out to be non-issues once chased
+down; B's taxonomy design resolved by adding a new
+`Artifact.strategy_family` field.
 
 ---
 
@@ -56,25 +77,98 @@ actual build.
     service's data root.
   - Wired into `docker-compose.yml` as `reflection-worker`: no HTTP
     port, read-only mounts of vinu-agent/vinu-live/vinu-research/
-    vinu-screener/vinu-portfolio's data roots, all five added as real
-    Python dependencies (mount-and-import, same posture
+    vinu-screener/vinu-portfolio/vinu-stock-price's data roots, all six
+    added as real Python dependencies (mount-and-import, same posture
     `vinu-agent/broker/research_link.py` already established for
-    vinu-research).
+    vinu-research; vinu-stock-price was already installed transitively
+    via vinu-agent's own chain, added explicitly to `pyproject.toml` for
+    P/G's `ingest_health.py`).
 
 ## Status at a glance
 
-**12 of 25 analyses implemented and tested. 13 not built**, each with a
+**19 of 25 analyses implemented and tested. 6 not built**, each with a
 real, checked reason (not "not gotten to yet") — see the table.
 
 | Package | Tests | Status |
 |---|---|---|
-| `vinu-infra` | 248 | green |
-| `vinu-reflection` | 57 | green |
-| `vinu-agent` | 1171 | green |
-| `vinu-live` | 436 | green |
+| `vinu-infra` | 254 (248 + 6 new `TestPearsonCorrelation`) | green |
+| `vinu-reflection` | 108 (57 + 19 new P/G/V/B tests + 7 new `test_memory_effectiveness.py` + 25 new: `test_rebalance_bypass.py` (6), `test_event_holding_loss.py` (6), `test_mandate_limit_friction.py` (7), `test_triage_freshness.py` (6)) | green |
+| `vinu-agent` | 1209 (1205 passed, 4 skipped) | green |
+| `vinu-live` | 442 (436 + 6 new `TestRebalanceRequestHistory`) | green |
 | `vinu-screener` | 436 | green |
 | `vinu-portfolio` | 209 | green |
-| `vinu-research` | 889 | green |
+| `vinu-research` | 905 (889 + 16 new: `test_strategy_family.py` (14), `TestStrategyFamilyField` (2)) | green |
+| `vinu-stock-price` | 111 (104 + 3 new `TestIngestLog` + 4 new `TestEventsArchive`) | green |
+
+All of the above ran for real, in-session, in a from-scratch Python 3.12
+venv built specifically to verify this pass (this repo's own committed
+`.venv`s were each built on a different machine/OS and don't run here).
+Earlier drafts of this file claimed a local Application Control policy
+permanently blocked pandas-dependent tests in this environment
+(`test_ingest_health.py`, `test_paper_live_correlation.py`, and several
+pre-existing files) and reported those two as verified only via a
+standalone stub harness instead — that block turned out to be transient
+(most likely a one-time AV/allow-list scan on first execution of a freshly
+pip-installed binary), not a permanent constraint: a second, independent
+venv ran the real suites for every package, including both files,
+cleanly.
+
+`vinu-infra`'s 19 Windows-only failures (`test_secrets.py`,
+`test_ticker_profile.py`, `test_llm_client.py`,
+`test_llm_client_async.py`, `test_logging.py`) and `vinu-agent`'s 2
+(`TestOrderThrottle`) were first reported (2026-09-18) as pre-existing
+and unrelated to this pass, since neither package was touched by it.
+On the user's follow-up ("check the errors and fix them instead of
+pointing them out"), all 21 were root-caused and fixed for real rather
+than left as known-bad:
+- 18 of the 19 `vinu-infra` failures (`test_llm_client.py`,
+  `test_llm_client_async.py`) shared one root cause: `LlmClient.close()`
+  / `AsyncLlmClient.close()` closed the HTTP session and cache but never
+  called `TelemetryStore.close()` -- a method that already existed
+  specifically to release `telemetry.db`'s sqlite connection before
+  `TemporaryDirectory` cleanup, just never wired up at the one call site
+  that mattered. Fixed in `llm/client.py` and `llm/client_async.py`.
+- 1 (`test_logging.py`) was the same class of bug for a log
+  `FileHandler`: the test's own cleanup fixture closed root-logger
+  handlers, but only in fixture teardown, which runs *after* the
+  `TemporaryDirectory` block already tried (and failed) to delete the
+  dir. Fixed by closing the handler inside the test, before the `with`
+  block exits.
+- 2 (`test_secrets.py`) compared `secrets_dir()` against a hardcoded
+  POSIX string (`"/tmp/custom-secrets"`) instead of a `Path`; `Path`
+  normalizes separators per-platform so the string comparison only ever
+  held on POSIX. Fixed by comparing `Path` objects (`secrets_dir() ==
+  Path(...)`), which is correct on every platform since both sides
+  normalize the same way -- no change to `secrets_loader.py` itself,
+  since its POSIX-style default is correct (it always runs inside Linux
+  containers in production).
+- 1 (`test_ticker_profile.py::test_lock_file_created_alongside`) was a
+  real cross-platform inconsistency in `ticker_profile.py`: the
+  `filelock` library's default Windows backend deletes the `.lock`
+  pathname on release (POSIX's native-lock backend doesn't need to).
+  Fixed by passing `preserve_lock_file=True` to both `FileLock(...)`
+  calls, so the lock file's on-disk presence is now deterministic on
+  every platform instead of silently differing by OS.
+- Both `vinu-agent` `TestOrderThrottle` failures were a test-isolation
+  gap, not a throttle-logic bug: `OrderGuard.check()` always calls
+  `_check_risk_budget()`, which does a real GET to
+  `localhost:8090/portfolio/risk/status`; with no portfolio service
+  listening, that fails via a real connection-refused round trip on
+  every call, measurably slower on Windows than on Linux (dual-stack
+  loopback fallback / firewall inspection) -- slow enough that the
+  throttle's 1-second real-clock window's oldest entries aged out before
+  the 4th call, so the throttle itself never got a chance to trip. Fixed
+  by mocking `requests.get` in both tests (following the same pattern
+  already used elsewhere in `test_order_guard.py`), so they test the
+  throttle in isolation instead of racing an unrelated network call.
+
+Result: all 21 are now green. Full from-scratch venv re-verification
+(2026-09-18) after the fixes: `vinu-infra` 254/254, `vinu-agent`
+1171/1171 passed + 4 skipped (`test_order_guard.py` alone: 83/83, was
+2 failed/81 passed), `vinu-research` 905/905 passed + 1 skipped,
+`vinu-reflection` 76/76, `vinu-stock-price` 107/107, `vinu-live`
+436/436, `vinu-screener` 436/436, `vinu-portfolio` 209/209 -- the whole
+repo's test suite is green with zero known-bad tests.
 
 Real infra bugs found and fixed along the way (both worth knowing about
 regardless of this reflection work):
@@ -96,6 +190,40 @@ regardless of this reflection work):
   it despite the module itself being real and correct. Moved to
   `vinu-infra/freeze.py` (the same flat layout every other vinu-infra
   module already uses) — fixed, not just worked around.
+- P/G's own "blocked" verdict (`01-forecast-intelligence.md`) turned out
+  to be a documentation error, not a real gap: `calibration.py`'s
+  `add_entry()` has set a real `CalibrationEntry.timestamp` since
+  2026-07-27, two months before that verdict claimed otherwise, and it's
+  wired to a real writer (vinu-live's `feedback_loop.py`). Worth noting
+  as a caution about this file's own reliability — a "checked the real
+  code" claim can still be wrong; re-verify before trusting a blocker
+  claim at face value, this file's own included.
+- `vinu_stock.storage.backend.MetaBackend` (the normal way to open
+  vinu-stock-price's `symbol_catalog`/`ingest_log`/`provider_fallback_log`
+  tables) turned out to require `VINU_STOCK_DATA_ROOT` to be set even
+  when a caller passes its own explicit db path — `SettingsStore`'s
+  schema init calls `vinu_stock.config.load_config()` for env-default
+  seeding, entirely decoupled from the path actually given to
+  `MetaBackend()`. `ingest_health.py` opens `CatalogStore` directly
+  instead (same construction vinu-stock-price's own tests already use)
+  to avoid that unrelated coupling — found while writing this pass's own
+  tests, not by inspection alone.
+- V's own "needs investigation" note (`02-regime-risk-coverage.md`)
+  assumed `paper_performance` needed a `promoted_at` marker to split
+  paper-period from live-period returns. Grepping `PaperPerformanceStore`'s
+  one real writer (`ShadowEvaluator.record_daily_paper_returns()`,
+  gated on `status=BENCHING`) showed the split already exists by
+  construction — nothing ever appends to it once an artifact leaves
+  BENCHING. No schema change needed at all, just the investigation this
+  file's own ranked list called for.
+- B's own "needs a new categorical scheme" note assumed `signal_definition`
+  might be a usable (if messy) source once parsed. Checked directly: it's
+  not messy, it's empty — no real writer anywhere ever sets
+  `Artifact.signal_definition` on a real artifact
+  (`service.py::_create_artifact_from_run` never touches it). The
+  taxonomy ended up keyed off `ResearchRunRecord.user_idea` instead, a
+  field the design doc's own grep for "`strategy_family`/`family`" never
+  had reason to look at.
 
 ---
 
@@ -106,24 +234,24 @@ regardless of this reflection work):
 | D | Decision-Process | `decision_process` | ✅ Built | `decision_process.py` |
 | L | Decision-Process | `decision_process` | ✅ Built | `process_mining.py` |
 | M | Decision-Process | `decision_process` | ✅ Built | `debate_value.py` |
-| K | Decision-Process | `decision_process` | ❌ Blocked | no structured record of which memory/facts get injected into a prompt exists anywhere |
+| K | Decision-Process | `decision_process` | ✅ Built | `memory_effectiveness.py` (new `InjectedContextLogStore` writer in vinu-agent, 2026-09-20) |
 | A | Forecast Intelligence | `forecast_intelligence` | ✅ Built | `angle_trust.py` |
 | Q | Forecast Intelligence | `forecast_intelligence` | ⏸ Deferred | source (`WeightsStore`) lives in the one dependency-heavy service (vinu-initial-analysis: torch/xgboost/chronos/timesfm) |
-| P | Forecast Intelligence | `forecast_intelligence` | ❌ Blocked | `calibration_entries.timestamp` is never populated by any real writer |
-| G | Forecast Intelligence | `forecast_intelligence` | ❌ Blocked | merges into P's row, same blocker |
+| P | Forecast Intelligence | `forecast_intelligence` | ✅ Built | `ingest_health.py` (2026-09-19 "blocked" verdict was a documentation error, corrected) |
+| G | Forecast Intelligence | `forecast_intelligence` | ✅ Built | `ingest_health.py` (same module as P) |
 | S | Forecast Intelligence | `forecast_intelligence` | 📋 Needs a spec | numeric-claim text extraction — no existing parser to build against |
 | C | Execution & Money-Flow | `execution_money_flow` | ✅ Built | `loss_attribution.py` |
-| U | Execution & Money-Flow | `execution_money_flow` | ❌ Blocked | `RebalanceRequestQueue.consume()` deletes each request once evaluated — no history |
-| Y | Execution & Money-Flow | `execution_money_flow` | ❌ Blocked | `EventsStore.replace_kind()` deletes past events every calendar pull — no archive |
+| U | Execution & Money-Flow | `execution_money_flow` | ✅ Built | `rebalance_bypass.py` (new `rebalance_request_history` writer, 2026-09-20; writes no findings until real evidence accumulates past `MIN_EVIDENCE_PER_GROUP`) |
+| Y | Execution & Money-Flow | `execution_money_flow` | ✅ Built | `event_holding_loss.py` (new `events_archive` writer, 2026-09-20; same evidence-floor gating) |
 | E (pair) | Regime & Risk Coverage | `regime_risk_coverage` | ✅ Built | `correlation_coverage.py` |
 | E (concentration) | Regime & Risk Coverage | `regime_risk_coverage` | ✅ Built | `concentration_coverage.py` |
-| B | Regime & Risk Coverage | `regime_risk_coverage` | 🆕 Needs new scheme | no `strategy_family` categorical concept exists anywhere |
+| B | Regime & Risk Coverage | `regime_risk_coverage` | ✅ Built | `regime_strategy_coverage.py` (new `Artifact.strategy_family` field, classified from `user_idea`) |
 | N | Regime & Risk Coverage | `regime_risk_coverage` | ⏸ Deferred | same dependency-cost tradeoff as Q |
-| V | Regime & Risk Coverage | `regime_risk_coverage` | 🔍 Needs investigation | `paper_performance` confirmed overwrite-only, no promotion timestamp found yet; also needs a new Pearson-correlation helper |
+| V | Regime & Risk Coverage | `regime_risk_coverage` | ✅ Built | `paper_live_correlation.py` (both blockers were non-issues once chased down — see below) |
 | H (governance) | Governance & Freshness | `governance_freshness` | ✅ Built | `skill_edit_governance.py` |
 | H (consistency) | Governance & Freshness | `governance_freshness` | ✅ Built | `consistency_freeze.py` |
-| O | Governance & Freshness | `governance_freshness` | ⏸ Deferred | rejected orders carry no `artifact_id`; "which artifact got blocked" needs a weak symbol+time-window match, not a stored key — a real decision, not a missing investigation (the "eventual performance" half is otherwise real and computable via `decay_snapshots`) |
-| R | Governance & Freshness | `governance_freshness` | ❌ Blocked | `ticker_summaries` is explicitly current-state-only (its own docstring says so) |
+| O | Governance & Freshness | `governance_freshness` | ✅ Built | `mandate_limit_friction.py` (new `GuardResult.blocked_artifact_ids` writer, 2026-09-20; same evidence-floor gating) |
+| R | Governance & Freshness | `governance_freshness` | ✅ Built | `triage_freshness.py` (new live Planner-triage freshness hook, 2026-09-20; same evidence-floor gating) |
 | F | Governance & Freshness | `governance_freshness` | ❌ Blocked | `significance_flags` has no join key (not even weak) to any later trade/artifact outcome |
 | W | Governance & Freshness | `governance_freshness` | ✅ Built | `threshold_calibration.py` (2 of the design doc's 3 named checkpoints — the third has no real writer) |
 | I | External-Signal Cross-Check | `external_signal_cross_check` | ✅ Built | `screener_agreement.py` |
@@ -134,10 +262,11 @@ regardless of this reflection work):
 **Legend**: ✅ built & tested · ❌ blocked (real data doesn't support the
 design as written — needs a new writer or a rescoped design) · ⏸
 deferred (real tradeoff, not a gap — a decision to make, not data to
-find) · 🆕 needs a new scheme invented (not just a missing writer) · 🔍
-needs real investigation before it can be trusted as buildable · 🚧
-structurally blocked on another not-yet-built component · 📋 needs a
-written spec for something with no precedent in this codebase.
+find) · 🚧 structurally blocked on another not-yet-built component · 📋
+needs a written spec for something with no precedent in this codebase.
+(🔍 "needs real investigation" and 🆕 "needs a new scheme invented" no
+longer appear in the table — V and B, the rows that used them, were both
+investigated/designed and built 2026-09-19.)
 
 ## The 6 analysts — completion by cluster
 
@@ -148,49 +277,103 @@ per-analyst code to write beyond its member analyses' `run()` functions.
 
 | Analyst | Analyses | Built | Blocked/deferred | Needs work |
 |---|---|---|---|---|
-| Decision-Process / Cognition | D, L, K, M | 3 (D, L, M) | 1 (K) | 0 |
-| Forecast Intelligence | A, Q, P, G, S | 1 (A) | 3 (Q, P, G) | 1 (S) |
-| Execution & Money-Flow | C, U, Y | 1 (C) | 2 (U, Y) | 0 |
-| Regime & Risk Coverage | B, E, N, V | 2 (E — both pieces) | 1 (N) | 2 (B, V) |
-| Governance & Freshness | O, R, F, W, H | 3 (H — both pieces, W) | 3 (O, R, F) | 0 |
+| Decision-Process / Cognition | D, L, K, M | 4 (D, L, K, M) | 0 | 0 |
+| Forecast Intelligence | A, Q, P, G, S | 3 (A, P, G) | 1 (Q) | 1 (S) |
+| Execution & Money-Flow | C, U, Y | 3 (C, U, Y) | 0 | 0 |
+| Regime & Risk Coverage | B, E, N, V | 4 (B, E — both pieces, V) | 1 (N) | 0 |
+| Governance & Freshness | O, R, F, W, H | 4 (H — both pieces, W, O, R) | 1 (F) | 0 |
 | External-Signal Cross-Check | I, J, T, X | 2 (I, X) | 2 (J, T) | 0 |
 
-**Decision-Process and Governance & Freshness are now the clusters with
-every implementable analysis actually done** (Decision-Process: 3 of 4,
-K's blocker is a real data gap; Governance & Freshness: 3 of 5 — H both
-pieces plus W — with O/R/F all landing on real, checked blockers/
-deferrals once investigated, not neglect). Regime & Risk Coverage and
-Forecast Intelligence are the two clusters with real, still-open
-next-wins left (V, B).
+**Every one of the 6 analysts now has every implementable analysis
+actually done — nothing left in the "Needs work" column anywhere, and
+Execution & Money-Flow is now fully built** (Decision-Process: 4 of 4 —
+K's missing writer (`injected_context_log.py`) built 2026-09-20 once the
+user decided it was worth adding; Execution & Money-Flow: 3 of 3 — C
+plus U/Y, both built 2026-09-20 (new writer, then the analyst itself,
+once asked to build ahead of real data rather than wait); Governance &
+Freshness: 4 of 5 — H both pieces plus W, O, and R (O/R same "writer,
+then analyst" pass as U/Y) — with F the one still genuinely blocked on a
+schema change; Forecast Intelligence: 3 of 5 — A plus P/G merged — with
+Q a real dependency-cost deferral and S needing a spec; Regime & Risk
+Coverage: 4 of 4 — B, E both pieces, and V — with only N left as a real
+dependency-cost deferral). U, Y, O, and R's new writers
+(`rebalance_request_history`, `events_archive`,
+`GuardResult.blocked_artifact_ids`, the live Planner-triage freshness
+hook) were built 2026-09-20 on explicit user sign-off; their analyst
+modules (`rebalance_bypass.py`, `event_holding_loss.py`,
+`mandate_limit_friction.py`, `triage_freshness.py`) were then built the
+same day too, once asked "can't we just build it so it's ready when it
+starts working" -- each one's own `MIN_EVIDENCE_COUNT` floor (same
+mechanism every other analyst here already uses) means it writes nothing
+until real production data actually clears that floor, but the code is
+real, tested, and registered now rather than needing a second build pass
+later. What's left across all 25 analyses is entirely real blockers,
+deferrals, and specs — not uninvestigated gaps, and not unbuilt code
+waiting on data that was already safe to build against.
 
 ---
 
 ## How each remaining group actually gets closed
 
-**The 6 blocked ones (K, P, G, U, Y, J, R — 7 total)** all share the same
-shape: the design doc assumed a historical record exists; the real store
-either overwrites, deletes-on-consume, or was never wired to persist
-that field. Closing any of them needs the same two-step decision, made
-per case:
-1. Decide whether the missing history is worth adding a new writer for
-   (e.g. an append-only audit table alongside `RebalanceRequestQueue`'s
-   consume-once queue for U; archiving `EventsStore` rows instead of
-   deleting them for Y; a structured injected-memory-ids record in
-   `context.py` for K).
-2. If yes, add that writer first (small, additive, ships inert like
-   every other addition in this codebase), then the analyst itself is a
-   normal one-day build, same shape as D/A/C.
-2b. If the history genuinely isn't worth adding, the analysis stays
-   permanently out of scope — that's a legitimate outcome too, not a
-   failure to resolve.
+**K, U, Y, O, R all resolved and fully built 2026-09-20** — the user was
+asked directly which of the five new-writer decisions were worth making
+(said yes to all five: K first, then U/Y, then O/R once investigated and
+found to be a different shape), then asked again whether the analysts
+themselves should be built ahead of real data rather than left waiting
+("can't we just build it so it's ready when it starts working") — yes
+to that too, for all four still pending at that point (U/Y/O/R; K's
+analyst was already built the same pass as its writer, since chat turns
+are frequent enough that it didn't need to wait). Every analyst here
+already starts at zero real evidence and gates on its own
+`MIN_EVIDENCE_COUNT` floor before writing anything — that's the
+mechanism that makes building U/Y/O/R's analyzers now, before real data
+exists, exactly as safe as building any other analyst ever was.
+- **K**: writer (`injected_context_log.py`) + analyst
+  (`memory_effectiveness.py`). See `04-decision-process-cognition.md`.
+- **U**: writer (`rebalance_request_history` table, appended to from
+  `RebalanceRequestQueue.consume()`) + analyst (`rebalance_bypass.py`,
+  `MIN_EVIDENCE_PER_GROUP=5` given critical bypasses are "rare events by
+  design"). See `03-execution-money-flow.md`.
+- **Y**: writer (`events_archive` table, appended to from
+  `EventsStore.replace_kind()` before its existing delete) + analyst
+  (`event_holding_loss.py`, `MIN_EVIDENCE_COUNT=20`). See
+  `03-execution-money-flow.md`.
+- **O**: writer (`GuardResult.blocked_artifact_ids`, populated at
+  `order_guard.py`'s four operator-limit rejection sites) + analyst
+  (`mandate_limit_friction.py`, `MIN_EVIDENCE_COUNT=10`, reads
+  `decay_snapshots` via `get_strategy_store()` same as B/V — **not**
+  `data_root_paths["vinu_research"]`, a key that doesn't exist in the
+  real wiring and was a real bug caught in testing). See
+  `05-governance-freshness.md`.
+- **R**: writer (a live freshness check at the real "Planner triage
+  event" call site, `ChangeGate`'s `run_gate_cycle` → `_on_yes` in
+  `scheduler_workers.py`, logging one of three exact event_types via the
+  already-existing `TickerLedgerStore` — no new table needed) + analyst
+  (`triage_freshness.py`, adjacent-window PSI same as `angle_trust.py`).
+  Two new pure-read methods on `TickerLedgerStore`
+  (`list_events_by_type`/`list_events_by_types`), ordered by SQLite
+  `rowid` rather than `timestamp` — a real ordering bug (same-second
+  writes losing their true relative order) found and fixed while testing
+  this analyst. See `05-governance-freshness.md`.
 
-**B (needs a new scheme)**: requires designing a `strategy_family`
-taxonomy (most likely: keyword-parsing `signal_definition`, or adding a
-new explicit field at artifact-creation time) before any query can be
-written. This is a design decision, not an implementation task — resolve
-it the same way `03-severity-and-trend.md`/`04-reference-baseline-config.md`
-resolved the PSI-threshold questions: research external convention, pick
-something grounded, document the reasoning, then build.
+All four new analysts (`rebalance_bypass.py`, `event_holding_loss.py`,
+`mandate_limit_friction.py`, `triage_freshness.py`) are registered in
+`cli.py`'s `ANALYSTS`/`_SEED_FNS` and were smoke-tested running a full
+cycle against completely empty mounted data roots — zero crashes, zero
+findings written (correct: no evidence yet), confirming they're
+genuinely ready to start producing real findings the moment production
+data clears each one's evidence floor, with no second build pass needed.
+
+**The blocked ones still left (J — 1 total; P and G left this group
+2026-09-19 once their "blocked" verdict turned out to be a documentation
+error, see above)**: J needs a genuinely new concept (a system-wide
+"current regime" signal that can transition over time) that doesn't
+exist anywhere in this codebase yet -- `Artifact.regime_tag` is a
+static, set-once-at-creation field, never a time series. Closer to S
+(needs a spec) than a K/U/Y/O/R-shaped "just add a writer for an
+already-defined value" decision -- someone has to define what "the
+system's regime" even means as a transitioning scalar before any code
+here makes sense. Left unbuilt, not investigated further this pass.
 
 **Q and N (dependency-cost deferrals)**: both need data that currently
 only exists inside vinu-initial-analysis (`WeightsStore` checkpoints for
@@ -240,38 +423,69 @@ narrower drift-detection question, built for its 2 real checkpoints.
   stored key connecting a flag to any later trade or artifact outcome,
   weak or otherwise. Would need a new field added to `significance_flags`
   at flag-creation time before this is buildable at all.
-- **V**: still needs a `promoted_at`-equivalent timestamp tracked down (or
-  added) and a small Pearson-correlation helper written (this codebase
-  only has PSI machinery today) — not reinvestigated this pass.
+
+**V, chased down and built 2026-09-19**: both blockers this file's own
+ranked list flagged turned out to be non-issues. `paper_performance` was
+assumed to need a `promoted_at` marker to split paper-period from
+live-period returns; its one real writer (`ShadowEvaluator.
+record_daily_paper_returns()`) only ever runs against `status=BENCHING`
+artifacts, so the split already exists by construction — no schema
+change needed. The missing Pearson-correlation helper was a real, small
+gap — added to `vinu_infra/reflection.py`. Scoped down to
+`scope_type=system` (B's `strategy_family` taxonomy didn't exist yet at
+the time) and substituted a paper-vs-live distribution PSI for the
+significance gate, since the design doc's single recomputed-each-cycle
+correlation scalar has no natural two-window PSI comparison the way
+every other analyst's Condition does. See `paper_live_correlation.py`'s
+own docstring for the full reasoning.
+
+**B, designed and built 2026-09-19**: the taxonomy design task this
+file's ranked list called for. Confirmed `signal_definition` has no real
+writer anywhere (empty on every real artifact, not just messy free text)
+before ruling it out, then found `ResearchRunRecord.user_idea` as the
+real, always-populated, short/descriptive field to classify instead.
+Added `Artifact.strategy_family`, classified once at creation via the
+new `vinu_research/strategy_family.py` (a small, fixed, keyword-based
+taxonomy grounded in common systematic-trading style categories --
+momentum, mean-reversion, breakout, volatility, stat-arb, event-driven,
+plus an honest `unclassified` bucket), same "research external
+convention, pick something grounded, document the reasoning" resolution
+`03-severity-and-trend.md`/`04-reference-baseline-config.md` used for the
+PSI-threshold questions. Built against `trade_audit_log.jsonl`'s real
+exit rows (not `bench_history`, a per-artifact backtest series that
+can't answer a per-real-trade cross-tab) joined to `Artifact.
+strategy_family`/`regime_tag` via `artifact_id`. See
+`regime_strategy_coverage.py`'s own docstring for the full reasoning,
+including the real scope-downs (`ic` dropped, raw reward-to-variability
+ratio instead of an annualized Sharpe).
 
 ---
 
 ## Where to continue, ranked
 
-1. **V investigation** — needs a `promoted_at`-equivalent timestamp
-   tracked down (or added) and a small Pearson-correlation helper
-   written; not yet chased down to the same certainty O/F/W just got.
-2. **The new-writer decisions (K, U, Y, O)** — product/design calls, not
-   implementation ones; O joined this group 2026-09-19 once investigated
-   (weak symbol+time join vs. adding `artifact_id` to `order_rejected`).
-   Worth a deliberate pass once someone decides whether closing any of
-   them is worth the new writer/field.
-3. **B's taxonomy design** — a real design task, same weight as the PSI
-   threshold work already done in `03-severity-and-trend.md`.
-4. **Q/N's dependency-cost decision** — likely resolved by extending the
+1. **J's spec** — needs someone to define what "the system's regime" is
+   as a transitioning, system-wide signal before any writer or analyst
+   makes sense; no existing concept to build against, same category as
+   S. Now the single highest-leverage remaining item — U/Y/O/R are fully
+   built (writer + analyst) and just waiting on production data to
+   accumulate, not on any further decision or code.
+2. **Q/N's dependency-cost decision** — likely resolved by extending the
    ticker-profile mechanism, once someone confirms Q/N's fields are
    worth adding to it.
-5. **S's spec** — needs a design pass with no existing precedent to
+3. **S's spec** — needs a design pass with no existing precedent to
    build from.
-6. **F** — genuinely blocked until `significance_flags` gains a real join
+4. **F** — genuinely blocked until `significance_flags` gains a real join
    key at flag-creation time; not actionable without that schema change.
-7. **T** — blocked until `MaturityAssessor` exists; not this file's
+5. **T** — blocked until `MaturityAssessor` exists; not this file's
    scope to unblock.
+6. **B's per-`strategy_family` breakdown for V** — B is now built, so
+   V's own `scope_type=system` scope-down (`paper_live_correlation.py`'s
+   docstring) could be revisited into a real per-family breakdown; not
+   urgent, V's system-wide finding is already real and useful.
 
 Once **the reader** exists (the actual gap `02-analyst-interface.md`
 still flags as open — every analyst writes, nothing reads
 `reflection_beliefs` yet, because the reflection worker's *consumer*,
-"the brain," doesn't exist), the 10 analyses already built become
+"the brain," doesn't exist), the 19 analyses already built become
 genuinely useful, not just tested in isolation. That's arguably a higher
-lever than finishing the remaining 15 — worth weighing against this
-list.
+lever than finishing the remaining 6 — worth weighing against this list.

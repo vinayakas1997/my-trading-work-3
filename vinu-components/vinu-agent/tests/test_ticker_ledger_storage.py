@@ -91,3 +91,41 @@ class TestTickerLedgerStore:
         assert store.count_events("AAPL", stage="risk_gatekeeper") == 3
         assert store.count_events("AAPL") == 3
         assert store.count_events("MSFT", event_type="REJECTED") == 1
+
+    def test_list_events_by_type_spans_every_ticker(self, store: TickerLedgerStore) -> None:
+        """Analysis R (25-A-Y-details/05-governance-freshness.md) needs a
+        system-wide read that no per-ticker method here provides."""
+        store.add_event(ticker="AAPL", stage="planner_triage", event_type="triage_freshness_stale", text="a")
+        store.add_event(ticker="MSFT", stage="planner_triage", event_type="triage_freshness_stale", text="b")
+        store.add_event(ticker="AAPL", stage="planner_triage", event_type="triage_freshness_fresh", text="c")
+
+        stale = store.list_events_by_type("triage_freshness_stale")
+        assert {e.ticker for e in stale} == {"AAPL", "MSFT"}
+        assert len(stale) == 2
+
+    def test_list_events_by_type_returns_oldest_first(self, store: TickerLedgerStore) -> None:
+        store.add_event(ticker="AAPL", stage="s", event_type="e", text="first")
+        store.add_event(ticker="AAPL", stage="s", event_type="e", text="second")
+        results = store.list_events_by_type("e")
+        assert [e.text for e in results] == ["first", "second"]
+
+    def test_list_events_by_type_unknown_type_returns_empty(self, store: TickerLedgerStore) -> None:
+        store.add_event(ticker="AAPL", stage="s", event_type="e1", text="x")
+        assert store.list_events_by_type("no-such-type") == []
+
+    def test_list_events_by_types_preserves_true_insertion_order_across_types(
+        self, store: TickerLedgerStore,
+    ) -> None:
+        """The real bug this method exists to prevent: two events of
+        different types written in the same second must still come back
+        in the order they were actually written, not grouped by type."""
+        store.add_event(ticker="AAPL", stage="s", event_type="fresh", text="1st")
+        store.add_event(ticker="AAPL", stage="s", event_type="stale", text="2nd")
+        store.add_event(ticker="AAPL", stage="s", event_type="fresh", text="3rd")
+
+        results = store.list_events_by_types(["stale", "fresh"])
+        assert [e.text for e in results] == ["1st", "2nd", "3rd"]
+
+    def test_list_events_by_types_empty_list_returns_empty(self, store: TickerLedgerStore) -> None:
+        store.add_event(ticker="AAPL", stage="s", event_type="e1", text="x")
+        assert store.list_events_by_types([]) == []

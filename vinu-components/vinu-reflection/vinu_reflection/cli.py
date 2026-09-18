@@ -22,11 +22,19 @@ from vinu_reflection.reflection import (
     correlation_coverage,
     debate_value,
     decision_process,
+    event_holding_loss,
+    ingest_health,
     loss_attribution,
+    mandate_limit_friction,
+    memory_effectiveness,
+    paper_live_correlation,
     process_mining,
+    rebalance_bypass,
+    regime_strategy_coverage,
     screener_agreement,
     skill_edit_governance,
     threshold_calibration,
+    triage_freshness,
 )
 
 LOG = logging.getLogger("vinu.reflection.worker")
@@ -48,15 +56,47 @@ LOG = logging.getLogger("vinu.reflection.worker")
 # (bracket_partial/rebalance_protect checkpoints only -- the design doc's
 # third named checkpoint has no real call site, see that module's
 # docstring). consistency_freeze.run() is H's consistency piece (the
-# governance piece is skill_edit_governance.run()).
+# governance piece is skill_edit_governance.run()). ingest_health.run()
+# is P+G merged into one per-ticker row -- the 2026-09-19 "blocked"
+# verdict for both in 01-forecast-intelligence.md was a documentation
+# error (calibration_entries.timestamp IS populated by a real writer),
+# corrected and built 2026-09-19, see that module's docstring.
+# paper_live_correlation.run() is V -- its own two blockers (a
+# `promoted_at` timestamp, a Pearson-correlation helper) turned out to
+# both be non-issues/small additions once investigated, see that
+# module's docstring. regime_strategy_coverage.run() is B -- its
+# `strategy_family` taxonomy blocker resolved by adding
+# Artifact.strategy_family (vinu-research), classified from
+# ResearchRunRecord.user_idea, see that module's docstring.
+# memory_effectiveness.run() is K -- its missing-writer blocker resolved
+# by adding InjectedContextLogStore (vinu-agent), written once per
+# ContextBuilder.build_messages() call, see that module's docstring.
+# rebalance_bypass.run() is U, event_holding_loss.run() is Y,
+# mandate_limit_friction.run() is O, triage_freshness.run() is R -- all
+# four built 2026-09-20 once the user explicitly signed off on their new
+# writers (rebalance_request_history, events_archive,
+# GuardResult.blocked_artifact_ids, the live Planner-triage freshness
+# hook). Each writer only started collecting data 2026-09-20, so these
+# four will write nothing until real production evidence accumulates
+# past each one's MIN_EVIDENCE_COUNT floor -- registered now so they're
+# ready to work correctly the moment it does, rather than needing a
+# second build pass later. See each module's own docstring.
 AnalystFn = Callable[[dict[str, Path], dict[str, Any]], list[Finding]]
 ANALYSTS: list[AnalystFn] = [
     decision_process.run,
     process_mining.run,
     debate_value.run,
     angle_trust.run,
+    ingest_health.run,
     loss_attribution.run,
+    memory_effectiveness.run,
+    rebalance_bypass.run,
+    event_holding_loss.run,
+    mandate_limit_friction.run,
+    triage_freshness.run,
     correlation_coverage.run,
+    paper_live_correlation.run,
+    regime_strategy_coverage.run,
     skill_edit_governance.run,
     screener_agreement.run,
     concentration_coverage.run,
@@ -68,8 +108,16 @@ _SEED_FNS: list[Callable[[ReflectionStore], None]] = [
     process_mining.seed_reference_config,
     debate_value.seed_reference_config,
     angle_trust.seed_reference_config,
+    ingest_health.seed_reference_config,
     loss_attribution.seed_reference_config,
+    memory_effectiveness.seed_reference_config,
+    rebalance_bypass.seed_reference_config,
+    event_holding_loss.seed_reference_config,
+    mandate_limit_friction.seed_reference_config,
+    triage_freshness.seed_reference_config,
     correlation_coverage.seed_reference_config,
+    paper_live_correlation.seed_reference_config,
+    regime_strategy_coverage.seed_reference_config,
     skill_edit_governance.seed_reference_config,
     screener_agreement.seed_reference_config,
     concentration_coverage.seed_reference_config,
@@ -114,6 +162,7 @@ def reflection_worker_main(args: argparse.Namespace) -> None:
         "vinu_live": config.live_trade_audit_log_path.parent,
         "vinu_screener": config.screener_data_root,
         "vinu_portfolio": config.portfolio_data_root,
+        "vinu_stock": config.stock_data_root,
         # this service's own data root -- consistency_freeze.py (H,
         # consistency piece) persists its prior-cycle manifest here since
         # reflection_beliefs can't be trusted to hold it across a quiet

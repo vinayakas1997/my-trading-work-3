@@ -6,7 +6,7 @@ import logging
 import os
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import requests
 
@@ -46,6 +46,15 @@ class GuardResult:
     # "...")` call site keeps working unchanged.
     code: ReasonCode | None = None
     outcome: GuardOutcome | None = None
+    # 25-A-Y-details/05-governance-freshness.md, analysis O: `order_rejected`
+    # audit entries used to carry no `artifact_id` at all, so identifying
+    # which artifact an operator-limit rejection blocked needed a weak
+    # symbol+time-window match. Populated only at the operator-limit
+    # rejection sites in check() below (symbol override, max_order_value,
+    # max_position_pct, max_capital_utilization_pct) -- every other
+    # rejection reason (kill switch, mandate expiry, allowlist, ...) isn't
+    # what O is asking about, so leaves this empty.
+    blocked_artifact_ids: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.outcome is None:
@@ -302,6 +311,7 @@ class OrderGuard:
                 False,
                 f"Order value {value:.2f} exceeds max_order_value {max_order_value:.2f}",
                 code=ReasonCode.MAX_ORDER_VALUE,
+                blocked_artifact_ids=self._blocked_artifact_ids(symbol),
             )
         # C17: within the top band below the hard cap -> hold for confirmation.
         if (
@@ -369,6 +379,7 @@ class OrderGuard:
                             f"Position {value:.2f} would be {frac:.1%} of equity "
                             f"({equity:.2f}), exceeding max_position_pct {max_position_pct:.0%}",
                             code=ReasonCode.MAX_POSITION_PCT,
+                            blocked_artifact_ids=self._blocked_artifact_ids(symbol),
                         )
                     if (
                         not reduce_only
@@ -399,6 +410,7 @@ class OrderGuard:
                             f"{projected_utilization:.1%} of equity ({equity:.2f}), exceeding "
                             f"max_capital_utilization_pct {max_capital_utilization_pct:.0%}",
                             code=ReasonCode.MAX_CAPITAL_UTILIZATION,
+                            blocked_artifact_ids=self._blocked_artifact_ids(symbol),
                         )
             except Exception as e:
                 logger.warning("Could not check max_capital_utilization_pct: %s", e)
@@ -509,6 +521,7 @@ class OrderGuard:
                 False,
                 f"{symbol} is IGNORED by operator override{note}: {rec.reason or 'no reason given'}",
                 code=ReasonCode.OVERRIDE_UNTRADEABLE,
+                blocked_artifact_ids=self._blocked_artifact_ids(symbol),
             )
         if rec.state is OverrideState.UNTRADEABLE:
             return GuardResult(
@@ -516,6 +529,7 @@ class OrderGuard:
                 f"{symbol} is marked UNTRADEABLE by operator override{note}: "
                 f"{rec.reason or 'no reason given'}",
                 code=ReasonCode.OVERRIDE_UNTRADEABLE,
+                blocked_artifact_ids=self._blocked_artifact_ids(symbol),
             )
         if rec.state is OverrideState.REDUCE_ONLY and not reduce_only:
             return GuardResult(
@@ -523,6 +537,7 @@ class OrderGuard:
                 f"{symbol} is REDUCE-ONLY by operator override{note}: "
                 f"{rec.reason or 'no reason given'} — only risk-reducing orders are allowed",
                 code=ReasonCode.OVERRIDE_REDUCE_ONLY,
+                blocked_artifact_ids=self._blocked_artifact_ids(symbol),
             )
         return GuardResult(True)
 
@@ -660,6 +675,33 @@ class OrderGuard:
             f"Set require_active_artifact: false in the mandate to override.",
             code=ReasonCode.NO_ACTIVE_ARTIFACT,
         )
+
+    def _blocked_artifact_ids(self, symbol: str) -> list[str]:
+        """25-A-Y-details/05-governance-freshness.md, analysis O: which
+        artifact(s) an operator-limit rejection actually blocked, so
+        `order_rejected` audit entries carry a real join key instead of
+        needing a weak symbol+time-window match. ACTIVE/BENCHING/MONITORING
+        are O's own "trackable" statuses (its Source stores note: eventual
+        performance is checkable via `decay_snapshots`/`calibration_entries`
+        "if it exists in BENCHING/MONITORING despite the block"). Best-effort
+        like every other artifact lookup in this class -- a lookup failure
+        must not turn a real rejection into an exception; it just means this
+        rejection's audit entry carries no artifact_id, same as before this
+        existed."""
+        try:
+            from vinu_research.models import ArtifactStatus
+
+            from .research_link import get_strategy_store
+
+            store = get_strategy_store()
+            artifacts = store.list_artifacts_for_symbol(
+                symbol,
+                statuses=[ArtifactStatus.ACTIVE, ArtifactStatus.BENCHING, ArtifactStatus.MONITORING],
+            )
+            return [a.artifact_id for a in artifacts]
+        except Exception as e:
+            logger.warning("Could not look up blocked-artifact ids for %s: %s", symbol, e)
+            return []
 
     def _check_market_open(self) -> GuardResult:
         """Reject orders while the market is closed, per Alpaca's clock endpoint.

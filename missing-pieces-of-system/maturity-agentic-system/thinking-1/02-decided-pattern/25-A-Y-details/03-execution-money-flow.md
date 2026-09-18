@@ -77,17 +77,31 @@ thin). `signal_json`: `{critical_outcome_rate, noncritical_outcome_rate}`.
 design — they skip a real protective rule), bounded by portfolio size,
 negligible volume.
 
-**Blocked, 2026-09-19 — not implementable as scoped, needs a new
-writer.** Checked `RebalanceRequestQueue` (`vinu-live/vinu_live/trade_plan/
-rebalance_intake.py`) directly: `PRIMARY KEY (symbol)`, one pending
-request per symbol, and `consume()` **deletes** the row once the
-orchestrator evaluates it. There is no historical log of past
-requests anywhere -- only whatever is currently unconsumed. U's Fetch
-("for each historical critical=True request, look up the position's
-subsequent realized P&L") needs a real history this table was never
-designed to keep. Same two ways forward as K/P/G: add a new writer
-(an append-only audit table alongside the consume-once queue), or
-accept this can't be built until one exists. Left undecided.
+**Built 2026-09-20**, once the user explicitly decided U's new writer
+was worth adding -- and then, on being asked "can't we just build the
+analyst now too, so it's ready when it starts working," the analyst
+itself as well. Checked `RebalanceRequestQueue`
+(`vinu-live/vinu_live/trade_plan/rebalance_intake.py`) and confirmed the
+original finding: `PRIMARY KEY (symbol)`, one pending request per
+symbol, `consume()` **deletes** the row once the orchestrator evaluates
+it, no historical log anywhere. Closed by adding the append-only
+`rebalance_request_history` table this file's 2026-09-19 note called
+for: `consume()` now archives the row (symbol, reason, requested_at,
+critical, consumed_at) before deleting it from the working queue, and
+two new read methods (`history_for(symbol)`, `all_history()`) expose it.
+`vinu_reflection/reflection/rebalance_bypass.py` (new file) is U itself:
+"subsequent realized P&L" reads `trade_audit_log.jsonl`'s real exit
+rows (same source B established), taking the first exit for a request's
+symbol at or after `requested_at` as the outcome. `MIN_EVIDENCE_PER_GROUP
+= 5` (rare events by design, per this file's own Manageability note --
+a much lower floor than D/C's 30 is the right order of magnitude) gates
+both the system-wide rollup and any per-symbol finding, so this writes
+nothing until real production evidence accumulates past that floor --
+registered in `cli.py`'s `ANALYSTS` now rather than needing a second
+build pass later. See that module's own docstring for the full
+reasoning. (P/G were originally grouped with K here too — that turned
+out to be a documentation error, not a real blocker; see
+`01-forecast-intelligence.md`, both built 2026-09-19.)
 
 ---
 
@@ -122,16 +136,31 @@ written when it diverges from the system baseline.
 **Manageability**: primary bounded to a single row; secondary bounded
 by N tickers but rare in practice (only genuine outlier symbols).
 
-**Blocked, 2026-09-19 — not implementable as scoped, needs a new
-writer.** Checked `EventsStore` (`vinu-stock-price/vinu_stock/events/store.py`)
-directly: `replace_kind()` -- the only writer -- does a full
-DELETE-then-INSERT of `kind`'s rows on every calendar pull, because the
-table is explicitly documented as "a full snapshot of the lookahead
-window." Past events are deleted once they're no longer upcoming, so
-there's no historical event archive to retrospectively check a closed
-trade's `[entry_ts, exit_ts]` overlap against -- by the time a trade
-closes and this analysis runs, the event that may have overlapped it is
-very likely already gone from the table. Same two ways forward as
-K/P/G/U: a new writer that archives events as they pass (rather than
-deleting them), or accept this can't be built until one exists. Left
-undecided.
+**Built 2026-09-20**, same "writer, then the analyst too" pass as U.
+Checked `EventsStore` (`vinu-stock-price/vinu_stock/events/store.py`)
+and confirmed the original finding: `replace_kind()` does a full
+DELETE-then-INSERT of `kind`'s rows on every calendar pull (the table is
+documented as "a full snapshot of the lookahead window"), so a closed
+trade's `[entry_ts, exit_ts]` overlap check would very likely find the
+relevant event already gone. Closed by adding the permanent
+`events_archive` table this file's 2026-09-19 note called for:
+`replace_kind()` now copies every row about to be deleted into the
+archive first (`INSERT OR IGNORE`, keyed on the same `(symbol, kind,
+event_ts, title)` PK, so a still-upcoming event seen across several
+consecutive pulls isn't re-archived with a fresher, wrong `archived_at`),
+and a new `archived_overlapping(symbol, from_ts, to_ts)` read method
+mirrors `upcoming()` against the archive.
+`vinu_reflection/reflection/event_holding_loss.py` (new file) is Y
+itself: closed trades come from `trade_audit_log.jsonl`'s real entry+exit
+pairs joined by `trade_id` (same source B established); overlap is
+checked against BOTH `upcoming()` (a very recent trade might still
+overlap something not yet superseded by a later pull) and
+`archived_overlapping()` (everything else). `MIN_EVIDENCE_COUNT = 20`
+gates the primary system-wide finding; the secondary per-ticker finding
+additionally requires the symbol's own delta to actually diverge from
+the system baseline (opposite sign, or >2x the magnitude), per this
+file's own Storage note. Writes nothing until real evidence accumulates
+-- registered in `cli.py`'s `ANALYSTS` now. See that module's own
+docstring for the full reasoning. (P/G were originally grouped here too
+— documentation error, not a real blocker; see
+`01-forecast-intelligence.md`, both built 2026-09-19.)

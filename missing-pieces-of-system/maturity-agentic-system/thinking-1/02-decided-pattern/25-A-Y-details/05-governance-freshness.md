@@ -34,13 +34,43 @@ with an active limit (a small subset of the watchlist). `signal_json`:
 has an active limit set — typically small in practice, not the full
 watchlist.
 
-**Not attempted, 2026-09-19.** "Compare the blocked artifact's eventual
-projected performance against the system's typical performance for
-similar artifacts" needs real investigation before building: what
-"eventual projected performance" of an artifact that never entered
-BENCHING actually means, and what "similar artifacts" resolves to (the
-same `strategy_family` gap already blocking B). Not checked this pass —
-flagged rather than guessed at.
+**Built 2026-09-20**, once the user explicitly decided O's join key was
+worth adding, then also the analyst itself once asked "can't we just
+build it so it's ready when it starts working." Checked directly
+(`vinu-agent/vinu_agent/broker/order_guard.py`) and confirmed the
+earlier finding: the operator-limit rejection sites
+(`_check_symbol_override`'s hard block, and the
+`max_order_value`/`max_position_pct`/`max_capital_utilization_pct`
+checks via `_effective_limit`) never looked up which artifact they were
+blocking — pure numeric/override checks with no artifact lookup at all.
+Closed by adding a new `GuardResult.blocked_artifact_ids: list[str]`
+field, populated at exactly those four rejection sites via a new
+`OrderGuard._blocked_artifact_ids(symbol)` helper (the same
+`list_artifacts_for_symbol` call `_check_active_artifact` already makes,
+broadened to `[ACTIVE, BENCHING, MONITORING]` — O's own "trackable"
+statuses). `trade_tool.py`'s two real `order_rejected` audit-log call
+sites (the `guard.check()` rejection and `guard.pre_approve()`'s
+re-check) now include it. Every other rejection reason (kill switch,
+mandate expiry, allowlist, short-selling, daily limits, market-closed,
+no-active-artifact, portfolio concentration) is deliberately left with
+an empty list — none of those are the "operator mandate limits" O is
+asking about.
+
+`vinu_reflection/reflection/mandate_limit_friction.py` (new file) is O
+itself. "Eventual projected performance... where trackable" is read from
+`decay_snapshots` via `get_strategy_store().get_latest_snapshot
+(artifact_id)` — same `get_strategy_store()` B/V already use (this
+module does **not** take a `data_root_paths["vinu_research"]` key; that
+key doesn't exist in `cli.py`'s real wiring, a bug caught in testing
+before it shipped). A snapshot's mere existence for a blocked artifact
+already means it's still being tracked; `evaluation == "HEALTHY"` (the
+only "nothing wrong" value `vinu_research/decay.py` ever returns) is the
+"good outcome" flag. `MIN_EVIDENCE_COUNT = 10` (rarer than raw order
+flow, per this file's own Manageability note) gates both the system-wide
+baseline and any per-symbol finding. Writes nothing until real
+production rejections against real trackable artifacts accumulate --
+registered in `cli.py`'s `ANALYSTS` now. See that module's own docstring
+for the full reasoning.
 
 ---
 
@@ -69,20 +99,46 @@ for repeat offenders.
 
 **Manageability**: primary bounded to a single row; secondary rare.
 
-**Blocked, 2026-09-19 — same current-state-only limitation as K/P/G/Y/U.**
-Checked `ticker_summaries` (`vinu-agent/vinu_agent/storage/ticker_summaries.py`)
-directly: its own docstring says it outright -- "One row per ticker,
-overwritten (not versioned) on each new screener run... `team_runs`
-already keeps the full run history if that's ever needed." `runs`
-(RunLog, vinu-initial-analysis) and `team_runs.created_at` are both real
-history, confirmed, but `ticker_summaries` only ever shows its *current*
-value -- there's no way to reconstruct what it said at an arbitrary past
-Planner-triage timestamp, only whether the run it currently references
-happens to be stale/errored *right now*. A scoped-down version ("is the
-currently-referenced run currently stale, sampled against team_runs'
-history of triage timestamps") is possible but answers a materially
-different question than "was the Planner ever triaging against stale
-data at the time" — left unbuilt rather than silently substituted.
+**Built 2026-09-20**, same "writer, then the analyst too" pass as O.
+Re-confirmed the original finding: `ticker_summaries`
+(`vinu-agent/vinu_agent/storage/ticker_summaries.py`) is deliberately
+non-versioned ("overwritten (not versioned) on each new screener run"),
+so there is genuinely no way to reconstruct what it said at an arbitrary
+*past* Planner-triage timestamp -- reversing that design decision was
+never on the table. Closed instead via the scoped-down version this file
+previously described but left unbuilt: found the real "Planner triage
+event" call site (`ChangeGate`'s `run_gate_cycle` → `_on_yes` in
+`vinu_agent/agent/scheduler_workers.py`, wired from `planner-worker` in
+`cli.py`) and added a LIVE check right there — at the moment each triage
+event fires, `_log_triage_freshness()` calls the same `RunLogReader.
+latest_run_id(ticker)` `RunLogTrigger` already uses elsewhere, compares
+it against `gate_result.run_id_seen` (the run this triage actually acted
+on), and logs one of three exact event_types (`triage_freshness_fresh`/
+`_stale`/`_unknown` -- deliberately not free text, so nothing downstream
+ever has to substring-match a human-readable string) to the existing
+`TickerLedgerStore`. This answers a real but narrower question than the
+original ("was this specific triage looking at stale data, checked live,
+going forward") rather than the original's unanswerable "was the Planner
+*ever* triaging against stale data" over arbitrary past history — an
+explicit, documented scope-down, not a silent substitution.
+
+`vinu_reflection/reflection/triage_freshness.py` (new file) is R itself.
+Two new pure-read methods on `TickerLedgerStore`
+(`list_events_by_type`/`list_events_by_types`) supply the event stream,
+ordered by SQLite `rowid` rather than `timestamp` -- a real bug found
+while testing this module: `timestamp` is only second-resolution, so
+several events written within the same second (routine under a burst of
+triage cycles, and the common case in any fast test) came back in an
+unspecified order among themselves when sorted by it. Primary (system-
+wide) follows `angle_trust.py`'s adjacent-window PSI precedent
+(`CURRENT_WINDOW=20`/`REFERENCE_WINDOW_MAX=60`) rather than the design
+doc's literal "trailing band" phrasing, same reasoning A gave. Secondary
+(per-ticker repeat offenders, `stale_count >= 3`) is a flat threshold,
+implemented literally with `domain_floor_breached=True` (no PSI needed
+for a threshold crossing). `_unknown` events (a live lookup failure) are
+excluded from the trend entirely. Writes nothing until real triage
+cycles accumulate -- registered in `cli.py`'s `ANALYSTS` now. See that
+module's own docstring for the full reasoning.
 
 ---
 

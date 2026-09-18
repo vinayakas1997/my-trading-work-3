@@ -567,15 +567,72 @@ def hypothesis_reader_for(service: Any):
     return _Reader()
 
 
-def make_planner_on_yes(service: Any, triage: PlannerTriage):
+# Distinct event_types, not one type with the outcome buried in free text
+# -- analysis R (vinu-reflection) needs to filter/count these reliably,
+# and this codebase's own convention for a categorical outcome is an
+# exact value (ReasonCode, ArtifactStatus, GuardOutcome, ...), never
+# substring-matching a human-readable string.
+TRIAGE_FRESHNESS_FRESH = "triage_freshness_fresh"
+TRIAGE_FRESHNESS_STALE = "triage_freshness_stale"
+TRIAGE_FRESHNESS_UNKNOWN = "triage_freshness_unknown"
+
+
+def _log_triage_freshness(service: Any, run_log_reader: Any, ticker: str, gate_result: Any) -> None:
+    """25-A-Y-details/05-governance-freshness.md, analysis R: was the run
+    this Planner triage event acted on already stale/errored, checked LIVE
+    at the moment of triage. `ticker_summaries` is deliberately never
+    versioned (its own docstring: "overwritten (not versioned) on each new
+    screener run"), so reconstructing "was it stale back then" after the
+    fact is impossible -- this is the only point where that question is
+    ever answerable, which is why it has to be checked and logged here,
+    going forward, rather than derived later from existing data.
+
+    Best-effort, same posture as every other ledger write in this
+    module: a freshness-check failure must never block a real triage
+    event from proceeding."""
+    run_id_seen = gate_result.run_id_seen or ""
+    try:
+        latest = run_log_reader.latest_run_id(ticker)
+    except Exception as exc:
+        try:
+            service.ticker_ledger.add_event(
+                ticker=ticker.upper(), stage="planner_triage", event_type=TRIAGE_FRESHNESS_UNKNOWN,
+                text=f"freshness check failed, defaulting to unknown: {exc}",
+                ref_id=run_id_seen, source="watchlist",
+            )
+        except Exception:
+            LOG.exception("failed to log triage freshness-check failure for %s", ticker)
+        return
+
+    stale = bool(latest) and latest != run_id_seen
+    event_type = TRIAGE_FRESHNESS_STALE if stale else TRIAGE_FRESHNESS_FRESH
+    text = (
+        f"triaged with run {run_id_seen or '(none)'}; latest known run is "
+        f"{latest or '(none)'} -- {'STALE' if stale else 'fresh'}"
+    )
+    try:
+        service.ticker_ledger.add_event(
+            ticker=ticker.upper(), stage="planner_triage", event_type=event_type,
+            text=text, ref_id=run_id_seen, source="watchlist",
+        )
+    except Exception:
+        LOG.exception("failed to log triage freshness check for %s", ticker)
+
+
+def make_planner_on_yes(service: Any, triage: PlannerTriage, run_log_reader: Any = None):
     """ChangeGate's `run_gate_cycle` `on_yes` callback -- the triage hook
     decides deterministically WHETHER and WHAT to propose; on a
     should_propose verdict, hands off to the real `research` team
     (`idea_generator`), exactly the same downstream loop Thesis Intake's
     own hand-off (`submit_thesis_tool.py`) already uses for human-
-    submitted ideas."""
+    submitted ideas. `run_log_reader` is optional (None means "no
+    freshness logging", same ships-inert posture as every other addition
+    in this codebase) so every existing caller/test keeps working
+    unchanged."""
 
     def _on_yes(ticker: str, gate_result: Any) -> None:
+        if run_log_reader is not None:
+            _log_triage_freshness(service, run_log_reader, ticker, gate_result)
         result = triage.check(ticker)
         if not result.should_propose:
             LOG.info("Planner triage skipped %s: %s", ticker, result.reason)

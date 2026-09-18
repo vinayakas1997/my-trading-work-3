@@ -106,6 +106,59 @@ class TestEventsStore:
         assert store.get_last_pull("earnings") == 1_700_000_000.0
 
 
+class TestEventsArchive:
+    """Analysis Y (25-A-Y-details/03-execution-money-flow.md) needs events
+    to still be queryable after they've fallen out of `events`'s
+    current-lookahead-window snapshot."""
+
+    def test_replaced_row_is_archived(self, store: EventsStore) -> None:
+        now = time.time()
+        store.replace_kind("earnings", [
+            EventRecord("AAPL", "earnings", now - 3600, "AAPL earnings (amc)", 2),
+        ])
+        # A later pull no longer includes the now-past event -- it drops
+        # out of `events` but must survive in the archive.
+        store.replace_kind("earnings", [])
+
+        assert store.upcoming("AAPL", now - 7200, now + 7200) == []
+        archived = store.archived_overlapping("AAPL", now - 7200, now + 7200)
+        assert len(archived) == 1
+        assert archived[0]["title"] == "AAPL earnings (amc)"
+
+    def test_still_upcoming_event_is_not_yet_archived_twice(self, store: EventsStore) -> None:
+        now = time.time()
+        record = EventRecord("AAPL", "earnings", now + 3600, "AAPL earnings", 2)
+        # Same event survives three consecutive daily pulls before it happens.
+        store.replace_kind("earnings", [record])
+        store.replace_kind("earnings", [record])
+        store.replace_kind("earnings", [record])
+        archived = store.archived_overlapping("AAPL", now, now + 7200)
+        assert len(archived) == 1
+
+    def test_macro_events_are_archived_too(self, store: EventsStore) -> None:
+        now = time.time()
+        store.replace_kind("economic", [
+            EventRecord(MACRO_SYMBOL, "economic", now - 3600, "US macro: CPI", 2),
+        ])
+        store.replace_kind("economic", [])
+        archived = store.archived_overlapping("AAPL", now - 7200, now + 7200)
+        assert len(archived) == 1
+        assert archived[0]["title"] == "US macro: CPI"
+
+    def test_archive_persists_across_other_kinds_replace(self, store: EventsStore) -> None:
+        now = time.time()
+        store.replace_kind("earnings", [
+            EventRecord("AAPL", "earnings", now - 3600, "old earnings", 2),
+        ])
+        store.replace_kind("earnings", [])  # archives + drops the earnings row
+        store.replace_kind("economic", [
+            EventRecord(MACRO_SYMBOL, "economic", now + 3600, "unrelated", 2),
+        ])
+        archived = store.archived_overlapping("AAPL", now - 7200, now + 7200)
+        assert len(archived) == 1
+        assert archived[0]["title"] == "old earnings"
+
+
 # --- refresh_calendar (poller) ------------------------------------------------
 
 class TestRefreshCalendar:

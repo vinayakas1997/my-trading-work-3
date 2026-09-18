@@ -72,6 +72,13 @@ class ContextBuilder:
         self.research_digest_reader = research_digest_reader
         self._last_research_digest_msg: dict | None = None
         self._last_freshness_msg: dict | None = None
+        # 25-A-Y-details/04-decision-process-cognition.md, analysis K: the
+        # only trace of which facts/memory entries actually got injected
+        # used to be the free-text prompt itself -- no structured record of
+        # the IDs anywhere. Captured here, per build_messages() call, so
+        # the caller (session/service.py) can log it against session_id.
+        self._last_injected_fact_ids: list[str] = []
+        self._last_injected_memory_ids: list[str] = []
 
     def build_system_prompt(self) -> str:
         tool_count = len(self.registry.tool_names)
@@ -128,6 +135,14 @@ class ContextBuilder:
     def last_research_digest_msg(self) -> dict | None:
         return self._last_research_digest_msg
 
+    @property
+    def last_injected_fact_ids(self) -> list[str]:
+        return self._last_injected_fact_ids
+
+    @property
+    def last_injected_memory_ids(self) -> list[str]:
+        return self._last_injected_memory_ids
+
     @staticmethod
     def is_known_constraints_msg(msg: dict) -> bool:
         content = msg.get("content", "")
@@ -151,6 +166,8 @@ class ContextBuilder:
         self, history: List[Dict], user_message: str, *, session_id: str = ""
     ) -> List[Dict]:
         messages: list[dict] = [{"role": "system", "content": self.build_system_prompt()}]
+        self._last_injected_fact_ids = []
+        self._last_injected_memory_ids = []
 
         if self._ground_truth_injector:
             _, gt_msg = self._ground_truth_injector.build_block(
@@ -181,6 +198,7 @@ class ContextBuilder:
                 facts_msg = {"role": "system", "content": "\n".join(lines)}
                 messages.append(facts_msg)
                 self._last_facts_msg = facts_msg
+                self._last_injected_fact_ids = [f.id for f in facts]
             else:
                 self._last_facts_msg = None
         else:
@@ -267,21 +285,25 @@ class ContextBuilder:
                 if block_tokens <= budget_remaining:
                     combined_context.append(block_text)
                     budget_remaining -= block_tokens
+                    self._last_injected_memory_ids.extend(e.id for e in entries)
                 else:
                     trimmed_lines: list[str] = []
                     trimmed_lines.append(f"<memory symbol={sym}>")
+                    trimmed_ids: list[str] = []
                     sub_budget = budget_remaining
                     for e in entries:
                         line = f"  [{e.source}/{e.memory_type}] {e.title}: {e.summary}"
                         line_tokens = self._estimate_tokens(line)
                         if line_tokens <= sub_budget and sub_budget > 20:
                             trimmed_lines.append(line)
+                            trimmed_ids.append(e.id)
                             sub_budget -= line_tokens
                         else:
                             break
                     trimmed_lines.append(f"</memory>")
                     if len(trimmed_lines) > 2:
                         combined_context.append("\n".join(trimmed_lines))
+                        self._last_injected_memory_ids.extend(trimmed_ids)
                     break
 
         if combined_context:

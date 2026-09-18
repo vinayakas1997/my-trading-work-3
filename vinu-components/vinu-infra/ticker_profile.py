@@ -46,7 +46,7 @@ def read_ticker_profile(shared_root: Path | str | None, symbol: str) -> dict[str
         path = _profile_path(Path(shared_root), symbol)
         if not path.is_file():
             return {}
-        lock = FileLock(str(_lock_path(path)))
+        lock = FileLock(str(_lock_path(path)), preserve_lock_file=True)
         with lock:
             data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
@@ -80,7 +80,7 @@ def write_ticker_profile_key(
     try:
         path = _profile_path(Path(shared_root), symbol)
         path.parent.mkdir(parents=True, exist_ok=True)
-        lock = FileLock(str(_lock_path(path)))
+        lock = FileLock(str(_lock_path(path)), preserve_lock_file=True)
         with lock:
             try:
                 current = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}

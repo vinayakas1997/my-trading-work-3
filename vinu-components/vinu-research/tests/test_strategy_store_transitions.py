@@ -38,6 +38,25 @@ class TestTimeframeField:
         assert fetched.timeframe == "intraday"
 
 
+class TestStrategyFamilyField:
+    """B (02-regime-risk-coverage.md): Artifact.strategy_family must
+    round-trip through storage the same way regime_tag/freeze_hash/
+    timeframe already do."""
+
+    def test_default_strategy_family_is_empty(self, strategy_store: SqliteStrategyStore) -> None:
+        a = strategy_store.upsert_artifact(Artifact.create("strategy", "AAPL-unclassified"))
+        assert a.strategy_family == ""
+        fetched = strategy_store.get_artifact(a.artifact_id)
+        assert fetched.strategy_family == ""
+
+    def test_explicit_strategy_family_round_trips(self, strategy_store: SqliteStrategyStore) -> None:
+        a = Artifact.create("strategy", "AAPL-momentum")
+        a.strategy_family = "momentum"
+        strategy_store.upsert_artifact(a)
+        fetched = strategy_store.get_artifact(a.artifact_id)
+        assert fetched.strategy_family == "momentum"
+
+
 class TestValidTransitions:
     def test_created_to_benching(self, strategy_store: SqliteStrategyStore, artifact: Artifact) -> None:
         updated = strategy_store.mark_benching(artifact.artifact_id)

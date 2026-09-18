@@ -541,3 +541,371 @@ investigation), and F a genuine hard blocker.
 12 new tests (45 -> 57 total in vinu-reflection), all suites still green
 (248/248 vinu-infra, 57/57 vinu-reflection). **12 of 25 analyses now
 implemented**: D, L, M, A, C, E (both pieces), H (both pieces), I, X, W.
+
+**Update, 2026-09-19 — P/G's "blocked" verdict was wrong; built.** Found
+while investigating V (chasing its `promoted_at`/Pearson-helper blockers):
+the `calibration_entries.timestamp` claim behind P/G's own "Blocked"
+verdict above doesn't hold up. Checked `calibration.py`'s `add_entry()`
+directly — it sets `timestamp=datetime.now(timezone.utc).isoformat()`,
+and `git blame` shows that line has been there since 2026-07-27, two
+months before the verdict was written. It's wired to a real writer:
+vinu-live's `feedback_loop.py` calls `POST /trade-plan/{id}/record-
+outcome` on every closed position, which reaches `append_calibration_
+entry()` and persists the real timestamp. This was a documentation
+error, not a real data gap — first one caught in this file.
+- **P/G built**: `vinu-reflection/vinu_reflection/reflection/
+  ingest_health.py` (one module, merged per-ticker row, per the design
+  doc's own merge rule). Real join is on `Artifact.created_at` (the
+  forecast-authoring moment), not `CalibrationEntry.timestamp` (the
+  trade's *close* time) — joining on the close time would have mis-dated
+  every comparison against `ingest_log`/`provider_fallback_log`'s
+  gap/fallback days. Scoped down the "`gap_count` exceeds its own
+  trailing P90" half of P's Condition — no historical time series of
+  `gap_count` exists anywhere, only a current snapshot — same "build
+  what's real, document what isn't" posture as W's own scope-down.
+  `CatalogStore.list_ingest_log()` added (`ingest_log` was write-only
+  everywhere else, exactly as originally flagged). Found a second real
+  bug while writing tests: `vinu_stock.storage.backend.MetaBackend`
+  requires `VINU_STOCK_DATA_ROOT` set even when given an explicit db
+  path (`SettingsStore`'s schema init calls `vinu_stock.config.
+  load_config()` regardless) — worked around by opening `CatalogStore`
+  directly instead, the same construction vinu-stock-price's own tests
+  already use.
+- Environment note: this pass's test suite for `ingest_health.py`
+  couldn't actually be executed in-session — a local Application Control
+  policy blocks pandas' compiled extension (pulled in transitively via
+  `vinu_research.models` -> `portfolio.py`), which also blocks several
+  *pre-existing* reflection/stock-price test files, not just this one.
+  Verified instead via `vinu-stock-price`'s new store-method tests
+  (pandas-free, 9/9 green) and a standalone harness that stubs only the
+  one pandas-triggering import and exercises the real join/PSI logic
+  end-to-end (22/22 checks passed). Whoever next runs this in a normal
+  dev/CI environment should run the real suite once and drop this note.
+
+**14 of 25 analyses now implemented**: D, L, M, A, C, E (both pieces),
+H (both pieces), I, X, W, P, G.
+
+**Update, 2026-09-19 — V's two blockers both turned out to be
+non-issues; built.** Chased down the same day, right after P/G. The
+`promoted_at`-equivalent timestamp this file long assumed `paper_
+performance` needed doesn't exist -- and isn't needed. Grepped
+`PaperPerformanceStore.record_daily_return(s)`'s one real caller anywhere
+in the codebase: `ShadowEvaluator.record_daily_paper_returns()`
+(`vinu-live/vinu_live/shadow_evaluator.py`), which only ever iterates
+`status=BENCHING` artifacts. So `paper_performance` is paper-period-only
+by construction -- nothing appends to it once an artifact leaves
+BENCHING -- and `calibration_entries` (populated only by closed *live*
+broker positions, via `feedback_loop.py`) is live-period-only by the same
+kind of construction. The two stores were already cleanly split; no join,
+no new field, needed at all.
+- **V built**: `vinu-reflection/vinu_reflection/reflection/
+  paper_live_correlation.py`. Added the other real blocker --
+  `vinu_infra.reflection.pearson_correlation()`, this codebase's first
+  correlation-coefficient helper (everything before this only needed
+  PSI). Scoped down to `scope_type=system` (one row across every
+  promoted artifact) instead of the design doc's `strategy_family`
+  breakdown -- same taxonomy B still doesn't have, same "don't invent B's
+  scheme here" posture E's concentration piece already took. Also
+  substituted a paper-vs-live distribution PSI for the write/no-write
+  significance gate: the design doc's Condition is a single correlation
+  coefficient recomputed fresh each cycle from the full history, which
+  has no natural two-window PSI comparison the way every other analyst's
+  Condition does (that's handled centrally by `write_finding()`'s own
+  `compute_trend()` instead, diffing this cycle's correlation against the
+  prior belief). "Correlation ≤ 0" implemented directly as
+  `domain_floor_breached`.
+- 6 new tests in `vinu-infra/tests/test_reflection.py`
+  (`TestPearsonCorrelation`) ran green for real, 31/31 total --
+  pandas-free, unlike the reflection-worker suite. `test_paper_live_
+  correlation.py` hit the same sandbox pandas block as P+G's own test
+  file (`vinu_agent.broker.research_link` pulls in `vinu_research.models`
+  the same way); verified instead via the same kind of standalone
+  harness, 15/15 checks passed.
+
+**15 of 25 analyses now implemented**: D, L, M, A, C, E (both pieces),
+H (both pieces), I, X, W, P, G, V. **B's taxonomy design is now the only
+real, still-open next-win left** across all 6 clusters (see
+`07-implementation-plan-status.md`'s ranked list).
+
+**Update, 2026-09-19 — B's taxonomy designed and built.** The design
+task this file's own ranked list called for, right after V. Confirmed
+`signal_definition` before ruling it out: it's not messy free text as
+originally assumed, it's *empty* -- no real writer anywhere ever sets
+`Artifact.signal_definition` on a real artifact
+(`service.py::_create_artifact_from_run` never touches it). Found
+`ResearchRunRecord.user_idea` instead -- required on every real research
+run (or auto-proposed by `ResearchService._propose_idea` when omitted,
+never silently empty), and confirmed short/descriptive against every
+real value in this codebase's own tests and non-LLM fallback string
+("SMA crossover", "momentum breakout", "Trend-following strategy for
+{stage} stage...").
+- **B built**: added `Artifact.strategy_family` (`vinu-research/
+  vinu_research/models.py`), same "written once at creation, never
+  backfilled" contract as `regime_tag`/`freeze_hash`/`timeframe`.
+  Classified via the new `vinu_research/strategy_family.py` -- a small,
+  fixed, keyword-based taxonomy grounded in the style categories
+  systematic-trading literature commonly uses (momentum, mean-reversion,
+  breakout, volatility, stat-arb, event-driven), the same "research
+  external convention, pick something grounded, document the reasoning"
+  resolution `03-severity-and-trend.md`/`04-reference-baseline-config.md`
+  used for the PSI-threshold questions. `unclassified` is a real 7th
+  bucket for runs that state no style (autonomous refresh/refine runs),
+  not a classifier failure. Wired into `service.py::
+  _create_artifact_from_run`. `vinu-reflection/vinu_reflection/
+  reflection/regime_strategy_coverage.py` built against it, joined to
+  `trade_audit_log.jsonl`'s real exit rows (not `bench_history`, a
+  per-artifact backtest series that can't answer a per-real-trade
+  cross-tab) via `artifact_id`. `ic` dropped from the per-regime
+  breakdown (no per-forecast expected-value data available); reports a
+  raw reward-to-variability ratio instead of an annualized Sharpe (real
+  trade holding periods vary, no single annualization factor applies).
+- 14 new tests in `vinu-research/tests/test_strategy_family.py` plus 2 in
+  `test_strategy_store_transitions.py` (`TestStrategyFamilyField`) ran
+  green for real: 905/905 (889 + 16), once `pytest-asyncio` was
+  installed in this pass's own venv (its absence, not a real regression,
+  caused the async `test_service.py` suite to error on first attempt --
+  installing it and rerunning showed all 905 genuinely pass). This also
+  showed the earlier "Application Control policy blocks pandas
+  permanently" note (P/G's and V's own entries above) was wrong -- a
+  fresh venv, rebuilt to double-check, ran every previously-"blocked"
+  suite for real, cleanly: `test_ingest_health.py` (7/7),
+  `test_paper_live_correlation.py` (6/6), and this pass's own
+  `test_regime_strategy_coverage.py` (6/6). The block was transient
+  (most likely a one-time AV/allow-list scan against a freshly
+  pip-installed binary), not a permanent constraint -- worth remembering
+  as its own lesson: re-verify an environment limitation before writing
+  it down as permanent, the same caution already earned by P/G's
+  documentation-error verdict.
+
+**16 of 25 analyses now implemented**: D, L, M, A, C, E (both pieces),
+H (both pieces), I, X, W, P, G, V, B. Every one of the 6 analysts now has
+every implementable analysis done -- what's left across all 25 is real
+blockers, deferrals, and specs, not uninvestigated gaps (see
+`07-implementation-plan-status.md`'s ranked list for what's next).
+
+---
+
+**2026-09-20 -- the 21 pre-existing Windows-only test failures got fixed
+for real, not just documented.** Asked directly "the windows error is
+been solved check teh errors and tell me" -- rechecked in a fresh venv
+and found the exact same 19 `vinu-infra` + 2 `vinu-agent` failures as
+before, contradicting the premise. Then asked to fix them instead of
+just reporting them, so:
+- 18 of `vinu-infra`'s 19 (`test_llm_client.py`, `test_llm_client_async.py`):
+  `LlmClient.close()`/`AsyncLlmClient.close()` never called
+  `TelemetryStore.close()` -- a method that already existed specifically
+  to release `telemetry.db`'s sqlite connection before
+  `TemporaryDirectory` cleanup, just never wired up at the one call site
+  that mattered. Fixed in both `llm/client.py` and `llm/client_async.py`.
+- 1 (`test_logging.py`): same class of bug for a log `FileHandler` --
+  the test's own cleanup fixture closed it, but only in teardown, which
+  runs after `TemporaryDirectory.__exit__` already tried and failed.
+  Fixed by closing it inside the test, before the `with` block exits.
+- 2 (`test_secrets.py`): compared `secrets_dir()` against a hardcoded
+  POSIX path string instead of a `Path` object -- `Path` normalizes
+  separators per-platform, so the string comparison only ever held on
+  POSIX. Fixed the test; `secrets_loader.py` itself was already correct
+  (it only ever runs inside Linux containers in production).
+- 1 (`test_ticker_profile.py::test_lock_file_created_alongside`): a real
+  cross-platform inconsistency in `ticker_profile.py` -- the `filelock`
+  library's Windows backend deletes the `.lock` file on release by
+  default; POSIX's native-lock backend doesn't need to. Fixed by passing
+  `preserve_lock_file=True` to both `FileLock(...)` calls.
+- `vinu-agent`'s 2 `TestOrderThrottle` failures: not a throttle-logic bug
+  at all -- `OrderGuard.check()` always calls `_check_risk_budget()`,
+  a real GET to `localhost:8090/portfolio/risk/status` with no service
+  listening, and Windows' connection-refused round trip on a dead
+  loopback port is measurably slower than Linux's -- slow enough that
+  the throttle's 1-second real-clock window's oldest entries aged out
+  before the 4th call in each test, so the throttle itself never got a
+  chance to trip. Fixed by mocking `requests.get` in both tests
+  (`test_order_guard.py`), the same pattern already used elsewhere in
+  that file.
+- Result, re-verified end to end in a fresh venv: `vinu-infra` 254/254,
+  `vinu-agent` 1171/1171 passed + 4 skipped (`test_order_guard.py` alone
+  went from 2 failed/81 passed to 83/83), and every other package
+  (`vinu-research`, `vinu-reflection`, `vinu-stock-price`, `vinu-live`,
+  `vinu-screener`, `vinu-portfolio`) still fully green. Zero known-bad
+  tests left anywhere in the repo.
+
+**2026-09-20 -- K, U, Y's new-writer decisions, asked and answered.**
+This file's own ranked list had flagged K/U/Y as blocked on a real
+product/priority call ("is the missing history worth a new writer") and
+deliberately left it undecided rather than picking silently. Asked the
+user directly which of the three to build; the answer was all three.
+- **K** ("does retrieved memory actually help"): `vinu_agent/agent/
+  context.py`'s `build_messages()` now captures the real `Fact.id`/
+  `MemoryEntry.id` values it already had in hand (including the
+  token-budget-trimmed case) into `last_injected_fact_ids`/
+  `last_injected_memory_ids`. New `vinu_agent/storage/
+  injected_context_log.py` (`InjectedContextLogStore`) is the writer --
+  one row per `build_messages()` call, keyed by `session_id`, written
+  from `session/service.py`, best-effort (a turn with nothing injected
+  writes no row at all). Unlike U/Y below, K's analyst was built the
+  same day: `vinu_reflection/reflection/memory_effectiveness.py`, same
+  `TeamRunStore.get_latest_verdict_by_session_id` join key D already
+  established (plus a new pure-read `TeamRunStore.
+  distinct_session_ids_with_verdict()` for the session universe) --
+  every chat turn is a potential data point, so there was no reason to
+  wait for it to accumulate.
+- **U** ("critical rebalance-bypass justification"): new
+  `rebalance_request_history` table in `vinu-live`'s
+  `rebalance_intake.py`, appended to by `consume()` right before it
+  deletes the working-queue row (plus `history_for()`/`all_history()`
+  reads). Writer only -- critical bypasses are rare events by design, so
+  the table starts empty; the analyst itself waits for real production
+  history to accumulate.
+- **Y** ("earnings/macro-event holding loss"): new `events_archive`
+  table in `vinu-stock-price`'s `events/store.py`, appended to by
+  `replace_kind()` right before its existing delete-then-insert wipes a
+  kind's rows (`INSERT OR IGNORE` keyed on the same PK, so a
+  still-upcoming event seen across several consecutive pulls isn't
+  re-archived with a wrong `archived_at`), plus a new
+  `archived_overlapping()` read mirroring `upcoming()`. Writer only --
+  same reasoning as U, the archive starts empty and Y needs closed
+  trades whose window is already in the past.
+- 41 new tests across `vinu-agent` (22: `TestLastInjectedMemoryIds`,
+  `test_injected_fact_id_is_captured`, `test_injected_context_log.py`),
+  `vinu-reflection` (7: `test_memory_effectiveness.py`), `vinu-live` (6:
+  `TestRebalanceRequestHistory`), and `vinu-stock-price` (4:
+  `TestEventsArchive`) -- all ran green, and the full suite for every
+  affected package still passed end to end afterward with no
+  regressions (`vinu-agent` 1183/1183 + 4 skipped, `vinu-reflection`
+  83/83, `vinu-live` 442/442, `vinu-stock-price` 111/111).
+
+**17 of 25 analyses now implemented**: D, L, K, M, A, C, E (both
+pieces), H (both pieces), I, X, W, P, G, V, B. U and Y's new writers are
+built and collecting data, but their analysts aren't -- see
+`07-implementation-plan-status.md`'s ranked list for what's next.
+
+---
+
+**2026-09-20 -- O and R's new-writer decisions, investigated and closed
+the same way as K/U/Y.** Asked to "go on" and implement the next ranked
+item; investigated O, J, and R (the remaining new-writer-shaped items)
+against the real code before asking anything, same discipline as K/U/Y:
+- **O** ("are operator mandate limits protecting against real risk, or
+  just friction"): confirmed `order_guard.py`'s operator-limit rejection
+  sites (`_check_symbol_override`'s hard block, plus
+  `max_order_value`/`max_position_pct`/`max_capital_utilization_pct` via
+  `_effective_limit`) never looked up which artifact they were blocking
+  -- pure numeric/override checks, no artifact lookup at all.
+- **R** ("is the Planner ever triaging against silently stale angle
+  data"): confirmed `ticker_summaries` is deliberately non-versioned
+  (own docstring says so), but found the real "Planner triage event"
+  call site (`ChangeGate`'s `run_gate_cycle` -> `_on_yes` in
+  `scheduler_workers.py`) already has everything needed to check
+  freshness LIVE, at the moment triage happens -- just never did.
+- **J** ("screener churn as a regime-change indicator"): different
+  shape entirely -- `Artifact.regime_tag` is a static, set-once field,
+  never a system-wide time series with "transitions" to detect. No
+  existing concept to build a writer against; flagged as needing a spec
+  first (same category as S), not asked about.
+
+Asked directly which of O/R to build; the answer was both. Built:
+- **O**: new `GuardResult.blocked_artifact_ids: list[str]` field,
+  populated at all four operator-limit rejection sites via a new
+  `OrderGuard._blocked_artifact_ids(symbol)` helper (the same
+  `list_artifacts_for_symbol` call `_check_active_artifact` already
+  makes, broadened to `[ACTIVE, BENCHING, MONITORING]`). Surfaced into
+  `order_rejected` audit entries from both of `trade_tool.py`'s real
+  guard-result logging call sites (`guard.check()` and
+  `guard.pre_approve()`). Every other rejection reason (kill switch,
+  allowlist, daily limits, no-active-artifact, ...) deliberately left
+  with an empty list -- not what O is asking about.
+- **R**: new `_log_triage_freshness()` in `scheduler_workers.py`, called
+  from `make_planner_on_yes`'s `_on_yes` (now takes an optional
+  `run_log_reader` param, wired from `cli.py`'s existing
+  `HttpRunLogReader`) right before the real triage check. Logs a
+  `triage_freshness_check` event to the already-existing
+  `TickerLedgerStore` -- no new table needed, this is exactly what it
+  already exists to hold. Best-effort: a freshness-check failure never
+  blocks the real triage/proposal it's observing.
+- Both are writer-only, same reasoning as U/Y: `order_rejected` entries
+  and `triage_freshness_check` events both only started 2026-09-20, so
+  there's no real history yet for either analyst to compare against.
+- 13 new tests (`TestBlockedArtifactIds` in `test_order_guard.py`,
+  `TestPlannerTriageFreshnessLogging` in `test_scheduler_workers.py`)
+  ran green, and the full `vinu-agent` suite still passed end to end
+  afterward with no regressions.
+
+Only J is left unresolved among the original five new-writer-shaped
+items (K/U/Y/O/R) -- and unlike the other four, it's not actually a
+new-writer decision at all, it's a missing spec. See
+`07-implementation-plan-status.md`'s ranked list for what's next.
+
+---
+
+**2026-09-20 -- U, Y, O, and R's analysts built too, not left waiting on
+data.** After U/Y/O/R's writers shipped, the plan had been to leave
+their analyst modules unbuilt until real production evidence
+accumulated (critical bypasses, past events, blocked-artifact
+rejections, and triage cycles are all either rare or newly-started).
+Asked directly: "you said some need real trades, can't we just build it
+so when it starts it will be working right, can't we do that?" -- yes:
+nothing about "no data yet" argues against writing and testing the
+analyzer code itself, only against real findings showing up soon. Every
+analyst in this codebase already starts at zero evidence and gates on
+its own `MIN_EVIDENCE_COUNT` floor before writing anything -- that's the
+exact mechanism that makes building ahead of data safe, and it's the
+same reasoning K's own analyst was already built under in the previous
+entry.
+
+Built all four:
+- **U** (`rebalance_bypass.py`): "subsequent realized P&L" reads
+  `trade_audit_log.jsonl`'s real exit rows (same source B established),
+  taking the first exit for a request's symbol at or after
+  `requested_at`. `MIN_EVIDENCE_PER_GROUP=5` (rare events by design)
+  gates both the system-wide rollup and any per-symbol finding.
+- **Y** (`event_holding_loss.py`): closed trades come from
+  `trade_audit_log.jsonl`'s entry+exit pairs joined by `trade_id`;
+  overlap checked against both the live `events` table (a very recent
+  trade might not be superseded by a pull yet) and the new
+  `events_archive`. `MIN_EVIDENCE_COUNT=20` for the primary; the
+  secondary per-ticker finding additionally requires the symbol's own
+  delta to diverge from the system baseline, per the design doc's own
+  Storage note.
+- **O** (`mandate_limit_friction.py`): "eventual projected performance"
+  reads `decay_snapshots` via `get_strategy_store().get_latest_snapshot
+  (artifact_id)` -- same `get_strategy_store()` B/V already use. Found
+  and fixed a real bug before it shipped: the first draft read
+  `data_root_paths["vinu_research"]`, a key that doesn't exist anywhere
+  in `cli.py`'s real wiring (only vinu_agent/vinu_live/vinu_screener/
+  vinu_portfolio/vinu_stock/vinu_reflection do) -- would have raised
+  `KeyError` in production despite passing its own tests (which had
+  fabricated that key themselves). Caught by checking the real wiring
+  against B/V's established pattern before calling it done, not by the
+  tests alone.
+- **R** (`triage_freshness.py`): windowing follows `angle_trust.py`'s
+  adjacent-window PSI precedent rather than the design doc's literal
+  "trailing band" phrasing. Found and fixed a second real bug while
+  writing this one's tests: merging two `list_events_by_type()` results
+  and re-sorting by `timestamp` doesn't preserve true order when
+  multiple events land in the same second (`_now()` is second-
+  resolution) -- routine under a burst of triage cycles, and the
+  default case in any fast test. Fixed by ordering by SQLite's own
+  `rowid` instead, and adding `list_events_by_types()` (queries several
+  types in one pass, already in true insertion order) so the analyzer
+  never needs to re-merge two separately-sorted lists at all.
+- 25 new tests across the four analyzer test files, plus 9 more for the
+  new pure-read methods they needed (`AuditLogger.read_all`,
+  `TickerLedgerStore.list_events_by_type`/`list_events_by_types`) --
+  all green. Smoke-tested `cli.py`'s real `run_cycle()` against
+  completely empty mounted data roots: all 19 registered analysts ran
+  with zero crashes and zero findings written (correct -- no evidence
+  yet), confirming the wiring is genuinely production-ready, not just
+  unit-tested in isolation. Full suites re-verified afterward with no
+  regressions: `vinu-reflection` 108/108, `vinu-agent` 1205/1205 + 4
+  skipped, `vinu-live` 442/442, `vinu-stock-price` 111/111, `vinu-research`
+  905/905 + 1 skipped.
+
+**19 of 25 analyses now implemented**: D, L, K, M, A, C, U, Y, E (both
+pieces), H (both pieces), I, X, W, P, G, V, B, O, R. Every one of the 6
+analysts now has every implementable analysis actually built, tested,
+and registered -- U/Y/O/R will simply start writing real findings once
+production data clears each one's evidence floor, no further code
+needed. What's left (Q, N, S, F, T, J) is entirely real dependency-cost
+tradeoffs, missing specs, and structural/schema blockers -- see
+`07-implementation-plan-status.md`'s ranked list, now topped by J's spec
+gap (the only remaining new-writer-shaped item that isn't actually a
+new-writer decision).

@@ -536,6 +536,7 @@ services:
       VINU_RESEARCH_DATA_ROOT: /research-data
       VINU_SCREENER_DATA_ROOT: /screener-data
       VINU_REFLECTION_PORTFOLIO_DATA_ROOT: /portfolio-data
+      VINU_REFLECTION_STOCK_DATA_ROOT: /stock-data
     volumes:
       - ./data/reflection:/data
       - ./data/agent:/agent-data:ro
@@ -543,6 +544,7 @@ services:
       - ./data/research:/research-data:ro
       - ./data/screener:/screener-data:ro
       - ./data/portfolio:/portfolio-data:ro
+      - ./data/stock-price:/stock-data:ro
     cap_drop:
       - ALL
     cap_add:

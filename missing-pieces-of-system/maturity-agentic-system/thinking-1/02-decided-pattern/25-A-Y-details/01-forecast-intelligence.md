@@ -90,7 +90,7 @@ exists to avoid — and the ticker-profile file's own
 `vinu_initial_analysis` key today only carries `timeframe`/`tier`/
 `run_id`/`row_count` per angle, not `weights_ref`/checkpoint age, so it
 can't answer Q's Condition either without a producer-side change. Not a
-hard blocker like K/P/G (no missing data, just a real dependency-cost
+hard blocker like K (no missing data, just a real dependency-cost
 tradeoff) — worth a deliberate decision before building, not a default.
 
 ---
@@ -119,29 +119,47 @@ in the trailing window.
 
 **Manageability**: ≤N tickers, linear.
 
-**Blocked, 2026-09-19 — not implementable as scoped, needs a new
-writer.** Checked the real schema/writers: `CalibrationEntry.timestamp`
-(`vinu-research/vinu_research/storage/strategy_store.py`'s
-`calibration_entries` table) is `TEXT NOT NULL` with no default, and
-**no real writer anywhere in the codebase ever sets it** —
-`calibration.py`'s `add_entry()` (the only real construction site,
-`vinu_research/calibration.py:61-84`) leaves it at the dataclass default
-(`""`). Every real calibration entry's `timestamp` column is an empty
-string today. `ingest_log.run_at`/`provider_fallback_log.occurred_at`
-(vinu-stock-price) are real Unix timestamps, but with nothing real to
-compare them against on the calibration side, "brier_score for windows
-served by a fallback / with a gap, vs. this symbol's own clean-period
-baseline" — a **within-symbol, time-windowed** comparison — cannot
-actually be computed. (`angle_trust.py`'s implementation of A sidesteps
-this same gap by using insertion order, not `timestamp`, as its time
-proxy — that works for A's "most recent N entries" framing but not for
-P's "which specific entries overlapped a gap/error window," which needs
-real calendar time on both sides.) Same two ways forward as K: (a) add a
-real writer -- populate `timestamp` at calibration-entry creation time
-(a small, real, probably worthwhile fix regardless of P), or (b) rescope
-P to a cross-sectional comparison (symbols with vs. without any
-recorded ingest degradation, not before/after) and accept it answers a
-different, related question. Left undecided.
+**Built 2026-09-19, `vinu-reflection/vinu_reflection/reflection/
+ingest_health.py` (merged with G below).** The 2026-09-19 "Blocked"
+verdict originally recorded here was a documentation error, found and
+corrected the same day while investigating V (02-regime-risk-coverage.md):
+it claimed `calibration.py`'s `add_entry()` "leaves
+[`CalibrationEntry.timestamp`] at the dataclass default (`""`)" and that
+"no real writer anywhere in the codebase ever sets it." Checked directly:
+`add_entry()` (`vinu_research/calibration.py`) sets
+`timestamp=datetime.now(timezone.utc).isoformat()`, and `git blame` shows
+that line has been there since 2026-07-27 — two months before the
+"blocked" verdict was written. It is wired to a real production writer:
+vinu-live's `feedback_loop.py` calls `POST /trade-plan/{id}/record-
+outcome` on every closed position, which calls `record_realized_outcome()`
+-> `CalibrationTracker.add_entry()` -> `append_calibration_entry()`, and
+`strategy_store.py`'s `append_calibration_entry`/`_row_to_calibration_entry`
+persist/read that column verbatim. `calibration_entries.timestamp` is
+genuinely populated today — this was never a real data gap.
+
+**Real join used**: not a naive per-entry timestamp match.
+`CalibrationEntry.timestamp` is the trade's *close* time, not when the
+forecast was made — an ingest gap or provider fallback that degraded a
+forecast would have happened near the trade's *entry*, not its close.
+Joined on `Artifact.created_at` instead (the real forecast-authoring
+moment): each closed position's calibration entries are attributed to
+the calendar day its owning artifact was created, and that day (plus a
+1-day lag) is checked against `ingest_log`'s bad-day set (P) and
+`provider_fallback_log`'s fallback-day set (G) for that same symbol —
+real calendar time on both sides, using `ingest_log`/`provider_fallback_
+log`'s real Unix timestamps and `Artifact.created_at`'s real ISO
+timestamp.
+
+**Scoped down from the Condition above, documented, not silently
+dropped**: "`gap_count` itself exceeds this symbol's own trailing P90"
+needs a historical *time series* of `gap_count` per symbol; only a
+current snapshot lives in `symbol_catalog` (no history table exists for
+it anywhere). Only the error-adjusted brier comparison half of P (and
+G's fallback-vs-primary equivalent) is implemented; `gap_count` is
+still reported in `signal_json` as context. `ingest_log` also needed its
+first real read method (`CatalogStore.list_ingest_log`, additive) — it
+was write-only everywhere else, exactly as this Condition originally
+noted.
 
 ---
 
@@ -168,12 +186,9 @@ the # `provider_fallback_log` rows in the window.
 
 **Manageability**: no additional row fan-out beyond P.
 
-**Blocked, 2026-09-19 — same reason as P above** (they merge into one
-row, so they share the same blocker): G needs the identical
-within-symbol, time-windowed comparison ("brier_score when served by a
-fallback provider... vs. this symbol's own primary-provider baseline"),
-which needs `calibration_entries.timestamp` to actually be populated.
-Not attempted separately from P.
+**Built 2026-09-19, same module as P above** (`ingest_health.py`,
+merged into P's per-ticker row). See P's own note above — the "blocked"
+verdict for both was a documentation error, not a real data gap.
 
 ---
 

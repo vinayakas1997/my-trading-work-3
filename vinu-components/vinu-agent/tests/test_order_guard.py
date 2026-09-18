@@ -111,7 +111,15 @@ class TestOrderThrottle:
         mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False)
         guard = _guard(mandate)
         guard._throttle_limit_per_sec = 3
-        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+        # check() also calls _check_risk_budget -> a real GET to
+        # /portfolio/risk/status. Unmocked, that hits a closed port and
+        # fails via a real (and, on Windows, measurably slower) connection-
+        # refused round trip on every call -- slow enough that the 1s
+        # throttle window's oldest entries can age out before the 4th call,
+        # making the throttle flaky instead of deterministic. Mock it out
+        # so this test only measures the throttle itself.
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False), \
+                patch("vinu_agent.broker.order_guard.requests.get", side_effect=ConnectionError("no portfolio service in tests")):
             assert guard.check("AAPL", "buy", qty=1, price=10.0)
             assert guard.check("AAPL", "buy", qty=1, price=10.0)
             assert guard.check("AAPL", "buy", qty=1, price=10.0)
@@ -130,7 +138,10 @@ class TestOrderThrottle:
         mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False)
         guard = _guard(mandate)
         guard._throttle_limit_per_sec = 1
-        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False):
+        # See test_trips_at_the_configured_rate above -- same reason for
+        # mocking the risk-budget GET out.
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False), \
+                patch("vinu_agent.broker.order_guard.requests.get", side_effect=ConnectionError("no portfolio service in tests")):
             guard.check("AAPL", "buy", qty=1, price=10.0)
             with caplog.at_level("WARNING", logger="vinu_agent.broker.order_guard"):
                 guard.check("AAPL", "buy", qty=1, price=10.0)
@@ -1178,6 +1189,121 @@ class TestMaxCapitalUtilization:
         result = guard.check("AAPL", "buy", qty=10, price=100.0)
 
         assert result
+
+
+class TestBlockedArtifactIds:
+    """Analysis O (25-A-Y-details/05-governance-freshness.md): an
+    operator-limit rejection now carries which artifact(s) it blocked, so
+    `order_rejected` audit entries have a real join key instead of needing
+    a weak symbol+time-window match."""
+
+    def _store_with_artifact(self, symbol: str, status: ArtifactStatus) -> SqliteStrategyStore:
+        tmp = tempfile.mktemp(suffix=".db")
+        store = SqliteStrategyStore(Path(tmp))
+        artifact = Artifact.create("strategy", "test-strategy", universe=[symbol])
+        artifact.status = status
+        store.upsert_artifact(artifact)
+        return store
+
+    def test_symbol_override_rejection_carries_blocked_artifact_id(self) -> None:
+        from vinu_agent.broker.symbol_overrides import SymbolOverrideStore
+        from vinu_agent.broker.guard_codes import OverrideState
+
+        override_store = SymbolOverrideStore(":memory:")
+        override_store.set("AAPL", OverrideState.UNTRADEABLE, reason="pending 8-K")
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False)
+        broker = MagicMock()
+        broker.get_account.return_value = _account()
+        guard = OrderGuard(
+            mandate=mandate, broker=broker,
+            daily_limit_store=DailyLimitStore(":memory:"), override_store=override_store,
+        )
+        artifact_store = self._store_with_artifact("AAPL", ArtifactStatus.ACTIVE)
+
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False), \
+                patch("vinu_agent.broker.research_link.get_strategy_store", return_value=artifact_store):
+            result = guard.check("AAPL", "buy", qty=1, price=10.0)
+
+        assert not result
+        assert len(result.blocked_artifact_ids) == 1
+
+    def test_max_order_value_rejection_carries_blocked_artifact_id(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, max_order_value=1_000.0)
+        guard = _guard(mandate)
+        artifact_store = self._store_with_artifact("AAPL", ArtifactStatus.BENCHING)
+
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False), \
+                patch("vinu_agent.broker.research_link.get_strategy_store", return_value=artifact_store):
+            result = guard.check("AAPL", "buy", qty=10, price=800.0)
+
+        assert not result
+        assert result.blocked_artifact_ids == [artifact_store.list_artifacts_for_symbol("AAPL")[0].artifact_id]
+
+    def test_max_position_pct_rejection_carries_blocked_artifact_id(self) -> None:
+        mandate = TradingMandate(max_position_pct=0.05, require_active_artifact=False)
+        broker = MagicMock()
+        broker.get_account.return_value = _account(equity=100_000.0)
+        guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=DailyLimitStore(":memory:"))
+        artifact_store = self._store_with_artifact("AAPL", ArtifactStatus.MONITORING)
+
+        with patch("vinu_agent.broker.research_link.get_strategy_store", return_value=artifact_store):
+            result = guard.check("AAPL", "buy", qty=100, price=100.0)
+
+        assert not result
+        assert len(result.blocked_artifact_ids) == 1
+
+    def test_max_capital_utilization_rejection_carries_blocked_artifact_id(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, max_capital_utilization_pct=0.6, require_active_artifact=False)
+        broker = MagicMock()
+        broker.get_account.return_value = _account(equity=100_000.0, cash=50_000.0)
+        guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=DailyLimitStore(":memory:"))
+        artifact_store = self._store_with_artifact("AAPL", ArtifactStatus.ACTIVE)
+
+        with patch("vinu_agent.broker.research_link.get_strategy_store", return_value=artifact_store):
+            result = guard.check("AAPL", "buy", qty=200, price=100.0)
+
+        assert not result
+        assert len(result.blocked_artifact_ids) == 1
+
+    def test_no_artifact_for_symbol_means_empty_list_not_an_error(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, max_order_value=1_000.0)
+        guard = _guard(mandate)
+        empty_store = SqliteStrategyStore(Path(tempfile.mktemp(suffix=".db")))
+
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False), \
+                patch("vinu_agent.broker.research_link.get_strategy_store", return_value=empty_store):
+            result = guard.check("AAPL", "buy", qty=10, price=800.0)
+
+        assert not result
+        assert result.blocked_artifact_ids == []
+
+    def test_lookup_failure_fails_open_with_empty_list(self) -> None:
+        mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, max_order_value=1_000.0)
+        guard = _guard(mandate)
+
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False), \
+                patch("vinu_agent.broker.research_link.get_strategy_store", side_effect=OSError("db gone")):
+            result = guard.check("AAPL", "buy", qty=10, price=800.0)
+
+        assert not result  # the real rejection (max_order_value) still fires
+        assert result.blocked_artifact_ids == []
+
+    def test_unrelated_rejection_reason_leaves_blocked_artifact_ids_empty(self) -> None:
+        """blocked_tickers is not an operator-limit rejection O cares
+        about -- it must not carry an artifact_id, and must not even
+        attempt the lookup (mock_get_store is never called)."""
+        mandate = TradingMandate(
+            max_position_pct=1.0, require_active_artifact=False, blocked_tickers=["AAPL"],
+        )
+        guard = _guard(mandate)
+
+        with patch("vinu_agent.broker.order_guard.is_trading_halted", return_value=False), \
+                patch("vinu_agent.broker.research_link.get_strategy_store") as mock_get_store:
+            result = guard.check("AAPL", "buy", qty=1, price=10.0)
+
+        assert not result
+        assert result.blocked_artifact_ids == []
+        mock_get_store.assert_not_called()
 
 
 class TestShortCheckExemptsReduceOnly:

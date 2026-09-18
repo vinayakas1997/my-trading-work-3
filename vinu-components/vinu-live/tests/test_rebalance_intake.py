@@ -53,6 +53,61 @@ class TestRebalanceRequestQueue:
         assert queue.pending_for("AAPL") is not None
 
 
+class TestRebalanceRequestHistory:
+    """Analysis U (25-A-Y-details/03-execution-money-flow.md) needs a
+    historical log of past critical=True requests -- consume() deleting
+    the working-queue row can't answer that alone."""
+
+    def test_consume_archives_the_request_into_history(self, queue: RebalanceRequestQueue) -> None:
+        queue.submit("AAPL", "free capital", critical=True)
+        queue.consume("AAPL")
+        history = queue.history_for("AAPL")
+        assert len(history) == 1
+        assert history[0].symbol == "AAPL"
+        assert history[0].reason == "free capital"
+        assert history[0].critical is True
+
+    def test_consuming_unknown_symbol_writes_no_history(self, queue: RebalanceRequestQueue) -> None:
+        queue.consume("MSFT")
+        assert queue.history_for("MSFT") == []
+
+    def test_history_survives_after_the_pending_row_is_gone(self, queue: RebalanceRequestQueue) -> None:
+        queue.submit("AAPL", "reason", critical=False)
+        queue.consume("AAPL")
+        assert queue.pending_for("AAPL") is None
+        assert len(queue.history_for("AAPL")) == 1
+
+    def test_repeated_submit_consume_cycles_accumulate_history(self, queue: RebalanceRequestQueue) -> None:
+        queue.submit("AAPL", "first", critical=True)
+        queue.consume("AAPL")
+        queue.submit("AAPL", "second", critical=False)
+        queue.consume("AAPL")
+        history = queue.history_for("AAPL")
+        assert len(history) == 2
+        assert {h.reason for h in history} == {"first", "second"}
+
+    def test_all_history_spans_every_symbol(self, queue: RebalanceRequestQueue) -> None:
+        queue.submit("AAPL", "a", critical=True)
+        queue.consume("AAPL")
+        queue.submit("MSFT", "b", critical=False)
+        queue.consume("MSFT")
+        symbols = {h.symbol for h in queue.all_history()}
+        assert symbols == {"AAPL", "MSFT"}
+
+    def test_history_visible_across_instances(self, db_path: Path) -> None:
+        writer = RebalanceRequestQueue(str(db_path))
+        writer.submit("AAPL", "reason", critical=True)
+        writer.consume("AAPL")
+        writer.close()
+
+        reader = RebalanceRequestQueue(str(db_path))
+        history = reader.history_for("AAPL")
+        reader.close()
+
+        assert len(history) == 1
+        assert history[0].critical is True
+
+
 class TestRebalanceRequestQueuePersistsAcrossInstances:
     """The actual bug being closed: server/app.py's HTTP route and the
     trade-plan-worker's own cron loop each construct their own

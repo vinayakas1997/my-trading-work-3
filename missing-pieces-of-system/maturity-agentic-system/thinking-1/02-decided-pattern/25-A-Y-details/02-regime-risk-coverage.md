@@ -34,16 +34,45 @@ wanting a per-ticker answer joins at read time: look up which
 `(strategy_family, regime_tag)` a candidate ticker matches, then read
 B's belief for that cell.
 
-**Not attempted, 2026-09-19 — needs a new categorical scheme first.**
-Grepped the whole codebase for `strategy_family`/`family`: no such
-categorical concept exists anywhere. `Artifact.type` is a coarse
-artifact-kind flag (`"strategy"`/`"trade_plan"`/etc, not a style
-taxonomy); `signal_definition` is free text, not categorical. Building
-B would mean inventing a brand-new classification scheme (e.g.
-keyword-parsing `signal_definition`) from scratch, not reading one that
-already exists -- a different, bigger decision than the "drop the field
-that has no real substitute" scoping-downs already applied to C/H. Left
-for a dedicated design pass, not silently invented here.
+**Built 2026-09-19, `vinu-reflection/vinu_reflection/reflection/
+regime_strategy_coverage.py`.** The taxonomy design pass this note called
+for: grepped the whole codebase again, confirming `Artifact.type`
+(coarse kind flag) and `signal_definition` (no real writer anywhere --
+empty on every real artifact today, not just "free text") both really
+can't provide one. `ResearchRunRecord.user_idea` can: required on every
+real research run (or auto-proposed when omitted, never silently empty),
+and confirmed short/descriptive against every real value in this
+codebase's own tests and non-LLM fallback string ("SMA crossover",
+"momentum breakout", "Trend-following strategy for {stage} stage...").
+
+Added `Artifact.strategy_family` (`vinu-research/vinu_research/
+models.py`), classified once at creation time (`service.py::
+_create_artifact_from_run`) via the new `vinu_research.strategy_family.
+classify_strategy_family()` -- a small, fixed, keyword-based taxonomy
+grounded in the style categories systematic-trading literature commonly
+uses (momentum/trend-following, mean-reversion, breakout, volatility,
+stat-arb/relative-value, event-driven), same "research external
+convention, pick something grounded, document the reasoning" resolution
+`03-severity-and-trend.md`/`04-reference-baseline-config.md` used for the
+PSI-threshold questions. `unclassified` is a real 7th bucket for runs
+that state no style (e.g. autonomous refresh/refine runs), not a
+classifier failure. Forward-only, never backfilled -- same contract as
+`regime_tag`/`freeze_hash`/`timeframe`; pre-existing artifacts are
+excluded from every cross-tab cell rather than lumped into a fake
+catch-all.
+
+**Real scope-down from the Fetch above, documented**: `bench_history` is
+a per-artifact *backtest*-time series, not per-real-trade -- it can't
+answer a per-(strategy_family, regime_tag) cross-tab of real outcomes.
+Uses `trade_audit_log.jsonl`'s real exit rows instead (`artifact_id`,
+`realized_pnl`, both confirmed populated at every real write site).
+`ic` is dropped from the per-regime breakdown (needs per-forecast
+expected-value data trade_audit_log doesn't carry); the reported figure
+is a raw reward-to-variability ratio (mean/std of realized_pnl), not an
+annualized Sharpe (real trade holding periods vary, no single
+annualization factor applies) -- same honesty already given to C's own
+loss-rate metric. See that module's own docstring for the full
+reasoning.
 
 ---
 
@@ -195,19 +224,39 @@ gating philosophy.
 
 **Manageability**: bounded by the number of strategy families.
 
-**Not attempted, 2026-09-19 — needs more investigation, not blocked.**
-Checked `paper_performance` (`vinu-agent/vinu_agent/broker/performance_store.py`)
-directly: PK is `artifact_id`, both `record_daily_returns`/`record_meta`
-upsert on it, confirming it's overwrite-only (the full `returns_json`
-accumulates under one row, but only a single last-write-wins
-`updated_at` -- no per-return timestamps). No `promoted_at` marker
-exists in this file, and a grep for a real promotion-timestamp field
-elsewhere (`ArtifactStatus.ACTIVE` transitions in
-`trade_plan_authoring.py`/`service.py`) found only inline `artifact.status
-= ArtifactStatus.ACTIVE` assignments with no dedicated timestamp write —
-`Artifact.updated_at` is the closest proxy but isn't exclusive to
-promotion (other updates bump it too), so it's not yet clear this
-cleanly splits "paper-period" from "live-period" returns. Also still
-needs a real Pearson-correlation helper (nothing in this codebase
-computes one yet — every analyst so far only needed PSI). Worth a
-closer look before building, not attempted this pass.
+**Built 2026-09-19, `vinu-reflection/vinu_reflection/reflection/
+paper_live_correlation.py`.** The two blockers this note originally
+flagged both turned out to be non-issues once chased down further:
+
+1. A `promoted_at` marker isn't actually needed to split "paper-period"
+   from "live-period" returns. Grepped every real writer:
+   `PaperPerformanceStore.record_daily_return(s)` has exactly one caller
+   anywhere in the codebase — `ShadowEvaluator.record_daily_paper_
+   returns()` (`vinu-live/vinu_live/shadow_evaluator.py`) — and that
+   method only ever iterates artifacts with `status=BENCHING`. So
+   `paper_performance` is *structurally* paper-period-only: nothing
+   appends to it once an artifact leaves BENCHING. `calibration_entries`,
+   on the other side, is only ever populated by `record_realized_
+   outcome()` for closed *live* broker positions (vinu-live's
+   `feedback_loop.py`) — paper trading never touches it. The two stores
+   are already cleanly split by construction, with no join needed: an
+   artifact_id present in both is, by construction, one that was
+   promoted.
+2. A Pearson-correlation helper was added —
+   `vinu_infra.reflection.pearson_correlation()`, first real user.
+
+**Real scope-down, documented**: the design doc's `scope_type=
+strategy_family` grouping needs the same categorical concept B is still
+missing (`01-forecast-intelligence.md`'s B verdict). Scoped down to one
+`scope_type=system` row across every promoted artifact instead — revisit
+per-family once B's taxonomy is resolved. The Condition's "correlation
+moves outside its own trailing band" is handled by `write_finding()`'s
+own `compute_trend()` (comparing this cycle's correlation against the
+prior belief, already centralized); PSI (needed for the write/no-write
+significance gate itself, since a single recomputed-each-cycle scalar
+has no natural two-window comparison) is instead computed between the
+paper-return and live-return distributions directly — a real, related,
+computable question ("how far has the live outcome distribution
+diverged from what paper predicted"). "Correlation ≤ 0" is implemented
+directly as `domain_floor_breached`. See that module's own docstring for
+the full reasoning.

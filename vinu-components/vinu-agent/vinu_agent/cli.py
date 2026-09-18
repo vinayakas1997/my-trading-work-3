@@ -365,15 +365,20 @@ def planner_worker_main(args: argparse.Namespace) -> None:
 
     log = logging.getLogger("vinu.agent.planner_worker")
     with AgentService() as service:
+        run_log_reader = HttpRunLogReader(config.services.get("vinu_initial_analysis"))
         run_log_trigger = RunLogTrigger(
-            HttpRunLogReader(config.services.get("vinu_initial_analysis")),
+            run_log_reader,
             service.ticker_summary_store, service.ticker_ledger,
             ticker_snapshot_store=service.ticker_snapshot_store,
         )
         change_gate = ChangeGate(service.ticker_summary_store, service._strategy_store, service.ticker_ledger)
         triage = PlannerTriage(service._strategy_store, hypothesis_reader_for(service), service.ticker_ledger)
         summary_agent_fn = make_summary_agent_fn(service)
-        on_yes = make_planner_on_yes(service, triage)
+        # run_log_reader reused here (analysis R, 25-A-Y-details/
+        # 05-governance-freshness.md): logs, at each real Planner triage
+        # event, whether the run it acted on was already stale/errored --
+        # see make_planner_on_yes's own docstring.
+        on_yes = make_planner_on_yes(service, triage, run_log_reader=run_log_reader)
 
         try:
             while True:
