@@ -22,9 +22,10 @@ has its first two steps done: Layer 0 (`vinu-infra/reflection.py`) plus
 a real worker loop to run it, both living in their own `vinu-reflection`
 service, not inside vinu-agent (`05-to-do.md` #5's 2026-09-19 update
 explains why, and why moving it back later would be cheap if that turns
-out to be the better call). **10 of the 25 analyses are built on top of
-it**, one per cluster's easiest real slice plus the whole implementable
-Decision-Process set — every remaining analysis was checked against real
+out to be the better call). **12 of the 25 analyses are built on top of
+it**, the whole implementable Decision-Process set plus every
+implementable Governance & Freshness one — every remaining analysis was
+checked against real
 code, not left unexamined. **For the full per-analysis status, why each
 unbuilt one isn't, and where to continue, see
 `25-A-Y-details/07-implementation-plan-status.md` — the single

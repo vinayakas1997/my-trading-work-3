@@ -18,6 +18,7 @@ from vinu_reflection.config import load_config
 from vinu_reflection.reflection import (
     angle_trust,
     concentration_coverage,
+    consistency_freeze,
     correlation_coverage,
     debate_value,
     decision_process,
@@ -25,6 +26,7 @@ from vinu_reflection.reflection import (
     process_mining,
     screener_agreement,
     skill_edit_governance,
+    threshold_calibration,
 )
 
 LOG = logging.getLogger("vinu.reflection.worker")
@@ -42,7 +44,11 @@ LOG = logging.getLogger("vinu.reflection.worker")
 # analysis (05-governance-freshness.md). I/X are both implemented in
 # screener_agreement.run() (06-external-signal-cross-check.md).
 # concentration_coverage.run() is E's concentration piece (the pair
-# piece is correlation_coverage.run()).
+# piece is correlation_coverage.run()). threshold_calibration.run() is W
+# (bracket_partial/rebalance_protect checkpoints only -- the design doc's
+# third named checkpoint has no real call site, see that module's
+# docstring). consistency_freeze.run() is H's consistency piece (the
+# governance piece is skill_edit_governance.run()).
 AnalystFn = Callable[[dict[str, Path], dict[str, Any]], list[Finding]]
 ANALYSTS: list[AnalystFn] = [
     decision_process.run,
@@ -54,6 +60,8 @@ ANALYSTS: list[AnalystFn] = [
     skill_edit_governance.run,
     screener_agreement.run,
     concentration_coverage.run,
+    threshold_calibration.run,
+    consistency_freeze.run,
 ]
 _SEED_FNS: list[Callable[[ReflectionStore], None]] = [
     decision_process.seed_reference_config,
@@ -65,6 +73,8 @@ _SEED_FNS: list[Callable[[ReflectionStore], None]] = [
     skill_edit_governance.seed_reference_config,
     screener_agreement.seed_reference_config,
     concentration_coverage.seed_reference_config,
+    threshold_calibration.seed_reference_config,
+    consistency_freeze.seed_reference_config,
 ]
 
 
@@ -104,6 +114,11 @@ def reflection_worker_main(args: argparse.Namespace) -> None:
         "vinu_live": config.live_trade_audit_log_path.parent,
         "vinu_screener": config.screener_data_root,
         "vinu_portfolio": config.portfolio_data_root,
+        # this service's own data root -- consistency_freeze.py (H,
+        # consistency piece) persists its prior-cycle manifest here since
+        # reflection_beliefs can't be trusted to hold it across a quiet
+        # (routine, nothing-written) stretch.
+        "vinu_reflection": config.data_root,
     }
 
     print(f"[reflection-worker] Starting (interval={interval}s, analysts={len(ANALYSTS)})")

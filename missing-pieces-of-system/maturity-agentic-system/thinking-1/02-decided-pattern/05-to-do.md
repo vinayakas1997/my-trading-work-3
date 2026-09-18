@@ -490,3 +490,54 @@ tests (40 -> 45 total in vinu-reflection), all suites still green
 (248/248 vinu-infra, 1171/1171 vinu-agent, 45/45 vinu-reflection,
 436/436 vinu-live, 436/436 vinu-screener, 209/209 vinu-portfolio,
 889/889 vinu-research). **10 of 25 analyses now implemented.**
+
+**Update, 2026-09-19 — O/F/W/V + H-consistency investigation pass, then
+W and H-consistency built**: real-code investigation (per
+`07-implementation-plan-status.md`'s ranked list) found W and
+H-consistency both buildable, O a real design decision (not a missing
+investigation), and F a genuine hard blocker.
+- **W built**: `vinu-reflection/vinu_reflection/reflection/
+  threshold_calibration.py`. The design doc's counterfactual ("swept
+  range of nearby values") has no helper anywhere in this codebase to
+  build against — implemented as the same two-adjacent-windows drift
+  detector every other analyst here uses, applied to each checkpoint's
+  own logged field instead. Only 2 of the design doc's 3 named
+  checkpoints have a real writer (`bracket_partial`, `rebalance_protect`
+  — grepped every `calibration_log.record()` call site; no
+  "thesis-duplicate" checkpoint exists anywhere). Found and fixed a real
+  infra bug along the way: `live-api` had no `VINU_CALIBRATION_LOG` set
+  in `docker-compose.yml` — same "writes to the container's ephemeral
+  `$HOME`, not `/data`" bug already fixed once for `trade_audit_log.jsonl`.
+- **H-consistency built**: `vinu-reflection/vinu_reflection/reflection/
+  consistency_freeze.py`. Found `vinu_infra/freeze.py`'s `freeze_manifest`/
+  `contamination_check` needed no refactor at all — they're plain,
+  argument-only functions, and this file's own "manually-triggered"
+  framing was wrong (grepped the whole tree: no caller anywhere, they
+  were simply unused). The real, load-bearing fix was packaging:
+  `freeze.py` lived in an orphaned `vinu-infra/vinu_infra/` subdirectory
+  that the package's own flat `package-dir` mapping never covered, so
+  `vinu_infra.freeze` was unimportable from anywhere — moved to
+  `vinu-infra/freeze.py` (the same flat layout every other vinu-infra
+  module uses). Scoped down to `scope_type=system` (no `strategy_family`
+  join is possible from what `freeze_manifest`/`contamination_check`
+  actually compute — global file hashes and env vars, not per-strategy
+  data) and to a `domain_floor_breached` finding rather than PSI (a
+  structural diff, not two numeric distributions).
+- **O investigated, not built**: the "eventual performance of a blocked
+  artifact" half is real and computable via `decay_snapshots`
+  (independent of whether the artifact was ever blocked live). The real
+  blocker: `order_rejected` audit entries carry no `artifact_id` at all —
+  identifying which artifact got blocked needs a weak symbol+time-window
+  match, not a stored key. A real decision (accept the weak match, or
+  add `artifact_id` to `order_rejected` logging first), same shape as
+  the K/U/Y new-writer decisions.
+- **F investigated, not built**: genuinely blocked. `significance_flags`
+  has no `artifact_id`/order/trade id at all, only `ticker` — no join,
+  weak or otherwise, to any later trade/artifact outcome exists in real
+  code today.
+- **V not reinvestigated this pass** — still needs a `promoted_at`-
+  equivalent timestamp and a Pearson-correlation helper.
+
+12 new tests (45 -> 57 total in vinu-reflection), all suites still green
+(248/248 vinu-infra, 57/57 vinu-reflection). **12 of 25 analyses now
+implemented**: D, L, M, A, C, E (both pieces), H (both pieces), I, X, W.

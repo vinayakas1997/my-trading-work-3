@@ -13,7 +13,7 @@ Named `07-` (not `06-`) because `06-external-signal-cross-check.md`
 already owns that number — reading order in this folder is
 `00` → `06` (the spec), then this file.
 
-Status as of **2026-09-19**.
+Status as of **2026-09-19** (update: W and H-consistency built).
 
 ---
 
@@ -63,13 +63,13 @@ actual build.
 
 ## Status at a glance
 
-**10 of 25 analyses implemented and tested. 15 not built**, each with a
+**12 of 25 analyses implemented and tested. 13 not built**, each with a
 real, checked reason (not "not gotten to yet") — see the table.
 
 | Package | Tests | Status |
 |---|---|---|
 | `vinu-infra` | 248 | green |
-| `vinu-reflection` | 45 | green |
+| `vinu-reflection` | 57 | green |
 | `vinu-agent` | 1171 | green |
 | `vinu-live` | 436 | green |
 | `vinu-screener` | 436 | green |
@@ -86,6 +86,16 @@ regardless of this reflection work):
   first 3 analysts built (A, plus the Decision-Process ones that read
   vinu-research) would have silently read/written nothing in a real
   deployment. Fixed.
+- Same bug, third instance: `live-api` had no `VINU_CALIBRATION_LOG` set
+  either — `calibration_log.jsonl` (needed for W) was also writing into
+  the container's ephemeral `$HOME`, not `/data`. Fixed.
+- `vinu_infra/freeze.py` (needed for H's consistency piece) turned out to
+  be entirely unreachable as `vinu_infra.freeze` — it lived in an orphaned
+  `vinu-infra/vinu_infra/` subdirectory never covered by the package's own
+  flat `package-dir` mapping, so nothing anywhere could actually import
+  it despite the module itself being real and correct. Moved to
+  `vinu-infra/freeze.py` (the same flat layout every other vinu-infra
+  module already uses) — fixed, not just worked around.
 
 ---
 
@@ -111,11 +121,11 @@ regardless of this reflection work):
 | N | Regime & Risk Coverage | `regime_risk_coverage` | ⏸ Deferred | same dependency-cost tradeoff as Q |
 | V | Regime & Risk Coverage | `regime_risk_coverage` | 🔍 Needs investigation | `paper_performance` confirmed overwrite-only, no promotion timestamp found yet; also needs a new Pearson-correlation helper |
 | H (governance) | Governance & Freshness | `governance_freshness` | ✅ Built | `skill_edit_governance.py` |
-| H (consistency) | Governance & Freshness | `governance_freshness` | 🔍 Not attempted | needs `freeze.py` generalized from one-off to schedulable |
-| O | Governance & Freshness | `governance_freshness` | 🔍 Needs investigation | "eventual projected performance of a blocked artifact" not yet a checked join |
+| H (consistency) | Governance & Freshness | `governance_freshness` | ✅ Built | `consistency_freeze.py` |
+| O | Governance & Freshness | `governance_freshness` | ⏸ Deferred | rejected orders carry no `artifact_id`; "which artifact got blocked" needs a weak symbol+time-window match, not a stored key — a real decision, not a missing investigation (the "eventual performance" half is otherwise real and computable via `decay_snapshots`) |
 | R | Governance & Freshness | `governance_freshness` | ❌ Blocked | `ticker_summaries` is explicitly current-state-only (its own docstring says so) |
-| F | Governance & Freshness | `governance_freshness` | 🔍 Needs investigation | "downstream outcomes for flagged tickers" not yet a checked join |
-| W | Governance & Freshness | `governance_freshness` | 🔍 Needs investigation | doc's own text: "the join varies per checkpoint" |
+| F | Governance & Freshness | `governance_freshness` | ❌ Blocked | `significance_flags` has no join key (not even weak) to any later trade/artifact outcome |
+| W | Governance & Freshness | `governance_freshness` | ✅ Built | `threshold_calibration.py` (2 of the design doc's 3 named checkpoints — the third has no real writer) |
 | I | External-Signal Cross-Check | `external_signal_cross_check` | ✅ Built | `screener_agreement.py` |
 | X | External-Signal Cross-Check | `external_signal_cross_check` | ✅ Built | `screener_agreement.py` (same module as I) |
 | J | External-Signal Cross-Check | `external_signal_cross_check` | ❌ Blocked | `regime_tag` is set once at artifact creation, never updated — no transition event stream |
@@ -142,13 +152,16 @@ per-analyst code to write beyond its member analyses' `run()` functions.
 | Forecast Intelligence | A, Q, P, G, S | 1 (A) | 3 (Q, P, G) | 1 (S) |
 | Execution & Money-Flow | C, U, Y | 1 (C) | 2 (U, Y) | 0 |
 | Regime & Risk Coverage | B, E, N, V | 2 (E — both pieces) | 1 (N) | 2 (B, V) |
-| Governance & Freshness | O, R, F, W, H | 1 (H, governance only) | 1 (R) | 4 (O, F, W, H-consistency) |
+| Governance & Freshness | O, R, F, W, H | 3 (H — both pieces, W) | 3 (O, R, F) | 0 |
 | External-Signal Cross-Check | I, J, T, X | 2 (I, X) | 2 (J, T) | 0 |
 
-**Decision-Process is the only cluster with every implementable analysis
-actually done** (3 of 4; K's blocker is a real data gap, not neglect).
-Every other cluster has at least one real, buildable-once-investigated
-analysis left.
+**Decision-Process and Governance & Freshness are now the clusters with
+every implementable analysis actually done** (Decision-Process: 3 of 4,
+K's blocker is a real data gap; Governance & Freshness: 3 of 5 — H both
+pieces plus W — with O/R/F all landing on real, checked blockers/
+deferrals once investigated, not neglect). Regime & Risk Coverage and
+Forecast Intelligence are the two clusters with real, still-open
+next-wins left (V, B).
 
 ---
 
@@ -204,42 +217,54 @@ appearing in the LLM summary's prose) before it's buildable. Nothing
 else in this codebase does this kind of text-vs-structured-data
 comparison to model it on.
 
-**The 4 "needs investigation" ones (O, F, W, V) plus H-consistency (not
-yet attempted)**: these are the most likely next wins — nothing found so
-far rules them out, they just weren't chased down to the same certainty
-D/A/C/E/H/I/X were before running out of scope for this pass.
-Concretely:
-- **H-consistency**: needs `vinu_infra/freeze.py`'s `freeze_manifest`/
-  `contamination_check` generalized from "manually triggered once" into
-  "callable on the worker's own schedule" — a real refactor, but a
-  small, scoped one.
-- **O, F, W**: each needs someone to sit down and trace the actual join
-  the design doc gestures at (same kind of investigation this file's
-  "Blocked" entries already got) before writing any code.
-- **V**: needs a `promoted_at`-equivalent timestamp tracked down (or
+**H-consistency and W, investigated and built 2026-09-19**: both turned
+out cleaner than the design doc assumed. `freeze.py` needed no refactor
+at all (it was just never wired into the installed package — fixed by
+moving it into vinu-infra's own flat layout); W lost its counterfactual
+ambition (no sweep helper exists anywhere) but kept a real, honestly
+narrower drift-detection question, built for its 2 real checkpoints.
+
+**O and F, investigated 2026-09-19 — real blockers found, not built**:
+- **O**: the "eventual performance of a blocked artifact" half is real
+  and computable (`decay_snapshots` is populated by the offline
+  promotion pipeline, independent of whether live order submission was
+  ever blocked). The real blocker is narrower than the design doc
+  implied: `order_rejected` audit entries carry no `artifact_id` at all
+  — identifying *which* artifact a rejection blocked needs a
+  symbol+time-window match, not a stored key. A real decision (accept
+  the weak match, or add `artifact_id` to `order_rejected` logging
+  first), not a missing investigation — same shape as the K/U/Y
+  new-writer decisions above.
+- **F**: genuinely blocked, no real or weak join found. `significance_flags`
+  has no `artifact_id`/order/trade id at all, only `ticker` — there's no
+  stored key connecting a flag to any later trade or artifact outcome,
+  weak or otherwise. Would need a new field added to `significance_flags`
+  at flag-creation time before this is buildable at all.
+- **V**: still needs a `promoted_at`-equivalent timestamp tracked down (or
   added) and a small Pearson-correlation helper written (this codebase
-  only has PSI machinery today).
+  only has PSI machinery today) — not reinvestigated this pass.
 
 ---
 
 ## Where to continue, ranked
 
-1. **O, F, W, V investigation pass** — same kind of real-code-reading
-   this file's "Blocked" section already did for 8 other analyses
-   (including E-concentration, closed 2026-09-19); likely resolves each
-   into either "buildable" or "blocked," same as everything else so far.
-2. **H-consistency** — small, scoped refactor of `freeze.py`, then a
-   normal analyst build.
-3. **The new-writer decisions (K, U, Y)** — product/design calls, not
-   implementation ones; worth a deliberate pass once someone decides
-   whether closing them is worth the new writers.
-4. **B's taxonomy design** — a real design task, same weight as the PSI
+1. **V investigation** — needs a `promoted_at`-equivalent timestamp
+   tracked down (or added) and a small Pearson-correlation helper
+   written; not yet chased down to the same certainty O/F/W just got.
+2. **The new-writer decisions (K, U, Y, O)** — product/design calls, not
+   implementation ones; O joined this group 2026-09-19 once investigated
+   (weak symbol+time join vs. adding `artifact_id` to `order_rejected`).
+   Worth a deliberate pass once someone decides whether closing any of
+   them is worth the new writer/field.
+3. **B's taxonomy design** — a real design task, same weight as the PSI
    threshold work already done in `03-severity-and-trend.md`.
-5. **Q/N's dependency-cost decision** — likely resolved by extending the
+4. **Q/N's dependency-cost decision** — likely resolved by extending the
    ticker-profile mechanism, once someone confirms Q/N's fields are
    worth adding to it.
-6. **S's spec** — needs a design pass with no existing precedent to
+5. **S's spec** — needs a design pass with no existing precedent to
    build from.
+6. **F** — genuinely blocked until `significance_flags` gains a real join
+   key at flag-creation time; not actionable without that schema change.
 7. **T** — blocked until `MaturityAssessor` exists; not this file's
    scope to unblock.
 

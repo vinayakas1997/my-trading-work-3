@@ -142,11 +142,24 @@ entries for this checkpoint.
 **Manageability**: bounded by the fixed checkpoint list (currently 3),
 independent of watchlist size.
 
-**Not attempted, 2026-09-19.** The design doc's own text flags the real
-difficulty: "the join varies per checkpoint" — this needs a per-checkpoint
-investigation pass (what a swept range of nearby values would plausibly
-have produced isn't a simple read, it's a counterfactual), not a single
-generic implementation. Flagged, not guessed at.
+**Built 2026-09-19**: `vinu-reflection/vinu_reflection/reflection/
+threshold_calibration.py`. **Real scoping correction found while
+implementing**: the "swept range of nearby values would plausibly have
+produced" counterfactual has no existing helper anywhere in this
+codebase to build against (same "needs a spec" situation as analysis S)
+— implemented instead as the same two-adjacent-windows drift detector
+every other analyst here uses, applied directly to each checkpoint's own
+logged numeric field (answers "did this checkpoint's real behavior
+drift from its own baseline," not "would a different value have done
+better"). Also found: only 2 of the design doc's 3 named checkpoints
+have a real writer — grepped every `calibration_log.record()` call site
+in vinu-live and found `bracket_partial`/`rebalance_protect` real, but
+no "thesis-duplicate similarity cutoff" checkpoint anywhere in real
+code; not built, since it doesn't exist to build against. Also found and
+fixed a real infra bug along the way: `live-api` had no
+`VINU_CALIBRATION_LOG` set in `docker-compose.yml` — same "writes to the
+container's ephemeral `$HOME`, not the mounted `/data` volume" bug
+already found and fixed once for `trade_audit_log.jsonl`.
 
 ---
 
@@ -220,7 +233,24 @@ actual_return_pct, tier, total_score` + sub-scores — there's no real way
 to scope the before/after comparison to "whatever artifact/strategy
 family the edited rule affects" as described; implemented as a
 system-wide before/after comparison instead, `affected_strategy_family`
-dropped from `signal_json`. Consistency piece not attempted — needs
-`freeze_manifest`/`contamination_check` generalized from its current
-one-off manually-triggered shape into something callable on a schedule,
-a real refactor of `vinu_infra/freeze.py`, not just a new reader.
+dropped from `signal_json`.
+
+**Consistency piece built 2026-09-19**: `vinu-reflection/vinu_reflection/
+reflection/consistency_freeze.py`. **Real correction to this file's own
+framing**: `freeze_manifest`/`contamination_check` turned out to need no
+refactor at all — they're already plain, argument-only functions with no
+CLI/argparse dependency; grepping the whole tree found no caller
+anywhere, meaning they were simply unused, not "manually-triggered" as
+this file previously said. **Real scoping correction**: both functions
+operate on global `VINU_*_DATA_ROOT` file hashes and `VINU_*` env vars,
+never per-`strategy_family` — the design doc's `signal_json` sketch
+(`{live_backtest_divergence, divergence_trend}`) assumed a
+`strategy_family`-scoped join that doesn't exist here (the same gap
+already documented for analysis B doesn't even apply — this piece never
+needed to join to it). Implemented as a single `scope_type=system`
+finding, `domain_floor_breached=True` on any real drift (added/removed/
+changed file hash or changed env var) rather than a PSI comparison,
+since `contamination_check()` returns a structural diff, not two
+numeric distributions. Prior-cycle manifest persisted to this service's
+own data root as `freeze_manifest_state.json`, not through
+`reflection_beliefs` (routine cycles write nothing there at all).

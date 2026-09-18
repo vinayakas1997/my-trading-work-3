@@ -393,6 +393,11 @@ services:
       # (Loss-cause/slippage attribution, vinu-reflection) -- it needs
       # this file to actually persist across cycles to read anything.
       VINU_TRADE_AUDIT_LOG: /data/trade_audit_log.jsonl
+      # Same bug, same fix, for calibration_log.py's DEFAULT_LOG_PATH --
+      # without this it falls back to $HOME/.vinu/calibration_log.jsonl
+      # inside the container, not the mounted /data volume. Found while
+      # wiring analysis W (threshold calibration, vinu-reflection).
+      VINU_CALIBRATION_LOG: /data/calibration_log.jsonl
     secrets:
       - vinu_api_key
     ports:
