@@ -56,6 +56,20 @@ notes already said (a real design spec for S, `MaturityAssessor` itself
 for T) -- not rebuilt this pass, no new information changed either
 verdict.
 
+Then Q and N too, on the user's explicit "think where it missed so that
+we implement it and fix it" -- re-investigated one level deeper than the
+prior pass and found the real, underlying problem behind each
+"dependency-cost" label: Q's whole premise (a live model checkpoint's
+real trade outcomes) has no real referent anywhere in production; N's
+data is reachable without the heavy import, but only via live HTTP,
+which traced further into a genuine coarse-cadence limit once read the
+honest (offline, torch-free) way instead. Both reframed and built --
+`dl_angle_backtest_health.py` (Q) and `shock_reading_before_halt.py`
+(N), plus a new shared reader (`_initial_analysis_parquet.py`) neither
+installs `vinu_initial_analysis` nor needs a live service. **23 of 25
+analyses now have real code for every implementable one.** Only S
+(needs a spec) and T (blocked on `MaturityAssessor`) remain.
+
 Prior update, 2026-09-19: W, H-consistency, P+G, V, and B built — P/G's
 earlier "blocked" verdict was a documentation error, corrected the same
 day; V's two blockers both turned out to be non-issues once chased
@@ -108,18 +122,22 @@ actual build.
     `vinu-agent/broker/research_link.py` already established for
     vinu-research; vinu-stock-price was already installed transitively
     via vinu-agent's own chain, added explicitly to `pyproject.toml` for
-    P/G's `ingest_health.py`).
+    P/G's `ingest_health.py`). A 7th read-only mount
+    (`./data/initial-analysis:/initial-analysis-data`, 2026-09-20, Q/N)
+    is different in kind from the other six: a *data* mount only,
+    `vinu_initial_analysis` is never added as a Python dependency at
+    all -- see `vinu_reflection/reflection/_initial_analysis_parquet.py`.
 
 ## Status at a glance
 
-**21 of 25 analyses implemented and tested. 4 not built**, each with a
-real, checked reason (not "not gotten to yet") — see the table.
+**23 of 25 analyses implemented and tested. 2 not built** (S, T), each
+with a real, checked reason (not "not gotten to yet") — see the table.
 
 | Package | Tests | Status |
 |---|---|---|
 | `vinu-infra` | 254 (248 + 6 new `TestPearsonCorrelation`) | green |
-| `vinu-reflection` | 119 (57 + 19 new P/G/V/B tests + 7 new `test_memory_effectiveness.py` + 25 new U/Y/O/R tests + 5 new `test_regime_drift.py` + 6 new `test_significance_response_outcome.py`) | green |
-| `vinu-agent` | 1212 (1208 passed + 4 skipped; 1205 + 4 skipped + 3 new `SignificanceFlagStore.all_flags()` tests) | green |
+| `vinu-reflection` | 139 (119 (see prior entries) + 20 new: `test_initial_analysis_parquet.py` (7), `test_dl_angle_backtest_health.py` (7), `test_shock_reading_before_halt.py` (6)) | green |
+| `vinu-agent` | 1212 (1208 passed + 4 skipped; 1205 + 4 skipped + 3 new `SignificanceFlagStore.all_flags()` tests) | green (unchanged this pass — Q/N touched only vinu-reflection + docker-compose.yml) |
 | `vinu-live` | 442 (436 + 6 new `TestRebalanceRequestHistory`) | green |
 | `vinu-screener` | 436 | green |
 | `vinu-portfolio` | 209 | green |
@@ -262,7 +280,7 @@ regardless of this reflection work):
 | M | Decision-Process | `decision_process` | ✅ Built | `debate_value.py` |
 | K | Decision-Process | `decision_process` | ✅ Built | `memory_effectiveness.py` (new `InjectedContextLogStore` writer in vinu-agent, 2026-09-20) |
 | A | Forecast Intelligence | `forecast_intelligence` | ✅ Built | `angle_trust.py` |
-| Q | Forecast Intelligence | `forecast_intelligence` | ⏸ Deferred | worse than dependency cost: `weights_ref` never crosses into any data vinu-research/vinu-agent stores at all, real new plumbing needed inside vinu-initial-analysis first (re-checked 2026-09-20) |
+| Q | Forecast Intelligence | `forecast_intelligence` | ✅ Built | `dl_angle_backtest_health.py` (reframed off the DL angles' own real backtest-accuracy history — no live checkpoint concept exists in production; new `_initial_analysis_parquet.py` torch-free reader, 2026-09-20) |
 | P | Forecast Intelligence | `forecast_intelligence` | ✅ Built | `ingest_health.py` (2026-09-19 "blocked" verdict was a documentation error, corrected) |
 | G | Forecast Intelligence | `forecast_intelligence` | ✅ Built | `ingest_health.py` (same module as P) |
 | S | Forecast Intelligence | `forecast_intelligence` | 📋 Needs a spec | numeric-claim text extraction — no existing parser to build against |
@@ -272,7 +290,7 @@ regardless of this reflection work):
 | E (pair) | Regime & Risk Coverage | `regime_risk_coverage` | ✅ Built | `correlation_coverage.py` |
 | E (concentration) | Regime & Risk Coverage | `regime_risk_coverage` | ✅ Built | `concentration_coverage.py` |
 | B | Regime & Risk Coverage | `regime_risk_coverage` | ✅ Built | `regime_strategy_coverage.py` (new `Artifact.strategy_family` field, classified from `user_idea`) |
-| N | Regime & Risk Coverage | `regime_risk_coverage` | ⏸ Deferred | data is reachable (`ResearchTools.get_angle_rows()`), but only via live HTTP to vinu-initial-analysis — a first-of-its-kind live-service dependency for this worker, not just an import cost (re-checked 2026-09-20) |
+| N | Regime & Risk Coverage | `regime_risk_coverage` | ✅ Built | `shock_reading_before_halt.py` (reframed to the nearest quarterly shock snapshot before a real halt — the official cadence is quarterly, not live; same new torch-free reader, 2026-09-20) |
 | V | Regime & Risk Coverage | `regime_risk_coverage` | ✅ Built | `paper_live_correlation.py` (both blockers were non-issues once chased down — see below) |
 | H (governance) | Governance & Freshness | `governance_freshness` | ✅ Built | `skill_edit_governance.py` |
 | H (consistency) | Governance & Freshness | `governance_freshness` | ✅ Built | `consistency_freeze.py` |
@@ -304,44 +322,44 @@ per-analyst code to write beyond its member analyses' `run()` functions.
 | Analyst | Analyses | Built | Blocked/deferred | Needs work |
 |---|---|---|---|---|
 | Decision-Process / Cognition | D, L, K, M | 4 (D, L, K, M) | 0 | 0 |
-| Forecast Intelligence | A, Q, P, G, S | 3 (A, P, G) | 1 (Q) | 1 (S) |
+| Forecast Intelligence | A, Q, P, G, S | 4 (A, P, G, Q) | 0 | 1 (S) |
 | Execution & Money-Flow | C, U, Y | 3 (C, U, Y) | 0 | 0 |
-| Regime & Risk Coverage | B, E, N, V | 4 (B, E — both pieces, V) | 1 (N) | 0 |
+| Regime & Risk Coverage | B, E, N, V | 5 (B, E — both pieces, V, N) | 0 | 0 |
 | Governance & Freshness | O, R, F, W, H | 5 (H — both pieces, W, O, R, F) | 0 | 0 |
 | External-Signal Cross-Check | I, J, T, X | 3 (I, J, X) | 1 (T) | 0 |
 
 **Every one of the 6 analysts now has every implementable analysis
-actually done — nothing left in the "Needs work" column anywhere,
-Execution & Money-Flow and Governance & Freshness are both fully built,
-and External-Signal Cross-Check is down to a single structural blocker**
-(Decision-Process: 4 of 4 — K's missing writer (`injected_context_log.py`)
-built 2026-09-20 once the user decided it was worth adding; Execution &
-Money-Flow: 3 of 3 — C plus U/Y, both built 2026-09-20 (new writer, then
-the analyst itself, once asked to build ahead of real data rather than
-wait); Governance & Freshness: 5 of 5 — H both pieces plus W, O, R, and
-F (F re-investigated and built 2026-09-20 once U's own weak-join
-precedent existed to reach for — see below); Forecast Intelligence: 3 of
-5 — A plus P/G merged — with Q re-checked and found to need real new
-plumbing (not just an import-cost decision) and S still needing a spec;
-Regime & Risk Coverage: 4 of 4 — B, E both pieces, and V — with N
-re-checked and found to need a live-HTTP dependency this worker doesn't
-otherwise have, not just an import-cost decision; External-Signal
-Cross-Check: 3 of 4 — I/X plus J, reframed and built 2026-09-20 — with
-only T left, structurally blocked on `MaturityAssessor` not existing
-yet). U, Y, O, and R's new writers (`rebalance_request_history`,
-`events_archive`, `GuardResult.blocked_artifact_ids`, the live
-Planner-triage freshness hook) were built 2026-09-20 on explicit user
-sign-off; their analyst modules (`rebalance_bypass.py`,
-`event_holding_loss.py`, `mandate_limit_friction.py`,
-`triage_freshness.py`) were then built the same day too, once asked
-"can't we just build it so it's ready when it starts working" -- each
-one's own `MIN_EVIDENCE_COUNT` floor (same mechanism every other analyst
-here already uses) means it writes nothing until real production data
-actually clears that floor, but the code is real, tested, and registered
-now rather than needing a second build pass later. J followed right
-after: its original framing was a real dead end (`regime_tag` never
-transitions), but investigating it surfaced a different, already-real
-market-regime signal
+actually done — nothing left in "Blocked/deferred" or "Needs work"
+anywhere except S (a real spec gap) and T (structurally blocked on a
+separate component)** (Decision-Process: 4 of 4 — K's missing writer
+(`injected_context_log.py`) built 2026-09-20 once the user decided it
+was worth adding; Execution & Money-Flow: 3 of 3 — C plus U/Y, both
+built 2026-09-20 (new writer, then the analyst itself, once asked to
+build ahead of real data rather than wait); Governance & Freshness: 5 of
+5 — H both pieces plus W, O, R, and F (F re-investigated and built
+2026-09-20 once U's own weak-join precedent existed to reach for — see
+below); Forecast Intelligence: 4 of 5 — A, P/G merged, and Q (reframed
+and built 2026-09-20 once its live-checkpoint premise was found to have
+no real referent in production — see below) — with only S left, needing
+a spec; Regime & Risk Coverage: 5 of 5 — B, E both pieces, V, and N
+(reframed and built the same pass as Q, once its data turned out
+reachable torch-free but only at quarterly cadence — see below);
+External-Signal Cross-Check: 3 of 4 — I/X plus J, reframed and built
+2026-09-20 — with only T left, structurally blocked on `MaturityAssessor`
+not existing yet). U, Y, O, and R's new writers
+(`rebalance_request_history`, `events_archive`,
+`GuardResult.blocked_artifact_ids`, the live Planner-triage freshness
+hook) were built 2026-09-20 on explicit user sign-off; their analyst
+modules (`rebalance_bypass.py`, `event_holding_loss.py`,
+`mandate_limit_friction.py`, `triage_freshness.py`) were then built the
+same day too, once asked "can't we just build it so it's ready when it
+starts working" -- each one's own `MIN_EVIDENCE_COUNT` floor (same
+mechanism every other analyst here already uses) means it writes nothing
+until real production data actually clears that floor, but the code is
+real, tested, and registered now rather than needing a second build pass
+later. J followed right after: its original framing was a real dead end
+(`regime_tag` never transitions), but investigating it surfaced a
+different, already-real market-regime signal
 (`market_regime_analogue.get_market_regime_stats_for_today()`) with no
 durable home — `MarketRegimeHistoryStore` (vinu-research, new) gives it
 one, and `regime_drift.py` trends it the same PSI way R trends triage
@@ -350,12 +368,21 @@ every remaining item rather than assume last pass's verdicts still
 held: `significance_flags` already had `ticker`/`created_at`/`resolved`
 all along, the exact weak-join shape U established — the 2026-09-19
 "genuinely blocked" verdict just predated that precedent. Q and N were
-re-investigated the same way and found to be *more* blocked than
-believed, not less (see "How each remaining group actually gets closed"
-below) — re-investigating isn't the same as assuming everything left is
-secretly easy. What's left across all 25 analyses is entirely real
-blockers, deferrals, and specs — not uninvestigated gaps, and not
-unbuilt code waiting on data that was already safe to build against.
+re-investigated the same pass and found to be *more* blocked than
+believed at first, not less — then, on the user's explicit follow-up
+("think where it missed so that we implement it and fix it"), traced one
+level deeper still and found the real reframe for both: Q's live-
+checkpoint premise has no referent in production at all (rebuilt around
+the angles' own real backtest history instead); N's data is torch-free
+readable but only at quarterly cadence (rebuilt around the nearest
+quarterly snapshot instead of "immediately before"). Both built
+2026-09-20 via a new shared reader (`_initial_analysis_parquet.py`) that
+reads vinu-initial-analysis's Parquet files directly without installing
+the package. **23 of 25 analyses now have real code for every
+implementable one.** What's left (S, T) is entirely a real spec gap and
+a structural blocker on a separate, larger component — not
+uninvestigated gaps, and not unbuilt code waiting on data that was
+already safe to build against.
 
 ---
 
@@ -476,15 +503,51 @@ assuming the earlier framing still held.
   separate from Q's plumbing gap even though both were filed under the
   same "dependency-cost" label originally.
 
-Real options for both, not yet decided between: (a) extend the shared
-ticker-profile mechanism (`vinu-infra/TICKER_PROFILE.md`) so vinu-
-initial-analysis projects `weights_ref`/shock readings into the existing
-lightweight JSON files — closes Q's plumbing gap and N's live-dependency
-problem in one mechanism, and is exactly the kind of gap it exists for;
-(b) for Q alone, add `weights_ref` as a new field threaded through the
-angle-attribution pipeline directly; (c) for N alone, accept a live-HTTP
-read in the reflection worker as a deliberate, documented exception to
-its otherwise-universal offline-read posture.
+**Q and N, taken one level deeper and built 2026-09-20** (same day, on
+the user's explicit "think where it missed so that we implement it and
+fix it"): the "real options" this file previously left undecided turned
+out to have a cleaner answer than any of the three once actually
+checked, rather than requiring a pick between them.
+- **Q's reframe**: chased `weights_ref` all the way to its one real
+  write site (`walk_forward.py`'s `weights_sink` call, invoked only from
+  each DL angle's offline `backtest.py`) and confirmed the LIVE forecast
+  path (`compute.py`, what `AngleRunner` actually runs on schedule) never
+  saves or references a checkpoint at all — read directly, not assumed.
+  There is no live-checkpoint concept to plumb `weights_ref` *to* even if
+  the attribution pipeline were extended, so option (b) above was a dead
+  end too. What IS real: `orchestration_registry.py` runs every DL
+  angle's `backtest.py` on a genuine (if quarterly) schedule, writing an
+  immutable `tier2` Parquet record with real `bar_ts`/`hit`/`weights_ref`
+  per walk-forward step. `dl_angle_backtest_health.py` reads that
+  directly — an adjacent-window PSI trend on `hit` (same shape as A), plus
+  a flat staleness check on the record's own age.
+- **N's reframe**: confirmed `AngleStorage` (the class vinu-initial-
+  analysis itself uses to read/write these files) only ever imports
+  `pandas`/`pyarrow` — the heavy deps belong to the angle-computation
+  modules, never the storage layer. So a torch-free reader wasn't a
+  hypothetical option (a); it's exactly what `AngleStorage` already
+  proves works, given its own small implementation. That closed the
+  dependency question, but reading the real schedule
+  (`quarters.py`/`AngleRunner.run()`'s `tier="tier2"` default) found
+  shock readings only ever refresh quarterly in the official record —
+  even the "continuous" hourly-polling mode dedupes against the same
+  quarterly window. `shock_reading_before_halt.py` reads the same way,
+  reframed to "the nearest quarterly snapshot before a real halt."
+- **Shared infrastructure**: `_initial_analysis_parquet.py` (new,
+  vinu-reflection) is the one small reader both use —
+  `list_analyzed_symbols()`/`read_latest_run()`/`read_all_runs()`,
+  `pandas`/`pyarrow` only (both already transitively installed via
+  vinu-research/vinu-stock-price — no new dependency needed).
+  `docker-compose.yml`'s `reflection-worker` gets a 7th mount
+  (`./data/initial-analysis:/initial-analysis-data:ro`) that's different
+  in kind from the other six: a data mount only, `vinu_initial_analysis`
+  is never installed as a package.
+
+This is what option (a) (extend the ticker-profile mechanism) would have
+had to reimplement anyway to actually work — reading the real storage
+layer directly turned out simpler than adding a new producer-side
+projection step, once the storage layer was actually checked instead of
+assumed heavy.
 
 **T (structurally blocked)**: nothing to do until `MaturityAssessor`
 itself is built — that's a separate, larger piece of work (the "brain,"
@@ -571,38 +634,31 @@ ratio instead of an annualized Sharpe).
 
 ## Where to continue, ranked
 
-1. **Q's plumbing decision** — thread `weights_ref` from wherever a DL
-   angle's inference resolves a checkpoint (inside vinu-initial-analysis)
-   through to `AngleCalibrationEntry`, or extend the ticker-profile
-   mechanism to project it instead. Bigger than a same-session addition —
-   starts inside an unfamiliar, heavy ML service, not a small store patch.
-2. **N's architecture decision** — accept a live-HTTP read as a
-   first-of-its-kind exception to this worker's otherwise-universal
-   offline-read posture, or extend the ticker-profile mechanism so
-   vinu-initial-analysis projects shock readings into it instead.
-3. **S's spec** — needs a design pass with no existing precedent to
-   build from.
-4. **T** — blocked until `MaturityAssessor` exists; not this file's
+1. **S's spec** — needs a design pass with no existing precedent to
+   build from. The single highest-leverage remaining item now that Q and
+   N are both built — everything else left is either not this file's
+   scope to unblock (T) or a config/product decision on already-built
+   code (items below).
+2. **T** — blocked until `MaturityAssessor` exists; not this file's
    scope to unblock.
-5. **B's per-`strategy_family` breakdown for V** — B is now built, so
+3. **B's per-`strategy_family` breakdown for V** — B is now built, so
    V's own `scope_type=system` scope-down (`paper_live_correlation.py`'s
    docstring) could be revisited into a real per-family breakdown; not
    urgent, V's system-wide finding is already real and useful.
-6. **Turning `regime_analogue_enabled` on** — a config/product decision,
+4. **Turning `regime_analogue_enabled` on** — a config/product decision,
    not a code gap: J's `regime_drift.py` is fully built and registered,
    but only starts accumulating real evidence once this flag (off by
    default) is turned on and trade-plan authoring actually runs Phase 4.
 
-Note Q and N moved from "likely a quick extend-the-ticker-profile call"
-to their own numbered items, ranked above S/T: re-investigating them
-this pass (2026-09-20) found each needs its own real decision (new
-plumbing for Q, a live-service exception for N), not one shared
-resolution — see "How each remaining group actually gets closed" above
-for what was actually checked before concluding that.
+Q and N were fully resolved and built 2026-09-20 (see "How each
+remaining group actually gets closed" above) — both turned out to have
+a real answer once traced one level deeper than the "dependency-cost"/
+"architecture-decision" framing this list previously carried them
+under, rather than needing the open decision that framing implied.
 
 Once **the reader** exists (the actual gap `02-analyst-interface.md`
 still flags as open — every analyst writes, nothing reads
 `reflection_beliefs` yet, because the reflection worker's *consumer*,
-"the brain," doesn't exist), the 21 analyses already built become
+"the brain," doesn't exist), the 23 analyses already built become
 genuinely useful, not just tested in isolation. That's arguably a higher
-lever than finishing the remaining 4 — worth weighing against this list.
+lever than finishing the remaining 2 — worth weighing against this list.

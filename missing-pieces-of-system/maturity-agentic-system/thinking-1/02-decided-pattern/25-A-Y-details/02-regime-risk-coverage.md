@@ -196,6 +196,44 @@ Parquet-only reader that doesn't import the full package? a new
 producer-side projection into the ticker-profile mechanism?) before
 building, not a default.
 
+**Re-investigated 2026-09-20 (found real, but coarser than assumed, and
+built).** Confirmed `AngleStorage` (`vinu-initial-analysis/storage/
+parquet.py`) -- the class that actually writes/reads these Parquet files
+in production -- only ever imports `pandas`/`pyarrow` itself; the heavy
+deps are only pulled in by the angle-computation modules, never the
+storage layer. So the "lightweight Parquet-only reader" option floated
+above wasn't hypothetical -- it's exactly what `AngleStorage` already
+demonstrates is possible, just needed its own small implementation
+(`_initial_analysis_parquet.py`, vinu-reflection, new) that reads the
+same on-disk layout directly without installing `vinu_initial_analysis`
+at all (a data-only docker-compose mount instead).
+
+That closed the dependency question, but traced the actual schedule
+(`vinu_initial_analysis/quarters.py`, `orchestration_registry.py`,
+`AngleRunner.run()`'s `tier="tier2"` default) and found a real, different
+limit: shock readings only ever refresh once per calendar quarter in the
+official record -- even the "continuous" hourly-polling compute mode
+dedupes against the same quarterly window, so there's no finer-grained
+tier3 rolling history to fall back on either. "The trailing window
+immediately before a halt" (this file's literal phrasing) doesn't exist
+at that resolution. Reframed to "the nearest quarterly snapshot before
+the halt" -- an honest scope-down, same class as C dropping `risk_band`
+or V's system-wide scope-down below.
+
+`shock_reading_before_halt.py` (new file, `vinu-reflection`) is N
+itself: reads `safety_ledger.jsonl` directly (confirmed real halts get
+appended live via `kill_switch.halt_trading()` -> `_ledger_append`, this
+file's earlier "confirmed real" note held up), keeping only *scoped*
+halts (a real ticker in `payload.scope`, not `"global"`) since a global
+halt has no single symbol's shock reading to check. Compares the nearest
+quarterly reading before each scoped halt against the same field's
+system-wide normal (non-halt) distribution via PSI -- same two-group
+shape U/F already use, not a windowed trend (halts are rare, one-off
+events). Uses each shock angle's own simplest real numeric field
+(`shock_personality.n_shocks`, `shock_clustering.n_shock_dates`) rather
+than the richer nested stats, same "keep it to what's real and simple"
+posture as everywhere else in this file.
+
 ---
 
 ## V. Paper-vs-live performance predictor

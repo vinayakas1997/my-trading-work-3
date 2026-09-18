@@ -93,6 +93,48 @@ can't answer Q's Condition either without a producer-side change. Not a
 hard blocker like K (no missing data, just a real dependency-cost
 tradeoff) — worth a deliberate decision before building, not a default.
 
+**Re-investigated 2026-09-20 (found worse, then reframed and built).**
+Asked to think harder about where Q was missed. Traced `weights_ref` all
+the way through the real attribution pipeline and found the "dependency
+cost" framing was hiding a deeper problem: `weights_ref` is written ONLY
+by each DL angle's offline walk-forward `backtest.py` (via
+`run_walk_forward`'s `weights_sink`,
+`vinu-tools/vinu_tools/compute/backtest/walk_forward.py`). The LIVE
+forecast path each angle actually runs on schedule (`compute.py`,
+dispatched by `AngleRunner`) never saves or references a checkpoint at
+all — confirmed by reading `lstm/compute.py` directly. There is no
+"currently-live model checkpoint" concept anywhere in production for
+these angles. Also confirmed independently: `angle_calibration_entries`
+(vinu-research) has no `weights_ref` or `symbol` column, and
+`Artifact.origin_angles` comes from an LLM's free-form self-report
+(`angles_used`), never a specific checkpoint. Q's original premise (is
+the live checkpoint stale, joined to real trade outcomes) has nothing
+real to point at — a dead end, same category as J's original framing.
+
+What IS real: `orchestration_registry.py` maps every DL angle to its
+`backtest.py` entry point, invoked on a real (if only quarterly,
+`quarters.py`) schedule, writing an immutable `tier2` Parquet record
+with real `bar_ts`/`hit`/`weights_ref` columns per walk-forward step —
+readable with `pandas`/`pyarrow` alone (confirmed by reading
+`AngleStorage`'s own imports directly), no torch/xgboost/chronos/
+timesfm needed, since those are only imported by the angle-computation
+modules, not the storage layer. Rebuilt around that: `dl_angle_backtest_
+health.py` (new file, `vinu-reflection`) reads the latest walk-forward
+run per (symbol, angle) via the new `_initial_analysis_parquet.py`
+reader (a data-only mount, never an install of `vinu_initial_analysis`
+itself — see `docker-compose.yml`'s new `initial-analysis-data` mount),
+and computes two honest, self-contained questions instead of Q's
+original live-checkpoint one: (1) adjacent-window PSI trend on the `hit`
+series, same shape as `angle_trust.py` (A); (2) is the backtest record
+itself overdue for its next quarterly recompute (`stored_at` age vs 2x
+`VINU_TIER2_PERIOD_MONTHS`). `DL_ANGLES` is the real 7 (`dlinear,
+itransformer, lpatchtst, lstm, patchtst, tft,
+tips_regime_aware_transformer`) — confirmed by checking `weights_sink`
+usage in all 8 angles the design doc's own text lists; ARIMA never
+calls it (a classical per-step refit with nothing to checkpoint), which
+also resolves that "7 vs 8 names" discrepancy in this file's own
+earlier text.
+
 ---
 
 ## P. Ingest health → forecast quality

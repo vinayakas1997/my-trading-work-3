@@ -22,6 +22,7 @@ from vinu_reflection.reflection import (
     correlation_coverage,
     debate_value,
     decision_process,
+    dl_angle_backtest_health,
     event_holding_loss,
     ingest_health,
     loss_attribution,
@@ -33,6 +34,7 @@ from vinu_reflection.reflection import (
     regime_drift,
     regime_strategy_coverage,
     screener_agreement,
+    shock_reading_before_halt,
     significance_response_outcome,
     skill_edit_governance,
     threshold_calibration,
@@ -101,6 +103,18 @@ LOG = logging.getLogger("vinu.reflection.worker")
 # was SignificanceFlagStore having no way to read every flag (added
 # all_flags()). No schema change needed after all. See that module's own
 # docstring.
+# dl_angle_backtest_health.run() is Q, shock_reading_before_halt.run() is
+# N -- both re-investigated 2026-09-20 and found to be worse than a
+# "dependency-cost" problem, not better: Q's whole premise (a live model
+# checkpoint's real trade outcomes) has no real referent anywhere in
+# production (weights_ref only exists in an offline backtest path, never
+# threaded to a live forecast); N's data is reachable without the heavy
+# import, but only via live HTTP to a running service. Both reframed
+# around what's actually real and read via
+# `_initial_analysis_parquet.py` (pandas/pyarrow only, never installs
+# vinu_initial_analysis itself) -- Q around the angle's own backtest-
+# accuracy trend, N around the nearest quarterly shock-reading snapshot
+# before a real halt. See each module's own docstring.
 AnalystFn = Callable[[dict[str, Path], dict[str, Any]], list[Finding]]
 ANALYSTS: list[AnalystFn] = [
     decision_process.run,
@@ -116,6 +130,8 @@ ANALYSTS: list[AnalystFn] = [
     triage_freshness.run,
     regime_drift.run,
     significance_response_outcome.run,
+    dl_angle_backtest_health.run,
+    shock_reading_before_halt.run,
     correlation_coverage.run,
     paper_live_correlation.run,
     regime_strategy_coverage.run,
@@ -139,6 +155,8 @@ _SEED_FNS: list[Callable[[ReflectionStore], None]] = [
     triage_freshness.seed_reference_config,
     regime_drift.seed_reference_config,
     significance_response_outcome.seed_reference_config,
+    dl_angle_backtest_health.seed_reference_config,
+    shock_reading_before_halt.seed_reference_config,
     correlation_coverage.seed_reference_config,
     paper_live_correlation.seed_reference_config,
     regime_strategy_coverage.seed_reference_config,
@@ -187,6 +205,10 @@ def reflection_worker_main(args: argparse.Namespace) -> None:
         "vinu_screener": config.screener_data_root,
         "vinu_portfolio": config.portfolio_data_root,
         "vinu_stock": config.stock_data_root,
+        # A *data* mount only (2026-09-20, Q/N) -- never an install of
+        # vinu_initial_analysis itself. See
+        # vinu_reflection/reflection/_initial_analysis_parquet.py.
+        "vinu_initial_analysis": config.initial_analysis_data_root,
         # this service's own data root -- consistency_freeze.py (H,
         # consistency piece) persists its prior-cycle manifest here since
         # reflection_beliefs can't be trusted to hold it across a quiet

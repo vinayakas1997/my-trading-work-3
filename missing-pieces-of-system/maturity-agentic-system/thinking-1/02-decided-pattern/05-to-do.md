@@ -1083,3 +1083,105 @@ plus F. What's left (Q, N, S, T) is: two real new-plumbing/architecture
 decisions (Q, N -- now tracked separately, not one shared deferral), one
 missing spec (S), and one structural blocker (T) -- see
 `07-implementation-plan-status.md`'s ranked list.
+
+---
+
+**2026-09-20, later still**: user asked to think harder specifically
+about Q and N -- "think where it missed so that we implement it and fix
+it." Traced one level deeper than the prior pass's "new plumbing needed"
+(Q) / "live-HTTP dependency" (N) verdicts, rather than treating either
+as settled.
+
+**Q**: chased `weights_ref` to its one real write site --
+`vinu-tools/vinu_tools/compute/backtest/walk_forward.py`'s
+`weights_sink` call, invoked only from each DL angle's offline
+`backtest.py`. Checked the LIVE forecast path each angle actually runs
+on schedule (`compute.py`, dispatched by `vinu_initial_analysis.runner.
+AngleRunner`) and confirmed directly: it never saves or references a
+checkpoint at all. There is no "currently-live model checkpoint" concept
+anywhere in production for these angles -- the prior pass's "thread
+weights_ref through to AngleCalibrationEntry" plan would have had
+nothing real to thread it *to*. What IS real:
+`orchestration_registry.py` runs every DL angle's `backtest.py` on a
+genuine (if quarterly, `quarters.py`) schedule, writing an immutable
+`tier2` Parquet record with real `bar_ts`/`hit`/`weights_ref` per
+walk-forward step. Confirmed the storage layer itself
+(`vinu_initial_analysis/storage/parquet.py`'s `AngleStorage`) only
+imports `pandas`/`pyarrow` -- the heavy deps belong to the angle-
+computation modules, never the storage layer -- so reading it needs no
+new dependency installed, just a data mount.
+
+**N**: re-checked whether `shock_clustering`/`shock_personality` really
+needed the live HTTP call the prior pass settled on, given the same
+`AngleStorage` finding above applies to them too. It does avoid the
+heavy import -- confirmed by reading `AngleStorage`'s own imports
+directly rather than assuming. Traced the real schedule
+(`AngleRunner.run()`'s `tier="tier2"` default, `quarters.py`'s
+calendar-quarter boundary, `cli.py`'s `_compute_batch` always passing
+the same quarterly `to_ts`) and found shock readings only ever refresh
+once per quarter in the official record -- even the "continuous"
+hourly-polling compute mode dedupes against the same quarterly window,
+so there's no finer-grained tier3 rolling history to fall back on
+either. "The trailing window immediately before a halt" doesn't exist
+at that resolution; reframed to "the nearest quarterly snapshot before
+the halt."
+
+Also confirmed `safety_ledger.jsonl` is genuinely live-written for real
+halts (`kill_switch.halt_trading()` -> `_ledger_append` ->
+`get_safety_ledger().append("halt", {"scope": ...})`) -- the design
+doc's "confirmed real" note for that store held up under a second look.
+
+Proposed the reframe (a shared torch-free Parquet reader; Q around the
+angles' own backtest-accuracy history; N around the nearest quarterly
+snapshot) to the user before building -- approved. Built:
+- `_initial_analysis_parquet.py` (new, vinu-reflection): `list_analyzed_
+  symbols()`, `read_latest_run()` (DL angles -- one run's file already
+  contains the full walk-forward series, concatenating runs would
+  double-count, same reasoning `AngleStorage.read()`'s own docstring
+  gives), `read_all_runs()` (shock angles -- each run is one new
+  snapshot row, concatenating IS the real history), `to_utc_datetime()`
+  (normalizes `stored_at` regardless of how tz round-trips through
+  Parquet -- a real comparison bug caught before it could bite: a
+  tz-naive pandas Timestamp compared against a tz-aware `datetime`
+  raises).
+- `dl_angle_backtest_health.py` (Q): adjacent-window PSI trend on `hit`
+  (`CURRENT_WINDOW=30`/`REFERENCE_WINDOW_MAX=90`, matching A's
+  `angle_trust.py`) plus a flat staleness check on the record's own
+  `stored_at` age vs 2x `VINU_TIER2_PERIOD_MONTHS`. `DL_ANGLES` is the
+  real 7 -- confirmed by grepping `weights_sink` usage across all 8
+  angle names the design doc's own text lists; ARIMA never calls it (a
+  classical per-step refit with nothing to checkpoint), resolving that
+  file's own "7 vs 8 names" discrepancy along the way.
+- `shock_reading_before_halt.py` (N): only *scoped* halts (`payload.
+  scope` a real ticker, not `"global"`) join to a symbol's shock
+  readings -- a global halt has no single symbol to check. Compares the
+  nearest-before reading against the system-wide normal distribution via
+  PSI (same two-group shape U/F use), using each shock angle's own
+  simplest real field (`n_shocks`/`n_shock_dates`) rather than the
+  richer nested stats.
+- Real bug caught and fixed before shipping: both new analysts'
+  accuracy/staleness findings for Q initially shared one scope_key per
+  (symbol, angle) -- `reflection_beliefs`' real primary key is
+  `(analyst_name, scope_type, scope_key)` with no `metric_name` column,
+  so the second finding would have silently overwritten the first's
+  belief row every cycle both fired. Fixed by giving the staleness
+  finding its own `:staleness`-suffixed scope_key.
+- `docker-compose.yml`'s `reflection-worker` gets a 7th mount
+  (`./data/initial-analysis:/initial-analysis-data:ro`) -- a data mount
+  only, `vinu_initial_analysis` is never installed as a package. No new
+  Python dependency needed either: `pandas`/`pyarrow` are already
+  transitively installed via vinu-research/vinu-stock-price.
+- 20 new tests: 7 for the shared reader, 7 for Q, 6 for N -- all green
+  on first real run. Smoke-tested `cli.py`'s real `run_cycle()` against
+  empty/missing data roots: 23 analysts registered, zero crashes, zero
+  findings (correct).
+
+Only vinu-reflection + docker-compose.yml changed this pass -- no
+vinu-agent/vinu-research source touched, so their full suites weren't
+re-run (vinu-reflection's own 139/139 covers everything new).
+
+**23 of 25 analyses now implemented**: everything from the prior entry
+plus Q and N. What's left (S, T) is a real spec gap and a structural
+blocker on a separate, larger component (`MaturityAssessor`) -- see
+`07-implementation-plan-status.md`'s ranked list, now topped by S's spec
+since Q/N no longer need any further decision.

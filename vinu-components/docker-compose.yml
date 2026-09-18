@@ -537,6 +537,13 @@ services:
       VINU_SCREENER_DATA_ROOT: /screener-data
       VINU_REFLECTION_PORTFOLIO_DATA_ROOT: /portfolio-data
       VINU_REFLECTION_STOCK_DATA_ROOT: /stock-data
+      # Q/N (2026-09-20): a *data* mount only, never an install of
+      # vinu-initial-analysis itself -- that package's torch/xgboost/
+      # chronos-forecasting/timesfm dependencies are real, but reading its
+      # already-written Parquet files needs only pandas/pyarrow, both
+      # already present here transitively. See
+      # vinu_reflection/reflection/_initial_analysis_parquet.py.
+      VINU_REFLECTION_INITIAL_ANALYSIS_DATA_ROOT: /initial-analysis-data
     volumes:
       - ./data/reflection:/data
       - ./data/agent:/agent-data:ro
@@ -545,6 +552,7 @@ services:
       - ./data/screener:/screener-data:ro
       - ./data/portfolio:/portfolio-data:ro
       - ./data/stock-price:/stock-data:ro
+      - ./data/initial-analysis:/initial-analysis-data:ro
     cap_drop:
       - ALL
     cap_add:
