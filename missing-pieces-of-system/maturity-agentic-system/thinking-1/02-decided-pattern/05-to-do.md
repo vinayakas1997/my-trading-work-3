@@ -1000,3 +1000,86 @@ tradeoffs, missing specs, and a structural blocker -- see
 `07-implementation-plan-status.md`'s ranked list, now topped by Q/N's
 dependency-cost decision since every remaining item is a decision or
 schema change, not a design gap needing a fresh concept.
+
+---
+
+**2026-09-20, later still**: user asked to "think what can be done and
+complete the next ones" against the remaining 5 (Q, N, S, F, T) --
+re-investigated all of them rather than assuming the 2026-09-19/09-20
+verdicts still held, same discipline as J's reframe.
+
+**F: re-investigated and built.** The 2026-09-19 note ("genuinely
+blocked, no real or weak join found... only `ticker`") turned out to be
+incomplete, not wrong about what existed -- `significance_flags`
+(`vinu_agent/agent/significance_triage.py`) has always also had
+`created_at`, which combined with `ticker` is exactly the same
+symbol+time weak join U's `rebalance_bypass.py` uses against
+`trade_audit_log.jsonl`'s exit rows. That precedent simply didn't exist
+in the codebase yet on 2026-09-19 (U was built 2026-09-20), so the
+earlier pass had nothing concrete to reach for even after noticing
+`created_at` was there. Re-checked with that precedent in hand: the only
+real gap was `SignificanceFlagStore` having no way to read every flag
+(`get_flag(flag_id)` is a single lookup, `response_rate()` only
+aggregate counts). Added `all_flags()` -- ordered by SQLite `rowid`, not
+`created_at`, catching the same same-second-tie ordering risk found (the
+hard way) while building R, applied here proactively instead of waiting
+to hit it. `significance_response_outcome.py` (new file) is F itself:
+per `reason` (flag_type), splits flags into responded/unresponded label
+lists using the next exit's realized_pnl sign for that ticker at or
+after the flag's `created_at`, `MIN_EVIDENCE_PER_GROUP=5` (same rarity
+order of magnitude as U). One real, permanent caveat: `llm_failure_rate`
+flags use a sentinel ticker (`"SYSTEM"`) that never appears in
+`trade_audit_log.jsonl`, so that flag_type never accumulates evidence --
+correct, since there's no real position to check an LLM-failure alert
+against in the first place. 9 new tests (6 for the analyst, 3 for
+`all_flags()`).
+
+**Q and N: re-investigated and found to be *more* blocked than the
+2026-09-19 "dependency-cost" framing said, not less.** Both had been
+filed as "the data exists in vinu-initial-analysis, importing that
+package is just expensive" -- checked whether that was actually the real
+blocker, the way it turned out not to be for J/F.
+- Traced `weights_ref` (Q's whole premise) through the real attribution
+  pipeline and found it never reaches any data vinu-research/vinu-agent
+  stores at all: `angle_calibration_entries` has no `weights_ref` column
+  (and no `symbol` column), and `Artifact.origin_angles` (the only real
+  angle-attribution field) comes from `angles_used`, a plain list of
+  angle-name strings an LLM research-manager self-reports
+  (`research_artifact_writer.py:100`) -- disconnected from which
+  checkpoint file actually produced a forecast. A free, torch-free
+  Parquet/`.pt` reader would still have nothing to join against. Q needs
+  new plumbing inside vinu-initial-analysis itself before it's buildable
+  at all, not just a cheaper way to read what already exists.
+- Checked whether N's `shock_clustering`/`shock_personality` angle data
+  really requires the heavy import, since `fetch_personality_features`
+  already reads it via `ResearchTools.get_angle_rows()`. It does avoid
+  the heavy import -- but only by making a live HTTP call to
+  vinu-initial-analysis's own running server. Every other analyst in
+  this worker is a pure offline read of a mounted, committed file; none
+  require any origin service to be up. Building N this way would be a
+  first-of-its-kind live-service dependency for this worker, a real
+  architecture decision, not an implementation detail.
+- Neither built this pass -- both now need their own real decision (new
+  cross-service plumbing for Q; a live-HTTP exception for N), tracked
+  separately in `07-implementation-plan-status.md`'s ranked list rather
+  than under one shared "dependency-cost" label.
+
+**S and T: re-confirmed, not rebuilt.** S still needs a real
+numeric-claim-extraction design (matching a number in Markdown against
+the same number paraphrased in LLM prose) with no existing parser
+anywhere in this codebase to build against -- rushing a regex heuristic
+here risks false "divergence" findings that undermine the whole
+reflection system's credibility, worse than leaving it unbuilt. T is
+still blocked on `MaturityAssessor`, a separate, larger deliverable
+outside the 25-analysis build entirely. Neither's prior verdict changed;
+re-checking them didn't surface anything the earlier passes missed.
+
+Full suites re-verified in a fresh throwaway venv (`.tvf`, cleaned up
+afterward): `vinu-reflection` 119/119, `vinu-agent` 1208/1208 + 4
+skipped.
+
+**21 of 25 analyses now implemented**: everything from the prior entry
+plus F. What's left (Q, N, S, T) is: two real new-plumbing/architecture
+decisions (Q, N -- now tracked separately, not one shared deferral), one
+missing spec (S), and one structural blocker (T) -- see
+`07-implementation-plan-status.md`'s ranked list.

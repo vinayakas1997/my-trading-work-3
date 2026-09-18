@@ -122,6 +122,24 @@ class TestSignificanceFlagStore:
         assert stats["total"] == 0
         assert stats["rate"] is None
 
+    def test_all_flags_with_no_flags_returns_empty(self, flag_store) -> None:
+        assert flag_store.all_flags() == []
+
+    def test_all_flags_returns_every_flag_oldest_first(self, flag_store) -> None:
+        f1 = flag_store.create_flag("AAPL", "repeated_rejection", "d1")
+        f2 = flag_store.create_flag("MSFT", "large_funding_decision", "d2")
+
+        flags = flag_store.all_flags()
+        assert [f.flag_id for f in flags] == [f1.flag_id, f2.flag_id]
+
+    def test_all_flags_reflects_resolved_state(self, flag_store) -> None:
+        f1 = flag_store.create_flag("AAPL", "repeated_rejection", "d1")
+        flag_store.mark_responded(f1.flag_id, "ok")
+
+        flags = flag_store.all_flags()
+        assert flags[0].resolved is True
+        assert flags[0].response_text == "ok"
+
 
 class TestDetectRepeatedRejectionPattern:
     def test_routine_decision_not_flagged(self, ticker_ledger_store) -> None:

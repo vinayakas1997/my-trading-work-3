@@ -210,6 +210,22 @@ class SignificanceFlagStore(SQLiteBackend):
         row = conn.execute("SELECT * FROM significance_flags WHERE flag_id = ?", (flag_id,)).fetchone()
         return SignificanceFlag.from_row(dict(row)) if row else None
 
+    def all_flags(self) -> list[SignificanceFlag]:
+        """Every flag ever created, oldest first -- analysis F
+        (missing-pieces-of-system/.../05-governance-freshness.md) needs
+        the full history to compare responded-vs-unresponded outcomes,
+        not just a single lookup or the aggregate counts response_rate()
+        already gives. Ordered by SQLite's own `rowid`, not `created_at`
+        -- `_now()` is second-resolution, so two flags raised in the same
+        cycle (a real case: `run_significance_cycle` can create several
+        per ticker back-to-back) would tie on `created_at` and risk
+        losing their true relative order, the same class of bug found and
+        fixed in `TickerLedgerStore` while building analysis R."""
+        self._ensure_v2()
+        conn = self._get_conn()
+        rows = conn.execute("SELECT * FROM significance_flags ORDER BY rowid ASC").fetchall()
+        return [SignificanceFlag.from_row(dict(row)) for row in rows]
+
     def mark_responded(self, flag_id: str, response_text: str) -> SignificanceFlag | None:
         """A flag with NO response ever, forever, is not an error state
         (02-guard-rail.md) -- this method is the only thing that ever

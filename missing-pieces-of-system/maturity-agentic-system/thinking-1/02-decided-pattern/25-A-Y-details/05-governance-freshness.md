@@ -170,6 +170,30 @@ tickers" isn't a checked, concrete join yet — needs the same kind of
 real investigation P/G/Y/U got before assuming it's buildable. Flagged,
 not guessed at.
 
+**Investigated and built, 2026-09-20.** Turned out to need the real
+investigation, not a schema change: `significance_flags`
+(`vinu_agent/agent/significance_triage.py`) already has `ticker`,
+`created_at`, and `resolved` — exactly the columns this analysis needs.
+"Downstream outcome for the flagged ticker" reuses the exact weak
+symbol+time join U (`rebalance_bypass.py`) already established against
+`trade_audit_log.jsonl`'s real exit rows: the first exit for that ticker
+at or after the flag's `created_at`. The only real gap was
+`SignificanceFlagStore` having no way to read every flag —
+`get_flag(flag_id)` is a single lookup, `response_rate()` gives only
+aggregate counts. Added `all_flags()` (ordered by SQLite `rowid`, not
+`created_at`, after remembering `_now()` is second-resolution and
+`run_significance_cycle` can create several flags back-to-back — the
+same class of ordering bug found and fixed for R, applied proactively
+here without needing to hit it first). `significance_response_outcome.py`
+(new file) is F itself, `scope_type=system`/`scope_key=reason` (the flag
+`reason` string doubles as `flag_type`), `MIN_EVIDENCE_PER_GROUP=5` (same
+"rare events by design" order of magnitude as U). One real, permanent
+caveat, not a bug: `llm_failure_rate` flags use a sentinel ticker
+(`"SYSTEM"`) that never appears in `trade_audit_log.jsonl`, so that
+`reason` never accumulates evidence here — correct, since "did a human
+response change this position's outcome" has no real position to check
+for a system-wide LLM-failure alert in the first place.
+
 ---
 
 ## W. Were the system's own hand-picked thresholds ever right

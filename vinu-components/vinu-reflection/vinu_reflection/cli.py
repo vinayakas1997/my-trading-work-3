@@ -33,6 +33,7 @@ from vinu_reflection.reflection import (
     regime_drift,
     regime_strategy_coverage,
     screener_agreement,
+    significance_response_outcome,
     skill_edit_governance,
     threshold_calibration,
     triage_freshness,
@@ -92,6 +93,14 @@ LOG = logging.getLogger("vinu.reflection.worker")
 # and a trade plan is actually authored that day) but the same
 # MIN_EVIDENCE_COUNT-style windowing makes it safe to register now. See
 # that module's own docstring.
+# significance_response_outcome.run() is F -- "not attempted, 2026-09-19"
+# because "downstream outcomes for the flagged tickers" wasn't a checked,
+# concrete join yet. Checked 2026-09-20: significance_flags already has
+# ticker + created_at, a real (if weak) join to trade_audit_log.jsonl's
+# exit rows, same shape as U's rebalance-bypass join -- the only real gap
+# was SignificanceFlagStore having no way to read every flag (added
+# all_flags()). No schema change needed after all. See that module's own
+# docstring.
 AnalystFn = Callable[[dict[str, Path], dict[str, Any]], list[Finding]]
 ANALYSTS: list[AnalystFn] = [
     decision_process.run,
@@ -106,6 +115,7 @@ ANALYSTS: list[AnalystFn] = [
     mandate_limit_friction.run,
     triage_freshness.run,
     regime_drift.run,
+    significance_response_outcome.run,
     correlation_coverage.run,
     paper_live_correlation.run,
     regime_strategy_coverage.run,
@@ -128,6 +138,7 @@ _SEED_FNS: list[Callable[[ReflectionStore], None]] = [
     mandate_limit_friction.seed_reference_config,
     triage_freshness.seed_reference_config,
     regime_drift.seed_reference_config,
+    significance_response_outcome.seed_reference_config,
     correlation_coverage.seed_reference_config,
     paper_live_correlation.seed_reference_config,
     regime_strategy_coverage.seed_reference_config,
