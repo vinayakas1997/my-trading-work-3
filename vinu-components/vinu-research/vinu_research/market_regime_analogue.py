@@ -406,6 +406,7 @@ async def get_market_regime_stats_for_today(
     query_window_days: int = _DEFAULT_QUERY_WINDOW_DAYS,
     k: int = 5,
     outcome_horizon_days: int = DEFAULT_OUTCOME_HORIZON_DAYS,
+    history_store: Any | None = None,
 ) -> dict[str, Any]:
     """Full pipeline: fetch `benchmark_symbol`'s returns -> reconstruct a
     price path -> derive historical regime windows -> match the most recent
@@ -419,6 +420,12 @@ async def get_market_regime_stats_for_today(
     fetch_risk_state/fetch_personality_features -- a missing regime context
     just means compute_trade_score's regime_fit_score defaults to 0, not
     that authoring breaks.
+
+    `history_store` (a MarketRegimeHistoryStore, optional) durably records
+    the result the first time it's computed each day -- see
+    storage/market_regime_history.py for why the in-memory day-cache alone
+    isn't enough for reflection's analysis J to read a trend from. None
+    (the default) preserves the previous no-persistence behavior exactly.
     """
     cache_key = datetime.now(timezone.utc).date().isoformat()
     cached = _DAY_CACHE.get(cache_key)
@@ -455,4 +462,9 @@ async def get_market_regime_stats_for_today(
 
     _DAY_CACHE.clear()  # only ever keep today's entry
     _DAY_CACHE[cache_key] = result
+    if history_store is not None and result:
+        try:
+            history_store.record(cache_key, result)
+        except Exception as e:
+            LOG.warning("MarketRegimeHistoryStore.record(%s) failed: %s", cache_key, e)
     return result

@@ -841,8 +841,12 @@ async def author_trade_plan(
     market_state_updates: dict[str, Any] = {}
     if config.regime_analogue_enabled:
         try:
+            from vinu_research.storage.market_regime_history import MarketRegimeHistoryStore
+
+            history_store = MarketRegimeHistoryStore(config.data_root / "market_regime_history.db")
             regime_stats = await get_market_regime_stats_for_today(
                 tools, benchmark_symbol=config.regime_analogue_benchmark_symbol,
+                history_store=history_store,
             )
         except Exception as e:
             logger.debug("[%s %s] Market regime analogue fetch failed: %s", symbol, timeframe, e)

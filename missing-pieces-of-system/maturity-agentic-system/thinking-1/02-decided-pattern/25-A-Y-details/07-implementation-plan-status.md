@@ -27,8 +27,17 @@ accumulate anything worth analyzing -- then built anyway once asked
 that reasoning only argued against *findings appearing soon*, never
 against writing and testing the analyzer code itself (every analyst here
 started at zero real evidence once; each one's own `MIN_EVIDENCE_COUNT`
-gate is exactly the mechanism that makes writing it early safe). All 25
-analyses now have real code for every implementable one.
+gate is exactly the mechanism that makes writing it early safe).
+
+Then J, same day, once its original framing was checked and found to be
+a genuine dead end (`regime_tag` never transitions -- see this file's
+own earlier note) but a *different* real signal was found sitting
+unused: `market_regime_analogue.get_market_regime_stats_for_today()`
+already computes a real system-wide market-regime read once per day,
+just with no durable home. Added `MarketRegimeHistoryStore`
+(vinu-research) to give it one, and `regime_drift.py` to trend it the
+same PSI way R trends triage staleness. **20 of 25 analyses now have real
+code for every implementable one.**
 
 Prior update, 2026-09-19: W, H-consistency, P+G, V, and B built — P/G's
 earlier "blocked" verdict was a documentation error, corrected the same
@@ -86,18 +95,18 @@ actual build.
 
 ## Status at a glance
 
-**19 of 25 analyses implemented and tested. 6 not built**, each with a
+**20 of 25 analyses implemented and tested. 5 not built**, each with a
 real, checked reason (not "not gotten to yet") — see the table.
 
 | Package | Tests | Status |
 |---|---|---|
 | `vinu-infra` | 254 (248 + 6 new `TestPearsonCorrelation`) | green |
-| `vinu-reflection` | 108 (57 + 19 new P/G/V/B tests + 7 new `test_memory_effectiveness.py` + 25 new: `test_rebalance_bypass.py` (6), `test_event_holding_loss.py` (6), `test_mandate_limit_friction.py` (7), `test_triage_freshness.py` (6)) | green |
+| `vinu-reflection` | 113 (57 + 19 new P/G/V/B tests + 7 new `test_memory_effectiveness.py` + 25 new U/Y/O/R tests + 5 new `test_regime_drift.py`) | green |
 | `vinu-agent` | 1209 (1205 passed, 4 skipped) | green |
 | `vinu-live` | 442 (436 + 6 new `TestRebalanceRequestHistory`) | green |
 | `vinu-screener` | 436 | green |
 | `vinu-portfolio` | 209 | green |
-| `vinu-research` | 905 (889 + 16 new: `test_strategy_family.py` (14), `TestStrategyFamilyField` (2)) | green |
+| `vinu-research` | 913 (912 passed + 1 skipped; 889 + 16 `test_strategy_family.py`/`TestStrategyFamilyField` + 9 new: `test_market_regime_history.py` (6) + 2 new `TestGetMarketRegimeStatsForToday` persistence tests) | green (one `TestThreadSafety::test_concurrent_writes` flake seen once under full-suite CPU contention, unrelated to this change — reruns 23/23 in isolation) |
 | `vinu-stock-price` | 111 (104 + 3 new `TestIngestLog` + 4 new `TestEventsArchive`) | green |
 
 All of the above ran for real, in-session, in a from-scratch Python 3.12
@@ -256,7 +265,7 @@ regardless of this reflection work):
 | W | Governance & Freshness | `governance_freshness` | ✅ Built | `threshold_calibration.py` (2 of the design doc's 3 named checkpoints — the third has no real writer) |
 | I | External-Signal Cross-Check | `external_signal_cross_check` | ✅ Built | `screener_agreement.py` |
 | X | External-Signal Cross-Check | `external_signal_cross_check` | ✅ Built | `screener_agreement.py` (same module as I) |
-| J | External-Signal Cross-Check | `external_signal_cross_check` | ❌ Blocked | `regime_tag` is set once at artifact creation, never updated — no transition event stream |
+| J | External-Signal Cross-Check | `external_signal_cross_check` | ✅ Built | `regime_drift.py` (reframed off the real `market_regime_analogue.get_market_regime_stats_for_today()` signal; new `MarketRegimeHistoryStore` writer, 2026-09-20; same evidence-floor gating as U/Y/O/R) |
 | T | External-Signal Cross-Check | `external_signal_cross_check` | 🚧 Structurally blocked | depends on `MaturityAssessor`, which doesn't exist yet |
 
 **Legend**: ✅ built & tested · ❌ blocked (real data doesn't support the
@@ -282,11 +291,12 @@ per-analyst code to write beyond its member analyses' `run()` functions.
 | Execution & Money-Flow | C, U, Y | 3 (C, U, Y) | 0 | 0 |
 | Regime & Risk Coverage | B, E, N, V | 4 (B, E — both pieces, V) | 1 (N) | 0 |
 | Governance & Freshness | O, R, F, W, H | 4 (H — both pieces, W, O, R) | 1 (F) | 0 |
-| External-Signal Cross-Check | I, J, T, X | 2 (I, X) | 2 (J, T) | 0 |
+| External-Signal Cross-Check | I, J, T, X | 3 (I, J, X) | 1 (T) | 0 |
 
 **Every one of the 6 analysts now has every implementable analysis
-actually done — nothing left in the "Needs work" column anywhere, and
-Execution & Money-Flow is now fully built** (Decision-Process: 4 of 4 —
+actually done — nothing left in the "Needs work" column anywhere,
+Execution & Money-Flow is fully built, and External-Signal Cross-Check
+is now down to a single structural blocker** (Decision-Process: 4 of 4 —
 K's missing writer (`injected_context_log.py`) built 2026-09-20 once the
 user decided it was worth adding; Execution & Money-Flow: 3 of 3 — C
 plus U/Y, both built 2026-09-20 (new writer, then the analyst itself,
@@ -296,8 +306,10 @@ then analyst" pass as U/Y) — with F the one still genuinely blocked on a
 schema change; Forecast Intelligence: 3 of 5 — A plus P/G merged — with
 Q a real dependency-cost deferral and S needing a spec; Regime & Risk
 Coverage: 4 of 4 — B, E both pieces, and V — with only N left as a real
-dependency-cost deferral). U, Y, O, and R's new writers
-(`rebalance_request_history`, `events_archive`,
+dependency-cost deferral; External-Signal Cross-Check: 3 of 4 — I/X plus
+J, reframed and built 2026-09-20 — with only T left, structurally
+blocked on `MaturityAssessor` not existing yet). U, Y, O, and R's new
+writers (`rebalance_request_history`, `events_archive`,
 `GuardResult.blocked_artifact_ids`, the live Planner-triage freshness
 hook) were built 2026-09-20 on explicit user sign-off; their analyst
 modules (`rebalance_bypass.py`, `event_holding_loss.py`,
@@ -307,7 +319,13 @@ starts working" -- each one's own `MIN_EVIDENCE_COUNT` floor (same
 mechanism every other analyst here already uses) means it writes nothing
 until real production data actually clears that floor, but the code is
 real, tested, and registered now rather than needing a second build pass
-later. What's left across all 25 analyses is entirely real blockers,
+later. J followed right after: its original framing was a real dead end
+(`regime_tag` never transitions), but investigating it surfaced a
+different, already-real market-regime signal
+(`market_regime_analogue.get_market_regime_stats_for_today()`) with no
+durable home — `MarketRegimeHistoryStore` (vinu-research, new) gives it
+one, and `regime_drift.py` trends it the same PSI way R trends triage
+staleness. What's left across all 25 analyses is entirely real blockers,
 deferrals, and specs — not uninvestigated gaps, and not unbuilt code
 waiting on data that was already safe to build against.
 
@@ -364,16 +382,30 @@ findings written (correct: no evidence yet), confirming they're
 genuinely ready to start producing real findings the moment production
 data clears each one's evidence floor, with no second build pass needed.
 
-**The blocked ones still left (J — 1 total; P and G left this group
-2026-09-19 once their "blocked" verdict turned out to be a documentation
-error, see above)**: J needs a genuinely new concept (a system-wide
-"current regime" signal that can transition over time) that doesn't
-exist anywhere in this codebase yet -- `Artifact.regime_tag` is a
-static, set-once-at-creation field, never a time series. Closer to S
-(needs a spec) than a K/U/Y/O/R-shaped "just add a writer for an
-already-defined value" decision -- someone has to define what "the
-system's regime" even means as a transitioning scalar before any code
-here makes sense. Left unbuilt, not investigated further this pass.
+**J, reframed and built 2026-09-20**: its original framing really was a
+dead end -- `Artifact.regime_tag` is a static, set-once-at-creation
+field, never a time series, so "regime relabeling events" don't exist
+and never will without inventing a wholly new concept. But that's not
+the only real regime signal in this codebase: `market_regime_analogue.
+get_market_regime_stats_for_today()` (vinu-research) already computes a
+genuine, system-wide, once-per-day market-regime read (a KNN match of
+today's market pattern against historical regime windows), feeding
+`TradeScore.regime_fit_score` — it just lived only in an in-memory,
+process-lifetime day-cache with nowhere durable to land (confirmed
+`TradeScoreResult` is never persisted to `SqliteStrategyStore`). Closed
+by adding `MarketRegimeHistoryStore` (vinu-research, new: one row per
+calendar date), wired from `get_market_regime_stats_for_today()`'s one
+real call site (`trade_plan_authoring.py`'s Phase 4 branch) via a new
+`get_market_regime_history_store()` helper in
+`vinu-agent/broker/research_link.py` (same env-var-direct pattern
+B/V/O already use). `regime_drift.py` (new analyst) reads that history
+and PSI-trends `positive_ratio` the same adjacent-window way
+`triage_freshness.py` trends stale fraction. Two real caveats carried
+forward, not fixed: `regime_analogue_enabled` is off by default, and
+persistence only happens on days `author_trade_plan()` actually runs
+that branch — sparser than a guaranteed daily heartbeat, so evidence
+accumulates more slowly here than for the other 19 built analyses. See
+`06-external-signal-cross-check.md` for the full reasoning.
 
 **Q and N (dependency-cost deferrals)**: both need data that currently
 only exists inside vinu-initial-analysis (`WeightsStore` checkpoints for
@@ -463,29 +495,30 @@ ratio instead of an annualized Sharpe).
 
 ## Where to continue, ranked
 
-1. **J's spec** — needs someone to define what "the system's regime" is
-   as a transitioning, system-wide signal before any writer or analyst
-   makes sense; no existing concept to build against, same category as
-   S. Now the single highest-leverage remaining item — U/Y/O/R are fully
-   built (writer + analyst) and just waiting on production data to
-   accumulate, not on any further decision or code.
-2. **Q/N's dependency-cost decision** — likely resolved by extending the
+1. **Q/N's dependency-cost decision** — likely resolved by extending the
    ticker-profile mechanism, once someone confirms Q/N's fields are
-   worth adding to it.
-3. **S's spec** — needs a design pass with no existing precedent to
+   worth adding to it. Now the single highest-leverage remaining item —
+   every other built analysis (including J, U/Y/O/R) is fully built
+   (writer + analyst) and just waiting on production data or a schema
+   change, not on any further design decision.
+2. **S's spec** — needs a design pass with no existing precedent to
    build from.
-4. **F** — genuinely blocked until `significance_flags` gains a real join
+3. **F** — genuinely blocked until `significance_flags` gains a real join
    key at flag-creation time; not actionable without that schema change.
-5. **T** — blocked until `MaturityAssessor` exists; not this file's
+4. **T** — blocked until `MaturityAssessor` exists; not this file's
    scope to unblock.
-6. **B's per-`strategy_family` breakdown for V** — B is now built, so
+5. **B's per-`strategy_family` breakdown for V** — B is now built, so
    V's own `scope_type=system` scope-down (`paper_live_correlation.py`'s
    docstring) could be revisited into a real per-family breakdown; not
    urgent, V's system-wide finding is already real and useful.
+6. **Turning `regime_analogue_enabled` on** — a config/product decision,
+   not a code gap: J's `regime_drift.py` is fully built and registered,
+   but only starts accumulating real evidence once this flag (off by
+   default) is turned on and trade-plan authoring actually runs Phase 4.
 
 Once **the reader** exists (the actual gap `02-analyst-interface.md`
 still flags as open — every analyst writes, nothing reads
 `reflection_beliefs` yet, because the reflection worker's *consumer*,
-"the brain," doesn't exist), the 19 analyses already built become
+"the brain," doesn't exist), the 20 analyses already built become
 genuinely useful, not just tested in isolation. That's arguably a higher
-lever than finishing the remaining 6 — worth weighing against this list.
+lever than finishing the remaining 5 — worth weighing against this list.

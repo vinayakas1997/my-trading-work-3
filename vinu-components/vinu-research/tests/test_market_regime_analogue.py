@@ -265,3 +265,30 @@ class TestGetMarketRegimeStatsForToday:
         tools = _StubBenchmarkTools(_benchmark_returns(n=30))
         stats = await get_market_regime_stats_for_today(tools, benchmark_symbol="SPY")
         assert stats == {}
+
+    async def test_persists_to_history_store_when_matches_found(self, tmp_path, monkeypatch) -> None:
+        from vinu_research.storage.market_regime_history import MarketRegimeHistoryStore
+
+        monkeypatch.setattr(
+            mra, "get_market_regime_stats",
+            lambda matches, outcomes: {
+                "n_matches": 4, "n_positive": 3, "n_negative": 1, "positive_ratio": 0.75,
+                "avg_return": 0.01, "median_return": 0.02, "max_drawdown": -0.05,
+            },
+        )
+        tools = _StubBenchmarkTools(_benchmark_returns())
+        store = MarketRegimeHistoryStore(tmp_path / "market_regime_history.db")
+        stats = await get_market_regime_stats_for_today(tools, benchmark_symbol="SPY", history_store=store)
+        assert stats["n_matches"] == 4
+        history = store.all_history()
+        assert len(history) == 1
+        assert history[0]["positive_ratio"] == pytest.approx(0.75)
+
+    async def test_does_not_persist_when_no_matches(self, tmp_path) -> None:
+        from vinu_research.storage.market_regime_history import MarketRegimeHistoryStore
+
+        tools = _StubBenchmarkTools(None)  # fails open to {}
+        store = MarketRegimeHistoryStore(tmp_path / "market_regime_history.db")
+        stats = await get_market_regime_stats_for_today(tools, benchmark_symbol="SPY", history_store=store)
+        assert stats == {}
+        assert store.all_history() == []

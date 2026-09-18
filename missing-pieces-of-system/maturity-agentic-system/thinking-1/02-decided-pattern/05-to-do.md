@@ -909,3 +909,94 @@ tradeoffs, missing specs, and structural/schema blockers -- see
 `07-implementation-plan-status.md`'s ranked list, now topped by J's spec
 gap (the only remaining new-writer-shaped item that isn't actually a
 new-writer decision).
+
+---
+
+**2026-09-20, later the same day**: after committing the U/Y/O/R work,
+the user asked to keep going ("continue what is stoppping?"). Nothing
+was actually blocked -- all prior work was complete and verified, just
+sitting uncommitted; committed it (`486dc312`), then re-checked J since
+it topped the ranked list.
+
+J's original framing (`regime_tag` relabeling events) was re-confirmed
+as a genuine dead end, not something to push past: traced
+`Artifact.regime_tag`'s one real write site
+(`research_artifact_writer.py:159`) back to `candidates[i]["regime"]`,
+which comes from a backtest-window label a strategy candidate was tuned
+against -- a static per-candidate tag, not a live signal, so there was
+never going to be a "regime changed" event to log there no matter how
+long this got investigated.
+
+But that dead end didn't mean J itself was a dead end. Grepping more
+broadly for "regime" in vinu-research surfaced
+`market_regime_analogue.get_market_regime_stats_for_today()`: a real,
+already-running, once-per-calendar-day computation -- a KNN match of
+"today's" whole-market pattern (built from a reconstructed benchmark
+price path) against historical regime windows, producing
+`positive_ratio`/`avg_return`/`median_return`/`max_drawdown` across the
+matches. It already feeds `TradeScore.regime_fit_score` on every
+authored trade plan. Checked whether that score gets persisted anywhere
+reflection could read (`SqliteStrategyStore`'s schema, `TradeScoreResult`
+usage) -- confirmed it doesn't; the whole computation lives only in an
+in-memory, process-lifetime `_DAY_CACHE` that gets cleared every day it
+advances. Real signal, no durable home -- the same shape as several
+other analyses this session (a real computation or event genuinely
+happening, just never written down anywhere reflection can read it),
+not the "invent a new concept" problem the original framing implied.
+
+Proposed the reframe to the user before building anything (concrete
+design: persist `market_regime_stats` durably, then PSI-trend it) --
+approved. Built:
+- `MarketRegimeHistoryStore` (`vinu-research/vinu_research/storage/
+  market_regime_history.py`, new): one row per calendar date
+  (`positive_ratio, avg_return, median_return, max_drawdown, n_matches,
+  n_positive, n_negative`), `INSERT OR IGNORE` keyed on `date` so the
+  first write each day wins and a later same-day call (already
+  short-circuited by the day-cache) can never overwrite it with stale
+  data.
+- `get_market_regime_stats_for_today()` takes an optional
+  `history_store` param now (default `None`, so every existing caller/
+  test is unaffected) and calls `.record()` right where it already
+  computes `result`, wrapped in its own try/except -- persistence
+  failure fails open, same posture as the rest of that function.
+- Wired from the one real call site, `trade_plan_authoring.py`'s Phase 4
+  branch, via a new `get_market_regime_history_store()` helper in
+  `vinu-agent/broker/research_link.py` -- same `VINU_RESEARCH_DATA_ROOT`-
+  direct pattern `get_strategy_store()` already established for B/V/O,
+  chosen over threading a store object through `author_trade_plan()`'s
+  call chain (which doesn't currently receive one).
+- `regime_drift.py` (new analyst, `vinu-reflection`): reads the full
+  history, applies the same adjacent-window PSI trend as
+  `triage_freshness.py`/`angle_trust.py` on `positive_ratio`
+  (`CURRENT_WINDOW=10`, `REFERENCE_WINDOW_MAX=30`,
+  `MIN_REFERENCE_WINDOW=10` -- smaller than R's 20/60 since this fires at
+  most once per calendar day, not per triage cycle), `scope_type=system`,
+  `scope_key="market_regime"`, `POLARITY_LOWER_IS_WORSE` (a falling
+  positive-match ratio is the bad direction, same delta convention as
+  U's `critical_outcome_delta`). Registered in `cli.py`'s
+  `ANALYSTS`/`_SEED_FNS`.
+- 15 new tests: 4 in `test_market_regime_analogue.py` (2 new
+  persistence-related, on top of the module's existing 31), 6 in new
+  `test_market_regime_history.py`, 5 in new `test_regime_drift.py`.
+
+Two real caveats flagged and left as-is, not "fixed": `regime_analogue_
+enabled` is off by default in `config.py`, and persistence only happens
+on a calendar day some `author_trade_plan()` call actually runs the
+Phase 4 branch -- sparser than a guaranteed daily heartbeat. Both are
+product/config decisions, not code gaps; `regime_drift.py`'s own
+evidence-floor windowing already makes it safe to have registered ahead
+of data, same reasoning as U/Y/O/R.
+
+Full suites re-verified in a fresh throwaway venv (`.tvj`, cleaned up
+afterward): `vinu-reflection` 113/113, `vinu-agent` 1205/1205 + 4
+skipped, `vinu-research` 912/912 + 1 skipped (one
+`TestThreadSafety::test_concurrent_writes` flake seen only under
+full-suite CPU contention -- reran 23/23 in isolation, confirmed
+unrelated to this change; `sqlite_backend.py` itself was never touched).
+
+**20 of 25 analyses now implemented**: everything from the prior entry
+plus J. What's left (Q, N, S, F, T) is entirely real dependency-cost
+tradeoffs, missing specs, and a structural blocker -- see
+`07-implementation-plan-status.md`'s ranked list, now topped by Q/N's
+dependency-cost decision since every remaining item is a decision or
+schema change, not a design gap needing a fresh concept.

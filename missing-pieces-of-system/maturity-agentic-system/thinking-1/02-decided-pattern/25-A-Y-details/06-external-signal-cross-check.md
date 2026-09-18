@@ -78,6 +78,39 @@ doesn't exist in this codebase. Would need a new writer that actually
 tracks system-wide regime transitions as events, not a read of existing
 data.
 
+**Reframed and built, 2026-09-20.** `regime_tag`'s dead end wasn't the
+whole story: `vinu-research/vinu_research/market_regime_analogue.py`'s
+`get_market_regime_stats_for_today()` already computes a real, genuine
+system-wide market-regime signal once per calendar day — a KNN match of
+"today's" whole-market pattern against historical regime windows, giving
+`positive_ratio`/`avg_return`/`median_return`/`max_drawdown` across the
+matches, feeding `TradeScore.regime_fit_score`. It just had nowhere
+durable to land: the result lived only in an in-memory, process-lifetime
+`_DAY_CACHE`, and `TradeScoreResult` (which carries it) is never
+persisted to `SqliteStrategyStore`. Closed by adding
+`MarketRegimeHistoryStore` (`vinu-research/vinu_research/storage/
+market_regime_history.py`, new): one row per calendar date
+(`positive_ratio, avg_return, median_return, max_drawdown, n_matches,
+n_positive, n_negative`), written the first time each day's stats are
+computed — `get_market_regime_stats_for_today()` takes an optional
+`history_store` param now, wired from `trade_plan_authoring.py`'s Phase 4
+call site via a new `get_market_regime_history_store()` helper in
+`vinu-agent/vinu_agent/broker/research_link.py` (same
+`VINU_RESEARCH_DATA_ROOT`-direct pattern B/V/O already established).
+`vinu_reflection/reflection/regime_drift.py` (new file) is J itself:
+reads the history's full run, applies the same adjacent-window PSI trend
+as `triage_freshness.py`/`angle_trust.py` on `positive_ratio`
+(`CURRENT_WINDOW=10`, `REFERENCE_WINDOW_MAX=30`, `MIN_REFERENCE_WINDOW=10`
+— smaller than R's 20/60 since this fires at most once per calendar day,
+not per triage cycle), `scope_type=system`, `scope_key="market_regime"`.
+Two real caveats, not implementation gaps: `regime_analogue_enabled` is
+off by default (`config.py`), and persistence only happens on a day some
+`author_trade_plan()` call actually runs the Phase 4 branch — sparser
+than a guaranteed daily heartbeat, so this accumulates evidence more
+slowly than the other 19 built analyses. Registered in `cli.py`'s
+`ANALYSTS` now regardless, per the same "safe to ship ahead of data"
+reasoning as U/Y/O/R.
+
 ---
 
 ## T. The LESSON snapshots as a free maturity-signal baseline check

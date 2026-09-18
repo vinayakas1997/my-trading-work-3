@@ -32,6 +32,7 @@ from typing import Any
 
 from vinu_research.hypothesis_registry import HypothesisRegistry
 from vinu_research.models import Hypothesis
+from vinu_research.storage.market_regime_history import MarketRegimeHistoryStore
 from vinu_research.storage.sqlite_backend import ResearchStorage
 from vinu_research.storage.strategy_store import SqliteStrategyStore
 
@@ -56,6 +57,10 @@ def get_strategy_store() -> SqliteStrategyStore:
 
 def get_research_storage() -> ResearchStorage:
     return ResearchStorage(_research_data_root() / "research_meta.db")
+
+
+def get_market_regime_history_store() -> MarketRegimeHistoryStore:
+    return MarketRegimeHistoryStore(_research_data_root() / "market_regime_history.db")
 
 
 def get_research_tools(config=None):

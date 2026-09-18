@@ -30,6 +30,7 @@ from vinu_reflection.reflection import (
     paper_live_correlation,
     process_mining,
     rebalance_bypass,
+    regime_drift,
     regime_strategy_coverage,
     screener_agreement,
     skill_edit_governance,
@@ -81,6 +82,16 @@ LOG = logging.getLogger("vinu.reflection.worker")
 # past each one's MIN_EVIDENCE_COUNT floor -- registered now so they're
 # ready to work correctly the moment it does, rather than needing a
 # second build pass later. See each module's own docstring.
+# regime_drift.run() is J -- its original framing (regime_tag relabeling
+# events) was a dead end (regime_tag never changes after artifact
+# creation), reframed around the real, already-computed
+# market_regime_analogue.get_market_regime_stats_for_today() signal, which
+# just had no durable home until MarketRegimeHistoryStore (vinu-research,
+# new) was added 2026-09-20 on explicit user sign-off. Sparser than the
+# other four above (only accumulates when regime_analogue_enabled is on
+# and a trade plan is actually authored that day) but the same
+# MIN_EVIDENCE_COUNT-style windowing makes it safe to register now. See
+# that module's own docstring.
 AnalystFn = Callable[[dict[str, Path], dict[str, Any]], list[Finding]]
 ANALYSTS: list[AnalystFn] = [
     decision_process.run,
@@ -94,6 +105,7 @@ ANALYSTS: list[AnalystFn] = [
     event_holding_loss.run,
     mandate_limit_friction.run,
     triage_freshness.run,
+    regime_drift.run,
     correlation_coverage.run,
     paper_live_correlation.run,
     regime_strategy_coverage.run,
@@ -115,6 +127,7 @@ _SEED_FNS: list[Callable[[ReflectionStore], None]] = [
     event_holding_loss.seed_reference_config,
     mandate_limit_friction.seed_reference_config,
     triage_freshness.seed_reference_config,
+    regime_drift.seed_reference_config,
     correlation_coverage.seed_reference_config,
     paper_live_correlation.seed_reference_config,
     regime_strategy_coverage.seed_reference_config,
