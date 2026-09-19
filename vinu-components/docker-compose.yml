@@ -335,6 +335,14 @@ services:
       # HTTP) see the very same artifacts the agent promoted. /data stays
       # the research service's own root for everything else.
       VINU_RESEARCH_DATA_ROOT: /research-data
+      # Turned on 2026-09-20 so reflection analysis J (regime_drift.py)
+      # actually starts accumulating real evidence: off by default
+      # (config.py), and trade_plan_authoring.py's Phase 4 branch is the
+      # only real writer of MarketRegimeHistoryStore -- this is the
+      # fallback-HTTP path (trade_plan_tool.py falls back here only if
+      # in-process authoring on agent-api raises), set here too so J's
+      # data isn't missing on whichever path actually runs.
+      VINU_RESEARCH_REGIME_ANALOGUE_ENABLED: "true"
     secrets:
       - vinu_llm_api_key
     ports:
@@ -456,6 +464,13 @@ services:
       # ACTIVE was invisible to stage 8/9. Agent's own memory/ledger stay on
       # /data (= data/agent); only the research/strategy root is unified here.
       VINU_RESEARCH_DATA_ROOT: /research-data
+      # Turned on 2026-09-20, same reasoning as research-api's own copy of
+      # this var above -- trade_plan_tool.py's real primary path
+      # (`_author_and_freeze_trade_plan_in_process`) runs `author_trade_plan()`
+      # directly in this container, so this is the one that matters most for
+      # reflection analysis J (regime_drift.py) to actually start seeing
+      # real market_regime_history rows.
+      VINU_RESEARCH_REGIME_ANALOGUE_ENABLED: "true"
     secrets:
       - vinu_api_key
       - alpaca_api_key

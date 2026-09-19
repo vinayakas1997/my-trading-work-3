@@ -70,6 +70,19 @@ installs `vinu_initial_analysis` nor needs a live service. **23 of 25
 analyses now have real code for every implementable one.** Only S
 (needs a spec) and T (blocked on `MaturityAssessor`) remain.
 
+Same day, on explicit user sign-off, closed two of the three items this
+file's own ranked list left below S/T: **V's per-`strategy_family`
+breakdown** (`paper_live_correlation.py` now emits one additional
+`scope_type=strategy_family` Finding per family with enough promoted
+artifacts, alongside its original `scope_type=system` row -- a real
+belief-collision risk against B's own `scope_key=family` rows under the
+same `analyst_name` was found and fixed the same way Q's was, see
+`02-regime-risk-coverage.md`) and **`regime_analogue_enabled` flipped on**
+(`VINU_RESEARCH_REGIME_ANALOGUE_ENABLED=true` added to both `agent-api`
+and `research-api` in `docker-compose.yml`, covering both the real
+in-process and HTTP-fallback trade-plan-authoring paths -- see
+`06-external-signal-cross-check.md`). S and T were left open, as decided.
+
 Prior update, 2026-09-19: W, H-consistency, P+G, V, and B built — P/G's
 earlier "blocked" verdict was a documentation error, corrected the same
 day; V's two blockers both turned out to be non-issues once chased
@@ -136,7 +149,7 @@ with a real, checked reason (not "not gotten to yet") — see the table.
 | Package | Tests | Status |
 |---|---|---|
 | `vinu-infra` | 254 (248 + 6 new `TestPearsonCorrelation`) | green |
-| `vinu-reflection` | 139 (119 (see prior entries) + 20 new: `test_initial_analysis_parquet.py` (7), `test_dl_angle_backtest_health.py` (7), `test_shock_reading_before_halt.py` (6)) | green |
+| `vinu-reflection` | 144 (139 (see prior entries) + 5 new in `test_paper_live_correlation.py`: 4 per-family-breakdown tests + 1 `seed_reference_config` dual-row test) | green |
 | `vinu-agent` | 1212 (1208 passed + 4 skipped; 1205 + 4 skipped + 3 new `SignificanceFlagStore.all_flags()` tests) | green (unchanged this pass — Q/N touched only vinu-reflection + docker-compose.yml) |
 | `vinu-live` | 442 (436 + 6 new `TestRebalanceRequestHistory`) | green |
 | `vinu-screener` | 436 | green |
@@ -291,7 +304,7 @@ regardless of this reflection work):
 | E (concentration) | Regime & Risk Coverage | `regime_risk_coverage` | ✅ Built | `concentration_coverage.py` |
 | B | Regime & Risk Coverage | `regime_risk_coverage` | ✅ Built | `regime_strategy_coverage.py` (new `Artifact.strategy_family` field, classified from `user_idea`) |
 | N | Regime & Risk Coverage | `regime_risk_coverage` | ✅ Built | `shock_reading_before_halt.py` (reframed to the nearest quarterly shock snapshot before a real halt — the official cadence is quarterly, not live; same new torch-free reader, 2026-09-20) |
-| V | Regime & Risk Coverage | `regime_risk_coverage` | ✅ Built | `paper_live_correlation.py` (both blockers were non-issues once chased down — see below) |
+| V | Regime & Risk Coverage | `regime_risk_coverage` | ✅ Built | `paper_live_correlation.py` (both blockers were non-issues once chased down; per-`strategy_family` breakdown added 2026-09-20 — see below) |
 | H (governance) | Governance & Freshness | `governance_freshness` | ✅ Built | `skill_edit_governance.py` |
 | H (consistency) | Governance & Freshness | `governance_freshness` | ✅ Built | `consistency_freeze.py` |
 | O | Governance & Freshness | `governance_freshness` | ✅ Built | `mandate_limit_friction.py` (new `GuardResult.blocked_artifact_ids` writer, 2026-09-20; same evidence-floor gating) |
@@ -610,6 +623,20 @@ correlation scalar has no natural two-window PSI comparison the way
 every other analyst's Condition does. See `paper_live_correlation.py`'s
 own docstring for the full reasoning.
 
+**V's per-`strategy_family` breakdown added 2026-09-20**, once B's
+taxonomy (below) existed to revisit the scope-down with. Adds one
+`scope_type=strategy_family` Finding per family clearing
+`MIN_SAMPLE_ARTIFACTS`, alongside the original `scope_type=system` row —
+additive, not a replacement. Caught and fixed a real belief-collision
+risk before shipping: B already writes `scope_type=strategy_family`/
+`scope_key=<family>` under the same `analyst_name`
+(`regime_risk_coverage`), and `reflection_beliefs`' real primary key
+(`analyst_name, scope_type, scope_key`) has no `metric_name` column, so a
+plain family-name `scope_key` here would have silently overwritten B's
+belief row for that family. Fixed with a distinct `scope_key`
+(`f"{family}:paper_live_correlation"`) — same bug class Q hit and fixed
+the same day.
+
 **B, designed and built 2026-09-19**: the taxonomy design task this
 file's ranked list called for. Confirmed `signal_definition` has no real
 writer anywhere (empty on every real artifact, not just messy free text)
@@ -635,26 +662,24 @@ ratio instead of an annualized Sharpe).
 ## Where to continue, ranked
 
 1. **S's spec** — needs a design pass with no existing precedent to
-   build from. The single highest-leverage remaining item now that Q and
-   N are both built — everything else left is either not this file's
-   scope to unblock (T) or a config/product decision on already-built
-   code (items below).
+   build from. The single remaining item with real, non-config, in-scope
+   work left — T is not this file's scope to unblock.
 2. **T** — blocked until `MaturityAssessor` exists; not this file's
    scope to unblock.
-3. **B's per-`strategy_family` breakdown for V** — B is now built, so
-   V's own `scope_type=system` scope-down (`paper_live_correlation.py`'s
-   docstring) could be revisited into a real per-family breakdown; not
-   urgent, V's system-wide finding is already real and useful.
-4. **Turning `regime_analogue_enabled` on** — a config/product decision,
-   not a code gap: J's `regime_drift.py` is fully built and registered,
-   but only starts accumulating real evidence once this flag (off by
-   default) is turned on and trade-plan authoring actually runs Phase 4.
 
 Q and N were fully resolved and built 2026-09-20 (see "How each
 remaining group actually gets closed" above) — both turned out to have
 a real answer once traced one level deeper than the "dependency-cost"/
 "architecture-decision" framing this list previously carried them
 under, rather than needing the open decision that framing implied.
+
+The two items previously ranked #3/#4 here are also closed, same day:
+**V's per-`strategy_family` breakdown** (built, once B gave
+`strategy_family` a real taxonomy — see `02-regime-risk-coverage.md`)
+and **`regime_analogue_enabled` turned on** (`docker-compose.yml`, both
+`agent-api` and `research-api` — see `06-external-signal-cross-check.md`).
+Neither was urgent, both were closed on explicit user sign-off rather
+than left for later.
 
 Once **the reader** exists (the actual gap `02-analyst-interface.md`
 still flags as open — every analyst writes, nothing reads

@@ -111,6 +111,19 @@ slowly than the other 19 built analyses. Registered in `cli.py`'s
 `ANALYSTS` now regardless, per the same "safe to ship ahead of data"
 reasoning as U/Y/O/R.
 
+**First caveat closed 2026-09-20**: `VINU_RESEARCH_REGIME_ANALOGUE_ENABLED`
+set to `"true"` in `docker-compose.yml` for both `agent-api` (the real
+primary path — `trade_plan_tool.py`'s `_author_and_freeze_trade_plan_in_
+process` runs `author_trade_plan()` directly in this container) and
+`research-api` (the HTTP fallback `trade_plan_tool.py` uses only if the
+in-process call raises) — both resolve `ResearchConfig` from their own
+container's env independently, so both needed the flag for J to see real
+data regardless of which path actually executes on a given call. The
+second caveat (sparser-than-daily persistence, since it's gated on Phase
+4 actually running, not a fixed schedule) is a real, structural property
+of the trigger — not something a config flag changes — and stands as
+documented.
+
 ---
 
 ## T. The LESSON snapshots as a free maturity-signal baseline check

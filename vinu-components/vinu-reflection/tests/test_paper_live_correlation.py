@@ -30,9 +30,17 @@ def strategy_store(tmp_path, monkeypatch):
     return paper_live_correlation.get_strategy_store()
 
 
-def _seed_live_returns(strategy_store, *, artifact_id: str, live_returns: list[float]) -> None:
+def _seed_live_returns(
+    strategy_store, *, artifact_id: str, live_returns: list[float], strategy_family: str = ""
+) -> None:
     strategy_store.upsert_artifact(
-        Artifact(artifact_id=artifact_id, type="trade_plan", name=artifact_id, universe=["AAPL"])
+        Artifact(
+            artifact_id=artifact_id,
+            type="trade_plan",
+            name=artifact_id,
+            universe=["AAPL"],
+            strategy_family=strategy_family,
+        )
     )
     for r in live_returns:
         strategy_store.append_calibration_entry(
@@ -114,3 +122,95 @@ class TestPaperLiveCorrelationRun:
         assert len(findings) == 1
         assert findings[0].primary_metric < 0
         assert findings[0].domain_floor_breached is True
+
+
+class TestPaperLiveCorrelationPerFamily:
+    def test_family_below_floor_only_system_finding(self, performance_store, strategy_store, data_root):
+        # 5 promoted artifacts clear the system-wide floor, but only 2
+        # share a strategy_family -- below MIN_SAMPLE_ARTIFACTS, so no
+        # per-family finding should appear yet.
+        for i in range(5):
+            aid = f"art_{i}"
+            performance_store.record_daily_returns(aid, [0.01 * (i + 1)] * 5)
+            family = "momentum" if i < 2 else ""
+            _seed_live_returns(
+                strategy_store, artifact_id=aid, live_returns=[0.02 * (i + 1)], strategy_family=family
+            )
+
+        findings = paper_live_correlation.run({"vinu_agent": data_root})
+        assert len(findings) == 1
+        assert findings[0].scope_type == "system"
+
+    def test_family_clears_floor_gets_own_finding(self, performance_store, strategy_store, data_root):
+        # 5 artifacts, all sharing "momentum" -- both the system-wide row
+        # and momentum's own per-family row should be written.
+        for i in range(5):
+            aid = f"art_{i}"
+            paper = 0.01 * (i + 1)
+            live = 0.01 * (i + 1)
+            performance_store.record_daily_returns(aid, [paper] * 5)
+            _seed_live_returns(
+                strategy_store, artifact_id=aid, live_returns=[live], strategy_family="momentum"
+            )
+
+        findings = paper_live_correlation.run({"vinu_agent": data_root})
+        assert len(findings) == 2
+        by_scope = {f.scope_type: f for f in findings}
+        assert "system" in by_scope and "strategy_family" in by_scope
+        family_finding = by_scope["strategy_family"]
+        assert family_finding.scope_key == "momentum:paper_live_correlation"
+        assert family_finding.metric_name == "paper_live_correlation"
+        assert family_finding.evidence_count == 5
+        assert family_finding.primary_metric == pytest.approx(1.0, abs=1e-6)
+        assert family_finding.domain_floor_breached is False
+
+    def test_artifact_without_family_excluded_from_breakdown(self, performance_store, strategy_store, data_root):
+        # Pre-existing artifact (empty strategy_family, B's "excluded not
+        # unclassified" convention) must never land in a per-family
+        # finding, even once enough total artifacts exist.
+        for i in range(5):
+            aid = f"art_{i}"
+            performance_store.record_daily_returns(aid, [0.01 * (i + 1)] * 5)
+            _seed_live_returns(strategy_store, artifact_id=aid, live_returns=[0.02 * (i + 1)], strategy_family="")
+
+        findings = paper_live_correlation.run({"vinu_agent": data_root})
+        assert len(findings) == 1
+        assert findings[0].scope_type == "system"
+
+    def test_two_families_each_get_own_finding(self, performance_store, strategy_store, data_root):
+        for i in range(5):
+            aid = f"mom_{i}"
+            v = 0.01 * (i + 1)
+            performance_store.record_daily_returns(aid, [v] * 5)
+            _seed_live_returns(strategy_store, artifact_id=aid, live_returns=[v], strategy_family="momentum")
+        for i in range(5):
+            aid = f"mr_{i}"
+            v = 0.01 * (i + 1)
+            performance_store.record_daily_returns(aid, [v] * 5)
+            _seed_live_returns(
+                strategy_store, artifact_id=aid, live_returns=[-v], strategy_family="mean_reversion"
+            )
+
+        findings = paper_live_correlation.run({"vinu_agent": data_root})
+        family_findings = {f.scope_key: f for f in findings if f.scope_type == "strategy_family"}
+        assert set(family_findings) == {"momentum:paper_live_correlation", "mean_reversion:paper_live_correlation"}
+        assert family_findings["momentum:paper_live_correlation"].primary_metric == pytest.approx(1.0, abs=1e-6)
+        assert family_findings["mean_reversion:paper_live_correlation"].primary_metric == pytest.approx(
+            -1.0, abs=1e-6
+        )
+
+
+class TestSeedReferenceConfig:
+    def test_seeds_both_system_and_strategy_family_rows(self, tmp_path):
+        from vinu_infra.reflection import ReflectionStore
+
+        store = ReflectionStore(tmp_path / "reflection.db")
+        paper_live_correlation.seed_reference_config(store)
+
+        system_cfg = store.get_reference_config("regime_risk_coverage", "system", "paper_live_correlation")
+        family_cfg = store.get_reference_config(
+            "regime_risk_coverage", "strategy_family", "paper_live_correlation"
+        )
+        assert system_cfg is not None
+        assert family_cfg is not None
+        assert system_cfg["reference_window_definition"] != family_cfg["reference_window_definition"]

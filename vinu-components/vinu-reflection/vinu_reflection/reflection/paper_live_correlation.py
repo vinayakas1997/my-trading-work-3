@@ -35,6 +35,21 @@ one `scope_type=system` row across every promoted artifact instead of a
 per-family breakdown, same "don't invent B's taxonomy here" posture C/E's
 concentration piece already took. Revisit per-family once B is resolved.
 
+**Per-family breakdown added 2026-09-20**, now that B (`regime_strategy_
+coverage.py`) has given `Artifact.strategy_family` a real taxonomy. Adds
+one additional `scope_type=strategy_family` `Finding` per family with
+`>= MIN_SAMPLE_ARTIFACTS` promoted artifacts, alongside (not instead of)
+the original system-wide row -- the system-wide finding stays useful on
+its own (e.g. while no single family yet clears the floor). Same
+"excluded, not unclassified" convention B uses for artifacts predating
+the field. Its `scope_key` is `f"{family}:paper_live_correlation"`, not
+the plain family name -- B already writes `scope_type=strategy_family`/
+`scope_key=family` under this same `analyst_name`
+(`regime_risk_coverage`), and `reflection_beliefs`' real primary key is
+`(analyst_name, scope_type, scope_key)` with no `metric_name` column, so
+a plain family `scope_key` here would silently overwrite B's belief row
+for that family.
+
 **Real substitution for significance, documented**: the design doc's
 Condition is "the correlation coefficient... moves outside its own
 trailing band... recomputed each cycle from the full history" -- a
@@ -58,6 +73,7 @@ floor does.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Optional
 
@@ -103,14 +119,29 @@ def run(
 
     paper_avgs: list[float] = []
     live_avgs: list[float] = []
+    # family -> parallel (paper_avg, live_avg) lists, for artifacts that
+    # also carry a real strategy_family -- see module docstring.
+    by_family: dict[str, tuple[list[float], list[float]]] = defaultdict(lambda: ([], []))
+
     for artifact_id, paper_returns in performance_store.get_all().items():
         if len(paper_returns) < MIN_PAPER_DAYS:
             continue
         calib_entries = strategy_store.get_calibration_entries(artifact_id)
         if len(calib_entries) < MIN_LIVE_ENTRIES:
             continue
-        paper_avgs.append(_mean(paper_returns))
-        live_avgs.append(_mean([e.actual_return_pct for e in calib_entries]))
+        paper_avg = _mean(paper_returns)
+        live_avg = _mean([e.actual_return_pct for e in calib_entries])
+        paper_avgs.append(paper_avg)
+        live_avgs.append(live_avg)
+
+        artifact = strategy_store.get_artifact(artifact_id)
+        # Excluded, not "unclassified" -- same convention B established:
+        # this artifact predates strategy_family or its run stated no
+        # real style.
+        if artifact is not None and artifact.strategy_family:
+            family_paper, family_live = by_family[artifact.strategy_family]
+            family_paper.append(paper_avg)
+            family_live.append(live_avg)
 
     n_promoted = len(paper_avgs)
     if n_promoted < MIN_SAMPLE_ARTIFACTS:
@@ -119,7 +150,7 @@ def run(
     correlation = pearson_correlation(paper_avgs, live_avgs)
     psi = population_stability_index(paper_avgs, live_avgs)
 
-    return [
+    findings = [
         Finding(
             analyst_name=ANALYST_NAME,
             cluster=CLUSTER,
@@ -141,6 +172,34 @@ def run(
         )
     ]
 
+    for family, (family_paper, family_live) in by_family.items():
+        if len(family_paper) < MIN_SAMPLE_ARTIFACTS:
+            continue
+        family_correlation = pearson_correlation(family_paper, family_live)
+        family_psi = population_stability_index(family_paper, family_live)
+        findings.append(
+            Finding(
+                analyst_name=ANALYST_NAME,
+                cluster=CLUSTER,
+                scope_type="strategy_family",
+                scope_key=f"{family}:paper_live_correlation",
+                signal_json={
+                    "paper_live_correlation": family_correlation,
+                    "n_promoted_artifacts": len(family_paper),
+                },
+                evidence_count=len(family_paper),
+                primary_metric=family_correlation,
+                metric_name=METRIC_NAME,
+                psi=family_psi,
+                domain_floor_breached=family_correlation <= 0,
+                narrative=(
+                    f"{family}: paper-vs-live return correlation across "
+                    f"{len(family_paper)} promoted artifacts: {family_correlation:+.3f}"
+                ),
+            )
+        )
+    return findings
+
 
 def seed_reference_config(reflection_store) -> None:
     """Idempotent, same posture as every other analyst's
@@ -154,6 +213,24 @@ def seed_reference_config(reflection_store) -> None:
         reason=(
             "V: a lower (or negative) paper-vs-live return correlation means "
             "paper performance predicts real performance less well"
+        ),
+        updated_by=ANALYST_NAME,
+    )
+    # Separate row: same (analyst_name, metric_name) pair, but
+    # scope_type="strategy_family" -- reflection_reference_config's real
+    # primary key is (analyst_name, scope_type, metric_name), so this is a
+    # genuinely distinct row from the one above, not a duplicate. One row
+    # covers every family's own Finding, same "single row, many scope_key
+    # values" precedent N's seed_reference_config already uses.
+    reflection_store.upsert_reference_config(
+        analyst_name=ANALYST_NAME,
+        scope_type="strategy_family",
+        metric_name=METRIC_NAME,
+        metric_polarity=POLARITY_LOWER_IS_WORSE,
+        reference_window_definition="promoted_artifacts_with_paper_and_live_history_for_this_family",
+        reason=(
+            "V per-family breakdown: same reasoning as the system-wide row, "
+            "scoped to one strategy_family now that B's taxonomy exists"
         ),
         updated_by=ANALYST_NAME,
     )

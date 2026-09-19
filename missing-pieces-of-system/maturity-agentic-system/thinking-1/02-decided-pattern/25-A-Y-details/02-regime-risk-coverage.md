@@ -298,3 +298,25 @@ computable question ("how far has the live outcome distribution
 diverged from what paper predicted"). "Correlation ≤ 0" is implemented
 directly as `domain_floor_breached`. See that module's own docstring for
 the full reasoning.
+
+**Per-family breakdown added 2026-09-20**, once B (above) gave
+`strategy_family` a real taxonomy — closing the "revisit per-family once
+B's taxonomy is resolved" note from the day before. `paper_live_
+correlation.py`'s `run()` now emits one additional `scope_type=
+strategy_family` `Finding` per family with `>= MIN_SAMPLE_ARTIFACTS`
+promoted artifacts, alongside (not replacing) the original `scope_type=
+system` row — the system-wide finding stays useful in its own right
+(e.g. while no single family yet clears the floor on its own). Same
+"excluded, not unclassified" convention B uses for artifacts predating
+the field.
+
+**Real belief-collision risk found and avoided**: B already writes
+`scope_type=strategy_family`/`scope_key=<family>` under this same
+`analyst_name` (`regime_risk_coverage` — B and V share one analyst_name,
+just different `metric_name`s). `reflection_beliefs`' real primary key is
+`(analyst_name, scope_type, scope_key)` — no `metric_name` column — so a
+plain family name as V's `scope_key` here would have silently overwritten
+B's belief row for that family on every cycle. Fixed by giving V's
+per-family finding its own `scope_key` (`f"{family}:paper_live_
+correlation"`), distinct from B's. Same bug class Q hit and fixed
+2026-09-20 (see `01-forecast-intelligence.md`).

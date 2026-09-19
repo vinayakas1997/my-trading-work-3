@@ -1185,3 +1185,59 @@ plus Q and N. What's left (S, T) is a real spec gap and a structural
 blocker on a separate, larger component (`MaturityAssessor`) -- see
 `07-implementation-plan-status.md`'s ranked list, now topped by S's spec
 since Q/N no longer need any further decision.
+
+---
+
+Same day, asked directly which of 4 remaining directions to take (S's
+spec, starting `MaturityAssessor`/"the brain", two small polish items
+from the ranked list, or stop) -- chose the two small items, leaving S
+and T open as real, undecided/blocked work rather than building past
+what was asked.
+
+- **V's per-`strategy_family` breakdown** (`paper_live_correlation.py`):
+  the "revisit once B's taxonomy is resolved" note from the day before
+  could finally be closed, since B (built earlier the same day) gave
+  `strategy_family` a real value. Added one `scope_type=strategy_family`
+  Finding per family clearing `MIN_SAMPLE_ARTIFACTS`, additive to (not
+  replacing) the original `scope_type=system` row. Real bug caught before
+  shipping, same class as Q's the day before: B already writes
+  `scope_type=strategy_family`/`scope_key=<family>` under the identical
+  `analyst_name` (`regime_risk_coverage` -- B and V share one
+  `analyst_name`, differing only in `metric_name`), and
+  `reflection_beliefs`' real primary key
+  (`analyst_name, scope_type, scope_key`) has no `metric_name` column --
+  a plain family-name `scope_key` for V's new finding would have silently
+  overwritten B's belief row for that family every cycle. Fixed with a
+  distinct suffixed `scope_key`
+  (`f"{family}:paper_live_correlation"`). Also added a second
+  `reflection_reference_config` seed row (`scope_type=strategy_family`,
+  same `metric_name`) alongside the existing `scope_type=system` one --
+  legitimately two rows since that table's real primary key includes
+  `scope_type`, not a duplicate.
+- **`regime_analogue_enabled` turned on**: added
+  `VINU_RESEARCH_REGIME_ANALOGUE_ENABLED: "true"` to `docker-compose.yml`
+  for *both* `agent-api` and `research-api` -- traced
+  `trade_plan_tool.py` and found two real call paths for
+  `author_trade_plan()`: the primary one runs in-process inside
+  `agent-api` (`_author_and_freeze_trade_plan_in_process`), and a
+  fallback goes over HTTP to `research-api`'s own
+  `routes_trade_plan.py` only if the in-process call raises. Both
+  containers resolve `ResearchConfig` from their own environment
+  independently (`get_research_config()` -> `load_config()`), so setting
+  the flag on only one would leave J's `regime_drift.py` blind on
+  whichever path happens to run for a given call. This closes J's first
+  documented caveat; the second (sparser-than-daily persistence, gated on
+  Phase 4 actually running) is a structural property of the trigger, not
+  a config gap, and stands as documented.
+- Verification: fresh throwaway venv, real runs (not skipped) --
+  `vinu-reflection` 144/144 (139 + 5 new: 4 per-family-breakdown tests +
+  1 dual-seed-row test), `vinu-research` 912/913 passed + 1 skipped (one
+  `TestThreadSafety::test_concurrent_writes` flake under full-suite
+  contention, confirmed 23/23 in isolation -- same known flake as before,
+  unrelated to this change), `vinu-agent` 1208/1212 passed + 4 skipped
+  (matches prior baseline exactly). `docker-compose.yml` validated as
+  real YAML (`yaml.safe_load`). Smoke-tested `cli.py`'s real `ANALYSTS`/
+  `_SEED_FNS` registries after the change: still 23/23, unaffected.
+
+Both closed the same day they were asked about -- S and T remain the
+only two open items, exactly as scoped.
