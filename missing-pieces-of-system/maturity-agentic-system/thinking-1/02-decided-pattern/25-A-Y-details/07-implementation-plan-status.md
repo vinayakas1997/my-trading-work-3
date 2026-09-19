@@ -83,6 +83,25 @@ and `research-api` in `docker-compose.yml`, covering both the real
 in-process and HTTP-fallback trade-plan-authoring paths -- see
 `06-external-signal-cross-check.md`). S and T were left open, as decided.
 
+Then, on the user's explicit "the brain... we have to do that" -- checked
+the docs carefully first and found **two separate components both loosely
+called "the brain"**, not one: `MaturityAssessor`
+(`00-maturity-agentic-system-explanation.md` -- small, fully specified,
+deterministic, no LLM, unblocks T directly) and the step-8 "brain" itself
+(`00-decided-pattern.md` -- a much bigger LLM synthesis agent reading
+`reflection_beliefs` *and* Hindsight, which doesn't exist either, plus an
+undesigned "6-axis maturity profile" and a self-trust-tracking loop).
+Building the second exactly as specced would mean inventing a design on
+the fly, which this file's own discipline throughout has avoided --
+`MaturityAssessor` was built instead, since it's the one with no open
+design questions and a real, immediate consumer (T). **T built the same
+day**, once `MaturityAssessor` gave it something real to compare against
+-- see `06-external-signal-cross-check.md` for both. **24 of 25 analyses
+now have real code for every implementable one.** Only S (needs a spec)
+remains; the step-8 LLM synthesis agent, Hindsight integration, and
+self-trust-tracking are explicitly out of scope for this pass, same as
+they were left out of the original 25-analysis build.
+
 Prior update, 2026-09-19: W, H-consistency, P+G, V, and B built — P/G's
 earlier "blocked" verdict was a documentation error, corrected the same
 day; V's two blockers both turned out to be non-issues once chased
@@ -143,13 +162,13 @@ actual build.
 
 ## Status at a glance
 
-**23 of 25 analyses implemented and tested. 2 not built** (S, T), each
-with a real, checked reason (not "not gotten to yet") — see the table.
+**24 of 25 analyses implemented and tested. 1 not built** (S), with a
+real, checked reason (not "not gotten to yet") — see the table.
 
 | Package | Tests | Status |
 |---|---|---|
 | `vinu-infra` | 254 (248 + 6 new `TestPearsonCorrelation`) | green |
-| `vinu-reflection` | 144 (139 (see prior entries) + 5 new in `test_paper_live_correlation.py`: 4 per-family-breakdown tests + 1 `seed_reference_config` dual-row test) | green |
+| `vinu-reflection` | 165 (144 (see prior entries) + 21 new: `test_maturity_assessor.py` (13) + `test_lesson_maturity_baseline_check.py` (8)) | green |
 | `vinu-agent` | 1212 (1208 passed + 4 skipped; 1205 + 4 skipped + 3 new `SignificanceFlagStore.all_flags()` tests) | green (unchanged this pass — Q/N touched only vinu-reflection + docker-compose.yml) |
 | `vinu-live` | 442 (436 + 6 new `TestRebalanceRequestHistory`) | green |
 | `vinu-screener` | 436 | green |
@@ -314,7 +333,12 @@ regardless of this reflection work):
 | I | External-Signal Cross-Check | `external_signal_cross_check` | ✅ Built | `screener_agreement.py` |
 | X | External-Signal Cross-Check | `external_signal_cross_check` | ✅ Built | `screener_agreement.py` (same module as I) |
 | J | External-Signal Cross-Check | `external_signal_cross_check` | ✅ Built | `regime_drift.py` (reframed off the real `market_regime_analogue.get_market_regime_stats_for_today()` signal; new `MarketRegimeHistoryStore` writer, 2026-09-20; same evidence-floor gating as U/Y/O/R) |
-| T | External-Signal Cross-Check | `external_signal_cross_check` | 🚧 Structurally blocked | depends on `MaturityAssessor`, which doesn't exist yet |
+| T | External-Signal Cross-Check | `external_signal_cross_check` | ✅ Built | `lesson_maturity_baseline_check.py` (unblocked 2026-09-20 once `_maturity_assessor.py` (new, `MaturityAssessor`) existed to compare against) |
+
+Note: `MaturityAssessor` itself
+(`vinu_reflection/reflection/_maturity_assessor.py`) is not a row in this
+table — it's a shared, non-Finding-writing module T imports, not one of
+the 25 analyses.
 
 **Legend**: ✅ built & tested · ❌ blocked (real data doesn't support the
 design as written — needs a new writer or a rescoped design) · ⏸
@@ -339,12 +363,11 @@ per-analyst code to write beyond its member analyses' `run()` functions.
 | Execution & Money-Flow | C, U, Y | 3 (C, U, Y) | 0 | 0 |
 | Regime & Risk Coverage | B, E, N, V | 5 (B, E — both pieces, V, N) | 0 | 0 |
 | Governance & Freshness | O, R, F, W, H | 5 (H — both pieces, W, O, R, F) | 0 | 0 |
-| External-Signal Cross-Check | I, J, T, X | 3 (I, J, X) | 1 (T) | 0 |
+| External-Signal Cross-Check | I, J, T, X | 4 (I, J, T, X) | 0 | 0 |
 
 **Every one of the 6 analysts now has every implementable analysis
 actually done — nothing left in "Blocked/deferred" or "Needs work"
-anywhere except S (a real spec gap) and T (structurally blocked on a
-separate component)** (Decision-Process: 4 of 4 — K's missing writer
+anywhere except S (a real spec gap)** (Decision-Process: 4 of 4 — K's missing writer
 (`injected_context_log.py`) built 2026-09-20 once the user decided it
 was worth adding; Execution & Money-Flow: 3 of 3 — C plus U/Y, both
 built 2026-09-20 (new writer, then the analyst itself, once asked to
@@ -357,9 +380,10 @@ no real referent in production — see below) — with only S left, needing
 a spec; Regime & Risk Coverage: 5 of 5 — B, E both pieces, V, and N
 (reframed and built the same pass as Q, once its data turned out
 reachable torch-free but only at quarterly cadence — see below);
-External-Signal Cross-Check: 3 of 4 — I/X plus J, reframed and built
-2026-09-20 — with only T left, structurally blocked on `MaturityAssessor`
-not existing yet). U, Y, O, and R's new writers
+External-Signal Cross-Check: 4 of 4 — I/X plus J (reframed and built
+2026-09-20) plus T (built the same day `MaturityAssessor` was, once it
+had a real tier to compare LESSON snapshots against — see below). U, Y,
+O, and R's new writers
 (`rebalance_request_history`, `events_archive`,
 `GuardResult.blocked_artifact_ids`, the live Planner-triage freshness
 hook) were built 2026-09-20 on explicit user sign-off; their analyst
@@ -662,10 +686,15 @@ ratio instead of an annualized Sharpe).
 ## Where to continue, ranked
 
 1. **S's spec** — needs a design pass with no existing precedent to
-   build from. The single remaining item with real, non-config, in-scope
-   work left — T is not this file's scope to unblock.
-2. **T** — blocked until `MaturityAssessor` exists; not this file's
-   scope to unblock.
+   build from. The only remaining item in the 25-analysis build itself.
+2. **The step-8 "brain"** (`00-decided-pattern.md`) — a much bigger,
+   separate component than `MaturityAssessor` (built 2026-09-20, see
+   below): an LLM synthesis agent reading `reflection_beliefs` *and*
+   Hindsight (which doesn't exist either), producing an undesigned
+   "6-axis maturity profile," plus a self-trust-tracking loop over its
+   own past suggestions. Deliberately not started without its own design
+   pass first — building it as specced right now would mean inventing
+   that design on the fly.
 
 Q and N were fully resolved and built 2026-09-20 (see "How each
 remaining group actually gets closed" above) — both turned out to have
@@ -681,9 +710,14 @@ and **`regime_analogue_enabled` turned on** (`docker-compose.yml`, both
 Neither was urgent, both were closed on explicit user sign-off rather
 than left for later.
 
-Once **the reader** exists (the actual gap `02-analyst-interface.md`
-still flags as open — every analyst writes, nothing reads
-`reflection_beliefs` yet, because the reflection worker's *consumer*,
-"the brain," doesn't exist), the 23 analyses already built become
-genuinely useful, not just tested in isolation. That's arguably a higher
-lever than finishing the remaining 2 — worth weighing against this list.
+**T is also closed, same day**, once `MaturityAssessor`
+(`00-maturity-agentic-system-explanation.md`'s small, fully-specified,
+deterministic module — not the bigger step-8 "brain" above, a real
+distinction this file initially missed) was built to unblock it. See
+`06-external-signal-cross-check.md` for both.
+
+The gap `02-analyst-interface.md` still flags as open — every analyst
+writes, nothing yet reads `reflection_beliefs` on its own initiative the
+way the step-8 brain eventually will — remains open. That's still
+arguably a higher lever than S's spec, but it's the same big, separate
+piece of work as item 2 above, not a quick win.

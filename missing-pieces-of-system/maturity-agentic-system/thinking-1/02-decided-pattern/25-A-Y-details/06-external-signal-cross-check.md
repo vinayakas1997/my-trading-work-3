@@ -154,6 +154,62 @@ meaningful once `MaturityAssessor` exists — low cadence by nature.
 doc's own text already says why: `MaturityAssessor` doesn't exist yet.
 Nothing to check until it's built.
 
+**Unblocked and built 2026-09-20.** `MaturityAssessor` itself was built
+the same day (`vinu_reflection/reflection/_maturity_assessor.py`) — a
+plain, deterministic, non-Finding-writing module per the design doc's own
+"library function, not a reasoning agent" instruction, not registered in
+`cli.py`'s `ANALYSTS`. **Real scope-down from the design doc's 5-store
+list, documented**: reads only `calibration_entries` (vinu-research) and
+`paper_performance` (vinu-agent) — both already mount-and-imported by
+this service via `paper_live_correlation.py` (V). The other 3 named
+stores (vinu-live's position book, `trade_audit_log.jsonl`,
+`trade_score_calibration_history.jsonl`) aren't a missing join:
+`calibration_entries` is *already* populated only from closed *live*
+broker positions via `feedback_loop.record_realized_outcome()` reading
+the real position book (established in V's own docstring) — re-reading
+the position book directly would re-derive the same real outcomes a
+second time, not add new evidence.
+
+**Tier thresholds, grounded not invented** (the design doc's own
+"illustrative, not final" examples): `MIN_PAPER_DAYS=5` reused from V/
+Shadow's own `min_paper_days`; `MATURE_MIN_TRADES=30` reused from
+`trade_score_calibration.py`'s own `compute_calibration_metrics()`
+default `min_sample` — literally the bar the design doc's own text names
+("the minimum sample size `trade_score_calibration.py` already
+requires"); `MATURE_MIN_REGIMES=2` grounded on `Artifact.regime_tag`'s
+real 3-value set (trend/range/high-vol) — a majority of them, not an
+arbitrary number.
+
+**T itself, built the same day**, once `MaturityAssessor` existed to
+compare against — `lesson_maturity_baseline_check.py`. **Real design gap
+found and resolved**: `MaturityAssessor`'s tier is a *level*
+(cold_start/paper_only/early_live/mature), not itself a "direction," and
+the design doc explicitly forbids persisting it as a new trend series (a
+recomputable read-model, not a new store) — so there's no "yesterday's
+tier vs today's" the way every other analyst's `compute_trend()` gets for
+free from `reflection_beliefs`. Resolved by giving `MaturityAssessor` a
+second, unpersisted function, `recent_form_reading()`: a crude "recent
+form" read from the most recent 5 real calibration entries system-wide
+(win/loss on `directional_correct`) — deliberately the same shape as
+LESSON's own `last5` win/loss string, so the two sides are genuinely
+comparable "already summary judgments," matching the design doc's own
+framing instead of comparing a crude read against something more
+sophisticated on only one side. Disagreement is defined narrowly as `{
+lesson_reading, assessor_reading} == {"improving", "degrading"}` — the
+doc's own example — with `domain_floor_breached` forcing significance the
+same direct way A's Brier floor / V's `correlation <= 0` already do.
+`evidence_count` = LESSON's own `closed` count (real trade volume behind
+that specific comparison), not "# comparison points made to date" as the
+design doc's Storage section literally says — that count isn't
+recoverable without persisting state this design deliberately avoids;
+scoped down the same way U/Y/O/R/F's evidence_count already draws from
+whatever real number is actually available at write time rather than an
+idealized running counter. See both modules' own docstrings for the full
+reasoning.
+
+**24 of 25 analyses now have real code for every implementable one.**
+Only S (needs a spec) remains.
+
 ---
 
 ## X. Does the screener's condition-rule alert engine predict anything either

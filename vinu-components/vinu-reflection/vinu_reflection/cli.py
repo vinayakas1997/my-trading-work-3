@@ -25,6 +25,7 @@ from vinu_reflection.reflection import (
     dl_angle_backtest_health,
     event_holding_loss,
     ingest_health,
+    lesson_maturity_baseline_check,
     loss_attribution,
     mandate_limit_friction,
     memory_effectiveness,
@@ -115,6 +116,16 @@ LOG = logging.getLogger("vinu.reflection.worker")
 # vinu_initial_analysis itself) -- Q around the angle's own backtest-
 # accuracy trend, N around the nearest quarterly shock-reading snapshot
 # before a real halt. See each module's own docstring.
+# lesson_maturity_baseline_check.run() is T -- structurally blocked until
+# 2026-09-20, when `_maturity_assessor.py` (new, not itself a
+# Finding-writing analyst -- a shared, importable read-model per
+# 00-maturity-agentic-system-explanation.md) gave T something real to
+# compare vinu-live's LESSON snapshots against. Compares LESSON's own
+# crude last5 win/loss read against MaturityAssessor's own same-shaped
+# "recent form" read (both real, both intentionally crude, matching the
+# design doc's own "both sides are already summary judgments" framing) --
+# not the persisted tier itself, which the design doc explicitly forbids
+# storing as a new trend series. See both modules' own docstrings.
 AnalystFn = Callable[[dict[str, Path], dict[str, Any]], list[Finding]]
 ANALYSTS: list[AnalystFn] = [
     decision_process.run,
@@ -132,6 +143,7 @@ ANALYSTS: list[AnalystFn] = [
     significance_response_outcome.run,
     dl_angle_backtest_health.run,
     shock_reading_before_halt.run,
+    lesson_maturity_baseline_check.run,
     correlation_coverage.run,
     paper_live_correlation.run,
     regime_strategy_coverage.run,
@@ -157,6 +169,7 @@ _SEED_FNS: list[Callable[[ReflectionStore], None]] = [
     significance_response_outcome.seed_reference_config,
     dl_angle_backtest_health.seed_reference_config,
     shock_reading_before_halt.seed_reference_config,
+    lesson_maturity_baseline_check.seed_reference_config,
     correlation_coverage.seed_reference_config,
     paper_live_correlation.seed_reference_config,
     regime_strategy_coverage.seed_reference_config,

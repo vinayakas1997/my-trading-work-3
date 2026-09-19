@@ -1241,3 +1241,92 @@ what was asked.
 
 Both closed the same day they were asked about -- S and T remain the
 only two open items, exactly as scoped.
+
+---
+
+Same day, asked directly "what is next," presented 3 real options (S's
+spec, starting "the brain," or stopping here) with an honest recommendation
+(starting the brain, since 23 built analyses writing to a table nothing
+reads is the actual bottleneck now) -- user chose to proceed with the
+brain: "we have to do that... go on then, why stopping here."
+
+Before writing any code, re-read the actual design docs rather than
+assume "the brain" meant one thing -- found it doesn't:
+
+- `00-maturity-agentic-system-explanation.md` describes `MaturityAssessor`
+  -- small, fully specified, deterministic (no LLM), reads real
+  calibration/paper-trading stores, outputs one tier
+  (cold_start/paper_only/early_live/mature) + the evidence behind it.
+  This is exactly what analysis T (structurally blocked since
+  2026-09-19) needs.
+- `00-decided-pattern.md` step 8 describes a *different*, much bigger
+  "brain": one LLM synthesis agent reading `reflection_beliefs` *and*
+  Hindsight (itself not built) across all 6 clusters, producing a
+  "maturity profile across 6 axes" (never precisely defined anywhere),
+  plus a self-trust-tracking loop over its own past suggestions. This is
+  what actually makes the 23 built analyses get *read* by something.
+
+Building #2 exactly as specced right now would mean inventing a 6-axis
+scheme and an LLM prompt design on the fly -- correctly flagged to the
+user as a real design gap rather than improvised, and left for its own
+future design pass. Built #1 instead, since it has zero open design
+questions and a real, immediate consumer already waiting (T) -- and built
+T itself the same day, since it became trivially unblocked.
+
+**`_maturity_assessor.py` (new, `vinu-reflection`)**: not a Finding-writing
+analyst (no `ANALYST_NAME`, not in `cli.py`'s `ANALYSTS`) -- a shared,
+importable read-model, matching the design doc's own "library function,
+not a reasoning agent" instruction. Real scope-down from the design doc's
+5-source-store list: reads only `calibration_entries` (vinu-research) and
+`paper_performance` (vinu-agent), both already mount-and-imported via the
+same pair `paper_live_correlation.py` (V) established -- the other 3
+sources (position book, `trade_audit_log.jsonl`,
+`trade_score_calibration_history.jsonl`) aren't a missing join:
+`calibration_entries` is already derived from the real position book via
+`feedback_loop.record_realized_outcome()`, so reading it again directly
+would double-count the same evidence, not add new evidence. Tier
+thresholds grounded in existing constants rather than invented:
+`MIN_PAPER_DAYS=5` (reused from V/Shadow), `MATURE_MIN_TRADES=30`
+(reused from `trade_score_calibration.py`'s own `compute_calibration_
+metrics()` default `min_sample` -- literally the bar the design doc's own
+text names), `MATURE_MIN_REGIMES=2` (grounded on `Artifact.regime_tag`'s
+real 3-value set: trend/range/high-vol -- a majority of them).
+
+**`lesson_maturity_baseline_check.py` (new, analysis T)**: real design
+gap found and resolved before writing tests -- `MaturityAssessor`'s tier
+is a *level*, not a direction, and the design doc explicitly forbids
+persisting it as a new trend series (a recomputable read-model, not a new
+store), so there's no "yesterday vs today" for it the way every other
+analyst's `compute_trend()` gets for free from `reflection_beliefs`.
+Resolved by giving `MaturityAssessor` a second, unpersisted function,
+`recent_form_reading()`: a crude win/loss read from the most recent 5
+real calibration entries system-wide, deliberately the same shape as
+LESSON's own `last5` win/loss string, so both sides of the comparison are
+genuinely "already summary judgments" (the design doc's own framing)
+instead of comparing a crude read against something more sophisticated on
+only one side. Disagreement defined narrowly as `{lesson_reading,
+assessor_reading} == {"improving", "degrading"}` (the doc's own example),
+`domain_floor_breached` forcing significance directly, same as A's Brier
+floor / V's `correlation <= 0`.
+
+Real bug caught before shipping, same class as every other end-to-end
+test this session: the first version of the round-trip test used an
+"agree" scenario and asserted a Finding got written -- it correctly
+didn't (`psi=0.0`, `domain_floor_breached=False` classifies as routine,
+same "most cycles write nothing" rule every analyst follows). Fixed the
+test, not the code -- rewrote it to exercise an actual disagreement,
+which is the scenario that's supposed to write something.
+
+Verification: fresh throwaway venv, real runs -- `vinu-reflection`
+165/165 (144 + 21 new: 13 for `_maturity_assessor.py`, 8 for T), full
+`vinu-research` 913/913 passed + 1 skipped (clean this run, no flake),
+`vinu-agent` 1208/1212 passed + 4 skipped (unchanged baseline). Smoke-ran
+all 24 registered analysts against empty data roots directly (not just
+via pytest): zero crashes, zero findings (correct -- no evidence exists
+yet).
+
+**24 of 25 analyses now implemented.** Only S (needs a spec) remains from
+the original 25. The step-8 LLM synthesis "brain," Hindsight integration,
+and self-trust-tracking are explicitly still not started -- correctly
+scoped as a separate, later design effort, not attempted under this
+session's "go on then" momentum.
