@@ -35,6 +35,7 @@ from vinu_research.gates.trade_score_gate import (
 )
 from vinu_research.market_regime_analogue import get_market_regime_stats_for_today
 from vinu_research.market_state import MarketState
+from vinu_research import maturity_assessor
 from vinu_research.models import (
     AngleCalibrationEntry,
     Artifact,
@@ -797,9 +798,27 @@ async def author_trade_plan(
             options_context = result
     logger.info("[%s %s] Risk state status=%s", symbol, timeframe, risk_state.get("status"))
 
+    # High-expectations spec, step 3 of 00-maturity-agentic-system-
+    # explanation.md: "wire MaturityAssessor's output into trade-plan
+    # authoring's prompt first." Opt-in (off by default, see config.py),
+    # local/cheap (no external API call), and fails open like every other
+    # optional prompt-context addition in this function -- a
+    # maturity-context failure must never break trade-plan authoring.
+    maturity_context = None
+    if config.maturity_tier_enabled:
+        try:
+            strategy_store = SqliteStrategyStore(config.data_root / "strategy_store.db")
+            assessment = maturity_assessor.assess(
+                strategy_store, config.agent_data_root,
+                mature_min_trades=config.trade_score_calibration_min_sample,
+            )
+            maturity_context = assessment.as_prompt_dict()
+        except Exception as e:
+            logger.debug("[%s %s] MaturityAssessor fetch failed, continuing without it: %s", symbol, timeframe, e)
+
     forecast = await generate_forecast(
         symbol, personality, risk_state, config, llm_client,
-        summary_context=summary_ctx,
+        summary_context=summary_ctx, maturity_context=maturity_context,
     )
     logger.info(
         "[%s %s] Forecast: direction=%s magnitude_std=%.4f",

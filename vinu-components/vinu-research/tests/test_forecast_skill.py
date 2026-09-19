@@ -219,3 +219,50 @@ class TestBuildForecastPromptAngleDigest:
         )
         assert "ok.a: 1" in prompt
         assert "broken" not in prompt
+
+
+class TestBuildForecastPromptMaturityContext:
+    def test_no_maturity_context_omits_the_section(self) -> None:
+        prompt = _build_forecast_prompt("AAPL", {}, {}, maturity_context=None)
+        assert "=== System Maturity ===" not in prompt
+
+    def test_maturity_context_without_tier_omits_the_section(self) -> None:
+        prompt = _build_forecast_prompt("AAPL", {}, {}, maturity_context={})
+        assert "=== System Maturity ===" not in prompt
+
+    def test_maturity_context_reaches_the_prompt(self) -> None:
+        prompt = _build_forecast_prompt(
+            "AAPL", {}, {},
+            maturity_context={
+                "tier": "early_live", "n_real_trades": 12, "n_paper_trading_days": 40,
+                "directional_accuracy": 0.583, "regime_coverage": ["trend"],
+            },
+        )
+        assert "=== System Maturity ===" in prompt
+        assert "tier: early_live" in prompt
+        assert "real live trades: 12" in prompt
+        assert "paper-trading days: 40" in prompt
+
+    def test_maturity_context_appears_before_angle_digest(self) -> None:
+        prompt = _build_forecast_prompt(
+            "AAPL", {}, {},
+            summary_context={"summary": "x", "angle_digest": {"ok": {"a": 1}}},
+            maturity_context={"tier": "cold_start", "n_real_trades": 0, "n_paper_trading_days": 0,
+                               "directional_accuracy": 0.0, "regime_coverage": []},
+        )
+        assert prompt.index("=== System Maturity ===") < prompt.index("=== Angle Digest ===")
+
+
+class TestGenerateForecastMaturityContext:
+    async def test_maturity_context_reaches_the_prompt_via_generate_forecast(self) -> None:
+        stub = _StubLlmClient({
+            "direction": "long", "confidence": 0.6, "magnitude_pct": 0.01,
+            "magnitude_std": 0.01, "horizon_days": 1,
+        })
+        await generate_forecast(
+            "AAPL", {}, {"status": "ok"}, ResearchConfig(), llm_client=stub,
+            maturity_context={"tier": "mature", "n_real_trades": 40, "n_paper_trading_days": 60,
+                               "directional_accuracy": 0.6, "regime_coverage": ["trend", "range"]},
+        )
+        prompt = stub.calls[0][1]
+        assert "tier: mature" in prompt

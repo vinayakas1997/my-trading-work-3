@@ -1330,3 +1330,82 @@ the original 25. The step-8 LLM synthesis "brain," Hindsight integration,
 and self-trust-tracking are explicitly still not started -- correctly
 scoped as a separate, later design effort, not attempted under this
 session's "go on then" momentum.
+
+---
+
+Same day, asked "what is next" again -- presented 3 real options (wire
+`MaturityAssessor` into trade-plan authoring's prompt, S's spec, or the
+step-8 brain) with an honest recommendation (wiring it, since it's
+already fully specified by the design doc's own step 3 and extends what
+was just built into something that actually changes agent behavior,
+unlike S or the brain which both need more design work first). User: "Perfect
+implement the above plan."
+
+**Real architectural snag found before writing code**: the design doc's
+own step 3 says "wire MaturityAssessor's output into trade-plan
+authoring's prompt" as if there's one `MaturityAssessor` to call. There
+isn't, once actually checked -- `trade_plan_authoring.py` lives in
+vinu-research, which has no dependency on vinu-agent at all
+(`vinu-research/pyproject.toml` doesn't list it), while `vinu-agent/
+pyproject.toml` already lists vinu-research (the one existing direction
+in this whole codebase, established by `research_link.py`). Importing
+vinu-agent's `PaperPerformanceStore` from vinu-research to reuse the
+vinu-reflection `_maturity_assessor.py` copy would be a new, circular
+package dependency. Resolved by writing a second copy,
+`vinu-research/vinu_research/maturity_assessor.py`, reading `paper_
+performance.db` via a minimal raw `sqlite3` query instead of importing
+the owning class -- the same "read the file directly, don't install the
+package" precedent `_initial_analysis_parquet.py` already set for Q/N,
+just applied to SQLite instead of Parquet. Documented as intentional,
+small duplication (same tier constants/logic, genuinely different
+data-access constraints per caller) rather than forcing one shared module
+across a dependency direction that doesn't exist.
+
+**A second real asymmetry, found and accepted rather than blocking on
+it**: `author_trade_plan()` runs on two real paths --
+`trade_plan_tool.py`'s in-process call on `agent-api` (the primary path)
+and an HTTP fallback to `research-api` (only if the in-process call
+raises). Only `agent-api` already has vinu-agent's own data root mounted
+at `/data` (so `VINU_RESEARCH_AGENT_DATA_ROOT=/data` needed no new
+mount); `research-api` has no such mount, so `MaturityAssessor` there can
+still read real `calibration_entries` but can't see `paper_performance`,
+meaning `cold_start`/`paper_only` stay indistinguishable on that path
+specifically. Accepted and documented rather than adding a new mount
+`research-api` doesn't otherwise need -- same "sparser on one path, real
+on the other, don't block on symmetry" tradeoff already accepted for
+`regime_analogue_enabled`.
+
+**The actual wiring**: a new "=== System Maturity ===" block in
+`forecast_skill._build_forecast_prompt()`, alongside (not folded into)
+`summary_context`'s existing "=== Angle Digest ===" block -- kept
+separate on purpose, since `_normalize_summary_context()`'s one
+documented job is normalizing the Summary Agent's own context
+specifically, and maturity data comes from a different source (real
+trade/calibration history) entirely. Threaded as a new, explicit
+`maturity_context` parameter through `generate_forecast()` instead.
+Reused `config.trade_score_calibration_min_sample` (already a real,
+live-wired threshold -- confirmed by grepping its one real call site,
+`scheduled/executor.py`'s calibration scan) as the mature-tier trade-count
+floor, rather than hardcoding a fresh `30` -- the exact number the design
+doc's own text names, and it now also respects an operator's own
+override automatically. Opt-in via `maturity_tier_enabled` (off by
+default, same posture as `regime_analogue_enabled`/`options_iv_enabled`
+right above it in `config.py`), and fails open on any error inside a
+try/except, matching every other optional prompt-context fetch already
+in `author_trade_plan()`.
+
+Verification: fresh throwaway venv, real runs -- `vinu-research` 930/930
+passed + 1 skipped (913 + 17 new: 8 in `test_maturity_assessor.py`, 5 in
+`test_forecast_skill.py`, 4 in `test_trade_plan_authoring.py`),
+`vinu-agent` 1208/1212 passed + 4 skipped (unchanged baseline, confirming
+this change doesn't ripple into vinu-agent despite running inside its
+container), a direct import smoke-test of the real in-process call chain
+(`vinu_agent.tools.trade_plan_tool` -> `vinu_research.trade_plan_
+authoring` -> `vinu_research.maturity_assessor`) confirming no circular
+import actually fires at runtime, and `docker-compose.yml` re-validated
+as real YAML after the two new service env-var blocks.
+
+Not started, explicitly out of scope for this step: wiring into
+`risk_gatekeeper`/`capital_allocator` (the design doc's own next two
+steps after this one), and the step-8 LLM synthesis brain (a separate,
+bigger design effort, unchanged from the prior entry's scoping).

@@ -234,8 +234,8 @@ hierarchy. They each gain one new input.
 
 ## Scope note
 
-This is a design doc, not an implementation — nothing described here has
-been built yet. The concrete next steps, in order, would be: (1) define
+This is a design doc; steps (1)–(3) below are now built (2026-09-20).
+The concrete next steps, in order: (1) define
 the exact tier thresholds and signal formulas (mirroring
 `trade_score_calibration.py`'s existing sample-gating conventions), (2)
 build `MaturityAssessor` as a plain module reading the DB stores in §1,
@@ -244,3 +244,47 @@ leverage, lowest risk — it's the earliest decision point), then
 `risk_gatekeeper`/`capital_allocator`, then finally into the narrating
 agent once that's built. The optional Layer 2 LLM synthesis call is a
 nice-to-have, not a prerequisite for the tier logic itself to be useful.
+
+**Status update, 2026-09-20**: (1) and (2) built twice, deliberately not
+shared — `vinu-reflection/vinu_reflection/reflection/_maturity_assessor.py`
+(analysis T's consumer, reads vinu-agent's `PaperPerformanceStore` class
+directly, since vinu-reflection already mount-and-imports vinu-agent as a
+service) and `vinu-research/vinu_research/maturity_assessor.py` (this
+step-3 consumer's own copy, reads vinu-agent's `paper_performance.db` via
+a minimal raw `sqlite3` query instead, since vinu-research importing
+vinu-agent's package would be a new, circular reverse dependency —
+vinu-agent already depends on vinu-research, not the other way). Same
+tier logic, same grounded thresholds, genuinely different data-access
+constraints per caller — documented in each module's own docstring
+rather than forced into one shared module across a dependency direction
+that doesn't exist.
+
+(3) wired into `vinu_research/trade_plan_authoring.py`'s `author_trade_plan()`,
+opt-in via `maturity_tier_enabled` (off by default, same cautious-rollout
+posture as `regime_analogue_enabled`/`options_iv_enabled` above it in
+`config.py`) — a new "=== System Maturity ===" block in
+`forecast_skill._build_forecast_prompt()`, alongside (not inside)
+`summary_context`'s existing "=== Angle Digest ===" block, carrying the
+tier + the real evidence behind it (`n_real_trades`,
+`n_paper_trading_days`, `directional_accuracy`, `regime_coverage`) plus
+one line telling the LLM how to weight it (backtest-heavy at
+cold_start/paper_only, live-calibration-heavy at mature). Fails open on
+any error, matching every other optional prompt-context addition in that
+function (`fetch_options_context`, `fetch_debate_signal`).
+
+**A real asymmetry, documented, not hidden**: `author_trade_plan()` runs
+on two real paths — in-process on `agent-api` (the primary path,
+`trade_plan_tool.py`'s `_author_and_freeze_trade_plan_in_process`) and
+over HTTP fallback on `research-api` (only if the in-process call
+raises). Only `agent-api` has `paper_performance.db` visible
+(`VINU_RESEARCH_AGENT_DATA_ROOT=/data`, its own already-mounted vinu-agent
+root — no new mount needed); `research-api` has no such mount, so on that
+path only `cold_start`/`early_live`/`mature` are distinguishable, never
+`paper_only` (paper history is invisible there). This mirrors the exact
+tradeoff analysis J already accepted for `regime_analogue_enabled`
+(sparser evidence on one path, real data on the other, rather than
+blocking on making both paths perfectly symmetric on day one).
+
+`risk_gatekeeper`/`capital_allocator` wiring and the narrating-agent
+consumer are still not started — real, separate future steps, each its
+own decision point per this doc's own step 3 phasing.

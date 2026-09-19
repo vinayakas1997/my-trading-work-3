@@ -1253,6 +1253,100 @@ class TestOptionsIvIntegration:
         assert plan is not None
 
 
+class _SpyLlmClient(_StubLlmClient):
+    """`_StubLlmClient` doesn't record calls -- extended here (not in the
+    shared fixture, since no other test class in this file needs prompt
+    content) so `TestMaturityTierIntegration` can inspect the actual
+    prompt `generate_forecast()` built, the same way `SpyTools` above
+    observes whether an optional fetch happened at all."""
+
+    def __init__(self, response: dict) -> None:
+        super().__init__(response)
+        self.calls: list[tuple] = []
+
+    async def chat_json(self, system, user, *, raise_on_failure: bool = False):
+        self.calls.append((system, user))
+        return await super().chat_json(system, user, raise_on_failure=raise_on_failure)
+
+
+class TestMaturityTierIntegration:
+    """MaturityAssessor wiring into trade-plan authoring's prompt
+    (maturity_assessor.py) is opt-in (config.maturity_tier_enabled,
+    default False) -- author_trade_plan must not touch strategy_store.db
+    at all unless explicitly enabled, and a failure must never break
+    authoring."""
+
+    async def test_disabled_by_default_omits_maturity_context(self, tmp_path) -> None:
+        tools = _StubTools(returns=_synthetic_returns(120), angle_rows={})
+        llm = _SpyLlmClient({
+            "direction": "long", "confidence": 0.7, "magnitude_pct": 0.02,
+            "magnitude_std": 0.01, "horizon_days": 3,
+        })
+        config = ResearchConfig(data_root=tmp_path)
+        await author_trade_plan("AAPL", "daily", config, tools, llm)
+        prompt = llm.calls[0][1]
+        assert "=== System Maturity ===" not in prompt
+        assert not (tmp_path / "strategy_store.db").exists()
+
+    async def test_enabled_adds_maturity_context_to_prompt(self, tmp_path) -> None:
+        tools = _StubTools(returns=_synthetic_returns(120), angle_rows={})
+        llm = _SpyLlmClient({
+            "direction": "long", "confidence": 0.7, "magnitude_pct": 0.02,
+            "magnitude_std": 0.01, "horizon_days": 3,
+        })
+        config = ResearchConfig(data_root=tmp_path, maturity_tier_enabled=True)
+        await author_trade_plan("AAPL", "daily", config, tools, llm)
+        prompt = llm.calls[0][1]
+        assert "=== System Maturity ===" in prompt
+        assert "tier: cold_start" in prompt
+
+    async def test_enabled_with_agent_data_root_reads_paper_history(self, tmp_path) -> None:
+        import json
+        import sqlite3
+
+        agent_root = tmp_path / "agent"
+        agent_root.mkdir()
+        conn = sqlite3.connect(agent_root / "paper_performance.db")
+        conn.execute(
+            "CREATE TABLE paper_performance (artifact_id TEXT PRIMARY KEY, returns_json TEXT NOT NULL, "
+            "updated_at REAL NOT NULL, meta_json TEXT NOT NULL DEFAULT '{}')"
+        )
+        conn.execute(
+            "INSERT INTO paper_performance (artifact_id, returns_json, updated_at) VALUES (?, ?, 0)",
+            ("art_1", json.dumps([0.01] * 5)),
+        )
+        conn.commit()
+        conn.close()
+
+        tools = _StubTools(returns=_synthetic_returns(120), angle_rows={})
+        llm = _SpyLlmClient({
+            "direction": "long", "confidence": 0.7, "magnitude_pct": 0.02,
+            "magnitude_std": 0.01, "horizon_days": 3,
+        })
+        config = ResearchConfig(data_root=tmp_path, maturity_tier_enabled=True, agent_data_root=agent_root)
+        await author_trade_plan("AAPL", "daily", config, tools, llm)
+        prompt = llm.calls[0][1]
+        assert "tier: paper_only" in prompt
+
+    async def test_enabled_but_strategy_store_error_still_produces_a_plan(self, tmp_path, monkeypatch) -> None:
+        import vinu_research.trade_plan_authoring as tpa_module
+
+        def _raise(*args, **kwargs):
+            raise RuntimeError("db locked")
+
+        monkeypatch.setattr(tpa_module, "SqliteStrategyStore", _raise)
+
+        tools = _StubTools(returns=_synthetic_returns(120), angle_rows={})
+        llm = _StubLlmClient({
+            "direction": "long", "confidence": 0.7, "magnitude_pct": 0.02,
+            "magnitude_std": 0.01, "horizon_days": 3,
+        })
+        config = ResearchConfig(data_root=tmp_path, maturity_tier_enabled=True)
+        plan = await author_trade_plan("AAPL", "daily", config, tools, llm)
+        assert plan is not None
+        assert plan.forecast is not None
+
+
 class TestTradeScorePositionSizing:
     """Verifies the position-size interaction called out in the plan as the
     highest-risk edit in this phase: compute_trade_score's tier scales

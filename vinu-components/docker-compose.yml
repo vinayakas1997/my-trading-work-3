@@ -343,6 +343,16 @@ services:
       # in-process authoring on agent-api raises), set here too so J's
       # data isn't missing on whichever path actually runs.
       VINU_RESEARCH_REGIME_ANALOGUE_ENABLED: "true"
+      # Turned on 2026-09-20, wiring MaturityAssessor into trade-plan
+      # authoring's prompt (00-maturity-agentic-system-explanation.md
+      # step 3). No VINU_RESEARCH_AGENT_DATA_ROOT set here -- this
+      # container has no mount of vinu-agent's own data root, so on this
+      # (HTTP-fallback-only) path MaturityAssessor can still read real
+      # calibration_entries but can't see paper_performance, meaning
+      # cold_start/paper_only stay indistinguishable here specifically.
+      # See maturity_assessor.py's own docstring; agent-api below (the
+      # real primary path) sees the full picture.
+      VINU_RESEARCH_MATURITY_TIER_ENABLED: "true"
     secrets:
       - vinu_llm_api_key
     ports:
@@ -471,6 +481,15 @@ services:
       # reflection analysis J (regime_drift.py) to actually start seeing
       # real market_regime_history rows.
       VINU_RESEARCH_REGIME_ANALOGUE_ENABLED: "true"
+      # Turned on 2026-09-20, wiring MaturityAssessor into trade-plan
+      # authoring's prompt -- this container is the real primary path
+      # (`_author_and_freeze_trade_plan_in_process` runs `author_trade_
+      # plan()` directly here), so it's the one that sees the full
+      # cold_start/paper_only/early_live/mature distinction. No new mount
+      # needed: `/data` below is already this container's own vinu-agent
+      # data root (paper_performance.db lives there).
+      VINU_RESEARCH_MATURITY_TIER_ENABLED: "true"
+      VINU_RESEARCH_AGENT_DATA_ROOT: /data
     secrets:
       - vinu_api_key
       - alpaca_api_key

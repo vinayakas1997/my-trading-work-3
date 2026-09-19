@@ -102,6 +102,38 @@ remains; the step-8 LLM synthesis agent, Hindsight integration, and
 self-trust-tracking are explicitly out of scope for this pass, same as
 they were left out of the original 25-analysis build.
 
+Then, on the user's follow-up "what is next" and "implement the above
+plan" (after being offered 3 options and recommending this one): wired
+`MaturityAssessor` into trade-plan authoring's own prompt --
+`00-maturity-agentic-system-explanation.md`'s own step 3, "highest
+leverage, lowest risk." This is outside the 25-analysis build itself (no
+new analysis, no `reflection_beliefs` row) -- it changes what the real
+LLM forecast prompt sees, not what the reflection worker computes. A
+second, separate `MaturityAssessor` copy
+(`vinu-research/vinu_research/maturity_assessor.py`) was written rather
+than importing the vinu-reflection one, since vinu-research has no
+dependency on vinu-agent (confirmed: `vinu-research/pyproject.toml`
+doesn't list it, `vinu-agent/pyproject.toml` already lists vinu-research
+-- the one existing direction) and importing vinu-agent's
+`PaperPerformanceStore` from vinu-research would be a new, circular
+package dependency. The vinu-research copy reads `paper_performance.db`
+via a minimal raw `sqlite3` query instead (same precedent
+`_initial_analysis_parquet.py` set for reading another service's data
+without installing its package). Opt-in
+(`maturity_tier_enabled`, off by default, same posture as
+`regime_analogue_enabled`), fails open on any error, and carries a real,
+documented asymmetry: only `agent-api` (the primary, in-process
+authoring path) has `paper_performance.db` visible, so only there can
+`paper_only` be distinguished from `cold_start` -- `research-api` (the
+HTTP-fallback path) still gets a real tier read, just a coarser one. See
+`00-maturity-agentic-system-explanation.md`'s own "Status update" for the
+full reasoning. Verified for real: `vinu-research` 930/930 passed + 1
+skipped (913 + 17 new, across `test_maturity_assessor.py`,
+`test_forecast_skill.py`, `test_trade_plan_authoring.py`), `vinu-agent`
+1208/1212 passed + 4 skipped (unchanged baseline), a direct import
+smoke-test confirming no circular dependency, and `docker-compose.yml`
+re-validated as real YAML.
+
 Prior update, 2026-09-19: W, H-consistency, P+G, V, and B built — P/G's
 earlier "blocked" verdict was a documentation error, corrected the same
 day; V's two blockers both turned out to be non-issues once chased
@@ -715,6 +747,16 @@ than left for later.
 deterministic module — not the bigger step-8 "brain" above, a real
 distinction this file initially missed) was built to unblock it. See
 `06-external-signal-cross-check.md` for both.
+
+**`MaturityAssessor` also wired into trade-plan authoring's prompt, same
+day** — `00-maturity-agentic-system-explanation.md`'s own step 3
+("highest leverage, lowest risk"), on the user's explicit "implement the
+above plan." Outside the 25-analysis build itself (changes the real LLM
+forecast prompt, not `reflection_beliefs`) — see that design doc's own
+"Status update" section for the full reasoning, including the real
+in-process-vs-HTTP-fallback asymmetry this wiring carries. `risk_
+gatekeeper`/`capital_allocator` wiring and the narrating-agent consumer
+(that doc's own steps after this one) are still not started.
 
 The gap `02-analyst-interface.md` still flags as open — every analyst
 writes, nothing yet reads `reflection_beliefs` on its own initiative the

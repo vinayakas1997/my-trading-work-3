@@ -180,6 +180,7 @@ async def generate_forecast(
     config: ResearchConfig,
     llm_client: Any | None = None,
     summary_context: dict[str, Any] | None = None,
+    maturity_context: dict[str, Any] | None = None,
 ) -> Forecast:
     """Produce a direction/magnitude forecast via the research LLM client.
 
@@ -190,6 +191,13 @@ async def generate_forecast(
     `summary_context` is the Summary Agent's stored read (already
     normalized by trade_plan_authoring._normalize_summary_context, or None
     for the legacy risk + shock-rows-only prompt).
+
+    `maturity_context` is `MaturityAssessor.assess(...).as_prompt_dict()`
+    (`maturity_assessor.py`), or None when `config.maturity_tier_enabled`
+    is off (the default) -- a separate parameter from `summary_context`
+    since it comes from a different source (real trade/calibration
+    history, not the Summary Agent) and `_normalize_summary_context`'s one
+    job is normalizing the latter specifically.
     """
     if llm_client is None:
         from vinu_research.llm import ResearchLlmClient
@@ -197,7 +205,8 @@ async def generate_forecast(
         llm_client = ResearchLlmClient(config, role="forecast_skill")
 
     prompt = _build_forecast_prompt(
-        symbol, personality_features, risk_state, summary_context=summary_context,
+        symbol, personality_features, risk_state,
+        summary_context=summary_context, maturity_context=maturity_context,
     )
 
     # raise_on_failure=True: an LLM failure here used to be silently
@@ -235,8 +244,23 @@ def _build_forecast_prompt(
     personality: dict[str, Any],
     risk: dict[str, Any],
     summary_context: dict[str, Any] | None = None,
+    maturity_context: dict[str, Any] | None = None,
 ) -> str:
     lines = [f"Generate a forecast for {symbol}.\n"]
+    if isinstance(maturity_context, dict) and maturity_context.get("tier"):
+        lines.append("=== System Maturity ===")
+        lines.append(
+            f"  tier: {maturity_context['tier']} "
+            f"(real live trades: {maturity_context.get('n_real_trades', 0)}, "
+            f"paper-trading days: {maturity_context.get('n_paper_trading_days', 0)}, "
+            f"live directional accuracy: {maturity_context.get('directional_accuracy', 0.0)}, "
+            f"regimes seen live: {maturity_context.get('regime_coverage') or 'none'})"
+        )
+        lines.append(
+            "  Weight backtest/theoretical evidence more heavily at cold_start/paper_only; "
+            "weight live calibration more heavily at mature."
+        )
+        lines.append("")
     if isinstance(summary_context, dict) and str(summary_context.get("summary") or "").strip():
         awd = summary_context.get("angles_with_data", "?")
         ac = summary_context.get("angle_count", 28)

@@ -232,6 +232,20 @@ class ResearchConfig:
     # extra weighting beyond the conviction tier.
     debate_signal_weight: float = 1.0
 
+    # MaturityAssessor (maturity_assessor.py), wired into the forecast
+    # prompt -- opt-in, same cautious-rollout posture as regime_analogue_
+    # enabled above (cheap, local computation, but it changes prompt
+    # content, so it doesn't default on). Env: VINU_RESEARCH_MATURITY_
+    # TIER_ENABLED. `agent_data_root`, when set, points at a read-only
+    # mount of vinu-agent's own data root (paper_performance.db) --
+    # only real on `agent-api` (the in-process trade-plan-authoring
+    # path); left unset on `research-api` (the HTTP fallback path), where
+    # MaturityAssessor still runs but can't distinguish cold_start from
+    # paper_only (see maturity_assessor.py's own docstring). Env:
+    # VINU_RESEARCH_AGENT_DATA_ROOT.
+    maturity_tier_enabled: bool = False
+    agent_data_root: Path | None = None
+
     # Regime router for the LLM trade-plan pipeline (high-expectations
     # follow-up): mirrors vinu-portfolio's own already-proven
     # _regime_alignment_multiplier / regime_tilt_bound design (same default
@@ -458,6 +472,14 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
             "VINU_RESEARCH_DEBATE_SIGNAL_ENABLED", "false"
         ).lower() in ("1", "true", "yes"),
         debate_signal_weight=float(os.environ.get("VINU_RESEARCH_DEBATE_SIGNAL_WEIGHT", "1.0")),
+        maturity_tier_enabled=os.environ.get(
+            "VINU_RESEARCH_MATURITY_TIER_ENABLED", "false"
+        ).lower() in ("1", "true", "yes"),
+        agent_data_root=(
+            Path(os.environ["VINU_RESEARCH_AGENT_DATA_ROOT"])
+            if os.environ.get("VINU_RESEARCH_AGENT_DATA_ROOT")
+            else None
+        ),
         regime_size_tilt_bound=float(os.environ.get("VINU_RESEARCH_REGIME_SIZE_TILT_BOUND", "0.3")),
         screener_ranker_id=os.environ.get("VINU_RESEARCH_SCREENER_RANKER_ID", ""),
         screener_rank_size_tilt_bound=float(os.environ.get("VINU_RESEARCH_SCREENER_RANK_SIZE_TILT_BOUND", "0.3")),
