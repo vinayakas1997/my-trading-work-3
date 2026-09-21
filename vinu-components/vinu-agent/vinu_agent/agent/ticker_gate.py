@@ -139,6 +139,9 @@ class RunLogTrigger:
         angle_count = int(meta.get("angle_count", 0))
         low_trust = list(meta.get("low_trust_angles") or [])
         angle_digest = meta.get("angle_digest") or {}
+        cluster_digest = meta.get("cluster_digest") or {}
+        cross_cluster = meta.get("cross_cluster") or {}
+        cluster_anomalies = meta.get("cluster_anomalies") or {}
         self._summaries.upsert_summary(
             ticker,
             summary_text,
@@ -146,6 +149,9 @@ class RunLogTrigger:
             angle_count=angle_count,
             source_run_id=result.new_run_id or "",
             angle_digest=angle_digest,
+            cluster_digest=cluster_digest,
+            cross_cluster=cross_cluster,
+            cluster_anomalies=cluster_anomalies,
         )
         if self._snapshots is not None:
             try:

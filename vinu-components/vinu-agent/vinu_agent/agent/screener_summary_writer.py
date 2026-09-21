@@ -54,14 +54,49 @@ def write_ticker_summaries(
             summary = str(info.get("summary", "")).strip()
             if not ticker or not summary:
                 continue
+            cluster_digest = info.get("cluster_digest") or {}
+            if not isinstance(cluster_digest, dict):
+                cluster_digest = {}
+            cross_cluster = info.get("cross_cluster") or {}
+            if not isinstance(cross_cluster, dict):
+                cross_cluster = {}
+            cluster_anomalies = info.get("cluster_anomalies") or {}
+            if not isinstance(cluster_anomalies, dict):
+                cluster_anomalies = {}
+            if cluster_digest:
+                _warn_on_cluster_digest_issues(str(ticker), cluster_digest)
             ticker_summary_store.upsert_summary(
                 str(ticker).strip().upper(),
                 summary,
                 angles_with_data=int(info.get("angles_with_data", 0) or 0),
                 angle_count=int(info.get("angle_count", 0) or 0),
                 source_run_id=source_run_id,
+                cluster_digest=cluster_digest,
+                cross_cluster=cross_cluster,
+                cluster_anomalies=cluster_anomalies,
             )
             written.append(str(ticker).strip().upper())
         except Exception:
             LOG.exception("failed to write summary for ticker %r, continuing with the rest", ticker)
     return written
+
+
+def _warn_on_cluster_digest_issues(ticker: str, cluster_digest: dict) -> None:
+    """Warn-only, never blocks persistence -- real failure policy (drop?
+    retry? persist anyway?) is an explicit open decision, not yet made,
+    see missing-pieces-of-system/angle-comprehension-hierarchy/
+    03-real-llm-findings-and-guardrails.md's "Future steps" #2. Logging
+    every finding at least makes a real, confirmed failure mode (an angle
+    cited under the wrong cluster; an invented cluster key) visible
+    instead of silently persisted with no trace."""
+    try:
+        from ..tools.cluster_digest_validator import validate_cluster_digest
+
+        findings = validate_cluster_digest(cluster_digest)
+        for finding in findings:
+            LOG.warning(
+                "cluster_digest validation issue for %s: %s (%s)",
+                ticker, finding.detail, finding.kind,
+            )
+    except Exception:
+        LOG.exception("cluster_digest validation itself failed for %s, continuing without it", ticker)

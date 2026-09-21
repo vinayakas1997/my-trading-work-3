@@ -111,6 +111,22 @@ class TradePlanTool(BaseTool):
                 "angles_with_data": getattr(row, "angles_with_data", "?"),
                 "angle_count": getattr(row, "angle_count", 28),
                 "angle_digest": getattr(row, "angle_digest", {}) or {},
+                # cluster_digest/cross_cluster: the split-cluster screener's
+                # real output (missing-pieces-of-system/
+                # angle-comprehension-hierarchy/01-plan.md step 5) -- kept
+                # alongside angle_digest, not replacing it, so checkpoint
+                # 01's trials can be re-run with both shapes present and
+                # actually compare them (step 6), instead of assuming the
+                # new shape is better without a real before/after.
+                "cluster_digest": getattr(row, "cluster_digest", {}) or {},
+                "cross_cluster": getattr(row, "cross_cluster", {}) or {},
+                # cluster_anomalies is SEPARATE from cluster_digest on
+                # purpose -- real finding (2026-09-22): a cluster's
+                # synthesis sentence can launder an anomalous value into
+                # plausible-sounding language without literally repeating
+                # it, so this is what actually preserves "this was
+                # flagged" for the forecast prompt to read.
+                "cluster_anomalies": getattr(row, "cluster_anomalies", {}) or {},
             }
         except Exception:
             return None

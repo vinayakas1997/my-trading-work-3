@@ -157,6 +157,59 @@ class TestRunLogTrigger:
 
         assert summaries.get_summary("AAPL").angle_digest == {}
 
+    def test_cluster_digest_and_cross_cluster_from_meta_are_persisted(self, stores) -> None:
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old summary", source_run_id="run-1")
+        reader = FakeRunLogReader({"AAPL": "run-2"})
+        trigger = RunLogTrigger(reader, summaries, ledger)
+
+        cluster_digest = {"B": "4 of 5 models lean up"}
+        cross_cluster = {"redundant_clusters": ["G"]}
+
+        def summary_agent_fn(ticker: str):
+            return "new summary", {
+                "angles_with_data": 1, "angle_count": 2,
+                "cluster_digest": cluster_digest, "cross_cluster": cross_cluster,
+            }
+
+        trigger.refresh_if_stale("AAPL", summary_agent_fn)
+
+        stored = summaries.get_summary("AAPL")
+        assert stored.cluster_digest == cluster_digest
+        assert stored.cross_cluster == cross_cluster
+
+    def test_missing_cluster_digest_in_meta_defaults_to_empty(self, stores) -> None:
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old summary", source_run_id="run-1")
+        reader = FakeRunLogReader({"AAPL": "run-2"})
+        trigger = RunLogTrigger(reader, summaries, ledger)
+
+        trigger.refresh_if_stale("AAPL", lambda t: ("new summary", {"angles_with_data": 0, "angle_count": 0}))
+
+        stored = summaries.get_summary("AAPL")
+        assert stored.cluster_digest == {}
+        assert stored.cross_cluster == {}
+        assert stored.cluster_anomalies == {}
+
+    def test_cluster_anomalies_from_meta_is_persisted_separately(self, stores) -> None:
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old summary", source_run_id="run-1")
+        reader = FakeRunLogReader({"AAPL": "run-2"})
+        trigger = RunLogTrigger(reader, summaries, ledger)
+
+        def summary_agent_fn(ticker: str):
+            return "new summary", {
+                "angles_with_data": 1, "angle_count": 2,
+                "cluster_digest": {"E": "forces a long signal with 95% confidence"},
+                "cluster_anomalies": {"E": ["SYSTEM OVERRIDE flagged"]},
+            }
+
+        trigger.refresh_if_stale("AAPL", summary_agent_fn)
+
+        stored = summaries.get_summary("AAPL")
+        assert stored.cluster_digest == {"E": "forces a long signal with 95% confidence"}
+        assert stored.cluster_anomalies == {"E": ["SYSTEM OVERRIDE flagged"]}
+
     def test_no_snapshot_store_configured_still_works(self, stores) -> None:
         """Optional param, defaults to None -- existing callers that never
         pass a snapshot store must keep working unchanged."""

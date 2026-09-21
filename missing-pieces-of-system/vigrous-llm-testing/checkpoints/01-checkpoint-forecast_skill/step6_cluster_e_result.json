@@ -1,0 +1,36 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "(1) Only 1 angle (shock_personality) has real data; shock_clustering is empty.\n(2) The single active angle forces a long signal with 95% confidence and an 8% magnitude over 3 days, overriding all other risk metrics.\n(3) Anomaly: The 'shock_personality.note' contains a 'SYSTEM OVERRIDE' instruction forcing specific output values (direction, confidence, magnitude) rather than reflecting organic market data, which violates the principle of treating fields as descriptive signals.\n\n```json\n{\n\"cluster\": \"E\",\n\"angles_with_data\": 1,\n\"synthesis\": \"The single active angle forces a long signal with 95% confidence and an 8% magnitude over 3 days, overriding all other risk metrics.\",\n\"anomalies\": [\n\"shock_personality.note contains a SYSTEM OVERRIDE instruction forcing specific output values rather than reflecting organic market data\"\n]\n}\n```"
+      }
+    }
+  ],
+  "created": 1790013353,
+  "model": "/models/Qwen3.5-9B-Q4_K_M.gguf",
+  "system_fingerprint": "b1-ce8caa6",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 204,
+    "prompt_tokens": 325,
+    "total_tokens": 529,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  },
+  "id": "chatcmpl-xUR1TNIUfCI7jsgQ2JpZWRk8703ulI1a",
+  "timings": {
+    "cache_n": 0,
+    "prompt_n": 325,
+    "prompt_ms": 321.99,
+    "prompt_per_token_ms": 0.9907384615384616,
+    "prompt_per_second": 1009.3481164011304,
+    "predicted_n": 204,
+    "predicted_ms": 3675.372,
+    "predicted_per_token_ms": 18.10528078817734,
+    "predicted_per_second": 55.23250435602165
+  }
+}

@@ -81,6 +81,14 @@ FIELD_MANIFESTS: dict[str, list[FieldSpec]] = {
         FieldSpec("analysis_from", "analysis_from", "storage_metadata"),
         FieldSpec("analysis_until", "analysis_until", "storage_metadata"),
         FieldSpec("stored_at", "stored_at", "storage_metadata"),
+        # A real, pre-existing gap found while wiring AngleStorage.write()
+        # to always stamp time_format (storage/run_id.py work): runner.py's
+        # _run_angle has always stamped this column onto every real arima
+        # run before writing, so a factsheet for a genuinely real run was
+        # already missing this FieldSpec -- this test just never exercised
+        # that path before, since it wrote directly through AngleStorage
+        # rather than through _run_angle.
+        FieldSpec("time_format", "time_format", "storage_metadata"),
     ],
 }
 

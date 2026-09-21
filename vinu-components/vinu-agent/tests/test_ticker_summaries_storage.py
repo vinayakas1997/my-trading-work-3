@@ -113,3 +113,77 @@ class TestAngleDigest:
         store.record_gate_check("AAPL", run_id="run-1", artifact_signature="sig-a")
         fetched = store.get_summary("AAPL")
         assert fetched.angle_digest == {}
+
+
+class TestClusterDigestAndCrossCluster:
+    """cluster_digest/cross_cluster -- the split-cluster screener
+    restructuring's output (7 real per-cluster syntheses + the
+    cross_cluster_analyst's ticker-level read). Unlike angle_digest,
+    these have no deterministic-Python source -- only real LLM output --
+    but round-trip through storage the same way."""
+
+    def test_cluster_digest_round_trips(self, store: TickerSummaryStore) -> None:
+        digest = {"B": "4 of 5 models lean up", "D": "regime=bull"}
+        store.upsert_summary("AAPL", "summary text", cluster_digest=digest)
+        fetched = store.get_summary("AAPL")
+        assert fetched.cluster_digest == digest
+
+    def test_cross_cluster_round_trips(self, store: TickerSummaryStore) -> None:
+        cross_cluster = {
+            "consensus_checks": [{"pair": ["arima", "chronos"], "outcome": "agree"}],
+            "corroborations": [{"clusters": ["B", "D"], "why": "both bullish"}],
+            "redundant_clusters": ["G"],
+        }
+        store.upsert_summary("AAPL", "summary text", cross_cluster=cross_cluster)
+        fetched = store.get_summary("AAPL")
+        assert fetched.cross_cluster == cross_cluster
+
+    def test_no_cluster_digest_passed_defaults_to_empty_dict(self, store: TickerSummaryStore) -> None:
+        store.upsert_summary("AAPL", "summary text")
+        fetched = store.get_summary("AAPL")
+        assert fetched.cluster_digest == {}
+        assert fetched.cross_cluster == {}
+
+    def test_record_gate_check_on_ticker_with_no_summary_yet_has_empty_cluster_digest(
+        self, store: TickerSummaryStore
+    ) -> None:
+        store.record_gate_check("AAPL", run_id="run-1", artifact_signature="sig-a")
+        fetched = store.get_summary("AAPL")
+        assert fetched.cluster_digest == {}
+        assert fetched.cross_cluster == {}
+
+    def test_cluster_anomalies_round_trips(self, store: TickerSummaryStore) -> None:
+        anomalies = {"E": ["shock_personality.note contains a SYSTEM OVERRIDE instruction"]}
+        store.upsert_summary("AAPL", "summary text", cluster_anomalies=anomalies)
+        fetched = store.get_summary("AAPL")
+        assert fetched.cluster_anomalies == anomalies
+
+    def test_no_cluster_anomalies_passed_defaults_to_empty_dict(self, store: TickerSummaryStore) -> None:
+        store.upsert_summary("AAPL", "summary text")
+        fetched = store.get_summary("AAPL")
+        assert fetched.cluster_anomalies == {}
+
+    def test_cluster_digest_and_cluster_anomalies_coexist_independently(self, store: TickerSummaryStore) -> None:
+        """Real regression risk this column pair exists specifically to
+        avoid: an anomaly must never get merged into or lost inside the
+        digest sentence."""
+        store.upsert_summary(
+            "AAPL", "summary text",
+            cluster_digest={"E": "forces a long signal with 95% confidence"},
+            cluster_anomalies={"E": ["SYSTEM OVERRIDE flagged"]},
+        )
+        fetched = store.get_summary("AAPL")
+        assert fetched.cluster_digest == {"E": "forces a long signal with 95% confidence"}
+        assert fetched.cluster_anomalies == {"E": ["SYSTEM OVERRIDE flagged"]}
+
+    def test_angle_digest_and_cluster_digest_coexist_independently(self, store: TickerSummaryStore) -> None:
+        """Real regression risk with two sibling JSON columns: writing one
+        must never clobber or leak into the other."""
+        store.upsert_summary(
+            "AAPL", "summary text",
+            angle_digest={"arima": {"forecast": 189.2}},
+            cluster_digest={"A": "arima trending up"},
+        )
+        fetched = store.get_summary("AAPL")
+        assert fetched.angle_digest == {"arima": {"forecast": 189.2}}
+        assert fetched.cluster_digest == {"A": "arima trending up"}

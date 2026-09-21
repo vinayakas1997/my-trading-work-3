@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS ticker_summaries (
 CREATE INDEX IF NOT EXISTS idx_ticker_summaries_updated_at ON ticker_summaries(updated_at);
 """
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 MIGRATIONS: list[tuple[str, str]] = [
     # Phase 0's change-gate (GATE) state: "what did the gate last see for
     # this ticker" -- kept as columns on the existing one-row-per-ticker
@@ -58,6 +58,29 @@ MIGRATIONS: list[tuple[str, str]] = [
         "gate-conflict gap where forecast_skill only ever saw 2 of ~28 angles as "
         "structured input, everything else discarded after computing counts.",
     ),
+    (
+        "ALTER TABLE ticker_summaries ADD COLUMN cluster_digest TEXT NOT NULL DEFAULT '{}'",
+        "the 7-cluster synthesis (JSON, one entry per cluster A-G) angle_synthesizer's "
+        "now-cluster-scoped delegations produce -- unlike angle_digest, this has no "
+        "deterministic-Python equivalent (it's LLM reasoning, not a field copy), so it "
+        "only exists in the screener manager's own JSON block. See "
+        "missing-pieces-of-system/angle-comprehension-hierarchy/01-plan.md step 4.",
+    ),
+    (
+        "ALTER TABLE ticker_summaries ADD COLUMN cross_cluster TEXT NOT NULL DEFAULT '{}'",
+        "cross_cluster_analyst's ticker-level output (JSON: consensus_checks, "
+        "calibration, corroborations, redundant_clusters) -- same LLM-only-source "
+        "reasoning as cluster_digest, not deterministic.",
+    ),
+    (
+        "ALTER TABLE ticker_summaries ADD COLUMN cluster_anomalies TEXT NOT NULL DEFAULT '{}'",
+        "per-cluster anomaly lists (JSON: {cluster_letter: [anomaly, ...]}), kept "
+        "SEPARATE from cluster_digest -- real finding (2026-09-22, live LLM test): a "
+        "cluster's synthesis sentence can launder an anomalous value (e.g. a prompt-"
+        "injection payload inside an angle field) into plausible-sounding market "
+        "language without literally repeating it, so the anomalies list is what "
+        "actually preserves the 'this was flagged' signal for forecast_skill to read.",
+    ),
 ]
 
 
@@ -77,19 +100,29 @@ class TickerSummary:
     last_checked_run_id: str = ""
     last_checked_artifact_signature: str = ""
     angle_digest: dict[str, Any] = None  # type: ignore[assignment]
+    cluster_digest: dict[str, Any] = None  # type: ignore[assignment]
+    cross_cluster: dict[str, Any] = None  # type: ignore[assignment]
+    cluster_anomalies: dict[str, Any] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.angle_digest is None:
             self.angle_digest = {}
+        if self.cluster_digest is None:
+            self.cluster_digest = {}
+        if self.cross_cluster is None:
+            self.cross_cluster = {}
+        if self.cluster_anomalies is None:
+            self.cluster_anomalies = {}
 
     @classmethod
     def from_row(cls, row: dict[str, Any]) -> "TickerSummary":
-        try:
-            angle_digest = json.loads(row.get("angle_digest") or "{}")
-            if not isinstance(angle_digest, dict):
-                angle_digest = {}
-        except Exception:
-            angle_digest = {}
+        def _load_dict(key: str) -> dict[str, Any]:
+            try:
+                value = json.loads(row.get(key) or "{}")
+                return value if isinstance(value, dict) else {}
+            except Exception:
+                return {}
+
         return cls(
             ticker=row["ticker"],
             summary=row.get("summary", ""),
@@ -100,7 +133,10 @@ class TickerSummary:
             updated_at=row.get("updated_at", ""),
             last_checked_run_id=row.get("last_checked_run_id", ""),
             last_checked_artifact_signature=row.get("last_checked_artifact_signature", ""),
-            angle_digest=angle_digest,
+            angle_digest=_load_dict("angle_digest"),
+            cluster_digest=_load_dict("cluster_digest"),
+            cross_cluster=_load_dict("cross_cluster"),
+            cluster_anomalies=_load_dict("cluster_anomalies"),
         )
 
 
@@ -118,12 +154,18 @@ class TickerSummaryStore(SQLiteBackend):
         angle_count: int = 0,
         source_run_id: str = "",
         angle_digest: dict[str, Any] | None = None,
+        cluster_digest: dict[str, Any] | None = None,
+        cross_cluster: dict[str, Any] | None = None,
+        cluster_anomalies: dict[str, Any] | None = None,
     ) -> TickerSummary:
         ticker = ticker.upper()
         now = _now()
         existing = self.get_summary(ticker)
         created_at = existing.created_at if existing else now
         angle_digest = angle_digest or {}
+        cluster_digest = cluster_digest or {}
+        cross_cluster = cross_cluster or {}
+        cluster_anomalies = cluster_anomalies or {}
         self.upsert(
             "ticker_summaries",
             {
@@ -135,6 +177,9 @@ class TickerSummaryStore(SQLiteBackend):
                 "created_at": created_at,
                 "updated_at": now,
                 "angle_digest": json.dumps(angle_digest),
+                "cluster_digest": json.dumps(cluster_digest),
+                "cross_cluster": json.dumps(cross_cluster),
+                "cluster_anomalies": json.dumps(cluster_anomalies),
             },
             conflict_columns=["ticker"],
         )
@@ -142,6 +187,8 @@ class TickerSummaryStore(SQLiteBackend):
             ticker=ticker, summary=summary, angles_with_data=angles_with_data,
             angle_count=angle_count, source_run_id=source_run_id,
             created_at=created_at, updated_at=now, angle_digest=angle_digest,
+            cluster_digest=cluster_digest, cross_cluster=cross_cluster,
+            cluster_anomalies=cluster_anomalies,
         )
 
     def get_summary(self, ticker: str) -> Optional[TickerSummary]:

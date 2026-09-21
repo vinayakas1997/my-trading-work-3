@@ -4,11 +4,12 @@ import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from uuid import uuid4
 
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+
+from vinu_initial_analysis.storage.run_id import generate_run_id
 
 if TYPE_CHECKING:
     from vinu_initial_analysis.storage.meta import RunLog
@@ -83,7 +84,11 @@ class AngleStorage:
         regardless of input order or case. When omitted, writes go under the
         single `symbol` as before.
         """
-        run_id = run_id or uuid4().hex[:12]
+        if run_id is None:
+            sequence = self._run_log.next_sequence(symbol, angle_name, granularity) if self._run_log else 1
+            run_id = generate_run_id(
+                symbol, angle_name, granularity, analysis_from, analysis_until, sequence,
+            )
         started_at = datetime.now(timezone.utc)
         stored_at = started_at
 
@@ -91,6 +96,18 @@ class AngleStorage:
         df = df.copy()
         df["symbol"] = symbol
         df["angle_name"] = angle_name
+        # FIXED_COLUMNS has always declared time_format as a stamped
+        # column, but this method never actually set it -- only
+        # runner.py's _run_angle did, by setting it on `df` itself
+        # before calling write(). A direct write() caller that skipped
+        # that step got a row with no time_format column at all despite
+        # the declared schema. This makes write() itself the single
+        # source of truth: always stamped here from the real
+        # `granularity` this write is under, matching every other
+        # FIXED_COLUMNS entry's pattern (auto-stamped, not left to the
+        # caller). Idempotent for runner.py's own pre-stamped rows,
+        # since it always passes the identical value as `granularity`.
+        df["time_format"] = granularity
         df["run_id"] = run_id
         df["started_at"] = pd.Timestamp(started_at)
         df["analysis_from"] = pd.Timestamp(analysis_from, unit="s", tz="UTC") if analysis_from else pd.NaT

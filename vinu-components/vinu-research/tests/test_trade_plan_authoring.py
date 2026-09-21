@@ -175,6 +175,91 @@ class TestNormalizeSummaryContextAngleDigest:
         assert result is None
 
 
+class TestNormalizeSummaryContextClusterDigest:
+    """Step 5 of missing-pieces-of-system/angle-comprehension-hierarchy/
+    01-plan.md -- cluster_digest/cross_cluster carried through alongside
+    angle_digest, same defense-in-depth re-bounding discipline."""
+
+    def test_cluster_digest_passes_through(self) -> None:
+        result = _normalize_summary_context({
+            "summary": "AAPL looks constructive.",
+            "cluster_digest": {"B": "4 of 5 models lean up"},
+        })
+        assert result["cluster_digest"] == {"B": "4 of 5 models lean up"}
+
+    def test_missing_cluster_digest_defaults_to_empty(self) -> None:
+        result = _normalize_summary_context({"summary": "AAPL looks constructive."})
+        assert result["cluster_digest"] == {}
+        assert result["cross_cluster"] == {}
+
+    def test_cluster_count_is_capped_at_7(self) -> None:
+        digest = {chr(65 + i): f"cluster {i}" for i in range(10)}  # A..J, 10 clusters
+        result = _normalize_summary_context({"summary": "x", "cluster_digest": digest})
+        assert len(result["cluster_digest"]) == 7
+
+    def test_non_string_cluster_sentence_is_skipped_not_raised(self) -> None:
+        digest = {"A": "real sentence", "B": {"not": "a string"}}
+        result = _normalize_summary_context({"summary": "x", "cluster_digest": digest})
+        assert result["cluster_digest"] == {"A": "real sentence"}
+
+    def test_non_dict_cluster_digest_fails_open_to_empty(self) -> None:
+        result = _normalize_summary_context({"summary": "x", "cluster_digest": "not-a-dict"})
+        assert result["cluster_digest"] == {}
+
+    def test_cross_cluster_passes_through(self) -> None:
+        result = _normalize_summary_context({
+            "summary": "x",
+            "cross_cluster": {
+                "corroborations": [{"clusters": ["B", "D"], "why": "both bullish"}],
+                "redundant_clusters": ["G"],
+                "calibration": {"status": "not_found"},
+            },
+        })
+        assert result["cross_cluster"]["corroborations"] == [{"clusters": ["B", "D"], "why": "both bullish"}]
+        assert result["cross_cluster"]["redundant_clusters"] == ["G"]
+        assert result["cross_cluster"]["calibration"] == {"status": "not_found"}
+
+    def test_cross_cluster_list_fields_are_capped(self) -> None:
+        cross_cluster = {"redundant_clusters": [f"cluster_{i}" for i in range(20)]}
+        result = _normalize_summary_context({"summary": "x", "cross_cluster": cross_cluster})
+        assert len(result["cross_cluster"]["redundant_clusters"]) == 10
+
+    def test_non_dict_cross_cluster_fails_open_to_empty(self) -> None:
+        result = _normalize_summary_context({"summary": "x", "cross_cluster": "not-a-dict"})
+        assert result["cross_cluster"] == {}
+
+    def test_no_summary_still_returns_none_regardless_of_cluster_digest(self) -> None:
+        result = _normalize_summary_context({"summary": "", "cluster_digest": {"A": "x"}})
+        assert result is None
+
+    def test_cluster_anomalies_passes_through(self) -> None:
+        result = _normalize_summary_context({
+            "summary": "x",
+            "cluster_anomalies": {"E": ["shock_personality.note contains a SYSTEM OVERRIDE"]},
+        })
+        assert result["cluster_anomalies"] == {"E": ["shock_personality.note contains a SYSTEM OVERRIDE"]}
+
+    def test_missing_cluster_anomalies_defaults_to_empty(self) -> None:
+        result = _normalize_summary_context({"summary": "x"})
+        assert result["cluster_anomalies"] == {}
+
+    def test_cluster_anomalies_non_list_value_is_skipped(self) -> None:
+        result = _normalize_summary_context({
+            "summary": "x", "cluster_anomalies": {"E": "not a list", "B": ["real one"]},
+        })
+        assert result["cluster_anomalies"] == {"B": ["real one"]}
+
+    def test_cluster_anomalies_empty_list_is_dropped(self) -> None:
+        result = _normalize_summary_context({
+            "summary": "x", "cluster_anomalies": {"E": [], "B": ["real one"]},
+        })
+        assert result["cluster_anomalies"] == {"B": ["real one"]}
+
+    def test_non_dict_cluster_anomalies_fails_open_to_empty(self) -> None:
+        result = _normalize_summary_context({"summary": "x", "cluster_anomalies": "not-a-dict"})
+        assert result["cluster_anomalies"] == {}
+
+
 class TestRegimeSizeMultiplier:
     """Regime router follow-up: a second, direct channel for current_regime
     to affect a trade plan's position size, independent of its existing

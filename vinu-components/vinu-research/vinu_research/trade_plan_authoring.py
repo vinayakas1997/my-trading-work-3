@@ -718,6 +718,66 @@ def _bound_angle_digest(angle_digest: Any) -> dict[str, Any]:
     return bounded
 
 
+_CLUSTER_DIGEST_MAX_CLUSTERS = 7  # the real, fixed A-G scheme -- never more
+_CROSS_CLUSTER_MAX_LIST_ITEMS = 10
+
+
+def _bound_cluster_digest(cluster_digest: Any) -> dict[str, str]:
+    """Same defense-in-depth re-bounding as _bound_angle_digest, for the
+    split-cluster screener's real output (missing-pieces-of-system/
+    angle-comprehension-hierarchy/01-plan.md step 5) -- also crosses the
+    vinu-agent -> vinu-research boundary. Capped at the real 7 clusters
+    (unlike angle_digest's 30, there's no legitimate reason for more)."""
+    if not isinstance(cluster_digest, dict):
+        return {}
+    bounded: dict[str, str] = {}
+    for cluster, sentence in cluster_digest.items():
+        if len(bounded) >= _CLUSTER_DIGEST_MAX_CLUSTERS:
+            break
+        if not isinstance(sentence, str):
+            continue
+        bounded[str(cluster)] = sentence
+    return bounded
+
+
+def _bound_cluster_anomalies(cluster_anomalies: Any) -> dict[str, list[str]]:
+    """Kept SEPARATE from cluster_digest -- real finding (2026-09-22, live
+    LLM test against a real prompt-injection payload): a cluster's own
+    synthesis sentence can describe an anomalous field value in
+    plausible-sounding market language without literally repeating it,
+    so this is what actually preserves the "flagged as suspicious" signal
+    through to the forecast prompt."""
+    if not isinstance(cluster_anomalies, dict):
+        return {}
+    bounded: dict[str, list[str]] = {}
+    for cluster, items in cluster_anomalies.items():
+        if len(bounded) >= _CLUSTER_DIGEST_MAX_CLUSTERS:
+            break
+        if not isinstance(items, list):
+            continue
+        strings = [str(x) for x in items if isinstance(x, str)][:_CROSS_CLUSTER_MAX_LIST_ITEMS]
+        if strings:
+            bounded[str(cluster)] = strings
+    return bounded
+
+
+def _bound_cross_cluster(cross_cluster: Any) -> dict[str, Any]:
+    """Same re-bounding discipline for cross_cluster_analyst's ticker-level
+    output -- caps each list-shaped field so a malformed/adversarial
+    upstream value can't inflate the forecast prompt unboundedly."""
+    if not isinstance(cross_cluster, dict):
+        return {}
+    bounded: dict[str, Any] = {}
+    for key in ("consensus_checks", "corroborations", "redundant_clusters"):
+        value = cross_cluster.get(key)
+        if isinstance(value, list):
+            bounded[key] = value[:_CROSS_CLUSTER_MAX_LIST_ITEMS]
+    calibration = cross_cluster.get("calibration")
+    if isinstance(calibration, dict):
+        bounded["calibration"] = calibration
+    return bounded
+
+
 def _normalize_summary_context(summary_context: dict[str, Any] | None) -> dict[str, Any] | None:
     """Validate + truncate the Summary Agent context for the forecast prompt.
 
@@ -741,6 +801,9 @@ def _normalize_summary_context(summary_context: dict[str, Any] | None) -> dict[s
         "angles_with_data": summary_context.get("angles_with_data", "?"),
         "angle_count": summary_context.get("angle_count", 28),
         "angle_digest": _bound_angle_digest(summary_context.get("angle_digest")),
+        "cluster_digest": _bound_cluster_digest(summary_context.get("cluster_digest")),
+        "cross_cluster": _bound_cross_cluster(summary_context.get("cross_cluster")),
+        "cluster_anomalies": _bound_cluster_anomalies(summary_context.get("cluster_anomalies")),
     }
 
 

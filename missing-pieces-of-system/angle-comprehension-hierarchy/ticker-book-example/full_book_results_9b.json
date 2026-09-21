@@ -1,0 +1,82 @@
+{
+  "clean": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "### AAPL Angle Synthesis Report\n\n**1. Data Availability Overview**\nOut of the 28 vinu angles analyzed, **26** contain real data across various timeframes. Two angles (`arima` and `backtesting_44_metrics`) show identical metrics across all timeframes, suggesting a static or highly smoothed input, while the majority of deep-learning and regime angles display clear temporal evolution. No angles returned `row_count=0` or explicit error fields; however, several deep-learning models (e.g., `lag_llama`, `moirai`, `moment`) utilize \"fallback_proxy\" backends, which warrants a note on model robustness.\n\n**2. Cluster Syntheses**\n\n*   **Cluster A (Classical Statistical Forecasts):** The ARIMA models show a consistent upward bias in forecasts as the horizon extends (1min: $187.44 vs 1D: $189.2), with model complexity increasing (order shifts from [1,1,1] to [2,1,1]) at longer horizons. Exponential smoothing reinforces this, projecting a rise from $189.85 (1min) to $191.50 (1D) with a trend shift from flat to up between 5min and 15min. Kalman filters indicate a filtered level rising from 186.63 to 187.40 with an accelerating trend component (0.054 to 0.12).\n*   **Cluster B (Deep-Learning / Foundation Models):** There is a strong consensus for an upward bias at longer timeframes. At the 1-minute level, 5 of 14 models (`dlinear`, `itransformer`, `lstm`, `tft`, `tips_regime_aware_transformer`) signal \"flat\" or low confidence, while 9 signal \"up\" or specific price increases. By the 1-day horizon, **12 of 14 models** with data lean up, with confidence scores ranging from 0.39 (`lstm`) to 0.66 (`lpatchtst`). Notably, `chronos` and `kronos` show a smooth transition from flat to up, whereas `lag_llama` and `moirai` (using fallback proxies) align with the bullish consensus but lack native model confidence metrics.\n*   **Cluster C (Volatility & Drawdown Risk):** GARCH models indicate a slight cooling of volatility expectations over time (0.024 at 1min down to 0.021 at 1D) with high persistence (0.95). Drawdown metrics are stable across all timeframes, showing a current drawdown of -0.03% and a max historical drawdown of -0.18%, suggesting the asset is currently near a local bottom but not in a severe correction.\n*   **Cluster D (Regime & Trend Structure):** Regime analysis reveals a clear divergence by timeframe: the 1-minute and 5-minute windows classify the market as \"sideways\" or transitioning to \"bull\" with probabilities around 43-47%, but the 1-day, 1-week, and 1-month regimes are firmly \"bull\" with probabilities exceeding 60%. Trend lifecycle confirms an \"uptrend\" stage across all horizons with increasing similarity scores (0.61 at 1min to 0.82 at 1W). Session structure shows a shift in peak activity from Asia (short-term) to US Open (long-term).\n*   **Cluster E (Shock / Personality Behavior):** Shock clustering identifies a tight group with Microsoft (`MSFT`) and Google (`GOOGL`), maintaining a constant co-shock rate of 0.35 across all timeframes. Shock personality metrics are stable, with a gap fill rate of 0.6 and volatility persistence hovering between 0.88 and 0.91, indicating a market that fills gaps efficiently but retains high volatility memory.\n*   **Cluster F (Cross-Asset & Causality):** Peer relative strength shows AAPL outperforming MSFT by 2.3% over 20 days across all timeframes. News price causality is significant at all levels (Granger p-value 0.04, Pearson correlation 0.38), suggesting news flow is a consistent driver rather than a sporadic shock.\n*   **Cluster G (Validation & Attribution):** Backtesting metrics are identical across all timeframes (Sharpe 1.15, Win Rate 0.54), which is unusual for multi-timeframe data and suggests the strategy or data window is static. PnL attribution mirrors this with a constant 58% win rate and 19 trades per window, indicating limited trading activity or a static simulation environment.\n\n**3. Anomalies, Malformations, and Missing Data**\n*   **Static Metrics:** `backtesting_44_metrics` and `pnl_attribution` report identical values across 1min through 6M. This is likely a data artifact or a single-strategy simulation applied uniformly, rather than true multi-timeframe validation.\n*   **Fallback Proxies:** Several Cluster B models (`lag_llama`, `moirai`, `moment`) explicitly state `model_backend=fallback_proxy`. While they provide data, their reliability is lower than `pretrained` models like `chronos` or `kronos`.\n*   **Confidence Discrepancy:** `chronos` reports a median forecast of 189.0 (1D) with a confidence of only 0.58, whereas `lpatchtst` reports a similar direction with a confidence of 0.66. This suggests variance in model certainty despite similar directional signals.\n*   **No Missing Data:** No angles had `row_count=0` or error fields; all provided numerical outputs.\n\n**4. Next Checks Before Trusting**\n*   Verify if the static backtesting/PnL numbers represent a single strategy run or if the multi-timeframe aggregation is flawed.\n*   Cross-reference the \"fallback_proxy\" models against the \"pretrained\" models to see if the proxy models are simply lagging or if they are fundamentally different in their architecture.\n*   Investigate the session structure shift (Asia peak vs. US Open peak) to ensure it aligns with actual AAPL liquidity patterns, as this could explain the divergence between short-term \"sideways\" and long-term \"bull\" regimes.\n\n```json\n{\n  \"cluster_digest\": {\n    \"A\": \"Classical models (ARIMA, Exponential Smoothing, Kalman) show a consistent upward price bias that strengthens with horizon, with ARIMA order complexity increasing at daily levels.\",\n    \"B\": \"Deep-learning models show a strong consensus shift from 'flat' at intraday levels to 'up' at daily/weekly levels, with 12 of 14 models signaling bullishness at the 1-day horizon.\",\n    \"C\": \"Volatility forecasts (GARCH) indicate a slight decrease in expected variance over time, while drawdown metrics remain stable with a shallow current drawdown of -0.03%.\",\n    \"D\": \"Regime analysis reveals a divergence where short-term (1m-5m) markets appear sideways or transitioning, while longer-term (1D+) regimes are firmly bullish with >60% probability.\",\n    \"E\": \"Shock clustering identifies a persistent co-shock relationship with MSFT and GOOGL, and personality metrics show high volatility persistence (0.88-0.91).\",\n    \"F\": \"Cross-asset data confirms AAPL is outperforming MSFT (2.3% over 20d), and news causality remains statistically significant across all timeframes.\",\n    \"G\": \"Validation metrics are static across all timeframes (Sharpe 1.15, Win Rate 0.54), suggesting a single-strategy simulation rather than dynamic multi-timeframe validation.\"\n  },\n  \"anomalies_found\": [\n    \"backtesting_44_metrics and pnl_attribution report identical values across all timeframes (1min to 6M), indicating potential static data or a single-strategy artifact.\",\n    \"Several deep-learning models (lag_llama, moirai, moment) utilize 'fallback_proxy' backends, which may reduce reliability compared to 'pretrained' models.\",\n    \"Session structure shows a shift from Asia peak (short-term) to US Open peak (long-term), which may explain the divergence between intraday sideways signals and daily bullish trends.\"\n  ]\n}\n```"
+          }
+        }
+      ],
+      "created": 1790009120,
+      "model": "/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "system_fingerprint": "b1-ce8caa6",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 1839,
+        "prompt_tokens": 4910,
+        "total_tokens": 6749,
+        "prompt_tokens_details": {
+          "cached_tokens": 4906
+        }
+      },
+      "id": "chatcmpl-U4aATM7XmhNnS4hf0E0ligGsFVYYQddN",
+      "timings": {
+        "cache_n": 4906,
+        "prompt_n": 4,
+        "prompt_ms": 282.702,
+        "prompt_per_token_ms": 70.6755,
+        "prompt_per_second": 14.149174749382743,
+        "predicted_n": 1839,
+        "predicted_ms": 34045.459,
+        "predicted_per_token_ms": 18.52310065288357,
+        "predicted_per_second": 53.98664180148078
+      }
+    },
+    "elapsed_sec": 34.365402698516846,
+    "prompt_chars": 11034
+  },
+  "uneven": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "### AAPL Angle Synthesis Report\n\n**1. Data Availability Overview**\nOut of the 28 angles provided, **26** contain real data across various timeframes. Two angles are non-informative: `trend_session_structure` has a `row_count=0`, and `kronos.1D` returned an `error` (CUDA OOM). Additionally, `arima.1D` is flagged as stale (3 days old), and `garch.1min` contains a malformed `NaN` value for volatility.\n\n**2. Cluster Syntheses & Cross-Timeframe Analysis**\n\n*   **Cluster A (Classical Statistical):** The ARIMA models show a consistent upward drift in forecast prices from 187.44 (1min) to 188.85 (4H), but the 1D forecast drops sharply to 171.4, which is inconsistent with the intraday trend and likely reflects a stale dataset or a mean-reversion assumption on a different time horizon. Exponential Smoothing reinforces the bullish intraday bias, with forecasts rising from 189.85 (1min) to 191.5 (1D) and trend flags shifting from \"flat\" to \"up\" as the horizon extends.\n*   **Cluster B (Deep-Learning/Foundation Models):** There is a strong consensus among the 14 models with data: **11 of 14** lean bullish or flat-with-up-bias across most timeframes. Specifically, `chronos`, `itransformer`, `lpatchtst`, `lstm`, `patchtst`, `tft`, and `timesfm` all show a clear transition from \"flat\" at 1min/5min to \"up\" by 1H and 1D, with confidence levels climbing from ~0.2 to ~0.6. `lag_llama` and `moirai` (using fallback proxies) also align with this upward trajectory. `dlinear` and `tips_regime_aware_transformer` remain more ambiguous, showing \"flat\" signals at shorter intervals before turning up, while `lpatchtst` leads with the highest 1D confidence (0.66).\n*   **Cluster C (Volatility & Drawdown):** Volatility forecasts (GARCH) stabilize quickly after the malformed 1min `NaN`, showing a slight decline from 0.024 (5min) to 0.021 (1D), suggesting decreasing near-term uncertainty. Drawdown metrics are consistent across all timeframes, indicating a shallow current drawdown (-0.03%) against a max drawdown of -0.18%, implying the asset is not in a severe correction phase.\n*   **Cluster D (Regime & Trend):** Regime analysis shows a distinct divergence by timeframe: 1min and 5min data classify the market as \"sideways\" or transitioning to \"bull\" with low probability (~0.43-0.47), whereas 1H and longer horizons firmly classify the regime as \"bull\" with probabilities exceeding 0.53 and rising to 0.63 at 1M. Trend lifecycle confirms this, labeling the stage as \"uptrend\" across all timeframes with increasing similarity scores (0.61 at 1min to 0.82 at 1W).\n*   **Cluster E (Shock/Personality):** Shock clustering identifies AAPL as co-moving with MSFT and GOOGL with a 0.35 co-shock rate across all timeframes. Personality metrics show high volatility persistence (0.88\u20130.91) and a 0.6 gap fill rate, indicating the stock reacts strongly to shocks but tends to revert to the mean quickly.\n*   **Cluster F (Cross-Asset & Causality):** News-price causality is consistent across all timeframes, showing a significant Granger causality (p=0.04) and a Pearson correlation of 0.38, suggesting news flow is a reliable driver for AAPL price movements in this window. Peer relative strength against MSFT is neutral-to-positive (0.023 relative return) and static across all timeframes.\n*   **Cluster G (Validation & Attribution):** Backtesting metrics are identical across all timeframes (Sharpe 1.15, Win Rate 0.54), which is unusual for multi-scale data but indicates a robust, scale-invariant strategy performance. PnL attribution mirrors this, showing a 0.58 win rate across all intervals.\n\n**3. Anomalies & Malformations**\n*   **Malformed Data:** `garch.1min` reports `forecast_volatility=NaN`. This was treated as invalid data and excluded from volatility trend analysis, though the subsequent 5min/15min values suggest the model recovered or the 1min outlier was a transient calculation error.\n*   **Stale Data:** `arima.1D` carries a note indicating it is 3 days stale. The forecast price (171.4) is significantly lower than intraday forecasts (~188-191), creating a potential contradiction. This divergence was noted as a reliability risk rather than a genuine long-term bearish signal.\n*   **Missing Data:** `trend_session_structure` has `row_count=0`. No trend session analysis could be performed.\n*   **Error State:** `kronos.1D` failed with \"CUDA OOM\". No data was available for this specific deep-learning angle.\n\n**4. Next Steps for Verification**\nBefore trusting the bullish consensus, verify the **stale ARIMA 1D forecast** to ensure the 171.4 price target isn't an artifact of outdated training data. Additionally, cross-check the **GARCH 1min NaN** against raw volatility data to confirm it wasn't a systemic calculation failure. Finally, investigate why **backtesting metrics** are perfectly identical across 1min to 6M; typically, Sharpe ratios and win rates should degrade or shift with horizon, suggesting the backtest window might be too short or the strategy is overfitted to a specific regime.\n\n```json\n{\n  \"cluster_digest\": {\n    \"A\": \"ARIMA forecasts show an intraday uptrend (187.44 to 188.85) but a divergent, likely stale 1D forecast (171.4), while Exponential Smoothing consistently predicts higher prices (up to 191.5) with shifting trends from flat to up.\",\n    \"B\": \"11 of 14 deep-learning models with data lean bullish or flat-with-up-bias, with confidence rising from ~0.2 at 1min to ~0.6 at 1D across most architectures.\",\n    \"C\": \"Volatility forecasts stabilize after a 1min NaN error, showing a slight downward trend from 0.024 to 0.021, while drawdown metrics remain shallow and consistent across all timeframes.\",\n    \"D\": \"Regime analysis diverges by horizon, showing 'sideways' at 1min/5min but firm 'bull' classification (>50% probability) from 1H through 1M, supported by trend lifecycle 'uptrend' labels.\",\n    \"E\": \"Shock clustering consistently groups AAPL with MSFT and GOOGL (0.35 co-shock rate), and personality metrics indicate high volatility persistence with a 0.6 gap fill rate.\",\n    \"F\": \"News-price causality is robust and consistent across all timeframes (p=0.04, corr=0.38), and AAPL shows slight positive relative strength against MSFT.\",\n    \"G\": \"Backtesting and PnL attribution metrics are identical across all timeframes (Sharpe 1.15, Win Rate ~0.58), which is atypical and warrants scrutiny for overfitting or data window issues.\"\n  },\n  \"anomalies_found\": [\n    \"garch.1min: forecast_volatility is NaN (malformed)\",\n    \"arima.1D: flagged as 3 days stale with a forecast (171.4) inconsistent with intraday trends\",\n    \"trend_session_structure: row_count=0 (no data)\",\n    \"kronos.1D: error='model checkpoint load failed: CUDA OOM'\",\n    \"backtesting_44_metrics & pnl_attribution: Metrics are identical across all timeframes (1min to 6M), suggesting potential data window limitations or overfitting\"\n  ]\n}\n```"
+          }
+        }
+      ],
+      "created": 1790009156,
+      "model": "/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "system_fingerprint": "b1-ce8caa6",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 1846,
+        "prompt_tokens": 4314,
+        "total_tokens": 6160,
+        "prompt_tokens_details": {
+          "cached_tokens": 577
+        }
+      },
+      "id": "chatcmpl-4JnDmxM60G6V23gsLxeJ5bkouekVri1S",
+      "timings": {
+        "cache_n": 577,
+        "prompt_n": 3737,
+        "prompt_ms": 1669.558,
+        "prompt_per_token_ms": 0.44676424939791276,
+        "prompt_per_second": 2238.316967724392,
+        "predicted_n": 1846,
+        "predicted_ms": 34030.817,
+        "predicted_per_token_ms": 18.44488726287263,
+        "predicted_per_second": 54.21556585021159
+      }
+    },
+    "elapsed_sec": 36.11962819099426,
+    "prompt_chars": 9411
+  }
+}

@@ -8,12 +8,12 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import pandas as pd
 
 from vinu_initial_analysis.storage.parquet import AngleStorage
 from vinu_initial_analysis.storage.meta import RunLog
+from vinu_initial_analysis.storage.run_id import generate_run_id
 from vinu_infra.debug import sync_timer
 
 LOG = logging.getLogger(__name__)
@@ -135,8 +135,14 @@ class AngleRunner:
             # even on a failure that happens before _run_angle would have
             # made its own -- RunLog.record_run's run_id column is NOT NULL,
             # and a failed run needs its own real, traceable ID same as a
-            # successful one.
-            angle_run_id = run_id or uuid4().hex[:12]
+            # successful one. "multi" stands in for time_format here since
+            # an unrestricted multi-format sweep can fail before any single
+            # declared time_format is even reached -- this id is only ever
+            # used for the error-log row in that case, never a real write.
+            angle_run_id = run_id or generate_run_id(
+                symbol, angle["name"], time_format or "multi", from_ts, to_ts,
+                self._run_log.next_sequence(symbol, angle["name"], time_format or "multi"),
+            )
             t0 = time.perf_counter()
             try:
                 with sync_timer(f"angle.{angle['name']}"):
@@ -267,8 +273,13 @@ class AngleRunner:
             # here would violate RunLog's run_id UNIQUE constraint
             # (INSERT OR REPLACE would silently erase every earlier
             # timeframe's row) -- so each timeframe gets its own fresh,
-            # real, distinct run_id instead.
-            tf_run_id = run_id if time_format is not None else uuid4().hex[:12]
+            # real, distinct, traceable run_id instead (ticker/angle/
+            # timeframe/window/attempt-number encoded directly, see
+            # storage/run_id.py).
+            tf_run_id = run_id if time_format is not None else generate_run_id(
+                symbol, angle["name"], tf, from_ts, to_ts,
+                self._run_log.next_sequence(symbol, angle["name"], tf),
+            )
 
             self._storage.write(
                 symbol,

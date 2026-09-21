@@ -171,6 +171,9 @@ def make_summary_agent_fn(service: Any):
                             "angles_with_data": getattr(existing, "angles_with_data", 0),
                             "angle_count": getattr(existing, "angle_count", 0),
                             "angle_digest": getattr(existing, "angle_digest", {}) or {},
+                            "cluster_digest": getattr(existing, "cluster_digest", {}) or {},
+                            "cross_cluster": getattr(existing, "cross_cluster", {}) or {},
+                            "cluster_anomalies": getattr(existing, "cluster_anomalies", {}) or {},
                         }
                 except Exception:
                     pass
@@ -201,6 +204,36 @@ def make_summary_agent_fn(service: Any):
             service, "screener", task, session_id=f"summary-refresh-{ticker}",
         )
         summary_text = result.get("content", "") if result.get("status") == "completed" else ""
+
+        # cluster_digest/cross_cluster have no deterministic equivalent to
+        # build_angle_digest -- they only exist inside the manager's own
+        # JSON block (real LLM reasoning, not a field copy), so this path
+        # has to parse the same block write_ticker_summaries already
+        # parses on the other persistence path (team.py's own hook after
+        # a batch run). Best-effort: a parse failure here just means this
+        # single-ticker refresh doesn't carry the cluster fields forward,
+        # never a hard failure of the whole refresh.
+        cluster_digest: dict[str, Any] = {}
+        cross_cluster: dict[str, Any] = {}
+        cluster_anomalies: dict[str, Any] = {}
+        try:
+            from .screener_summary_writer import _extract_json_block
+
+            block = _extract_json_block(summary_text) or {}
+            ticker_entry = (block.get("tickers") or {}).get(ticker) or {}
+            if isinstance(ticker_entry, dict):
+                raw_cluster_digest = ticker_entry.get("cluster_digest") or {}
+                if isinstance(raw_cluster_digest, dict):
+                    cluster_digest = raw_cluster_digest
+                raw_cross_cluster = ticker_entry.get("cross_cluster") or {}
+                if isinstance(raw_cross_cluster, dict):
+                    cross_cluster = raw_cross_cluster
+                raw_cluster_anomalies = ticker_entry.get("cluster_anomalies") or {}
+                if isinstance(raw_cluster_anomalies, dict):
+                    cluster_anomalies = raw_cluster_anomalies
+        except Exception:
+            pass
+
         return summary_text, {
             "angles_with_data": angles_data.get("angles_with_data", 0),
             "angle_count": angles_data.get("angle_count", 0),
@@ -208,6 +241,9 @@ def make_summary_agent_fn(service: Any):
             "rated_angles": trust["rated"],
             "unrated_angles": trust["unrated"],
             "angle_digest": angle_digest,
+            "cluster_digest": cluster_digest,
+            "cross_cluster": cross_cluster,
+            "cluster_anomalies": cluster_anomalies,
         }
 
     return _fn

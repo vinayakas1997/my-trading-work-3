@@ -169,6 +169,26 @@ class RunLog(SQLiteBackend):
         cursor = conn.execute(query, params)
         return cursor.fetchone() is not None
 
+    def next_sequence(self, symbol: str, angle_name: str, granularity: str) -> int:
+        """1-indexed count of runs already logged for this exact
+        (symbol, angle_name, granularity) bucket, plus one -- feeds the
+        `seq` field in `storage/run_id.py::generate_run_id`.
+
+        Best-effort, not an atomic increment: a plain COUNT(*) read, not
+        wrapped in a locking transaction. Two genuinely concurrent
+        writers (the tier3 `trigger` route's real background threads)
+        could read the same count before either has inserted -- that's
+        exactly why `generate_run_id` also appends a random suffix, so a
+        rare race here still can't produce two identical run_ids.
+        """
+        conn = self._get_conn()
+        cursor = conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE symbol = ? AND angle_name = ? AND granularity = ?",
+            (symbol, angle_name, granularity),
+        )
+        (count,) = cursor.fetchone()
+        return int(count) + 1
+
     def delete_by_angle(self, angle_name: str) -> int:
         """Deletes every run row for this angle. Returns the number deleted.
 

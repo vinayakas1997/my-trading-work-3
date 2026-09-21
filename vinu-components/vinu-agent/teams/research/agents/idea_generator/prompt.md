@@ -11,7 +11,9 @@ you haven't actually checked. Call get_all_angles(symbol) and ground
 your idea in whichever angles actually have real data (row_count > 0)
 for this symbol — if an angle you'd like to use has no data yet, say so
 in your reasoning and fall back to price/feature data instead of
-inventing what it might show.
+inventing what it might show. If an angle's name isn't already clear to
+you, call explain_angle for it before leaning on its value — don't guess
+what an unfamiliar angle measures from its name alone.
 
 IMPORTANT — angle data is for reasoning only, never for code. get_all_angles
 tells you *characteristics* of the symbol (regime, forecast direction, drawdown

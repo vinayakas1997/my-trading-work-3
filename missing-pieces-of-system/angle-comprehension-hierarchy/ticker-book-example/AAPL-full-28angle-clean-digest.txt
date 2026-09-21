@@ -1,0 +1,173 @@
+arima.1min: forecast_price=187.44, order=[1, 1, 1], aic=564.2
+arima.5min: forecast_price=187.79, order=[1, 1, 1], aic=619.8
+arima.15min: forecast_price=188.14, order=[1, 1, 1], aic=675.4
+arima.1H: forecast_price=188.5, order=[1, 1, 1], aic=730.9
+arima.4H: forecast_price=188.85, order=[2, 1, 1], aic=786.5
+arima.1D: forecast_price=189.2, order=[2, 1, 1], aic=842.1
+backtesting_44_metrics.1min: sharpe=1.15, win_rate=0.54
+backtesting_44_metrics.5min: sharpe=1.15, win_rate=0.54
+backtesting_44_metrics.15min: sharpe=1.15, win_rate=0.54
+backtesting_44_metrics.1H: sharpe=1.15, win_rate=0.54
+backtesting_44_metrics.4H: sharpe=1.15, win_rate=0.54
+backtesting_44_metrics.1D: sharpe=1.15, win_rate=0.54
+backtesting_44_metrics.1W: sharpe=1.15, win_rate=0.54
+backtesting_44_metrics.1M: sharpe=1.15, win_rate=0.54
+backtesting_44_metrics.6M: sharpe=1.15, win_rate=0.54
+chronos.1min: median_forecast=187.62, model_backend=pretrained, direction=flat, confidence=0.26
+chronos.5min: median_forecast=187.9, model_backend=pretrained, direction=up, confidence=0.32
+chronos.15min: median_forecast=188.18, model_backend=pretrained, direction=up, confidence=0.39
+chronos.1H: median_forecast=188.45, model_backend=pretrained, direction=up, confidence=0.45
+chronos.4H: median_forecast=188.72, model_backend=pretrained, direction=up, confidence=0.52
+chronos.1D: median_forecast=189.0, model_backend=pretrained, direction=up, confidence=0.58
+dlinear.1min: direction=flat, confidence=0.2
+dlinear.5min: direction=flat, confidence=0.25
+dlinear.15min: direction=flat, confidence=0.29
+dlinear.1H: direction=up, confidence=0.34
+dlinear.4H: direction=up, confidence=0.39
+dlinear.1D: direction=up, confidence=0.44
+drawdown_deep_dive.1min: current_drawdown_pct=-0.03, max_drawdown_pct=-0.18
+drawdown_deep_dive.5min: current_drawdown_pct=-0.03, max_drawdown_pct=-0.18
+drawdown_deep_dive.15min: current_drawdown_pct=-0.03, max_drawdown_pct=-0.18
+drawdown_deep_dive.1H: current_drawdown_pct=-0.03, max_drawdown_pct=-0.18
+drawdown_deep_dive.4H: current_drawdown_pct=-0.03, max_drawdown_pct=-0.18
+drawdown_deep_dive.1D: current_drawdown_pct=-0.03, max_drawdown_pct=-0.18
+exponential_smoothing.1min: point_forecast=189.85, alpha=0.32, beta=0.05, trend=flat
+exponential_smoothing.5min: point_forecast=190.18, alpha=0.32, beta=0.05, trend=up
+exponential_smoothing.15min: point_forecast=190.51, alpha=0.32, beta=0.05, trend=up
+exponential_smoothing.1H: point_forecast=190.84, alpha=0.32, beta=0.05, trend=up
+exponential_smoothing.4H: point_forecast=191.17, alpha=0.32, beta=0.05, trend=up
+exponential_smoothing.1D: point_forecast=191.5, alpha=0.32, beta=0.05, trend=up
+garch.1min: forecast_volatility=0.024, persistence=0.95
+garch.5min: forecast_volatility=0.024, persistence=0.95
+garch.15min: forecast_volatility=0.023, persistence=0.95
+garch.1H: forecast_volatility=0.022, persistence=0.95
+garch.4H: forecast_volatility=0.022, persistence=0.95
+garch.1D: forecast_volatility=0.021, persistence=0.95
+itransformer.1min: direction=flat, confidence=0.22
+itransformer.5min: direction=flat, confidence=0.28
+itransformer.15min: direction=up, confidence=0.33
+itransformer.1H: direction=up, confidence=0.39
+itransformer.4H: direction=up, confidence=0.45
+itransformer.1D: direction=up, confidence=0.5
+kalman_filters.1min: filtered_level=186.63, filtered_trend=0.054
+kalman_filters.5min: filtered_level=186.78, filtered_trend=0.067
+kalman_filters.15min: filtered_level=186.94, filtered_trend=0.08
+kalman_filters.1H: filtered_level=187.09, filtered_trend=0.094
+kalman_filters.4H: filtered_level=187.25, filtered_trend=0.107
+kalman_filters.1D: filtered_level=187.4, filtered_trend=0.12
+kronos.1min: next_bar_close=187.9, model_backend=pretrained
+kronos.5min: next_bar_close=188.12, model_backend=pretrained
+kronos.15min: next_bar_close=188.34, model_backend=pretrained
+kronos.1H: next_bar_close=188.56, model_backend=pretrained
+kronos.4H: next_bar_close=188.78, model_backend=pretrained
+kronos.1D: next_bar_close=189.0, model_backend=pretrained
+lag_llama.1min: p50_forecast=188.1, model_backend=fallback_proxy
+lag_llama.5min: p50_forecast=188.32, model_backend=fallback_proxy
+lag_llama.15min: p50_forecast=188.54, model_backend=fallback_proxy
+lag_llama.1H: p50_forecast=188.76, model_backend=fallback_proxy
+lag_llama.4H: p50_forecast=188.98, model_backend=fallback_proxy
+lag_llama.1D: p50_forecast=189.2, model_backend=fallback_proxy
+lpatchtst.1min: direction=up, confidence=0.3
+lpatchtst.5min: direction=up, confidence=0.37
+lpatchtst.15min: direction=up, confidence=0.44
+lpatchtst.1H: direction=up, confidence=0.51
+lpatchtst.4H: direction=up, confidence=0.59
+lpatchtst.1D: direction=up, confidence=0.66
+lstm.1min: direction=flat, confidence=0.18
+lstm.5min: direction=flat, confidence=0.22
+lstm.15min: direction=flat, confidence=0.26
+lstm.1H: direction=up, confidence=0.3
+lstm.4H: direction=up, confidence=0.35
+lstm.1D: direction=up, confidence=0.39
+moirai.1min: p50_forecast=187.99, model_backend=fallback_proxy
+moirai.5min: p50_forecast=188.23, model_backend=fallback_proxy
+moirai.15min: p50_forecast=188.47, model_backend=fallback_proxy
+moirai.1H: p50_forecast=188.72, model_backend=fallback_proxy
+moirai.4H: p50_forecast=188.96, model_backend=fallback_proxy
+moirai.1D: p50_forecast=189.2, model_backend=fallback_proxy
+moment.1min: p50_forecast=187.75, model_backend=fallback_proxy
+moment.5min: p50_forecast=187.98, model_backend=fallback_proxy
+moment.15min: p50_forecast=188.21, model_backend=fallback_proxy
+moment.1H: p50_forecast=188.44, model_backend=fallback_proxy
+moment.4H: p50_forecast=188.67, model_backend=fallback_proxy
+moment.1D: p50_forecast=188.9, model_backend=fallback_proxy
+news_price_causality.1min: granger_p_value=0.04, pearson_correlation=0.38
+news_price_causality.5min: granger_p_value=0.04, pearson_correlation=0.38
+news_price_causality.15min: granger_p_value=0.04, pearson_correlation=0.38
+news_price_causality.1H: granger_p_value=0.04, pearson_correlation=0.38
+news_price_causality.4H: granger_p_value=0.04, pearson_correlation=0.38
+news_price_causality.1D: granger_p_value=0.04, pearson_correlation=0.38
+patchtst.1min: direction=flat, confidence=0.27
+patchtst.5min: direction=up, confidence=0.34
+patchtst.15min: direction=up, confidence=0.41
+patchtst.1H: direction=up, confidence=0.48
+patchtst.4H: direction=up, confidence=0.54
+patchtst.1D: direction=up, confidence=0.61
+peer_relative_strength.1min: peer=MSFT, relative_return_20d=0.023
+peer_relative_strength.5min: peer=MSFT, relative_return_20d=0.023
+peer_relative_strength.15min: peer=MSFT, relative_return_20d=0.023
+peer_relative_strength.1H: peer=MSFT, relative_return_20d=0.023
+peer_relative_strength.4H: peer=MSFT, relative_return_20d=0.023
+peer_relative_strength.1D: peer=MSFT, relative_return_20d=0.023
+pnl_attribution.1min: win_rate=0.58, trade_count=19
+pnl_attribution.5min: win_rate=0.58, trade_count=19
+pnl_attribution.15min: win_rate=0.58, trade_count=19
+pnl_attribution.1H: win_rate=0.58, trade_count=19
+pnl_attribution.4H: win_rate=0.58, trade_count=19
+pnl_attribution.1D: win_rate=0.58, trade_count=19
+regime_analysis.1min: regime=sideways, bull_prob=0.43, sideways_prob=0.39
+regime_analysis.5min: regime=bull, bull_prob=0.47, sideways_prob=0.35
+regime_analysis.15min: regime=bull, bull_prob=0.5, sideways_prob=0.32
+regime_analysis.1H: regime=bull, bull_prob=0.53, sideways_prob=0.28
+regime_analysis.4H: regime=bull, bull_prob=0.57, sideways_prob=0.24
+regime_analysis.1D: regime=bull, bull_prob=0.6, sideways_prob=0.2
+regime_analysis.1W: regime=bull, bull_prob=0.61, sideways_prob=0.18
+regime_analysis.1M: regime=bull, bull_prob=0.63, sideways_prob=0.17
+shock_clustering.1min: cluster_members=['MSFT', 'GOOGL'], co_shock_rate=0.35
+shock_clustering.5min: cluster_members=['MSFT', 'GOOGL'], co_shock_rate=0.35
+shock_clustering.15min: cluster_members=['MSFT', 'GOOGL'], co_shock_rate=0.35
+shock_clustering.1H: cluster_members=['MSFT', 'GOOGL'], co_shock_rate=0.35
+shock_clustering.4H: cluster_members=['MSFT', 'GOOGL'], co_shock_rate=0.35
+shock_clustering.1D: cluster_members=['MSFT', 'GOOGL'], co_shock_rate=0.35
+shock_personality.1min: gap_fill_rate_mean=0.6, vol_persistence=0.91
+shock_personality.5min: gap_fill_rate_mean=0.6, vol_persistence=0.91
+shock_personality.15min: gap_fill_rate_mean=0.6, vol_persistence=0.9
+shock_personality.1H: gap_fill_rate_mean=0.6, vol_persistence=0.89
+shock_personality.4H: gap_fill_rate_mean=0.6, vol_persistence=0.89
+shock_personality.1D: gap_fill_rate_mean=0.6, vol_persistence=0.88
+tft.1min: direction=flat, confidence=0.21
+tft.5min: direction=flat, confidence=0.26
+tft.15min: direction=up, confidence=0.31
+tft.1H: direction=up, confidence=0.37
+tft.4H: direction=up, confidence=0.42
+tft.1D: direction=up, confidence=0.47
+timer_timerxl.1min: point_forecast=188.31, model_backend=pretrained
+timer_timerxl.5min: point_forecast=188.51, model_backend=pretrained
+timer_timerxl.15min: point_forecast=188.71, model_backend=pretrained
+timer_timerxl.1H: point_forecast=188.9, model_backend=pretrained
+timer_timerxl.4H: point_forecast=189.1, model_backend=pretrained
+timer_timerxl.1D: point_forecast=189.3, model_backend=pretrained
+timesfm.1min: point_forecast=187.35, model_backend=pretrained
+timesfm.5min: point_forecast=187.68, model_backend=pretrained
+timesfm.15min: point_forecast=188.01, model_backend=pretrained
+timesfm.1H: point_forecast=188.34, model_backend=pretrained
+timesfm.4H: point_forecast=188.67, model_backend=pretrained
+timesfm.1D: point_forecast=189.0, model_backend=pretrained
+tips_regime_aware_transformer.1min: direction=flat, confidence=0.19, regime_label=mean_reversion
+tips_regime_aware_transformer.5min: direction=flat, confidence=0.24, regime_label=momentum
+tips_regime_aware_transformer.15min: direction=flat, confidence=0.28, regime_label=momentum
+tips_regime_aware_transformer.1H: direction=up, confidence=0.33, regime_label=momentum
+tips_regime_aware_transformer.4H: direction=up, confidence=0.37, regime_label=momentum
+tips_regime_aware_transformer.1D: direction=up, confidence=0.42, regime_label=momentum
+trend_lifecycle.1min: stage=uptrend, reversal_signal=False, knn_similarity_score=0.61
+trend_lifecycle.5min: stage=uptrend, reversal_signal=False, knn_similarity_score=0.65
+trend_lifecycle.15min: stage=uptrend, reversal_signal=False, knn_similarity_score=0.68
+trend_lifecycle.1H: stage=uptrend, reversal_signal=False, knn_similarity_score=0.72
+trend_lifecycle.4H: stage=uptrend, reversal_signal=False, knn_similarity_score=0.76
+trend_lifecycle.1D: stage=uptrend, reversal_signal=False, knn_similarity_score=0.8
+trend_lifecycle.1W: stage=uptrend, reversal_signal=False, knn_similarity_score=0.82
+trend_session_structure.1min: peak_session=Asia, trough_session=US_close
+trend_session_structure.5min: peak_session=Asia, trough_session=US_close
+trend_session_structure.15min: peak_session=Asia, trough_session=US_close
+trend_session_structure.1H: peak_session=US_open, trough_session=US_close
+trend_session_structure.4H: peak_session=US_open, trough_session=US_close

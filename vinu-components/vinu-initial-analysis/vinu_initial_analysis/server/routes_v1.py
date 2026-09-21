@@ -58,7 +58,6 @@ Design notes specific to this component:
 from __future__ import annotations
 
 import threading
-import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -69,6 +68,7 @@ from fastapi import APIRouter, HTTPException, Response
 from vinu_initial_analysis.server.routes_read import _json_safe
 from vinu_initial_analysis.service import InitialAnalysisService
 from vinu_initial_analysis.storage.factsheet import NoRunFoundError, generate_factsheet
+from vinu_initial_analysis.storage.run_id import generate_run_id
 
 router = APIRouter(tags=["v1-stage1"])
 
@@ -262,7 +262,8 @@ def trigger(ticker: str, granularity: str, time_range: str, method: str) -> Enve
     start_ts, end_ts = _parse_time_range(time_range)
 
     ticker = ticker.upper()
-    run_id = uuid.uuid4().hex[:12]
+    sequence = svc.run_log.next_sequence(ticker, method, internal_granularity)
+    run_id = generate_run_id(ticker, method, internal_granularity, start_ts, end_ts, sequence)
     with _jobs_lock:
         _jobs[run_id] = {"status": "running", "computed_at": None}
         _cleanup_old_jobs()

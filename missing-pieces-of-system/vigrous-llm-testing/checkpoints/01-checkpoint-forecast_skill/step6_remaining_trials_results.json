@@ -1,0 +1,162 @@
+{
+  "trial-01": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "{\n  \"direction\": \"long\",\n  \"confidence\": 0.58,\n  \"magnitude_pct\": 0.045,\n  \"magnitude_std\": 0.028,\n  \"horizon_days\": 5,\n  \"reasoning\": \"The forecast leans long primarily due to the strong bullish breakout above the 50-day moving average on 2.3x average volume, supported by positive momentum indicators (patchtst, timesfm) and improved sentiment (finbert). However, the Risk State significantly dampens confidence and magnitude. The 'elevated_volatility' regime, combined with a recent max drawdown of -14% and active drawdown status, suggests the market is fragile despite the technical breakout. The negative 20-day momentum (-6%) and poor recent Sharpe ratio (-0.35) indicate the current rally may be a short-term relief move rather than a sustained trend, limiting the expected magnitude to roughly 4.5% with a standard deviation of 2.8%. The high correlation to SPY (0.81) implies the move is likely driven by broad market beta rather than idiosyncratic alpha, further capping upside potential in a volatile environment.\"\n}"
+          }
+        }
+      ],
+      "created": 1790014374,
+      "model": "/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "system_fingerprint": "b1-ce8caa6",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 264,
+        "prompt_tokens": 603,
+        "total_tokens": 867,
+        "prompt_tokens_details": {
+          "cached_tokens": 186
+        }
+      },
+      "id": "chatcmpl-T9YhWBA42Itgb6DPkqCDc7wkExPUSruV",
+      "timings": {
+        "cache_n": 186,
+        "prompt_n": 417,
+        "prompt_ms": 416.077,
+        "prompt_per_token_ms": 0.9977865707434053,
+        "prompt_per_second": 1002.2183393939101,
+        "predicted_n": 264,
+        "predicted_ms": 5794.541,
+        "predicted_per_token_ms": 22.032475285171103,
+        "predicted_per_second": 45.3875466581391
+      }
+    },
+    "elapsed_sec": 6.430184364318848,
+    "prompt": "Generate a forecast for AAPL.\n\n=== Ticker Summary (9 of 28 angles, run run_20260921_0300) ===\nAAPL is showing a strong bullish breakout above its 50-day moving average on unusually high volume (2.3x the 20-day average). Two sell-side analysts raised price targets this week citing strength in services revenue. Momentum indicators (patchtst, timesfm) both point to continued upside over the next 5-10 sessions. Sentiment angle (finbert) shows a marked improvement in news tone over the past 3 days.\n\n=== Cluster Digest ===\n  Cluster B: patchtst leans up (confidence 0.71), timesfm leans up (confidence 0.68) -- 2 of 2 models with data lean up.\n  Cluster E: shock_personality regime=normal; shock_clustering cluster_id=2.\n\n=== Angle Digest ===\n  patchtst.direction: up\n  patchtst.confidence: 0.71\n  timesfm.direction: up\n  timesfm.confidence: 0.68\n  finbert.sentiment_score: 0.62\n  finbert.article_count: 14\n  shock_personality.regime: normal\n  shock_clustering.cluster_id: 2\n\n=== Personality Features ===\n  shock_clustering_score: 0.71\n  regime_tag: elevated_volatility\n  correlation_to_spy_20d: 0.81\n=== Risk State ===\n  realized_vol_30d: 0.42\n  atr_pct: 0.038\n  max_drawdown_pct: -0.14\n  drawdown_active: True\n  momentum_20d_pct: -0.06\n  sharpe_recent_20d: -0.35"
+  },
+  "trial-02": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "{\n  \"direction\": \"neutral\",\n  \"confidence\": 0.05,\n  \"magnitude_pct\": 0.0,\n  \"magnitude_std\": 0.0,\n  \"horizon_days\": 1,\n  \"reasoning\": \"The Risk State and Personality Features sections are empty, providing no quantitative basis for sizing the forecast. The only available data comes from a single chronos angle with a confidence of 0.1 and a flat directional signal. The Cluster Digest flags this as having only 1 of 14 models with data, indicating extreme noise and lack of consensus. Per instructions, the magnitude must be sized solely from Risk State and Personality numbers; since these are absent, the magnitude is set to zero. The low confidence in the single data point (0.1) combined with the lack of personality/risk context results in a minimal overall confidence score of 0.05.\"\n}"
+          }
+        }
+      ],
+      "created": 1790014379,
+      "model": "/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "system_fingerprint": "b1-ce8caa6",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 196,
+        "prompt_tokens": 347,
+        "total_tokens": 543,
+        "prompt_tokens_details": {
+          "cached_tokens": 186
+        }
+      },
+      "id": "chatcmpl-OS4KUzI6Uvgygnwn2cg8A5bOvf85AcNR",
+      "timings": {
+        "cache_n": 186,
+        "prompt_n": 161,
+        "prompt_ms": 227.818,
+        "prompt_per_token_ms": 1.4150186335403727,
+        "prompt_per_second": 706.7044746244809,
+        "predicted_n": 196,
+        "predicted_ms": 4471.737,
+        "predicted_per_token_ms": 22.931984615384614,
+        "predicted_per_second": 43.60721571952912
+      }
+    },
+    "elapsed_sec": 4.968409776687622,
+    "prompt": "Generate a forecast for NEWCO.\n\n=== Ticker Summary (1 of 28 angles, run run_20260921_0300) ===\nVery few angles have real data for NEWCO yet (1 of 28). The one angle with data (chronos) shows no clear directional signal. Confidence in this read is low given the limited coverage.\n\n=== Cluster Digest ===\n  Cluster B: chronos is flat, confidence 0.1 -- only 1 of 14 models has data this cycle.\n\n=== Angle Digest ===\n  chronos.direction: flat\n  chronos.confidence: 0.1\n\n=== Personality Features ===\n=== Risk State ==="
+  },
+  "trial-03": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "{\n  \"direction\": \"neutral\",\n  \"confidence\": 0.25,\n  \"magnitude_pct\": 0.0,\n  \"magnitude_std\": 0.05,\n  \"horizon_days\": 14,\n  \"reasoning\": \"The forecast is neutral due to conflicting and low-confidence signals. The Cluster Digest indicates mixed, low-confidence data with only 2 of 14 models active (patchtst flat at 0.34, timesfm down at 0.29), providing no strong directional consensus. The Risk State is highly degraded: realized_vol is NaN, max_drawdown is 999.0 (indicating a data anomaly or extreme outlier), and drawdown is active, while momentum is near zero. The Personality features show moderate correlation to the S&P 500 (0.55) but a high shock clustering score (15.0), suggesting the asset is prone to erratic moves during stress. Given the active drawdown, data anomalies in volatility, and the absence of a clear momentum or mean-reversion signal, no actionable long or short bias can be established.\"\n}"
+          }
+        }
+      ],
+      "created": 1790014384,
+      "model": "/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "system_fingerprint": "b1-ce8caa6",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 244,
+        "prompt_tokens": 462,
+        "total_tokens": 706,
+        "prompt_tokens_details": {
+          "cached_tokens": 186
+        }
+      },
+      "id": "chatcmpl-OaDDs8hU0zGVEv1koySDWcl0T0j7opvj",
+      "timings": {
+        "cache_n": 186,
+        "prompt_n": 276,
+        "prompt_ms": 311.9,
+        "prompt_per_token_ms": 1.1300724637681159,
+        "prompt_per_second": 884.8990060916962,
+        "predicted_n": 244,
+        "predicted_ms": 4526.391,
+        "predicted_per_token_ms": 18.627123456790123,
+        "predicted_per_second": 53.68515446411943
+      }
+    },
+    "elapsed_sec": 5.0837414264678955,
+    "prompt": "Generate a forecast for AAPL.\n\n=== Ticker Summary (14 of 28 angles, run run_20260921_0300) ===\nMixed signals across momentum and mean-reversion angles this cycle. No strong directional consensus.\n\n=== Cluster Digest ===\n  Cluster B: patchtst is flat (confidence 0.34), timesfm leans down (confidence 0.29) -- mixed, low-confidence signals, 2 of 14 models with data.\n\n=== Angle Digest ===\n  patchtst.direction: flat\n  patchtst.confidence: 0.34\n  timesfm.direction: down\n  timesfm.confidence: 0.29\n\n=== Personality Features ===\n  shock_clustering_score: 15.0\n  regime_tag: \n  correlation_to_spy_20d: 0.55\n=== Risk State ===\n  realized_vol_30d: NaN\n  atr_pct: -0.5\n  max_drawdown_pct: 999.0\n  drawdown_active: True\n  momentum_20d_pct: 0.01\n  sharpe_recent_20d: 0.4"
+  },
+  "trial-05": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "{\n  \"direction\": \"long\",\n  \"confidence\": 0.52,\n  \"magnitude_pct\": 0.025,\n  \"magnitude_std\": 0.018,\n  \"horizon_days\": 5,\n  \"reasoning\": \"The system is in a cold_start state with no live trade calibration, so the forecast relies heavily on theoretical evidence and the provided ticker summary. The summary indicates a constructive setup with positive momentum and trend angles, supported by improved sentiment. The Cluster Digest shows a unified bullish signal from both patchtst and timesfm models (2 of 2 leaning up), though confidence is moderate (~0.55-0.58). The Angle Digest confirms these directions. Personality features show a 'normal' regime with low shock clustering (0.25), suggesting stability rather than a sudden regime shift. Risk state metrics are benign: realized volatility is moderate (0.19), max drawdown is minimal (-0.02), and momentum is slightly positive (0.03). Given the cold_start constraint, the confidence is dampened from the raw model signals to account for lack of live validation, resulting in a moderate long bias with a small expected move over a short horizon.\"\n}"
+          }
+        }
+      ],
+      "created": 1790014389,
+      "model": "/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "system_fingerprint": "b1-ce8caa6",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 264,
+        "prompt_tokens": 579,
+        "total_tokens": 843,
+        "prompt_tokens_details": {
+          "cached_tokens": 186
+        }
+      },
+      "id": "chatcmpl-W3peMrzga3uZDzFEJcz4kkMS019ZVRPc",
+      "timings": {
+        "cache_n": 186,
+        "prompt_n": 393,
+        "prompt_ms": 253.084,
+        "prompt_per_token_ms": 0.6439796437659033,
+        "prompt_per_second": 1552.8441149973921,
+        "predicted_n": 264,
+        "predicted_ms": 4702.864,
+        "predicted_per_token_ms": 17.88161216730038,
+        "predicted_per_second": 55.92336924903634
+      }
+    },
+    "elapsed_sec": 5.191239595413208,
+    "prompt": "Generate a forecast for AAPL.\n\n=== System Maturity ===\n  tier: cold_start (real live trades: 0, paper-trading days: 3, live directional accuracy: 0.0, regimes seen live: none)\n  Weight backtest/theoretical evidence more heavily at cold_start/paper_only; weight live calibration more heavily at mature.\n\n=== Ticker Summary (16 of 28 angles, run run_20260921_0300) ===\nConstructive setup: momentum and trend angles both lean positive, sentiment has improved over the past week, no major red flags in the mean-reversion angles.\n\n=== Cluster Digest ===\n  Cluster B: patchtst leans up (confidence 0.58), timesfm leans up (confidence 0.55) -- 2 of 2 models with data lean up.\n  Cluster E: shock_personality regime=normal.\n\n=== Angle Digest ===\n  patchtst.direction: up\n  patchtst.confidence: 0.58\n  timesfm.direction: up\n  timesfm.confidence: 0.55\n  finbert.sentiment_score: 0.4\n  shock_personality.regime: normal\n\n=== Personality Features ===\n  shock_clustering_score: 0.25\n  regime_tag: normal\n  correlation_to_spy_20d: 0.62\n=== Risk State ===\n  realized_vol_30d: 0.19\n  atr_pct: 0.015\n  max_drawdown_pct: -0.02\n  drawdown_active: False\n  momentum_20d_pct: 0.03\n  sharpe_recent_20d: 0.45"
+  }
+}

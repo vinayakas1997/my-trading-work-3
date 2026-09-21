@@ -96,9 +96,15 @@ def _json_safe(value: Any) -> Any:
 
 
 @router.get("/angle/{angle_name}/{ticker}")
-def get_angle(angle_name: str, ticker: str):
+def get_angle(angle_name: str, ticker: str, granularity: str = Query("1D")):
+    """`granularity` defaults to "1D" -- every existing caller that omits
+    it keeps today's exact behavior unchanged. Previously hardcoded to
+    AngleStorage.read()'s own default with no way to override it at all,
+    even though the storage layer has always supported per-granularity
+    reads -- this was the second of two hardcoded-to-1D spots
+    GetAllAnglesTool (vinu-agent) hits, see that tool's own docstring."""
     svc = _get_svc()
-    df = svc.storage.read(ticker.upper(), angle_name)
+    df = svc.storage.read(ticker.upper(), angle_name, granularity=granularity)
     records = df.to_dict("records") if not df.empty else []
     records = [{k: _json_safe(v) for k, v in rec.items()} for rec in records]
     return {

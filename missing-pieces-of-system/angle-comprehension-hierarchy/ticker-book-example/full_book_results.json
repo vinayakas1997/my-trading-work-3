@@ -1,0 +1,82 @@
+{
+  "clean": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Out of the 28 requested angles, **27** have real data across multiple timeframes. Only `regime_analysis` and `trend_lifecycle` provide data extending into weekly and monthly timeframes, while the remaining angles cover 1min through 1D. No angles reported an error or zero row count.\n\nHere is the synthesis of the data:\n\n**A -- Classical statistical forecasts:** The ARIMA and Exponential Smoothing models show a consistent upward drift across timeframes, with ARIMA forecasts rising from 187.44 (1min) to 189.2 (1D) and Exponential Smoothing trending from 189.85 (1min) to 191.5 (1D), indicating a strengthening bullish bias as the horizon extends.\n\n**B -- Deep-learning / foundation-model forecasts:** There is a clear consensus among the 14 models with directional data that the market is trending up, with 10 of 14 models (chronos, dlinear, itransformer, lpatchtst, lstm, patchtst, tft, timer_timerxl, timesfm, tips_regime_aware_transformer) showing an \"up\" direction on the 1D timeframe, though confidence levels remain moderate (0.18\u20130.66).\n\n**C -- Volatility & drawdown risk:** The GARCH model indicates persistently low volatility (0.021\u20130.024) with high persistence (0.95), while the drawdown analysis shows negligible current drawdown (-0.03%) but a historical maximum of -0.18%, suggesting the asset is currently in a low-risk, stable phase.\n\n**D -- Regime & trend structure:** The regime analysis confirms a bullish state with bull probability increasing from 0.43 (1min) to 0.63 (1M), and the trend lifecycle consistently identifies the market as in an \"uptrend\" stage with no reversal signals across all timeframes, including weekly and monthly horizons.\n\n**E -- Shock / personality behavior:** Shock clustering reveals AAPL is currently co-movements with MSFT and GOOGL at a 0.35 rate, while personality metrics show a stable gap-fill rate of 0.6 and high volatility persistence (0.88\u20130.91), indicating a resilient market structure.\n\n**F -- Cross-asset & causality:** Peer relative strength shows AAPL outperforming MSFT by 0.023 over 20 days across all timeframes, and news price causality tests show statistically significant Granger causality (p=0.04) with a 0.38 correlation, confirming news drives price movements.\n\n**G -- Validation & attribution:** Backtesting metrics are identical across all timeframes (Sharpe 1.15, Win Rate 0.54), and PnL attribution shows a 0.58 win rate with 19 trades, suggesting the strategy's performance is consistent regardless of the timeframe analyzed.\n\n**Anomalies and Data Quality Notes:**\n*   **Consistency Check:** The `backtesting_44_metrics` and `pnl_attribution` angles show identical values across every single timeframe (1min to 6M). This is highly unusual for backtesting data, which typically degrades or changes as the lookback window expands. It suggests these angles may be reporting a static snapshot or a simplified metric rather than dynamic historical performance.\n*   **Confidence Levels:** Several deep learning models (e.g., `lstm`, `tft`, `tips_regime_aware_transformer`) report very low confidence scores (0.18\u20130.33) even on the 1D timeframe, which contrasts with the strong directional consensus (\"up\") from other models. This divergence suggests the models are predicting the *direction* correctly but are uncertain about the *magnitude* or timing.\n*   **Missing Data:** The `regime_analysis` and `trend_lifecycle` angles are the only ones providing 1W and 1M data, which is valuable for long-term context but means the other 26 angles lack this specific long-term horizon.\n\nBefore trusting this synthesis, I would check:\n1.  The source code or documentation for `backtesting_44_metrics` and `pnl_attribution` to understand why the metrics are static across timeframes; this could indicate a bug or a specific \"snapshot\" mode rather than rolling backtests.\n2.  The underlying price data for AAPL to verify if the \"up\" trend is driven by a recent breakout or a long-term accumulation phase, given the low confidence scores in some deep learning models.\n3.  Whether the `shock_clustering` data is updated in real-time or is a delayed aggregate, as the 0.35 co-shock rate with MSFT/GOOGL is a significant correlation metric to validate against current market news.\n\n```json\n{\n  \"cluster_digest\": {\n    \"A\": \"ARIMA and Exponential Smoothing models show a consistent upward drift across timeframes, with ARIMA forecasts rising from 187.44 (1min) to 189.2 (1D) and Exponential Smoothing trending from 189.85 (1min) to 191.5 (1D), indicating a strengthening bullish bias as the horizon extends.\",\n    \"B\": \"There is a clear consensus among the 14 models with directional data that the market is trending up, with 10 of 14 models showing an 'up' direction on the 1D timeframe, though confidence levels remain moderate (0.18\u20130.66).\",\n    \"C\": \"The GARCH model indicates persistently low volatility (0.021\u20130.024) with high persistence (0.95), while the drawdown analysis shows negligible current drawdown (-0.03%) but a historical maximum of -0.18%, suggesting the asset is currently in a low-risk, stable phase.\",\n    \"D\": \"The regime analysis confirms a bullish state with bull probability increasing from 0.43 (1min) to 0.63 (1M), and the trend lifecycle consistently identifies the market as in an 'uptrend' stage with no reversal signals across all timeframes, including weekly and monthly horizons.\",\n    \"E\": \"Shock clustering reveals AAPL is currently co-movements with MSFT and GOOGL at a 0.35 rate, while personality metrics show a stable gap-fill rate of 0.6 and high volatility persistence (0.88\u20130.91), indicating a resilient market structure.\",\n    \"F\": \"Peer relative strength shows AAPL outperforming MSFT by 0.023 over 20 days across all timeframes, and news price causality tests show statistically significant Granger causality (p=0.04) with a 0.38 correlation, confirming news drives price movements.\",\n    \"G\": \"Backtesting metrics are identical across all timeframes (Sharpe 1.15, Win Rate 0.54), and PnL attribution shows a 0.58 win rate with 19 trades, suggesting the strategy's performance is consistent regardless of the timeframe analyzed.\"\n  },\n  \"anomalies_found\": [\n    \"backtesting_44_metrics and pnl_attribution show identical values across all timeframes (1min to 6M), which is atypical for dynamic backtesting data and may indicate a static snapshot or simplified metric.\",\n    \"Several deep learning models report low confidence scores (0.18\u20130.33) despite a strong directional consensus ('up'), suggesting uncertainty in magnitude or timing.\",\n    \"Only regime_analysis and trend_lifecycle provide data for 1W and 1M timeframes; all other angles lack this long-term horizon.\"\n  ]\n}\n```"
+          }
+        }
+      ],
+      "created": 1790006012,
+      "model": "/models/Qwen3.5-4B-Q4_K_M.gguf",
+      "system_fingerprint": "b1-ce8caa6",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 1702,
+        "prompt_tokens": 4910,
+        "total_tokens": 6612,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "id": "chatcmpl-jo0N3sOAs1FkuweESM1KDFhzGY7sSYnk",
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 4910,
+        "prompt_ms": 1547.728,
+        "prompt_per_token_ms": 0.3152195519348269,
+        "prompt_per_second": 3172.39204821519,
+        "predicted_n": 1702,
+        "predicted_ms": 20140.947,
+        "predicted_per_token_ms": 11.840650793650793,
+        "predicted_per_second": 84.45481734299783
+      }
+    },
+    "elapsed_sec": 22.006391286849976,
+    "prompt_chars": 11034
+  },
+  "uneven": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Out of the 28 angles provided, **27** have real data at one or more timeframes. Only `trend_session_structure` returned `row_count=0` and was excluded from the synthesis.\n\nHere is the cluster synthesis:\n\n**A -- Classical statistical forecasts:** The ARIMA and Exponential Smoothing models show a consistent upward bias across timeframes, with ARIMA forecasts ranging from 171.4 (daily) to 188.85 (4H) and Exponential Smoothing trending from 189.85 (1min) to 191.5 (daily), though the ARIMA daily forecast is flagged as 3 days stale.\n\n**B -- Deep-learning / foundation-model forecasts:** A strong consensus of **11 out of 14 models** with data (Chronos, DLinear, iTransformer, Kalman Filters, LPatchTST, LSTM, PatchTST, TFT, Timer TimerXL, TimesFM, and Tips Regime Aware Transformer) lean up or flat-to-up, with confidence increasing from 0.18\u20130.27 at 1min to 0.61\u20130.66 at daily; however, Kronos failed to load due to CUDA OOM, and Lag Llama/Moirai/Moment relied on fallback proxies.\n\n**C -- Volatility & drawdown risk:** The GARCH model shows a sharp anomaly where the 1-minute forecast volatility is `NaN` while all other timeframes report valid values (~0.02), whereas the Drawdown Deep Dive angle shows consistent, low drawdowns (-0.03% current, -0.18% max) across all timeframes.\n\n**D -- Regime & trend structure:** Regime analysis and Trend Lifecycle angles are highly consistent, identifying a \"bull\" regime and \"uptrend\" stage across all timeframes (1min to 1M) with increasing bull probabilities and similarity scores, indicating a stable upward trend structure.\n\n**E -- Shock / personality behavior:** Shock clustering and personality angles are uniform across timeframes, identifying MSFT and GOOGL as co-shock members with a 0.35 co-shock rate, and showing stable gap fill rates (0.6) and volatility persistence (~0.9) regardless of timeframe.\n\n**F -- Cross-asset & causality:** Peer relative strength consistently shows AAPL outperforming MSFT by 0.023 over 20 days across all timeframes, and news price causality maintains a significant Granger p-value of 0.04 and Pearson correlation of 0.38 across all timeframes.\n\n**G -- Validation & attribution:** Backtesting metrics and PnL attribution are identical across all timeframes, reporting a Sharpe ratio of 1.15, win rate of 0.58, and 19 trades, suggesting a static backtest environment rather than dynamic real-time validation.\n\n**Anomalies and Data Quality Notes:**\n1.  **GARCH NaN:** The `garch.1min` angle contains a `NaN` value for `forecast_volatility`, which is malformed compared to its other timeframes; this was flagged as an error rather than ignored.\n2.  **Stale Data:** The `arima.1D` angle is explicitly marked as \"3 days stale,\" which contradicts the real-time nature of the other angles and reduces its reliability for current price action.\n3.  **Missing Data:** `trend_session_structure` had `row_count=0` and was excluded from the analysis.\n4.  **Model Failures:** `kronos.1D` reported a \"CUDA OOM\" error, and several deep learning models (Lag Llama, Moirai, Moment) used \"fallback_proxy\" backends, indicating potential infrastructure issues or data quality limitations for those specific models.\n\n**Next Steps Before Trusting:**\n*   Investigate the source of the `NaN` in `garch.1min` to determine if it is a data ingestion bug or a genuine market volatility spike.\n*   Verify the recency of the `arima.1D` data given the 3-day staleness warning.\n*   Re-run the `kronos` model or check GPU availability to resolve the CUDA OOM error.\n*   Cross-validate the identical backtesting metrics (Sharpe 1.15, Win Rate 0.58) across all timeframes to ensure they are not artifacts of a static historical window rather than live performance.\n\n```json\n{\n  \"cluster_digest\": {\n    \"A\": \"ARIMA and Exponential Smoothing show consistent upward bias (171.4\u2013191.5), though ARIMA daily data is 3 days stale.\",\n    \"B\": \"11 of 14 models with data lean up or flat-to-up; Kronos failed (CUDA OOM), others used fallback proxies.\",\n    \"C\": \"GARCH shows a malformed NaN at 1min volatility, while drawdowns remain low and consistent across timeframes.\",\n    \"D\": \"Regime and trend angles are perfectly aligned in 'bull'/'uptrend' across all timeframes with increasing confidence.\",\n    \"E\": \"Shock clustering and personality metrics are uniform across timeframes, identifying MSFT/GOOGL as co-shocks.\",\n    \"F\": \"Cross-asset causality shows consistent positive correlation (0.38) and AAPL outperformance vs MSFT (0.023) across all timeframes.\",\n    \"G\": \"Backtesting and PnL attribution metrics are static and identical across all timeframes (Sharpe 1.15, Win Rate 0.58).\"\n  },\n  \"anomalies_found\": [\n    \"garch.1min: forecast_volatility is NaN (malformed compared to other timeframes)\",\n    \"arima.1D: flagged as 3 days stale\",\n    \"trend_session_structure: row_count=0 (no data)\",\n    \"kronos.1D: error=model checkpoint load failed: CUDA OOM\",\n    \"Multiple deep learning models (Lag Llama, Moirai, Moment) using fallback_proxy backends\"\n  ]\n}\n```"
+          }
+        }
+      ],
+      "created": 1790006029,
+      "model": "/models/Qwen3.5-4B-Q4_K_M.gguf",
+      "system_fingerprint": "b1-ce8caa6",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 1335,
+        "prompt_tokens": 4314,
+        "total_tokens": 5649,
+        "prompt_tokens_details": {
+          "cached_tokens": 577
+        }
+      },
+      "id": "chatcmpl-NrAHfuSl8edjOqZjgKtR75ARxBAJdyre",
+      "timings": {
+        "cache_n": 577,
+        "prompt_n": 3737,
+        "prompt_ms": 1083.288,
+        "prompt_per_token_ms": 0.28988172330746587,
+        "prompt_per_second": 3449.682817496363,
+        "predicted_n": 1335,
+        "predicted_ms": 15536.811,
+        "predicted_per_token_ms": 11.646784857571214,
+        "predicted_per_second": 85.86060550006047
+      }
+    },
+    "elapsed_sec": 17.05566143989563,
+    "prompt_chars": 9411
+  }
+}

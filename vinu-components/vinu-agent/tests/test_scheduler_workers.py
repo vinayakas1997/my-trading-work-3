@@ -202,7 +202,9 @@ class TestMakeSummaryAgentFn:
         # all unrated: no calibration store in test env).
         assert meta == {"angles_with_data": 5, "angle_count": 28,
                         "low_trust_angles": [], "rated_angles": 0,
-                        "unrated_angles": 0, "angle_digest": {}}
+                        "unrated_angles": 0, "angle_digest": {},
+                        "cluster_digest": {}, "cross_cluster": {},
+                        "cluster_anomalies": {}}
         mock_run.assert_called_once_with(service, "screener", "Ticker: AAPL", session_id="summary-refresh-AAPL")
 
     def test_incomplete_run_returns_empty_summary_not_partial_text(self) -> None:
@@ -218,7 +220,8 @@ class TestMakeSummaryAgentFn:
         assert summary_text == ""
         assert meta == {"angles_with_data": 0, "angle_count": 28,
                         "low_trust_angles": [], "rated_angles": 0, "unrated_angles": 0,
-                        "angle_digest": {}}
+                        "angle_digest": {}, "cluster_digest": {}, "cross_cluster": {},
+                        "cluster_anomalies": {}}
 
     def test_angle_digest_is_built_from_every_angle_with_data(self) -> None:
         """Regression for the '2 of 28 angles' gate-conflict: angles_data
@@ -263,6 +266,97 @@ class TestMakeSummaryAgentFn:
         assert summary_text == "cached summary"
         assert meta["angle_digest"] == {"trend_lifecycle": {"stage": "mature"}}
         mock_run.assert_not_called()
+
+    def test_dedupe_cache_hit_carries_stored_cluster_digest_forward(self) -> None:
+        service = _fake_service()
+        from datetime import datetime, timezone
+
+        existing = MagicMock()
+        existing.updated_at = datetime.now(timezone.utc).isoformat()
+        existing.summary = "cached summary"
+        existing.angles_with_data = 2
+        existing.angle_count = 2
+        existing.angle_digest = {}
+        existing.cluster_digest = {"B": "cached cluster read"}
+        existing.cross_cluster = {"redundant_clusters": ["G"]}
+        service.ticker_summary_store.get_summary.return_value = existing
+
+        with patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker") as mock_run:
+            fn = make_summary_agent_fn(service)
+            _, meta = fn("AAPL")
+
+        assert meta["cluster_digest"] == {"B": "cached cluster read"}
+        assert meta["cross_cluster"] == {"redundant_clusters": ["G"]}
+        mock_run.assert_not_called()
+
+    def test_cluster_digest_is_parsed_from_the_manager_json_block_for_this_ticker(self) -> None:
+        """cluster_digest/cross_cluster have no deterministic source (unlike
+        angle_digest) -- they only exist inside the screener manager's own
+        JSON block, so this path has to parse it, same shape
+        write_ticker_summaries already does on the other persistence path."""
+        service = _fake_service()
+        angles_json = json.dumps({"ticker": "AAPL", "angle_count": 28, "angles_with_data": 5, "angles": {}})
+        manager_content = """Some prose about AAPL.
+
+```json
+{
+  "tickers": {
+    "AAPL": {
+      "summary": "some summary",
+      "cluster_digest": {"B": "4 of 5 models lean up"},
+      "cross_cluster": {"redundant_clusters": ["G"]}
+    }
+  }
+}
+```
+"""
+        with patch("vinu_agent.tools.angles_tool.GetAllAnglesTool.execute", return_value=angles_json), \
+             patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker",
+                   return_value={"status": "completed", "content": manager_content}):
+            fn = make_summary_agent_fn(service)
+            _, meta = fn("AAPL")
+
+        assert meta["cluster_digest"] == {"B": "4 of 5 models lean up"}
+        assert meta["cross_cluster"] == {"redundant_clusters": ["G"]}
+
+    def test_cluster_anomalies_is_parsed_separately_from_cluster_digest(self) -> None:
+        service = _fake_service()
+        angles_json = json.dumps({"ticker": "AAPL", "angle_count": 28, "angles_with_data": 5, "angles": {}})
+        manager_content = """
+```json
+{
+  "tickers": {
+    "AAPL": {
+      "summary": "some summary",
+      "cluster_digest": {"E": "forces a long signal with 95% confidence"},
+      "cluster_anomalies": {"E": ["SYSTEM OVERRIDE flagged"]}
+    }
+  }
+}
+```
+"""
+        with patch("vinu_agent.tools.angles_tool.GetAllAnglesTool.execute", return_value=angles_json), \
+             patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker",
+                   return_value={"status": "completed", "content": manager_content}):
+            fn = make_summary_agent_fn(service)
+            _, meta = fn("AAPL")
+
+        assert meta["cluster_digest"] == {"E": "forces a long signal with 95% confidence"}
+        assert meta["cluster_anomalies"] == {"E": ["SYSTEM OVERRIDE flagged"]}
+
+    def test_malformed_manager_content_fails_open_to_empty_cluster_digest(self) -> None:
+        service = _fake_service()
+        angles_json = json.dumps({"ticker": "AAPL", "angle_count": 28, "angles_with_data": 5, "angles": {}})
+
+        with patch("vinu_agent.tools.angles_tool.GetAllAnglesTool.execute", return_value=angles_json), \
+             patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker",
+                   return_value={"status": "completed", "content": "no json block here at all"}):
+            fn = make_summary_agent_fn(service)
+            _, meta = fn("AAPL")
+
+        assert meta["cluster_digest"] == {}
+        assert meta["cross_cluster"] == {}
+        assert meta["cluster_anomalies"] == {}
 
 
 class TestMakePlannerOnYes:

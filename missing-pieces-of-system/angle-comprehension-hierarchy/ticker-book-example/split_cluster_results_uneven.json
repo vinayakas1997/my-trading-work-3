@@ -1,0 +1,275 @@
+{
+  "A": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "1. All three real angles in Cluster A (arima, exponential_smoothing, kalman_filters) have real data across multiple timeframes.\n2. Cross-timeframe pattern: All three angles show a consistent upward bias in forecasts as the timeframe increases from 1min to 1D, with arima and exponential_smoothing explicitly noting trend shifts or higher AIC values at longer horizons.\n3. Anomalies: arima.1D contains a stale note (3 days old) and a significantly divergent forecast_price (171.4) compared to shorter-term forecasts (~188-189), suggesting potential model drift or data gap.\n\n```json\n{\n  \"cluster\": \"A\",\n  \"angles_with_data\": 3,\n  \"synthesis\": \"All three real angles (arima, exponential_smoothing, kalman_filters) report data across multiple timeframes, showing a consistent upward forecast bias that strengthens at longer horizons.\",\n  \"anomalies\": [\n    \"arima.1D forecast_price (171.4) is significantly lower than shorter-term forecasts (~188-189) and is flagged as 3 days stale.\"\n  ]\n}\n```"
+          }
+        }
+      ],
+      "created": 1790010471,
+      "model": "/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "system_fingerprint": "b1-ce8caa6",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 262,
+        "prompt_tokens": 970,
+        "total_tokens": 1232,
+        "prompt_tokens_details": {
+          "cached_tokens": 414
+        }
+      },
+      "id": "chatcmpl-pRX5m7obFahjmYML1us4MU3aOAENrW1o",
+      "timings": {
+        "cache_n": 414,
+        "prompt_n": 556,
+        "prompt_ms": 286.564,
+        "prompt_per_token_ms": 0.5154028776978418,
+        "prompt_per_second": 1940.2297567035635,
+        "predicted_n": 262,
+        "predicted_ms": 4697.701,
+        "predicted_per_token_ms": 17.998854406130267,
+        "predicted_per_second": 55.55909156415021
+      }
+    },
+    "elapsed_sec": 5.210959196090698
+  },
+  "B": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "(1) All 14 real Cluster B angles have real data at one or more timeframes (excluding kronos which has an error).\n(2) A consistent cross-timeframe pattern emerges where short-term models (1min\u201315min) predominantly signal \"flat\" or low-confidence moves, while medium-to-longer horizons (1H\u20131D) across nearly all angles converge on a \"up\" direction with rising confidence.\n(3) Anomalies: kronos.1D reports a \"model checkpoint load failed: CUDA OOM\" error; tips_regime_aware_transformer shows inconsistent regime labels (mean_reversion at 1min/5min/15min vs momentum at 1H/4H/1D).\n\n```json\n{\n  \"cluster\": \"B\",\n  \"angles_with_data\": 14,\n  \"synthesis\": \"Short-term Cluster B models mostly signal flatness, while 1H to 1D horizons show a strong consensus for an upward direction with increasing confidence.\",\n  \"anomalies\": [\n    \"kronos.1D has an error: model checkpoint load failed: CUDA OOM\",\n    \"tips_regime_aware_transformer regime labels shift from mean_reversion (1min-15min) to momentum (1H-1D)\"\n  ]\n}\n```"
+          }
+        }
+      ],
+      "created": 1790010478,
+      "model": "/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "system_fingerprint": "b1-ce8caa6",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 292,
+        "prompt_tokens": 1714,
+        "total_tokens": 2006,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "id": "chatcmpl-qsCoteIuY2aqDHhH2KzOYlsFLHWWPZHV",
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 1714,
+        "prompt_ms": 741.81,
+        "prompt_per_token_ms": 0.4327946324387398,
+        "prompt_per_second": 2310.5646998557586,
+        "predicted_n": 292,
+        "predicted_ms": 5331.786,
+        "predicted_per_token_ms": 18.322288659793816,
+        "predicted_per_second": 54.578334539308216
+      }
+    },
+    "elapsed_sec": 6.352457284927368
+  },
+  "C": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "1. Only 1 of Cluster C's 2 real angles (garch and drawdown_deep_dive) has real data at any timeframe.\n2. Volatility forecasts are stable across timeframes (0.021\u20130.024) while drawdown metrics remain constant, indicating a lack of cross-timeframe variation in the provided data.\n3. Anomalies: garch.1min shows forecast_volatility=NaN, which is malformed and should be flagged as missing data.\n\n```json\n{\n  \"cluster\": \"C\",\n  \"angles_with_data\": 1,\n  \"synthesis\": \"Only drawdown_deep_dive provides valid real-time metrics across all timeframes, while garch data is incomplete at the 1-minute interval.\",\n  \"anomalies\": [\n    \"garch.1min: forecast_volatility is NaN (malformed/missing data)\"\n  ]\n}\n```"
+          }
+        }
+      ],
+      "created": 1790010482,
+      "model": "/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "system_fingerprint": "b1-ce8caa6",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 200,
+        "prompt_tokens": 649,
+        "total_tokens": 849,
+        "prompt_tokens_details": {
+          "cached_tokens": 316
+        }
+      },
+      "id": "chatcmpl-q54HXKrtUqU1OrMT6G0Mtx2OBXvLEEFk",
+      "timings": {
+        "cache_n": 316,
+        "prompt_n": 333,
+        "prompt_ms": 193.915,
+        "prompt_per_token_ms": 0.5823273273273273,
+        "prompt_per_second": 1717.2472475053503,
+        "predicted_n": 200,
+        "predicted_ms": 3621.923,
+        "predicted_per_token_ms": 18.20061809045226,
+        "predicted_per_second": 54.94318901865115
+      }
+    },
+    "elapsed_sec": 4.074628114700317
+  },
+  "D": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Cluster D contains three real angles: regime_analysis, trend_lifecycle, and trend_session_structure. Only two of these angles have real data at any timeframe (regime_analysis and trend_lifecycle), while trend_session_structure has row_count=0.\n\nThe synthesis shows a consistent cross-timeframe pattern where both regime and trend lifecycle angles align on a \"bull\" regime and \"uptrend\" stage across all available timeframes from 1min up to 1M, with increasing confidence (bull_prob rising from 0.43 to 0.63; knn_similarity rising from 0.61 to 0.82).\n\nAnomalies: None found in the provided data; all values are within expected ranges and no malformed entries were detected.\n\n```json\n{\n  \"cluster\": \"D\",\n  \"angles_with_data\": 2,\n  \"synthesis\": \"Both regime_analysis and trend_lifecycle show aligned bullish signals across all timeframes from 1min to 1M, with increasing confidence metrics as the timeframe lengthens.\",\n  \"anomalies\": []\n}\n```"
+          }
+        }
+      ],
+      "created": 1790010486,
+      "model": "/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "system_fingerprint": "b1-ce8caa6",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 233,
+        "prompt_tokens": 750,
+        "total_tokens": 983,
+        "prompt_tokens_details": {
+          "cached_tokens": 317
+        }
+      },
+      "id": "chatcmpl-znF4JEG3AV16OhqKlHiLVvWCePXNiCy9",
+      "timings": {
+        "cache_n": 317,
+        "prompt_n": 433,
+        "prompt_ms": 242.678,
+        "prompt_per_token_ms": 0.5604572748267899,
+        "prompt_per_second": 1784.257328641245,
+        "predicted_n": 233,
+        "predicted_ms": 4131.181,
+        "predicted_per_token_ms": 17.806814655172413,
+        "predicted_per_second": 56.158275321270125
+      }
+    },
+    "elapsed_sec": 4.580420732498169
+  },
+  "E": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "1. **Data Availability**: Both real angles in Cluster E (`shock_clustering` and `shock_personality`) have real data across all provided timeframes (1min through 1D). Total angles with data: 2.\n\n2. **Synthesis**: Across all timeframes, the cluster shows a stable co-shock rate of 0.35 with AAPL's peers (MSFT, GOOGL) and consistent personality metrics (gap_fill_rate_mean=0.6, vol_persistence ranging 0.88\u20130.91), indicating no cross-timeframe divergence or degradation in signal quality.\n\n3. **Anomalies**: None found; all values are within plausible ranges and consistent across timeframes.\n\n```json\n{\n  \"cluster\": \"E\",\n  \"angles_with_data\": 2,\n  \"synthesis\": \"Both shock_clustering and shock_personality angles report consistent real data across all timeframes with stable metrics (co_shock_rate=0.35, gap_fill_rate_mean=0.6, vol_persistence 0.88-0.91) and no cross-timeframe divergence.\",\n  \"anomalies\": []\n}\n```"
+          }
+        }
+      ],
+      "created": 1790010491,
+      "model": "/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "system_fingerprint": "b1-ce8caa6",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 257,
+        "prompt_tokens": 667,
+        "total_tokens": 924,
+        "prompt_tokens_details": {
+          "cached_tokens": 663
+        }
+      },
+      "id": "chatcmpl-K4CLcD3VYjkqZhir6V3EtK9LQXepVMuM",
+      "timings": {
+        "cache_n": 663,
+        "prompt_n": 4,
+        "prompt_ms": 44.456,
+        "prompt_per_token_ms": 11.114,
+        "prompt_per_second": 89.97660608241857,
+        "predicted_n": 257,
+        "predicted_ms": 4634.817,
+        "predicted_per_token_ms": 18.10475390625,
+        "predicted_per_second": 55.23411172436797
+      }
+    },
+    "elapsed_sec": 4.842058897018433
+  },
+  "F": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "1. Both real angles in Cluster F (peer_relative_strength and news_price_causality) have data across all provided timeframes.\n2. A consistent cross-timeframe pattern exists where AAPL shows a 2.3% 20-day relative strength advantage over MSFT and a statistically significant Granger causality (p=0.04) with a 0.38 correlation to news.\n3. No anomalies found; all values are within reasonable ranges and consistent across timeframes.\n\n```json\n{\n  \"cluster\": \"F\",\n  \"angles_with_data\": 2,\n  \"synthesis\": \"Both peer_relative_strength and news_price_causality show consistent real data across all timeframes, indicating a stable 2.3% relative advantage over MSFT and significant news-driven price causality.\",\n  \"anomalies\": []\n}\n```"
+          }
+        }
+      ],
+      "created": 1790010495,
+      "model": "/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "system_fingerprint": "b1-ce8caa6",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 186,
+        "prompt_tokens": 666,
+        "total_tokens": 852,
+        "prompt_tokens_details": {
+          "cached_tokens": 662
+        }
+      },
+      "id": "chatcmpl-HofAiCvnB2OC8G0VoG5RsMKQfvAxJqWR",
+      "timings": {
+        "cache_n": 662,
+        "prompt_n": 4,
+        "prompt_ms": 48.152,
+        "prompt_per_token_ms": 12.038,
+        "prompt_per_second": 83.07027745472669,
+        "predicted_n": 186,
+        "predicted_ms": 3380.011,
+        "predicted_per_token_ms": 18.27032972972973,
+        "predicted_per_second": 54.733549683714045
+      }
+    },
+    "elapsed_sec": 3.6372783184051514
+  },
+  "G": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "1. Both real angles in Cluster G (`backtesting_44_metrics` and `pnl_attribution`) have real data across multiple timeframes.\n2. The cluster shows a consistent cross-timeframe pattern where `backtesting_44_metrics` reports identical Sharpe (1.15) and win rate (0.54) across all available frequencies, while `pnl_attribution` reports a slightly higher win rate (0.58) with a fixed trade count (19) across shorter timeframes (1min\u20131D).\n3. Anomalies: None detected; all values are numeric and within plausible ranges, and no malformed or stale data (e.g., NaN, errors, row_count=0) was observed.\n\n```json\n{\n  \"cluster\": \"G\",\n  \"angles_with_data\": 2,\n  \"synthesis\": \"Both angles in Cluster G have real data across multiple timeframes, showing consistent metrics with backtesting_44_metrics reporting identical Sharpe (1.15) and win_rate (0.54) across all frequencies, while pnl_attribution reports a slightly higher win_rate (0.58) with a fixed trade_count (19) on shorter timeframes.\",\n  \"anomalies\": []\n}\n```"
+          }
+        }
+      ],
+      "created": 1790010500,
+      "model": "/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "system_fingerprint": "b1-ce8caa6",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 275,
+        "prompt_tokens": 706,
+        "total_tokens": 981,
+        "prompt_tokens_details": {
+          "cached_tokens": 702
+        }
+      },
+      "id": "chatcmpl-UvVQbgTfzsvvXGZwMmhxzSUItll5q1xn",
+      "timings": {
+        "cache_n": 702,
+        "prompt_n": 4,
+        "prompt_ms": 46.218,
+        "prompt_per_token_ms": 11.5545,
+        "prompt_per_second": 86.54636721623609,
+        "predicted_n": 275,
+        "predicted_ms": 4978.237,
+        "predicted_per_token_ms": 18.168748175182483,
+        "predicted_per_second": 55.039565211539745
+      }
+    },
+    "elapsed_sec": 5.249917030334473
+  }
+}
