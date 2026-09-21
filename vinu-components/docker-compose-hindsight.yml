@@ -1,0 +1,155 @@
+# Hindsight (vectorize-io/hindsight) memory harness -- standalone, ships
+# separately from docker-compose.yml. Nothing in the main app tier reads
+# from this yet (the step-8 "brain" that would consume it is a deliberate,
+# separate pass -- see missing-pieces-of-system/maturity-agentic-system/
+# 00-maturity-agentic-system-explanation.md and personal-important/
+# 01-discussions-to-reach-conclusion/hindsight-memory-harness-explanation.md).
+# This file exists to stand the infrastructure up first and verify it works
+# end-to-end before anything depends on it.
+#
+# Real specifics below (image names, env var names, required Postgres
+# extension) verified against vectorize-io/hindsight's own
+# docker/docker-compose/external-pg/docker-compose.yaml and
+# hindsight.vectorize.io/developer/configuration -- not guessed.
+#
+# Run standalone:
+#   docker compose -f docker-compose-hindsight.yml up -d
+# Or alongside the main stack (once something actually consumes it):
+#   docker compose -f docker-compose.yml -f docker-compose-hindsight.yml up -d
+#
+# Before first run:
+#   1. Copy .env-example's HINDSIGHT_* section into .env and fill in
+#      HINDSIGHT_DB_PASSWORD (any strong random string).
+#   2. Download a Qwen3.5-4B-Q4_K_M.gguf file yourself (this repo does not
+#      and should not commit model weights) and place it at
+#      ./hindsight-llm/models/Qwen3.5-4B-Q4_K_M.gguf -- or point
+#      HINDSIGHT_LLM_MODEL_FILE at whatever filename you actually used.
+
+services:
+  # ---------------------------------------------------------------------
+  # Local LLM server for Hindsight's own retain/reflect extraction calls --
+  # NOT the same as the existing native-host qwen3.6-35B server other
+  # services already point VINU_LLM_BASE_URL at (see .env-example) -- that
+  # one runs outside Docker on the host at :8009. This is a separate,
+  # smaller, containerized model dedicated to Hindsight, per explicit
+  # 2026-09-21 direction to run it in Docker this time.
+  # ---------------------------------------------------------------------
+  hindsight-llm:
+    build:
+      context: ./hindsight-llm
+    container_name: hindsight-llm
+    environment:
+      LLAMA_MODEL_FILE: ${HINDSIGHT_LLM_MODEL_FILE:-Qwen3.5-4B-Q4_K_M.gguf}
+      LLAMA_CTX_SIZE: ${HINDSIGHT_LLM_CTX_SIZE:-32768}
+      LLAMA_N_GPU_LAYERS: ${HINDSIGHT_LLM_N_GPU_LAYERS:-999}
+    volumes:
+      - ./hindsight-llm/models:/models:ro
+    # Same nvidia device-reservation shape already used by
+    # initial-analysis-api / quant-core-api in docker-compose.yml -- set
+    # HINDSIGHT_LLM_N_GPU_LAYERS=0 and delete this `deploy:` block for a
+    # CPU-only run instead.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    ports:
+      # Exposed on the host, same host.docker.internal reachability
+      # pattern the existing native 35B server already uses at :8009 --
+      # lets the MAIN stack (docker-compose.yml, a separate compose
+      # project/network) point VINU_LLM_BASE_URL here too, for an
+      # apples-to-apples "can the small model actually handle this"
+      # comparison. Added 2026-09-21 on explicit request.
+      #
+      # Bound to all interfaces, NOT 127.0.0.1 -- confirmed by a real
+      # failure: a 127.0.0.1-only bind is invisible to other containers
+      # reaching it via host.docker.internal (that DNAT only accepts
+      # connections arriving over loopback, not the docker bridge
+      # host.docker.internal traffic actually arrives on), unlike every
+      # other API port in this repo which intentionally stays
+      # 127.0.0.1-only since nothing else needs to reach them this way.
+      - "8092:8080"
+    networks:
+      - hindsight-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # ---------------------------------------------------------------------
+  # Postgres + pgvector -- the one supported vector extension used here,
+  # per Hindsight's own docs. pg18 matches the upstream compose file's
+  # own default tag.
+  # ---------------------------------------------------------------------
+  hindsight-db:
+    image: pgvector/pgvector:pg18
+    container_name: hindsight-db
+    restart: always
+    environment:
+      POSTGRES_USER: hindsight
+      POSTGRES_PASSWORD: ${HINDSIGHT_DB_PASSWORD:?set HINDSIGHT_DB_PASSWORD in .env}
+      POSTGRES_DB: hindsight
+    volumes:
+      - ./data/hindsight/pg_data:/var/lib/postgresql/18/docker
+    networks:
+      - hindsight-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hindsight -d hindsight"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ---------------------------------------------------------------------
+  # Hindsight itself -- retain/recall/reflect over memory banks. Points at
+  # hindsight-llm above (not a real OpenAI key) via the same
+  # HINDSIGHT_API_LLM_BASE_URL override the official docs document for any
+  # OpenAI-compatible endpoint. HINDSIGHT_API_LLM_API_KEY is still a
+  # mandatory field per Hindsight's config, but its value is irrelevant
+  # here -- llama-server enforces no auth by default, so any placeholder
+  # string satisfies it.
+  # ---------------------------------------------------------------------
+  hindsight-app:
+    image: ghcr.io/vectorize-io/hindsight:${HINDSIGHT_VERSION:-latest}
+    container_name: hindsight-app
+    environment:
+      HINDSIGHT_API_DATABASE_URL: postgresql://hindsight:${HINDSIGHT_DB_PASSWORD}@hindsight-db:5432/hindsight
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: http://hindsight-llm:8080/v1
+      HINDSIGHT_API_LLM_MODEL: qwen3.5-4b-q4_k_m-local
+      HINDSIGHT_API_LLM_API_KEY: local-no-auth-required
+      # Docs list local/openai/onnx/tei as embedding-provider options;
+      # "local" (a bundled small embedding model, e.g. bge-small) avoids
+      # needing a second model server just for embeddings -- not
+      # independently verified against a real deployment yet, flagged
+      # rather than silently assumed correct if recall quality looks off.
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER: local
+    ports:
+      # NOT 8888/9999 -- an unrelated project's own Hindsight instance
+      # (`hindsight-hindsight-1`, ~/Vina/new-iot-chat-api/ingestion/
+      # hindsight) is already running on this host and already occupies
+      # those two host ports. Confirmed real collision 2026-09-21, not a
+      # hypothetical -- verified via `docker ps`/`docker inspect` before
+      # writing this. Container-internal ports are unchanged (8888/9999,
+      # Hindsight's own hardcoded defaults); only the host-side mapping
+      # moved, by explicit choice to keep this a fully separate instance
+      # rather than sharing the other project's deployment.
+      - "127.0.0.1:8889:8888"
+      - "127.0.0.1:9998:9999"
+    depends_on:
+      hindsight-db:
+        condition: service_healthy
+      hindsight-llm:
+        condition: service_healthy
+    networks:
+      - hindsight-net
+    restart: always
+
+networks:
+  hindsight-net:
+    driver: bridge

@@ -35,6 +35,7 @@ def scan_main(args: argparse.Namespace) -> None:
 
     import httpx
 
+    from vinu_infra.auth import internal_auth_headers
     from vinu_screener.audit.watch_history import WatchAuditStore
     from vinu_screener.rankers.churn import RankerChurnStore
     from vinu_screener.rankers.holdings_client import fetch_held_symbols
@@ -57,7 +58,10 @@ def scan_main(args: argparse.Namespace) -> None:
         DEFAULT_STOCK_API_URL,
     )
 
-    data_source = HttpStockDataSource(httpx.Client(), base_url=args.stock_api_url or DEFAULT_STOCK_API_URL)
+    data_source = HttpStockDataSource(
+        httpx.Client(headers=internal_auth_headers()),
+        base_url=args.stock_api_url or DEFAULT_STOCK_API_URL,
+    )
 
     rule_store = RuleStore(args.rule_db or DEFAULT_RULE_DB_PATH)
     audit_store = WatchAuditStore(args.audit_db or DEFAULT_AUDIT_DB_PATH)

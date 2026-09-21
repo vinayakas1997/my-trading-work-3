@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
@@ -65,6 +66,7 @@ class AgentLoop:
         max_context_tokens: Optional[int] = None,
         data_root: str = "",
         service_name: str = "vinu-agent",
+        tool_timeout: Optional[int] = None,
     ) -> None:
         self.registry = registry
         self.llm = llm
@@ -87,7 +89,23 @@ class AgentLoop:
         self._previous_summary: str = ""
         self._nudge_sent: bool = False
         self._compact_requested: bool = False
-        self.tool_timeout: int = 60
+        # Real gap found 2026-09-21: this previously had no constructor
+        # param or env override at all -- hardcoded to 60 regardless of
+        # LLMConfig.timeout/VINU_LLM_TIMEOUT (default 120) or
+        # SwarmConfig.default_timeout/VINU_SWARM_TIMEOUT (default 300),
+        # so a sub-agent delegation (team.py's sub_loop, which can make
+        # several LLM calls across its own iterations) could get killed by
+        # this loop-level timeout well before the LLM-level timeout budget
+        # it was actually configured with ever had a chance to matter --
+        # confirmed live against a local model slow enough to hit exactly
+        # this ceiling. Explicit constructor arg takes precedence; env var
+        # lets every call site (session/service.py, team.py x2,
+        # swarm/worker.py -- none of which share a single config object)
+        # pick this up without threading a new param through each one.
+        self.tool_timeout: int = (
+            tool_timeout if tool_timeout is not None
+            else int(os.environ.get("VINU_AGENT_TOOL_TIMEOUT", "60"))
+        )
         self._workflow_tracker: WorkflowTracker = WorkflowTracker()
         self._workflow_injected: bool = False
         self._ground_truth_system_msg: dict | None = None
@@ -397,8 +415,33 @@ class AgentLoop:
                 return {}
         return raw if isinstance(raw, dict) else {}
 
+    def _consolidate_system_messages(self, messages: List[Dict]) -> List[Dict]:
+        """Some chat templates require exactly one system-role message, at
+        index 0 -- confirmed live against qwen3.5-4B via a real, repeated
+        "System message must be at the beginning" Jinja error (llama.cpp's
+        server-side template enforcement), not a hypothetical. This
+        codebase's own context injection can produce several separate
+        system-role messages scattered through the array (the workflow
+        block inserted at index 1, the ground-truth/facts/freshness/
+        research-digest messages `_auto_compact` appends, the compacted-
+        summary itself, the 80%-iteration wrap-up nudge appended at the
+        very end) -- every one of those trips this template's check.
+        Merges every system-role message's content into one, at index 0,
+        in original relative order; every other message keeps its
+        position and role. Universally safe: concatenating system-level
+        context into a single message changes nothing semantically for
+        templates (including the previous qwen36-35B setup) that already
+        tolerated several separate ones."""
+        system_parts = [m.get("content", "") for m in messages if m.get("role") == "system"]
+        if len(system_parts) <= 1:
+            return messages
+        rest = [m for m in messages if m.get("role") != "system"]
+        merged = {"role": "system", "content": "\n\n".join(p for p in system_parts if p)}
+        return [merged, *rest]
+
     def _call_llm(self, messages: List[Dict]) -> Dict:
         tools_def = self.registry.get_definitions()
+        messages = self._consolidate_system_messages(messages)
         # qwen36-35B Jinja (chat:79) requires at least one user role; ensure it.
         if not any(m.get("role") == "user" for m in messages):
             messages = list(messages) + [{"role": "user", "content": "Continue analysis."}]

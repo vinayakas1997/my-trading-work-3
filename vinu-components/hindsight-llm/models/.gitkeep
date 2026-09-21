@@ -1,0 +1,6 @@
+Place your downloaded qwen3.5-4B-Q4_K_M.gguf (or whichever quant you're
+using) directly in this directory. GGUF files are gitignored here — this
+placeholder just keeps the directory itself present in a fresh clone.
+
+See docker-compose-hindsight.yml and .env-example's HINDSIGHT_LLM_* section
+for how this directory is mounted and which filename is expected by default.

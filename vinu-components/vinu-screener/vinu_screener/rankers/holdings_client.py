@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 
+from vinu_infra.auth import internal_auth_headers
+
 LOG = logging.getLogger(__name__)
 
 
@@ -21,7 +23,11 @@ def fetch_held_symbols(base_url: str) -> frozenset[str]:
     import httpx
 
     try:
-        resp = httpx.get(f"{base_url.rstrip('/')}/agent/broker/positions", timeout=15)
+        resp = httpx.get(
+            f"{base_url.rstrip('/')}/agent/broker/positions",
+            headers=internal_auth_headers(),
+            timeout=15,
+        )
         resp.raise_for_status()
         data = resp.json()
         positions = data if isinstance(data, list) else []

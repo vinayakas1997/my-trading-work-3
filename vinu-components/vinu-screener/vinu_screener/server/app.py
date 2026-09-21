@@ -22,7 +22,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from vinu_infra.auth import VINU_API_KEY
+from vinu_infra.auth import VINU_API_KEY, internal_auth_headers
 from vinu_infra.server import create_app as _create_app
 
 from ..audit.watch_history import WatchAuditStore
@@ -127,7 +127,9 @@ def create_app(
 ):
     store = rule_store or RuleStore(DEFAULT_RULE_DB_PATH)
     audit = audit_store or WatchAuditStore(DEFAULT_AUDIT_DB_PATH)
-    ds = data_source or HttpStockDataSource(httpx.Client(), base_url=DEFAULT_STOCK_API_URL)
+    ds = data_source or HttpStockDataSource(
+        httpx.Client(headers=internal_auth_headers()), base_url=DEFAULT_STOCK_API_URL
+    )
     library = FeatureLibrary()
     rankers = ranker_store or RankerStore(DEFAULT_RANKER_DB_PATH)
     ranker_snapshots = ranker_snapshot_store or RankedSnapshotStore(DEFAULT_RANKER_SNAPSHOT_DB_PATH)

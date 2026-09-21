@@ -1,6 +1,8 @@
 {
   "tickers": [
-    "AAPL"
+    "AAPL",
+    "MSFT",
+    "NVDA"
   ],
-  "updated_at": 1788796513
+  "updated_at": 1789968519
 }

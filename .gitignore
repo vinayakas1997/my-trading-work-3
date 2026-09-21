@@ -64,6 +64,11 @@ secrets/
 # throwaway venvs show up as untracked instead of being ignored.
 **/data/simulator/simulations/
 **/data/models/
+# Hindsight (docker-compose-hindsight.yml): Postgres binary data dir and
+# the downloaded GGUF model weight file -- same "regenerable/too large to
+# commit" reasoning as the two lines above.
+**/data/hindsight/pg_data/
+**/hindsight-llm/models/*.gguf
 
 # --- Logs / generated output ---
 logs/
