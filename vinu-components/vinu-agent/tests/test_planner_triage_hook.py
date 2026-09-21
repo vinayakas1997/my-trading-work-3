@@ -50,7 +50,7 @@ class FakeTickerLedger:
         self._count_raises = count_raises
         self.events: list[dict[str, Any]] = []
 
-    def count_events(self, ticker: str, *, event_type: str | None = None) -> int:
+    def count_events(self, ticker: str, *, event_type: str | None = None, since: str | None = None) -> int:
         if self._count_raises:
             raise RuntimeError("db down")
         return self._count
@@ -73,24 +73,67 @@ def _triage(strategy_store=None, hypothesis_reader=None, ticker_ledger=None, **k
 
 
 class TestKCap:
+    """Real fix, 2026-09-21 (missing-pieces-of-system/startegy-enhancer/
+    02-implementation.md): the K-cap now counts real, currently
+    non-terminal artifacts for the ticker (the same
+    `list_artifacts_for_symbol(NON_TERMINAL_STATUSES)` lookup this
+    function already ran for recipe rotation) -- not a rolling time
+    window over ticker_ledger events (the earlier, honestly-scoped-as-
+    imprecise interim fix; see this file's git history for those tests).
+    A slot frees the instant a candidate actually resolves (ACTIVE, or
+    DISABLED on a genuine promotion-bar rejection), not after a fixed
+    number of days regardless of what happened."""
+
     def test_under_cap_proceeds(self) -> None:
-        triage = _triage(ticker_ledger=FakeTickerLedger(count=1), k_cap=3)
+        triage = _triage(strategy_store=FakeStrategyStore([FakeArtifact("BENCHING")]), k_cap=3)
         result = triage.check("AAPL")
         assert result.should_propose is True
 
     def test_at_cap_skips(self) -> None:
-        triage = _triage(ticker_ledger=FakeTickerLedger(count=3), k_cap=3)
+        triage = _triage(
+            strategy_store=FakeStrategyStore(
+                [FakeArtifact("ACTIVE"), FakeArtifact("BENCHING"), FakeArtifact("PEND")],
+            ),
+            k_cap=3,
+        )
         result = triage.check("AAPL")
         assert result.should_propose is False
         assert "cap" in result.reason
 
-    def test_kcap_lookup_failure_defaults_to_skip(self) -> None:
-        """Fail-closed direction is skip here -- cost-only, not safety,
-        same category as Phase 0's RunLog trigger."""
-        triage = _triage(ticker_ledger=FakeTickerLedger(count_raises=True))
+    def test_decayed_and_disabled_artifacts_do_not_count(self, tmp_path) -> None:
+        """Real regression: a ticker whose 3 lifetime candidates all
+        genuinely resolved (2 DISABLED after a real promotion-bar
+        rejection, 1 DECAYED after real underperformance) must not be
+        locked out -- confirms the fix actually reads live status, not
+        just a raw count, using the real SqliteStrategyStore, not the
+        fake (the fake doesn't simulate status filtering)."""
+        from vinu_research.models import Artifact, ArtifactStatus
+        from vinu_research.storage.strategy_store import SqliteStrategyStore
+
+        store = SqliteStrategyStore(tmp_path / "strategy_store.db")
+        for status in (ArtifactStatus.DISABLED, ArtifactStatus.DISABLED, ArtifactStatus.DECAYED):
+            art = Artifact.create("strategy", "old", universe=["AAPL"])
+            art.status = status
+            store.upsert_artifact(art)
+
+        triage = _triage(strategy_store=store, k_cap=3)
+        result = triage.check("AAPL")
+        assert result.should_propose is True, result.reason
+
+    def test_non_terminal_artifacts_still_count_regardless_of_age(self, tmp_path) -> None:
+        from vinu_research.models import Artifact, ArtifactStatus
+        from vinu_research.storage.strategy_store import SqliteStrategyStore
+
+        store = SqliteStrategyStore(tmp_path / "strategy_store.db")
+        for _ in range(3):
+            art = Artifact.create("strategy", "still-open", universe=["AAPL"])
+            art.status = ArtifactStatus.BENCHING
+            store.upsert_artifact(art)
+
+        triage = _triage(strategy_store=store, k_cap=3)
         result = triage.check("AAPL")
         assert result.should_propose is False
-        assert "K-cap lookup failed" in result.reason
+        assert "cap" in result.reason
 
 
 class TestArtifactDedup:

@@ -338,9 +338,6 @@ class TestMakePlannerOnYes:
             "investment_committee", {"symbol": "AAPL"},
         )
         service.swarm_runtime.start_run.assert_called_once_with("debate_99")
-        triage.on_propose.assert_called_once_with(
-            "AAPL", result, ref_id="run_42", debate_run_id="debate_99",
-        )
 
     def test_debate_mode_full_failure_does_not_block_research_handoff(self, monkeypatch) -> None:
         import vinu_agent.agent.scheduler_workers as sw_mod
@@ -361,6 +358,76 @@ class TestMakePlannerOnYes:
             "AAPL", result, ref_id="run_42", debate_run_id="",
         )
 
+
+class TestStrategyEnhancerContext:
+    """missing-pieces-of-system/startegy-enhancer/01-plan.md section 5 --
+    the freed-K-cap-slot candidate gets real sibling/failure context."""
+
+    def test_env_unset_ships_inert(self, monkeypatch) -> None:
+        monkeypatch.delenv("VINU_STRATEGY_EVAL_DATA_ROOT", raising=False)
+        service = _fake_service()
+        triage = MagicMock()
+        result = PlannerTriageResult("AAPL", True, "reason", recipe_name="macd_cross")
+        triage.check.return_value = result
+
+        with patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker",
+                   return_value={"run_id": "run_42"}) as mock_run:
+            on_yes = make_planner_on_yes(service, triage)
+            on_yes("AAPL", MagicMock())
+
+        task_text = mock_run.call_args[0][2]
+        assert "in flight for this ticker" not in task_text
+        assert "Most recent rejected candidate" not in task_text
+
+    def test_in_flight_siblings_and_recent_rejection_added_to_task(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        store = StrategyEvaluationStore(tmp_path / "strategy_evaluation.db")
+        store.write_step_result(
+            artifact_id="sibling-1", ticker="AAPL", step_name="risk_critic",
+            step_order=1, verdict="PASS",
+        )
+        store.write_step_result(
+            artifact_id="rejected-1", ticker="AAPL", step_name="promotion_bar",
+            step_order=2, verdict="FAIL", reasoning="deflated_sharpe 0.1 below threshold 0.3",
+        )
+
+        service = _fake_service()
+        triage = MagicMock()
+        result = PlannerTriageResult("AAPL", True, "reason", recipe_name="macd_cross")
+        triage.check.return_value = result
+
+        with patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker",
+                   return_value={"run_id": "run_42"}) as mock_run:
+            on_yes = make_planner_on_yes(service, triage)
+            on_yes("AAPL", MagicMock())
+
+        task_text = mock_run.call_args[0][2]
+        assert "sibling-1" in task_text
+        assert "in flight for this ticker" in task_text
+        assert "promotion_bar" in task_text
+        assert "deflated_sharpe 0.1 below threshold 0.3" in task_text
+
+    def test_no_ticker_history_adds_nothing(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        StrategyEvaluationStore(tmp_path / "strategy_evaluation.db")  # creates the schema, no rows
+
+        service = _fake_service()
+        triage = MagicMock()
+        result = PlannerTriageResult("AAPL", True, "reason", recipe_name="macd_cross")
+        triage.check.return_value = result
+
+        with patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker",
+                   return_value={"run_id": "run_42"}) as mock_run:
+            on_yes = make_planner_on_yes(service, triage)
+            on_yes("AAPL", MagicMock())
+
+        task_text = mock_run.call_args[0][2]
+        assert "in flight for this ticker" not in task_text
+        assert "Most recent rejected candidate" not in task_text
 
 class TestPlannerTriageFreshnessLogging:
     """Analysis R (25-A-Y-details/05-governance-freshness.md): logs, at

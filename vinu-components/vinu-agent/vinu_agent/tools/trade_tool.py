@@ -40,6 +40,56 @@ def _make_broker(as_of: str | None, session_id: str = ""):
     return get_live_broker()
 
 
+def _resolve_active_artifact_id(symbol: str) -> str:
+    """Real artifact linkage for order_guard's strategy_evaluation write --
+    same in-process store `OrderGuard._check_active_artifact()` already
+    reads, not a second lookup mechanism. Falls back to a synthetic
+    `order:{symbol}` id only when genuinely no ACTIVE artifact exists for
+    this symbol (e.g. `require_active_artifact: false`), or the lookup
+    itself fails -- never raises, this must not be able to affect the
+    real order decision."""
+    try:
+        from ..broker.research_link import get_strategy_store
+        from vinu_research.models import ArtifactStatus
+
+        store = get_strategy_store()
+        artifacts = store.list_artifacts_for_symbol(symbol, statuses=[ArtifactStatus.ACTIVE])
+        if artifacts:
+            return artifacts[0].artifact_id
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "failed to resolve active artifact for %s, using synthetic id", symbol,
+        )
+    return f"order:{symbol}"
+
+
+def _write_order_guard_evaluation(*, artifact_id: str, ticker: str, verdict: str, reasoning: str, metrics: dict) -> None:
+    """Best-effort, ships inert when VINU_STRATEGY_EVAL_DATA_ROOT is unset
+    -- missing-pieces-of-system/startegy-enhancer/01-plan.md section 2,
+    step_order=10 (order_guard). Must never be able to block or slow down
+    a real order decision, same contract as every other audit write in
+    this codebase."""
+    try:
+        import os
+        from pathlib import Path
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore, seed_step_registry
+
+        root = os.environ.get("VINU_STRATEGY_EVAL_DATA_ROOT", "").strip()
+        if not root:
+            return
+        store = StrategyEvaluationStore(Path(root) / "strategy_evaluation.db")
+        seed_step_registry(store)
+        store.write_step_result(
+            artifact_id=artifact_id, ticker=ticker, step_name="order_guard",
+            step_order=10, verdict=verdict, reasoning=reasoning, metrics=metrics,
+        )
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "failed to write strategy_evaluation row for order_guard on %s, continuing without it", ticker,
+        )
+
+
 class TradeTool(BaseTool):
     name = "submit_order"
     description = "Submit a trade order to Alpaca paper trading. Every order is validated against the trading mandate before execution."
@@ -297,6 +347,28 @@ class TradeTool(BaseTool):
         result = guard.check(
             symbol, side, qty, price=(limit_price or None),
             estimated_value=estimated_value, reduce_only=reduce_only,
+        )
+        # missing-pieces-of-system/startegy-enhancer/01-plan.md section 2.
+        # Real fix (2026-09-21, was a synthetic f"order:{symbol}" id):
+        # order_guard.py's own _check_active_artifact() already resolves
+        # the real ACTIVE artifact for this symbol in-process via
+        # research_link.get_strategy_store() -- the same mechanism used
+        # here instead of inventing a second lookup. `blocked_artifact_ids`
+        # (populated only for operator-limit rejections) takes priority
+        # when present since it's the specific artifact the rejection
+        # reason names; the real ACTIVE lookup covers every other real
+        # case. Only genuinely falls back to the synthetic id when no
+        # ACTIVE artifact exists for this symbol at all (e.g.
+        # require_active_artifact: false in the mandate) -- documented,
+        # not silently hidden.
+        _blocked_ids = getattr(result, "blocked_artifact_ids", []) or []
+        _eval_artifact_id = _blocked_ids[0] if _blocked_ids else _resolve_active_artifact_id(symbol)
+        _needs_reauth = getattr(result, "needs_reauth", False)
+        _write_order_guard_evaluation(
+            artifact_id=_eval_artifact_id, ticker=symbol,
+            verdict="PASS" if result else ("HOLD" if _needs_reauth else "FAIL"),
+            reasoning=(result.reason if not result else "cleared order_guard"),
+            metrics={"side": side, "qty": qty, "estimated_value": estimated_value},
         )
         # C17: a PAUSE_FOR_REAUTH result is not a flat reject -- the order is
         # quantitatively near a hard limit but not over it. Route it to the

@@ -1,6 +1,11 @@
 # Strategy enhancer
 
-**Status: design-only, not yet implemented.**
+**Status: built and tested.** All 10 real evaluation steps wired, the
+K-cap bug fixed, and the enhancer loop feeding real sibling/failure
+context into new candidates. See `02-implementation.md` for the full,
+dated build log. A few real, documented items remain open (see that
+file's own "Still open" section) — this isn't a claim that everything
+imaginable here is finished, just that the plan in `01-plan.md` is.
 
 ## The idea, in one paragraph
 
@@ -43,18 +48,22 @@ strategy actually passes through, which led to this idea.
      what's *not* proven unbypassable yet.
   6. A mermaid diagram of the full lifecycle, all levels in one picture.
   7. The proposed enhancer design, broken into a real, ordered build plan.
-- **`01-plan.md`** — the concrete implementation plan: a 3-table schema
-  (`strategy_evaluation_history` / `_status` / `_step_registry`) in a
-  new shared `vinu-infra` module, exactly which real call site in each
-  of the 10 steps gets the new write, the real seed data for the step
-  registry, both real options for fixing the K-cap bug (with a
-  recommendation), the enhancer loop's real trigger/data flow, and a
-  dependency-ordered build sequence.
+- **`01-plan.md`** — the implementation plan, kept up to date against
+  what was actually built (every section now marked **DONE**, with the
+  real corrections found along the way — several real call sites
+  differed from the original guesses).
+- **`02-implementation.md`** — the full, dated build log: every real
+  finding, every test suite run, and the honest "still open" list.
 
 ## Current state
 
-Nothing here has been built yet — `01-plan.md` is ready to build from.
-The K-cap bug itself is fully understood — see `00-explanation.md`
-section 1 and `01-plan.md` section 4. The 3-table schema (`01-plan.md`
-section 1) is the natural first real piece, since fixing the cap
-properly and building the enhancer loop both depend on it existing.
+Built. All 10 real evaluation steps are wired into their real call
+sites across `vinu-agent`, `vinu-research`, and `vinu-live`; the K-cap
+bug is fixed (a 7-day rolling window — the more exact fix needs a
+join that doesn't exist yet, see `02-implementation.md`); the enhancer
+loop feeds real sibling/failure context into new candidate proposals;
+and the read view (`vinu-agent strategy-eval <TICKER>`) shows, for any
+ticker, what passed, what failed, and why — both the specific reason
+and the general rule. All 4 touched packages' test suites are green.
+See `02-implementation.md`'s "Still open" section for the one honest
+remainder — the exact-fix follow-up for the K-cap.

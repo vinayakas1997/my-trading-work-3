@@ -619,6 +619,66 @@ def _log_triage_freshness(service: Any, run_log_reader: Any, ticker: str, gate_r
         LOG.exception("failed to log triage freshness check for %s", ticker)
 
 
+def _strategy_evaluation_context_for_ticker(ticker: str) -> str:
+    """The strategy enhancer (missing-pieces-of-system/startegy-enhancer/
+    01-plan.md section 5): when the Planner proposes a new candidate for a
+    ticker, tell the idea-generation prompt two real things so a freed
+    K-cap slot doesn't just get filled with a blind retry --
+
+    1. Which other candidates are still genuinely in flight for this
+       ticker (in_progress/active in `strategy_evaluation_status`), so the
+       new idea doesn't duplicate one already being evaluated.
+    2. The most recent real rejection's specific reason (which step, and
+       why) -- not `HypothesisRegistry`'s human-thesis rejections (that's
+       `result.prior_rejections`, a separate, older mechanism this
+       doesn't replace), but the machine-evaluation chain's own real
+       verdicts (risk_critic, promotion_bar, correlation_gate, ...).
+
+    Ships inert (empty string, no context added) when
+    VINU_STRATEGY_EVAL_DATA_ROOT is unset or there's nothing to report --
+    same posture as `result.prior_rejections` being empty today. Best-
+    effort: any failure here must never block the real research hand-off.
+    """
+    try:
+        root = os.environ.get("VINU_STRATEGY_EVAL_DATA_ROOT", "").strip()
+        if not root:
+            return ""
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        store = StrategyEvaluationStore(Path(root) / "strategy_evaluation.db")
+        rows = store.list_status_for_ticker(ticker)
+        if not rows:
+            return ""
+
+        in_flight = [r for r in rows if r["status"] in ("in_progress", "active")]
+        rejected = [r for r in rows if r["status"] == "rejected"]
+
+        parts: list[str] = []
+        if in_flight:
+            parts.append(
+                "Other candidates already in flight for this ticker -- don't "
+                "propose something too similar to these:\n"
+                + "\n".join(
+                    f"- {r['artifact_id']} (reached step {r['furthest_step_passed']}, status={r['status']})"
+                    for r in in_flight
+                )
+            )
+        if rejected:
+            # rows are ordered by last_updated DESC (list_status_for_ticker's
+            # own contract) -- the first rejected row is the most recent one.
+            r = rejected[0]
+            parts.append(
+                f"Most recent rejected candidate for this ticker failed at "
+                f"'{r['rejected_at_step']}': {r['rejected_reason']}\n"
+                "Propose something that specifically avoids this failure mode, "
+                "not a blind retry of the same idea."
+            )
+        return "\n\n".join(parts)
+    except Exception:
+        LOG.exception("failed to build strategy_evaluation context for %s, continuing without it", ticker)
+        return ""
+
+
 def make_planner_on_yes(service: Any, triage: PlannerTriage, run_log_reader: Any = None):
     """ChangeGate's `run_gate_cycle` `on_yes` callback -- the triage hook
     decides deterministically WHETHER and WHAT to propose; on a
@@ -649,6 +709,10 @@ def make_planner_on_yes(service: Any, triage: PlannerTriage, run_log_reader: Any
                 "blindly re-propose the same idea:\n"
                 + "\n".join(f"- {r}" for r in result.prior_rejections)
             )
+
+        eval_context = _strategy_evaluation_context_for_ticker(ticker)
+        if eval_context:
+            task += f"\n\n{eval_context}"
 
         handoff = run_team_for_ticker(service, "research", task, session_id=f"planner-{ticker}")
 

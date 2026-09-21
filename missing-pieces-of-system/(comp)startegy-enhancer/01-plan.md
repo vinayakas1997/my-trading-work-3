@@ -115,18 +115,20 @@ and already produces a verdict + reasoning — this plan does not change
 any step's actual pass/fail logic, only adds one `write_step_result()`
 call at the point the verdict is already known.
 
-| step_name | Real call site to add the write | step_order |
-|---|---|---|
-| `risk_critic` | `vinu-research/vinu_research/loop.py:~450`, right after `critic_feedback = await self._risk_critic(...)` | 1 |
-| `promotion_bar` | `vinu-research/vinu_research/promotion.py:76`, right after `return PromotionVerdict(eligible=not reasons, reasons=reasons)` — **also fixes the real gap in `00-explanation.md` section 3** (currently only printed to stdout in `cli.py`) | 2 |
-| `correlation_gate` | `vinu-research/vinu_research/gates/correlation_gate.py`, right after `CorrelationVerdict` is built | 3 |
-| `risk_gatekeeper` | `vinu-agent/vinu_agent/agent/risk_gatekeeper_hook.py:63-74` — already writes to `TickerLedger`; add the same info to this new table alongside it, don't remove the existing write (other things may already depend on it) | 4 |
-| `capital_allocator` | `vinu-agent/vinu_agent/cli.py`'s `capital-allocator-worker`, at the point funding is decided | 5 |
-| `shadow_evaluator` | `vinu-live/vinu_live/shadow_evaluator.py`, at the point it decides "promote" vs "not yet" | 6 |
-| `decay_scan` | `vinu-research/vinu_research/cli.py:544`, right after `art.status = new_status` | 7 |
-| `trade_score_gate` | `vinu-research/vinu_research/gates/trade_score_gate.py`, at its real verdict point | 8 |
-| `approve_trade_plan` | `vinu_research.trade_plan_authoring.approve_trade_plan()`, at its real verdict point | 9 |
-| `order_guard` | `vinu-agent/vinu_agent/tools/trade_tool.py:297`, right after `result = guard.check(...)` | 10 |
+| step_name | Real call site(s) | step_order | Status |
+|---|---|---|---|
+| `risk_critic` | **Real site differs from the plan's guess**: not inside `loop.py` (no artifact exists there yet) — `vinu-research/vinu_research/service.py`'s `approve_run()`, reading the final iteration's verdict back via the already-existing `iteration_checkpoints.critic_verdict` column | 1 | **Wired** — only the verdict string survives (not the full reasoning text, which was never persisted anywhere), documented honestly in the written `reasoning` field |
+| `promotion_bar` | **3 real call sites, not 1** (found while implementing): `vinu-research/vinu_research/cli.py`'s `promote-scan`, `vinu-research/vinu_research/service.py`'s `approve_run()`, **and** `vinu-agent/vinu_agent/agent/capital_allocator_hook.py`'s own independent re-check before funding (a deliberate second enforcement point, not a duplicate — see that file's own G1 docstring) | 2 | **Wired**, all 3 sites |
+| `correlation_gate` | **2 real call sites**: `cli.py`'s `promote-scan` (reuses the verdict `build_correlation_verdict()` already computes) and `service.py`'s `approve_run()` (the independent fresh-research-run path) | 3 | **Wired**, both sites |
+| `risk_gatekeeper` | `vinu-agent/vinu_agent/agent/risk_gatekeeper_hook.py` — both branches (REJECTED and APPROVED/PEND) | 4 | **Wired** |
+| `capital_allocator` | `vinu-agent/vinu_agent/agent/capital_allocator_hook.py` — kill-switch-engaged (`HOLD`, not just PASS/FAIL) and real-funding-succeeds branches | 5 | **Wired** |
+| `shadow_evaluator` | `vinu-live/vinu_live/shadow_evaluator.py`'s `_evaluate_one()` — the `auto_paused` fast-path (FAIL) and the `promoted`/`below_threshold` split (PASS/FAIL). `insufficient_data` writes nothing (nothing decided yet) | 6 | **Wired** |
+| `decay_scan` | `vinu-research/vinu_research/cli.py`'s `_run_decay_scan()`, right after each artifact's real `DecaySnapshot` is computed | 7 | **Wired** |
+| `trade_score_gate` | **Real site differs from the plan's guess**: `check_trade_score_gate()` itself is a pure function with no artifact context — wired instead at `trade_plan_authoring.approve_trade_plan()`'s frozen-tier re-check, the one real place both gates share force/approver logic (per that function's own docstring) | 8 | **Wired** |
+| `approve_trade_plan` | `vinu_research.trade_plan_authoring.approve_trade_plan()` — both real branches (bootstrap-from-ACTIVE-strategy, or `CalibrationGate`). `force=True` records the real underlying verdict, never silently flipped to PASS — `forced`/`approver` go into `metrics_json` instead | 9 | **Wired** |
+| `order_guard` | `vinu-agent/vinu_agent/tools/trade_tool.py`, right after `result = guard.check(...)` — the structurally-unbypassable choke point (`00-explanation.md` section 5). Real artifact linkage via `_resolve_active_artifact_id()`, reusing `OrderGuard._check_active_artifact()`'s own in-process lookup; synthetic `f"order:{symbol}"` id only as genuine last resort (no ACTIVE artifact exists) | 10 | **Wired**, with real artifact-id resolution (not just the synthetic fallback) |
+
+See `02-implementation.md` for the full, dated build log — this table is kept in sync with it, not a duplicate source of truth.
 
 **New dependency**: `vinu-research` needs `vinu-infra` (almost certainly
 already has it, since `vinu-infra` is the base shared package — confirm
@@ -191,8 +193,8 @@ STEP_DEFINITIONS = [
          source_file="vinu-research/vinu_research/decay.py"),
     dict(step_name="trade_score_gate", step_order=8, service_owner="vinu-research",
          kind="deterministic",
-         description="Per-trade-plan-authoring check (not artifact-level) -- EV/regime fit at the moment a trade plan is generated.",
-         pass_rule="See vinu-research/vinu_research/gates/trade_score_gate.py's real thresholds -- not yet read in this pass, fill in during implementation.",
+         description="Re-checks the Trade Score tier frozen onto a trade plan at authoring time, at approval time (approve_trade_plan()) -- a composite of confluence, EV, and regime-fit sub-scores against config.min_tradeable_tier (default 'watch').",
+         pass_rule="tier_meets_minimum(tier, config.min_tradeable_tier) -- tier order is no_trade < watch < moderate < strong.",
          source_file="vinu-research/vinu_research/gates/trade_score_gate.py"),
     dict(step_name="approve_trade_plan", step_order=9, service_owner="vinu-research",
          kind="deterministic, fail-closed",
@@ -214,93 +216,121 @@ not invented now.
 
 ---
 
-## 4. Fix 1 — the K-cap bug (self-contained, do this first)
+## 4. Fix 1 — the K-cap bug — **DONE, Option B, the real fix**
 
-**File**: `vinu-agent/vinu_agent/agent/planner_triage_hook.py:103`
+**Superseded, 2026-09-21**: this section originally shipped as Option A
+(a 7-day rolling time window), reasoned as a stopgap because Option B
+appeared to need a `run_id→artifact_id` join that didn't exist. That
+premise was wrong — **user correction**: the cap never needed to count
+proposal *events* at all. It needs to count **currently-open artifacts
+for the ticker**, and the whole system is already organized around
+`artifact_id` (machine-proposed and human-submitted strategies both
+produce the same `Artifact` row) — the exact lookup already existed and
+was already used elsewhere in the same function for recipe rotation:
+`strategy_store.list_artifacts_for_symbol(ticker,
+statuses=NON_TERMINAL_STATUSES)`. No join was ever required.
 
-Current:
+**Built Option B**: both real call sites
+(`thesis_intake_gate.py`/`planner_triage_hook.py`) now count
+`len(list_artifacts_for_symbol(ticker, NON_TERMINAL_STATUSES))` directly
+instead of a ledger-event count. `K_CAP_WINDOW_DAYS`/
+`_k_cap_window_since()` are kept in `thesis_intake_gate.py` as a real
+fallback for the one call path where no `strategy_store` is available,
+not deleted outright.
+
+**No time-based control needed on top of this**: decay (`decay_scan`,
+step 7) already auto-transitions a strategy to `decayed`/`disabled`
+when it stops working, which frees its K-cap slot the moment that
+happens. A fixed cap of currently-open artifacts, with decay doing the
+real-time freeing, is the complete mechanism.
+
+**Real gap this surfaced and closed** (explicit user "go ahead" before
+building): artifact-count-based capping only works if rejected
+candidates actually become terminal. Before this round, a
+`promotion_bar` FAIL left the artifact stuck in `BENCHING` forever,
+permanently occupying a slot. Fixed by transitioning to
+`ArtifactStatus.DISABLED` at all real `promotion_bar` call sites —
+`cli.py`'s `promote-scan`, `capital_allocator_hook.py`'s re-check, and a
+**fourth real call site found while closing this gap**,
+`routes_read.py`'s `POST /artifacts/{id}/promote` (previously never
+wired for `strategy_evaluation` at all, in any prior round). This split
+is deliberate, not uniform: `promotion_bar` FAIL → `DISABLED`
+(permanent — its metrics are fixed, re-checking can't change the
+verdict); `risk_gatekeeper`/`correlation_gate` REJECTED stay
+re-checkable (portfolio state and inter-strategy correlation can
+legitimately change). See `02-implementation.md` for the full account
+and test coverage.
+
+**File**: `vinu-agent/vinu_agent/agent/planner_triage_hook.py`
+
+Now:
 ```python
-count = self._ticker_ledger.count_events(ticker, event_type=CANDIDATE_PROPOSED_EVENT_TYPE)
+existing = self._strategy_store.list_artifacts_for_symbol(ticker, statuses=NON_TERMINAL_STATUSES)
+if len(existing) >= self._k_cap:
+    return PlannerTriageResult(ticker, False, f"ticker at distinct-candidate cap ({len(existing)}/{self._k_cap}) currently non-terminal")
 ```
-
-Real fix — two real options, pick one deliberately, don't guess:
-
-**Option A — rolling time window** (matches the log message's own
-"this cycle" wording most literally):
-```python
-count = self._ticker_ledger.count_events(
-    ticker, event_type=CANDIDATE_PROPOSED_EVENT_TYPE,
-    since=<some real window, e.g. now - 24h>,
-)
-```
-Needs a real decision on the window size — not specified anywhere yet,
-would need to be a new config value, not a hardcoded guess.
-
-**Option B — discount terminal (rejected/expired) candidates from the
-count**, keeping it otherwise all-time. Requires knowing, per
-`candidate_proposed` event, whether that candidate is still open or was
-already terminally rejected — which is exactly what table 2
-(`strategy_evaluation_status`) will be able to answer once section 1-3
-are built. **This option becomes trivial once the new tables exist** —
-count only artifacts with `status IN ('in_progress', 'active')` for this
-ticker, not `count_events()`'s raw ledger count at all.
-
-**Recommendation**: build the 3 tables first (sections 1-3), then fix
-the cap using Option B — it's the more correct fix (a candidate that's
-still genuinely in flight should count against the cap; one that's
-already resolved shouldn't, regardless of how much time has passed) and
-it falls out naturally once the status table exists, rather than needing
-a second, separate time-window config value.
 
 ---
 
-## 5. Fix 2 — the enhancer loop itself
+## 5. Fix 2 — the enhancer loop itself — **DONE**
 
-Once sections 1-4 exist, the actual "learn from rejection" piece:
+**Real trigger point turned out simpler than guessed**: not a new hook on
+the K-cap check itself — `vinu-agent/vinu_agent/agent/scheduler_workers.py`'s
+`make_planner_on_yes()`'s `_on_yes()` already fires exactly once per real
+candidate proposal (the same moment `PlannerTriage.check()` says
+`should_propose=True`), and it **already had the exact right shape**: it
+was already building `prior_rejections` (from `HypothesisRegistry`,
+human-submitted theses only) into the `idea_generator` hand-off's task
+string. The enhancer just extends this same, already-proven mechanism
+with `strategy_evaluation` data instead of inventing a new path.
 
-1. **Trigger point**: `planner_triage_hook.py`'s cap check (now backed
-   by table 2, per section 4 Option B) sees a freed slot for a ticker.
-2. **Before generating a new candidate**, query:
-   - `list_status_for_ticker(store, ticker)` — the other 1-2 candidates
-     still `in_progress`/`active` for this ticker, so the new idea's
-     prompt can be told "don't propose something like these."
-   - The most recent `rejected` row for this ticker from table 2 —
-     `rejected_at_step` + `rejected_reason`, so the new idea's prompt is
-     told specifically what failed and why.
-3. **Feed both into the real candidate-generation prompt** — the exact
-   prompt-shape change needed is not yet designed; this is genuinely the
-   open design question flagged in `00-explanation.md` section 7 (how
-   much history to include, how to keep the context from growing
-   unbounded as rejections accumulate over a ticker's lifetime — a real
-   question, not yet answered here).
-4. **Reuse `decay_scan`'s real precedent** (`_trigger_re_research()` in
-   `vinu-research/vinu_research/cli.py`) for the actual "kick off a new
-   attempt" plumbing shape — it already does steps 1 and (partially) 2
-   for the decay case; this is the same shape applied to a K-cap
-   rejection instead of a decay event.
+**New**: `_strategy_evaluation_context_for_ticker(ticker)` in
+`scheduler_workers.py`. Queries `list_status_for_ticker(ticker)` and
+appends, when real data exists:
+- Every candidate still `in_progress`/`active` for this ticker (so the
+  new idea doesn't duplicate one already being evaluated).
+- The single most recent `rejected` row's `rejected_at_step` +
+  `rejected_reason` (the real machine-evaluation chain's own reasons —
+  `risk_critic`, `promotion_bar`, etc. — distinct from
+  `HypothesisRegistry`'s human-thesis rejections, which stay untouched).
+
+**The open design questions from the original draft, resolved**:
+- *Prompt shape*: reuses the exact `"\nPrior rejected hypotheses..."`
+  pattern already proven in production, not a new format.
+- *How much history*: only the single most recent rejection, not the
+  full history — matches "learn from the last mistake," not "relitigate
+  every past attempt."
+- *Unbounded growth*: naturally bounded by `K_CAP_DEFAULT` itself (at
+  most 3 in-flight siblings can ever exist for one ticker at a time) —
+  no separate cap needed.
+
+Ships inert (no context added) when `VINU_STRATEGY_EVAL_DATA_ROOT` is
+unset or there's no real data yet — same posture as `prior_rejections`
+being empty today. 3 new tests in `test_scheduler_workers.py`
+(ships-inert, real siblings+rejection appear in the task text, no
+history adds nothing). Full `vinu-agent` suite green.
 
 ---
 
-## 6. Build order
+## 6. Build order — all done, see `02-implementation.md` for the real account
 
-1. `vinu-infra/strategy_evaluation.py` — the 3 tables + the 5 real
-   functions (section 1). Tests: schema creation, `write_step_result()`
-   recomputes `status` correctly (furthest step, rejected reason),
-   `seed_step_registry()` idempotency.
-2. Resolve the shared-data-root open question (section 2) —
-   docker-compose.yml change, needed before any real cross-service data
-   shows up (both services can develop/test against it locally without
-   this being resolved, using a shared `tmp_path` in tests).
-3. Wire all 10 real write call sites (section 2's table), one at a time,
-   each with its own test confirming the write actually happens with
-   real verdict/reasoning content, not a placeholder. Run each touched
-   service's full test suite after its own step.
-4. Fix the K-cap bug (section 4), using Option B once table 2 exists.
-5. Build the enhancer loop (section 5) — the piece with real open design
-   questions; expect this to need its own follow-up design pass once
-   1-4 are running and real data exists to design the prompt against
-   (same "don't design in a vacuum" discipline used throughout this
-   whole project).
+1. ✅ `vinu-infra/strategy_evaluation.py` — the 3 tables + the 5 real
+   functions (section 1).
+2. ✅ Shared-data-root — real docker-compose.yml volume + env var,
+   mounted into `agent-api`/`research-api`/`live-api`.
+3. ✅ All 10 real write call sites wired — several at more real call
+   sites than originally guessed (`promotion_bar`: 3, `correlation_gate`:
+   2) or at a different site entirely (`risk_critic`, `trade_score_gate`).
+4. ✅ K-cap bug fixed — Option B (real artifact count via
+   `list_artifacts_for_symbol(NON_TERMINAL_STATUSES)`), superseding the
+   earlier Option A (rolling window) shipped first in this same round;
+   see `02-implementation.md` for the correction and the DISABLED-on-
+   rejection fix it required.
+5. ✅ Enhancer loop built — reused an existing, already-proven prompt
+   mechanism (`prior_rejections`) rather than inventing a new one.
+6. ✅ The read view — `vinu-agent strategy-eval <TICKER>` (not in the
+   original numbered list, added once the data existed to build a real
+   view against).
 
 ## 7. Verify
 

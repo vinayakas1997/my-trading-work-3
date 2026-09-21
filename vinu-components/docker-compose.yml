@@ -329,6 +329,7 @@ services:
     env_file: .env
     environment:
       # Single shared strategy store: agent (stages 1->7, in-process writes
+      VINU_STRATEGY_EVAL_DATA_ROOT: /strategy-eval
       # BENCHING/PEND/ACTIVE) and portfolio (stage-7 weights) resolve their
       # VINU_RESEARCH_DATA_ROOT to this same host dir, so live-api's
       # shadow/monitor workers (stages 8->9, which reach it over research-api
@@ -359,6 +360,7 @@ services:
       - "127.0.0.1:8087:8087"
     volumes:
       - ./data/research:/data
+      - ./data/strategy-evaluation:/strategy-eval
       - ./data/research:/research-data
       - ./data/shared:/shared
     cap_drop:
@@ -404,6 +406,7 @@ services:
       dockerfile: vinu-live/Dockerfile
     env_file: .env
     environment:
+      VINU_STRATEGY_EVAL_DATA_ROOT: /strategy-eval
       # Without this, trade_audit_log.py's DEFAULT_LOG_PATH falls back to
       # $HOME/.vinu/trade_audit_log.jsonl inside the container -- NOT the
       # mounted /data volume -- so the file was silently lost on every
@@ -422,6 +425,7 @@ services:
       - "127.0.0.1:8091:8091"
     volumes:
       - ./data/live:/data
+      - ./data/strategy-evaluation:/strategy-eval
       - ./data/shared:/shared
     cap_drop:
       - ALL
@@ -490,6 +494,7 @@ services:
       # data root (paper_performance.db lives there).
       VINU_RESEARCH_MATURITY_TIER_ENABLED: "true"
       VINU_RESEARCH_AGENT_DATA_ROOT: /data
+      VINU_STRATEGY_EVAL_DATA_ROOT: /strategy-eval
     secrets:
       - vinu_api_key
       - alpaca_api_key
@@ -501,6 +506,7 @@ services:
       - "127.0.0.1:8086:8086"
     volumes:
       - ./data/agent:/data
+      - ./data/strategy-evaluation:/strategy-eval
       - ./data/research:/research-data
       - ./data/shared:/shared
       - ./vinu-agent/skills:/app/vinu-agent/skills:ro

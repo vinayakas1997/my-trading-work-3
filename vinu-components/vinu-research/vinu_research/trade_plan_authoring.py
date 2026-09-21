@@ -1030,6 +1030,33 @@ def approve_trade_plan(
             ["trade plan is already frozen ACTIVE; revisions require authoring a new version"]
         )
 
+    _eval_ticker = artifact.universe[0] if artifact.universe else ""
+
+    def _write_eval(step_name: str, step_order: int, verdict: str, reasoning: str, metrics: dict | None = None) -> None:
+        """missing-pieces-of-system/startegy-enhancer/01-plan.md section 2.
+        `force` recorded in metrics, not folded into the verdict itself --
+        the gate's own real verdict is what it is; force is a human
+        override layered on top, same distinction this function's own
+        docstring already draws for its audit log."""
+        try:
+            import os
+            from pathlib import Path
+
+            from vinu_infra.strategy_evaluation import StrategyEvaluationStore, seed_step_registry
+
+            root = os.environ.get("VINU_STRATEGY_EVAL_DATA_ROOT", "").strip()
+            if not root or not _eval_ticker:
+                return
+            eval_store = StrategyEvaluationStore(Path(root) / "strategy_evaluation.db")
+            seed_step_registry(eval_store)
+            eval_store.write_step_result(
+                artifact_id=artifact_id, ticker=_eval_ticker, step_name=step_name,
+                step_order=step_order, verdict=verdict, reasoning=reasoning,
+                metrics={**(metrics or {}), "forced": force, "approver": approver},
+            )
+        except Exception:
+            logger.exception("failed to write strategy_evaluation row for %s, continuing without it", artifact_id)
+
     # High-expectations spec #14: re-check the Trade Score tier frozen onto
     # this plan at authoring time. Re-derived from the plan's own JSON, not
     # recomputed -- recomputing would need the same market_state the
@@ -1055,12 +1082,21 @@ def approve_trade_plan(
                     "minimum tradeable tier -- refusing to approve a plan the Trade Score "
                     "gate already rejected at authoring time"
                 ]
+                _write_eval(
+                    "trade_score_gate", 8, "FAIL", "; ".join(reasons),
+                    {"tier": tier, "total_score": plan_for_score_check.trade_score.total_score},
+                )
                 if not force:
                     logger.warning("[%s] Approval REJECTED: %s", artifact_id, "; ".join(reasons))
                     raise TradePlanApprovalError(reasons)
                 logger.warning(
                     "[%s] Approval FORCED by %s despite: %s",
                     artifact_id, approver, "; ".join(reasons),
+                )
+            else:
+                _write_eval(
+                    "trade_score_gate", 8, "PASS", f"tier {tier!r} clears the minimum tradeable tier",
+                    {"tier": tier, "total_score": plan_for_score_check.trade_score.total_score},
                 )
 
     tracker = load_calibration_tracker(store, artifact_id, config)
@@ -1090,12 +1126,18 @@ def approve_trade_plan(
                 f"no calibration history yet for this trade plan, and no ACTIVE "
                 f"strategy artifact for {symbol} to bootstrap approval from"
             ]
+            _write_eval("approve_trade_plan", 9, "FAIL", "; ".join(reasons), {"path": "bootstrap"})
             if not force:
                 logger.warning("[%s] Approval REJECTED: %s", artifact_id, "; ".join(reasons))
                 raise TradePlanApprovalError(reasons)
             logger.warning(
                 "[%s] Approval FORCED by %s despite: %s",
                 artifact_id, approver, "; ".join(reasons),
+            )
+        else:
+            _write_eval(
+                "approve_trade_plan", 9, "PASS",
+                f"bootstrapped from {symbol}'s own ACTIVE strategy artifact", {"path": "bootstrap"},
             )
         artifact.status = ArtifactStatus.ACTIVE
         saved = store.upsert_artifact(artifact)
@@ -1112,6 +1154,7 @@ def approve_trade_plan(
     gate = CalibrationGate(tracker, min_window=tracker.config.min_calibration_window)
     result = gate.check()
     if not result.passed:
+        _write_eval("approve_trade_plan", 9, "FAIL", "; ".join(result.reasons), {"path": "calibration_gate"})
         if not force:
             logger.warning("[%s] Approval REJECTED: %s", artifact_id, "; ".join(result.reasons))
             raise TradePlanApprovalError(result.reasons)
@@ -1119,6 +1162,8 @@ def approve_trade_plan(
             "[%s] Approval FORCED by %s despite: %s",
             artifact_id, approver, "; ".join(result.reasons),
         )
+    else:
+        _write_eval("approve_trade_plan", 9, "PASS", "cleared CalibrationGate", {"path": "calibration_gate"})
 
     artifact.status = ArtifactStatus.ACTIVE
     saved = store.upsert_artifact(artifact)

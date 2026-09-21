@@ -210,3 +210,67 @@ class TestRecordDailyPaperReturns:
         assert {r["artifact_id"]: r["status"] for r in results} == {
             "art-bad": "error", "art-good": "recorded",
         }
+
+
+class TestStrategyEvaluationWrite:
+    """missing-pieces-of-system/startegy-enhancer/01-plan.md section 2,
+    shadow_evaluator (step_order=6)."""
+
+    @pytest.mark.asyncio
+    async def test_promoted_writes_pass(self, evaluator, tmp_path, monkeypatch):
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        artifacts = [
+            {"artifact_id": "art-1", "name": "test-strategy", "initial_sharpe": 1.5, "universe": ["AAPL"]},
+        ]
+        returns = [0.02, 0.015, -0.005, 0.01, 0.025, 0.0, 0.018]
+
+        with patch.object(evaluator._http, "get", _mock_get(artifacts, returns)):
+            with patch.object(evaluator._http, "post", _mock_post()):
+                await evaluator.evaluate_all()
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        eval_store = StrategyEvaluationStore(tmp_path / "strategy_evaluation.db")
+        history = eval_store.get_history("art-1")
+        rows = [h for h in history if h["step_name"] == "shadow_evaluator"]
+        assert len(rows) == 1
+        assert rows[0]["verdict"] == "PASS"
+        assert rows[0]["ticker"] == "AAPL"
+
+    @pytest.mark.asyncio
+    async def test_below_threshold_writes_fail(self, evaluator, tmp_path, monkeypatch):
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        artifacts = [
+            {"artifact_id": "art-2", "name": "weak-strategy", "initial_sharpe": 3.0, "universe": ["MSFT"]},
+        ]
+        # Mildly negative returns -> negative paper sharpe (real
+        # promotion=False path via `paper_sharpe > 0`), but not negative
+        # enough to trip the separate auto_paused branch (<= -1.0).
+        returns = [-0.001, -0.0015, 0.0005, -0.0008, 0.0, -0.0012, -0.0003]
+
+        with patch.object(evaluator._http, "get", _mock_get(artifacts, returns)):
+            with patch.object(evaluator._http, "post", _mock_post()):
+                await evaluator.evaluate_all()
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        eval_store = StrategyEvaluationStore(tmp_path / "strategy_evaluation.db")
+        history = eval_store.get_history("art-2")
+        rows = [h for h in history if h["step_name"] == "shadow_evaluator"]
+        assert len(rows) == 1
+        assert rows[0]["verdict"] == "FAIL"
+
+    @pytest.mark.asyncio
+    async def test_insufficient_data_writes_nothing(self, evaluator, tmp_path, monkeypatch):
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        artifacts = [
+            {"artifact_id": "art-3", "name": "no-data", "initial_sharpe": 1.0, "universe": ["NVDA"]},
+        ]
+
+        with patch.object(evaluator._http, "get", _mock_get(artifacts, None)):
+            await evaluator.evaluate_all()
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        eval_store = StrategyEvaluationStore(tmp_path / "strategy_evaluation.db")
+        assert eval_store.get_history("art-3") == []

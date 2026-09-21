@@ -175,7 +175,57 @@ async def promote_artifact(artifact_id: str, force: bool = False) -> dict[str, A
         raise HTTPException(status_code=400, detail=f"Artifact is {artifact.status.value}, not BENCHING")
     correlation_verdict = await _service.build_correlation_verdict(artifact)
     verdict = meets_promotion_bar(artifact, _service.config, correlation_verdict)
+
+    # missing-pieces-of-system/startegy-enhancer/01-plan.md section 2 --
+    # a real, third call site found while implementing the K-cap fix
+    # (2026-09-21): this HTTP route and `promote-scan` are both real
+    # BENCHING->ACTIVE paths, and this one had never been wired at all.
+    ticker = artifact.universe[0] if artifact.universe else ""
+    try:
+        import os
+        from pathlib import Path
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore, seed_step_registry
+
+        eval_root = os.environ.get("VINU_STRATEGY_EVAL_DATA_ROOT", "").strip()
+        if eval_root and ticker:
+            eval_store = StrategyEvaluationStore(Path(eval_root) / "strategy_evaluation.db")
+            seed_step_registry(eval_store)
+            if correlation_verdict is not None:
+                eval_store.write_step_result(
+                    artifact_id=artifact_id, ticker=ticker, step_name="correlation_gate",
+                    step_order=3, verdict="PASS" if correlation_verdict.eligible else "FAIL",
+                    reasoning="; ".join(correlation_verdict.reasons) if correlation_verdict.reasons else "within correlation threshold",
+                    metrics={
+                        "avg_correlation": correlation_verdict.avg_correlation,
+                        "max_correlation": correlation_verdict.max_correlation,
+                        "n_active": correlation_verdict.n_active,
+                    },
+                )
+            eval_store.write_step_result(
+                artifact_id=artifact_id, ticker=ticker, step_name="promotion_bar",
+                step_order=2, verdict="PASS" if verdict.eligible else "FAIL",
+                reasoning="; ".join(verdict.reasons) if verdict.reasons else "cleared promotion bar",
+                metrics={
+                    "deflated_sharpe": artifact.deflated_sharpe,
+                    "holdout_passed": artifact.holdout_passed,
+                    "stress_test_passed": artifact.stress_test_passed,
+                },
+            )
+    except Exception:
+        import logging as _logging
+        _logging.getLogger(__name__).exception(
+            "failed to write strategy_evaluation rows for %s, continuing without them", artifact_id,
+        )
+
     if not verdict.eligible and not force:
+        # Real fix, same reasoning as promote-scan/capital_allocator_hook.py:
+        # deflated_sharpe/holdout/pbo are fixed metrics from this artifact's
+        # own backtest -- a genuine (non-forced) rejection is permanent, so
+        # DISABLE it rather than leaving it stuck in BENCHING forever
+        # blocking a K-cap slot.
+        artifact.status = ArtifactStatus.DISABLED
+        _service.strategy_store.upsert_artifact(artifact)
         raise HTTPException(
             status_code=409,
             detail={

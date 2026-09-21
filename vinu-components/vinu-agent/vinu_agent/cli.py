@@ -139,6 +139,14 @@ def _parse_args(argv=None) -> argparse.Namespace:
     mandate_set.add_argument("key", help="Mandate field name")
     mandate_set.add_argument("value", help="New value (JSON-encoded)")
 
+    # ── strategy-eval (missing-pieces-of-system/startegy-enhancer) ──
+    se_p = sub.add_parser(
+        "strategy-eval",
+        help="Show which of the 10 real evaluation steps a ticker's candidates passed/failed, and why",
+    )
+    se_p.add_argument("ticker", help="Symbol, e.g. AAPL")
+    se_p.add_argument("--db", default="", help="Override VINU_STRATEGY_EVAL_DATA_ROOT")
+
     return parser.parse_args(argv)
 
 
@@ -290,6 +298,48 @@ def _cmd_mandate(args) -> None:
             print(json.dumps({"status": "ok", "key": key, "value": getattr(mandate, key)}))
         else:
             print(json.dumps({"status": "error", "error": f"Unknown mandate field: {key}"}))
+
+
+def _cmd_strategy_eval(args) -> None:
+    """missing-pieces-of-system/startegy-enhancer -- the read view over
+    strategy_evaluation_{history,status,step_registry}: for a ticker,
+    show every candidate, how far it got, and -- for any FAIL -- both the
+    specific reason for that candidate AND the general rule that step
+    enforces (so a rejection is readable without reading code, per the
+    original ask this whole 3-table design was built to answer)."""
+    import os
+    from pathlib import Path
+
+    from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+    root = args.db or os.environ.get("VINU_STRATEGY_EVAL_DATA_ROOT", "")
+    if not root:
+        print("No VINU_STRATEGY_EVAL_DATA_ROOT set and no --db given -- nothing to read.")
+        return
+    store = StrategyEvaluationStore(Path(root) / "strategy_evaluation.db")
+
+    ticker = args.ticker.upper()
+    candidates = store.list_status_for_ticker(ticker)
+    if not candidates:
+        print(f"No real evaluation history for {ticker} yet.")
+        return
+
+    print(f"\n{ticker}\n{'=' * len(ticker)}\n")
+    for cand in candidates:
+        print(
+            f"Artifact: {cand['artifact_id']}  status={cand['status']}  "
+            f"furthest_step={cand['furthest_step_passed']}"
+        )
+        history = store.get_history(cand["artifact_id"])
+        for row in history:
+            mark = {"PASS": "[PASS]", "FAIL": "[FAIL]", "HOLD": "[HOLD]"}.get(row["verdict"], "[?]")
+            print(f"  {mark} {row['step_name']:<20s} {row['reasoning']}")
+            if row["verdict"] == "FAIL":
+                defn = store.get_step_definition(row["step_name"])
+                if defn is not None:
+                    print(f"      rule:   {defn['pass_rule']}")
+                    print(f"      source: {defn['source_file']}")
+        print()
 
 
 def resolve_worker_interval(args: argparse.Namespace | None, config, config_field: str = "skill_audit_worker_interval_sec") -> int:
@@ -625,6 +675,8 @@ def main() -> None:
         asyncio.run(_cmd_swarm(args))
     elif args.command == "mandate":
         _cmd_mandate(args)
+    elif args.command == "strategy-eval":
+        _cmd_strategy_eval(args)
     else:
         _parse_args(["--help"])
 

@@ -77,6 +77,45 @@ class TestApprove:
         assert len(history) == 1
         assert history[0].sharpe == 1.8
 
+    async def test_approve_run_writes_risk_critic_evaluation_from_last_checkpoint(
+        self, service, storage, sample_record,
+    ):
+        """missing-pieces-of-system/startegy-enhancer/01-plan.md section 2,
+        risk_critic (step_order=1) -- resolved from the real, already-
+        persisted `iteration_checkpoints.critic_verdict` column."""
+        sample_record.status = "done"
+        sample_record.strategy_code = "class UserStrategy: pass"
+        r = storage.insert_run(sample_record)
+        storage.save_checkpoint(run_id=r.id, iteration=1, critic_verdict="PASS")
+
+        result = await service.approve_run(r.id)
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        eval_store = StrategyEvaluationStore(service._config.data_root / "strategy_evaluation.db")
+        history = eval_store.get_history(result["artifact_id"])
+        rc_rows = [h for h in history if h["step_name"] == "risk_critic"]
+        assert len(rc_rows) == 1
+        assert rc_rows[0]["verdict"] == "PASS"
+
+    async def test_approve_run_writes_risk_critic_fail_for_stop_verdict(
+        self, service, storage, sample_record,
+    ):
+        sample_record.status = "done"
+        sample_record.strategy_code = "class UserStrategy: pass"
+        r = storage.insert_run(sample_record)
+        storage.save_checkpoint(run_id=r.id, iteration=1, critic_verdict="STOP")
+
+        result = await service.approve_run(r.id)
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        eval_store = StrategyEvaluationStore(service._config.data_root / "strategy_evaluation.db")
+        history = eval_store.get_history(result["artifact_id"])
+        rc_rows = [h for h in history if h["step_name"] == "risk_critic"]
+        assert len(rc_rows) == 1
+        assert rc_rows[0]["verdict"] == "FAIL"
+
 
 class TestBuildCorrelationVerdict:
     """Regression for the promotion-correlation bypass: meets_promotion_bar()

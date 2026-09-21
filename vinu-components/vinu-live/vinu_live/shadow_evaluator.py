@@ -10,6 +10,29 @@ import httpx
 LOG = logging.getLogger(__name__)
 
 
+def _write_shadow_evaluation(*, artifact_id: str, ticker: str, verdict: str, reasoning: str, metrics: dict) -> None:
+    """Best-effort, ships inert when VINU_STRATEGY_EVAL_DATA_ROOT is unset
+    -- missing-pieces-of-system/startegy-enhancer/01-plan.md section 2,
+    step_order=6 (shadow_evaluator)."""
+    try:
+        import os
+        from pathlib import Path
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore, seed_step_registry
+
+        root = os.environ.get("VINU_STRATEGY_EVAL_DATA_ROOT", "").strip()
+        if not root or not ticker:
+            return
+        store = StrategyEvaluationStore(Path(root) / "strategy_evaluation.db")
+        seed_step_registry(store)
+        store.write_step_result(
+            artifact_id=artifact_id, ticker=ticker, step_name="shadow_evaluator",
+            step_order=6, verdict=verdict, reasoning=reasoning, metrics=metrics,
+        )
+    except Exception:
+        LOG.exception("failed to write strategy_evaluation row for %s, continuing without it", artifact_id)
+
+
 class ShadowEvaluator:
     """Automated shadow-account comparison: compares paper-trading P&L against
     backtest expectations and promotes BENCHING strategies to ACTIVE when the
@@ -139,10 +162,15 @@ class ShadowEvaluator:
         artifact_id = artifact.get("artifact_id", "unknown")
         name = artifact.get("name", "unknown")
         backtest_sharpe = artifact.get("initial_sharpe", 0.0)
+        ticker = (artifact.get("universe") or [""])[0]
 
         paper_sharpe = await self._fetch_paper_sharpe(artifact_id, name)
 
         if paper_sharpe is None:
+            # Not a verdict -- nothing has been decided yet (not enough
+            # paper-trading days have accumulated), same "no evidence,
+            # no claim" reasoning population_stability_index() uses for
+            # empty inputs. No strategy_evaluation write.
             return {
                 "artifact_id": artifact_id,
                 "name": name,
@@ -166,6 +194,11 @@ class ShadowEvaluator:
         except ValueError:
             _pause_at = -1.0
         if paper_sharpe <= _pause_at:
+            _write_shadow_evaluation(
+                artifact_id=artifact_id, ticker=ticker, verdict="FAIL",
+                reasoning=f"auto_paused: paper_sharpe={paper_sharpe:.4f} <= {_pause_at}",
+                metrics={"paper_sharpe": paper_sharpe, "backtest_sharpe": backtest_sharpe},
+            )
             return {
                 "artifact_id": artifact_id,
                 "name": name,
@@ -180,6 +213,19 @@ class ShadowEvaluator:
 
         if promoted:
             await self._promote_artifact(artifact_id)
+
+        _write_shadow_evaluation(
+            artifact_id=artifact_id, ticker=ticker,
+            verdict="PASS" if promoted else "FAIL",
+            reasoning=(
+                f"paper_sharpe={paper_sharpe:.4f} backtest_sharpe={backtest_sharpe:.4f} "
+                f"degradation={degradation:.4f} (max {self._max_sharpe_degradation})"
+            ),
+            metrics={
+                "paper_sharpe": paper_sharpe, "backtest_sharpe": backtest_sharpe,
+                "degradation": degradation,
+            },
+        )
 
         return {
             "artifact_id": artifact_id,

@@ -34,6 +34,29 @@ def _extract_json_block(content: str) -> Optional[dict]:
         return None
 
 
+def _write_evaluation_step(*, artifact_id: str, ticker: str, verdict: str, reasoning: str, metrics: dict) -> None:
+    """Best-effort, same swallow-and-log posture as the rest of this file
+    -- missing-pieces-of-system/startegy-enhancer/01-plan.md section 2.
+    Resolved fresh from env per call, not a frozen module-level constant."""
+    try:
+        import os
+        from pathlib import Path
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore, seed_step_registry
+
+        root = os.environ.get("VINU_STRATEGY_EVAL_DATA_ROOT", "").strip()
+        if not root:
+            return
+        store = StrategyEvaluationStore(Path(root) / "strategy_evaluation.db")
+        seed_step_registry(store)
+        store.write_step_result(
+            artifact_id=artifact_id, ticker=ticker, step_name="risk_gatekeeper",
+            step_order=4, verdict=verdict, reasoning=reasoning, metrics=metrics,
+        )
+    except Exception:
+        LOG.exception("failed to write strategy_evaluation row for %s, continuing without it", artifact_id)
+
+
 def apply_risk_gatekeeper_verdict(
     content: str, *, strategy_store: Any, ticker_ledger_store: Any = None
 ) -> Optional[str]:
@@ -61,17 +84,25 @@ def apply_risk_gatekeeper_verdict(
         return None
 
     if verdict == "REJECTED":
-        if ticker_ledger_store is not None:
+        ticker = ""
+        try:
+            artifact = strategy_store.get_artifact(artifact_id)
+            ticker = artifact.universe[0] if artifact and artifact.universe else ""
+        except Exception:
+            LOG.exception("failed to look up ticker for %s REJECTED verdict, continuing without it", artifact_id)
+        if ticker_ledger_store is not None and ticker:
             try:
-                artifact = strategy_store.get_artifact(artifact_id)
-                ticker = artifact.universe[0] if artifact and artifact.universe else ""
-                if ticker:
-                    ticker_ledger_store.add_event(
-                        ticker=ticker, stage="risk_gatekeeper", event_type="REJECTED",
-                        text=str(data.get("reason", "")), ref_id=artifact_id, source="watchlist",
-                    )
+                ticker_ledger_store.add_event(
+                    ticker=ticker, stage="risk_gatekeeper", event_type="REJECTED",
+                    text=str(data.get("reason", "")), ref_id=artifact_id, source="watchlist",
+                )
             except Exception:
                 LOG.exception("failed to write TickerLedger row for %s REJECTED verdict, continuing without it", artifact_id)
+        if ticker:
+            _write_evaluation_step(
+                artifact_id=artifact_id, ticker=ticker, verdict="FAIL",
+                reasoning=str(data.get("reason", "")), metrics={},
+            )
         return None
 
     try:
@@ -174,6 +205,13 @@ def apply_risk_gatekeeper_verdict(
             artifact_id,
         )
         return None
+
+    if artifact.universe:
+        _write_evaluation_step(
+            artifact_id=artifact_id, ticker=artifact.universe[0], verdict="PASS",
+            reasoning=f"APPROVED, approved_size={approved_size}",
+            metrics={"approved_size": approved_size},
+        )
 
     if ticker_ledger_store is not None:
         try:

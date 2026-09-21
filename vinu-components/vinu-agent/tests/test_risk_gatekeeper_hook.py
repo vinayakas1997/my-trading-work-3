@@ -116,3 +116,50 @@ def test_clamp_failure_is_swallowed_and_leaves_size_to_orderguard(strategy_store
     updated = strategy_store.get_artifact(artifact_id)
     # Unclamped: min(approved_size 90k, formula 80k) = 80k.
     assert updated.approved_size == pytest.approx(80_000.0)
+
+
+class TestStrategyEvaluationWrite:
+    """missing-pieces-of-system/startegy-enhancer/01-plan.md section 2."""
+
+    def test_approved_writes_pass(self, strategy_store, tmp_path, monkeypatch):
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        artifact_id = _benching(strategy_store)
+        content = _content(artifact_id, approved_size=1000.0, sizing_inputs={})
+
+        apply_risk_gatekeeper_verdict(content, strategy_store=strategy_store)
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        eval_store = StrategyEvaluationStore(tmp_path / "strategy_evaluation.db")
+        history = eval_store.get_history(artifact_id)
+        rows = [h for h in history if h["step_name"] == "risk_gatekeeper"]
+        assert len(rows) == 1
+        assert rows[0]["verdict"] == "PASS"
+        assert rows[0]["ticker"] == "AAPL"
+
+    def test_rejected_writes_fail(self, strategy_store, tmp_path, monkeypatch):
+        import json
+
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        artifact_id = _benching(strategy_store)
+        block = {"verdict": "REJECTED", "artifact_id": artifact_id, "reason": "over concentration limit"}
+        content = f"```json\n{json.dumps(block)}\n```"
+
+        apply_risk_gatekeeper_verdict(content, strategy_store=strategy_store)
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        eval_store = StrategyEvaluationStore(tmp_path / "strategy_evaluation.db")
+        history = eval_store.get_history(artifact_id)
+        rows = [h for h in history if h["step_name"] == "risk_gatekeeper"]
+        assert len(rows) == 1
+        assert rows[0]["verdict"] == "FAIL"
+        assert rows[0]["reasoning"] == "over concentration limit"
+
+    def test_unset_env_ships_inert(self, strategy_store, monkeypatch):
+        monkeypatch.delenv("VINU_STRATEGY_EVAL_DATA_ROOT", raising=False)
+        artifact_id = _benching(strategy_store)
+        content = _content(artifact_id, approved_size=1000.0, sizing_inputs={})
+        # Must not raise when the shared data root isn't configured.
+        returned = apply_risk_gatekeeper_verdict(content, strategy_store=strategy_store)
+        assert returned == artifact_id

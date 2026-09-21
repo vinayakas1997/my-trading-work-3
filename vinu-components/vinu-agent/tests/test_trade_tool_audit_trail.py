@@ -202,3 +202,99 @@ class TestAuditLoggerReadAll:
         entries = AuditLogger.read_all(log_path=other_log)
         assert len(entries) == 1
         assert entries[0]["details"]["which"] == "other"
+
+
+class TestStrategyEvaluationWrite:
+    """missing-pieces-of-system/startegy-enhancer/01-plan.md section 2,
+    order_guard (step_order=10) -- the structurally-unbypassable one."""
+
+    def test_passed_order_writes_pass(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(True)
+        guard.pre_approve.return_value = GuardResult(True)
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            _tool("sess-42").execute(symbol="AAPL", qty=1, side="buy")
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        eval_store = StrategyEvaluationStore(tmp_path / "strategy_evaluation.db")
+        rows = eval_store.list_status_for_ticker("AAPL")
+        assert any(r["artifact_id"] == "order:AAPL" for r in rows)
+
+    def test_passed_order_resolves_the_real_active_artifact_id(self, tmp_path, monkeypatch) -> None:
+        """Real fix, 2026-09-21: this used to always be the synthetic
+        f"order:{symbol}" id. Confirms it now resolves the actual ACTIVE
+        artifact for the symbol via the same in-process store
+        OrderGuard._check_active_artifact() already reads."""
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        research_root = tmp_path / "research"
+        research_root.mkdir()
+        monkeypatch.setenv("VINU_RESEARCH_DATA_ROOT", str(research_root))
+
+        from vinu_research.models import Artifact, ArtifactStatus
+        from vinu_research.storage.strategy_store import SqliteStrategyStore
+
+        store = SqliteStrategyStore(research_root / "strategy_store.db")
+        artifact = Artifact.create("strategy", "AAPL-real", universe=["AAPL"])
+        artifact.status = ArtifactStatus.ACTIVE
+        store.upsert_artifact(artifact)
+
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(True)
+        guard.pre_approve.return_value = GuardResult(True)
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            _tool("sess-42").execute(symbol="AAPL", qty=1, side="buy")
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        eval_store = StrategyEvaluationStore(tmp_path / "strategy_evaluation.db")
+        rows = eval_store.list_status_for_ticker("AAPL")
+        assert any(r["artifact_id"] == artifact.artifact_id for r in rows)
+        assert not any(r["artifact_id"] == "order:AAPL" for r in rows)
+
+    def test_rejected_order_writes_fail_with_real_reason(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(False, reason="daily order cap reached")
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            _tool("sess-42").execute(symbol="AAPL", qty=1, side="buy")
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        eval_store = StrategyEvaluationStore(tmp_path / "strategy_evaluation.db")
+        history = eval_store.get_history("order:AAPL")
+        og_rows = [h for h in history if h["step_name"] == "order_guard"]
+        assert len(og_rows) == 1
+        assert og_rows[0]["verdict"] == "FAIL"
+        assert og_rows[0]["reasoning"] == "daily order cap reached"
+
+    def test_unset_env_ships_inert(self, monkeypatch) -> None:
+        monkeypatch.delenv("VINU_STRATEGY_EVAL_DATA_ROOT", raising=False)
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(True)
+        guard.pre_approve.return_value = GuardResult(True)
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            # Must not raise when the shared data root isn't configured.
+            result = json.loads(_tool("sess-42").execute(symbol="AAPL", qty=1, side="buy"))
+        assert result["status"] == "submitted"

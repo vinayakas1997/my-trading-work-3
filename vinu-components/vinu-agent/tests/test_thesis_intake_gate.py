@@ -139,3 +139,69 @@ class TestThGate:
         # AAPL has zero events of its own -- MSFT's cap must not bleed over.
         result = gate.check("AAPL", "a fresh AAPL theory")
         assert result.allowed is True
+
+
+class TestKCapWithStrategyStore:
+    """Real fix, 2026-09-21 (missing-pieces-of-system/startegy-enhancer/
+    02-implementation.md): when a strategy_store is provided, the K-cap
+    counts real, currently non-terminal artifacts for the ticker -- the
+    same fix PlannerTriage got -- instead of the time-window fallback.
+    A human-submitted thesis's own artifact counts against the same real
+    cap a machine-proposed candidate does, since both are just
+    `Artifact`s in the same store."""
+
+    def test_real_non_terminal_artifacts_block_a_human_submission(self, ticker_ledger_store, tmp_path) -> None:
+        from vinu_research.models import Artifact, ArtifactStatus
+        from vinu_research.storage.strategy_store import SqliteStrategyStore
+
+        store = SqliteStrategyStore(tmp_path / "strategy_store.db")
+        for _ in range(3):
+            art = Artifact.create("strategy", "machine-proposed", universe=["AAPL"])
+            art.status = ArtifactStatus.BENCHING
+            store.upsert_artifact(art)
+
+        reader = FakeHypothesisReader([])
+        gate = ThesisIntakeGate(reader, ticker_ledger_store, k_cap=3, strategy_store=store)
+
+        result = gate.check("AAPL", "a human theory arriving when 3 machine candidates are still open")
+        assert result.allowed is False
+        assert "cap" in result.reason
+        assert "currently non-terminal" in result.reason
+
+    def test_resolved_artifacts_do_not_block_a_human_submission(self, ticker_ledger_store, tmp_path) -> None:
+        from vinu_research.models import Artifact, ArtifactStatus
+        from vinu_research.storage.strategy_store import SqliteStrategyStore
+
+        store = SqliteStrategyStore(tmp_path / "strategy_store.db")
+        for status in (ArtifactStatus.DISABLED, ArtifactStatus.DISABLED, ArtifactStatus.DECAYED):
+            art = Artifact.create("strategy", "resolved", universe=["AAPL"])
+            art.status = status
+            store.upsert_artifact(art)
+
+        reader = FakeHypothesisReader([])
+        gate = ThesisIntakeGate(reader, ticker_ledger_store, k_cap=3, strategy_store=store)
+
+        result = gate.check("AAPL", "a human theory once the 3 prior candidates have all resolved")
+        assert result.allowed is True
+
+    def test_strategy_store_takes_priority_over_ticker_ledger_when_both_given(self, ticker_ledger_store, tmp_path) -> None:
+        """The ticker_ledger fallback is still used for on_propose()'s own
+        write (Phase 7 pattern detection needs the raw event history
+        separately), but the cap CHECK itself must use the real artifact
+        count once a strategy_store is provided, not the event count."""
+        from vinu_research.storage.strategy_store import SqliteStrategyStore
+
+        for i in range(5):
+            ticker_ledger_store.add_event(
+                ticker="AAPL", stage="research", event_type=CANDIDATE_PROPOSED_EVENT_TYPE,
+                text=f"idea {i}", source="watchlist",
+            )
+        store = SqliteStrategyStore(tmp_path / "strategy_store.db")  # empty -- 0 real artifacts
+
+        reader = FakeHypothesisReader([])
+        gate = ThesisIntakeGate(reader, ticker_ledger_store, k_cap=3, strategy_store=store)
+
+        # 5 stale ledger events would have blocked this under the old
+        # mechanism; 0 real non-terminal artifacts must allow it.
+        result = gate.check("AAPL", "a fresh theory with zero real open candidates")
+        assert result.allowed is True

@@ -114,7 +114,10 @@ class SubmitThesisTool(BaseTool):
             return json.dumps({"status": "error", "error": "submit_thesis not fully wired (missing ticker_ledger_store)"})
 
         research_api_url = self._services_config.get("vinu_research", "http://localhost:8087")
-        gate = ThesisIntakeGate(_InProcessHypothesisReader(research_api_url), self._ticker_ledger_store)
+        gate = ThesisIntakeGate(
+            _InProcessHypothesisReader(research_api_url), self._ticker_ledger_store,
+            strategy_store=self._strategy_store,
+        )
         gate_result = gate.check(ticker, thesis)
 
         if not gate_result.allowed:

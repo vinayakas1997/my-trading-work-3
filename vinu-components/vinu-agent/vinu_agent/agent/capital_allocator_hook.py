@@ -84,6 +84,28 @@ def _extract_json_block(content: str) -> Optional[dict]:
         return None
 
 
+def _write_evaluation_step(*, artifact_id: str, ticker: str, step_name: str, step_order: int, verdict: str, reasoning: str, metrics: dict) -> None:
+    """Best-effort, ships inert when VINU_STRATEGY_EVAL_DATA_ROOT is unset
+    -- missing-pieces-of-system/startegy-enhancer/01-plan.md section 2."""
+    try:
+        import os
+        from pathlib import Path
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore, seed_step_registry
+
+        root = os.environ.get("VINU_STRATEGY_EVAL_DATA_ROOT", "").strip()
+        if not root or not ticker:
+            return
+        store = StrategyEvaluationStore(Path(root) / "strategy_evaluation.db")
+        seed_step_registry(store)
+        store.write_step_result(
+            artifact_id=artifact_id, ticker=ticker, step_name=step_name,
+            step_order=step_order, verdict=verdict, reasoning=reasoning, metrics=metrics,
+        )
+    except Exception:
+        LOG.exception("failed to write strategy_evaluation row for %s, continuing without it", artifact_id)
+
+
 def _request_unwind(
     entry: dict, *, strategy_store: Any, ticker_ledger_store: Any, services_config: dict,
 ) -> None:
@@ -257,6 +279,12 @@ def apply_capital_allocator_decision(
         except Exception:
             LOG.exception("promotion-bar check failed for %s, continuing without funding it", artifact_id)
             continue
+        _write_evaluation_step(
+            artifact_id=artifact_id, ticker=ticker, step_name="promotion_bar",
+            step_order=2, verdict="PASS" if _verdict.eligible else "FAIL",
+            reasoning="; ".join(_verdict.reasons) if _verdict.reasons else "cleared promotion bar",
+            metrics={},
+        )
         if not _verdict.eligible:
             LOG.info(
                 "capital_allocator: %s does not meet the promotion bar, skipping funding: %s",
@@ -274,6 +302,18 @@ def apply_capital_allocator_decision(
                         "failed to write TickerLedger row for %s promotion_bar_failed transition, continuing without it",
                         artifact_id,
                     )
+            # Real fix, missing-pieces-of-system/startegy-enhancer/
+            # 02-implementation.md: same permanent-rejection reasoning as
+            # cli.py's promote-scan -- deflated_sharpe/holdout/pbo are
+            # fixed, so a re-check will only ever reach this same verdict.
+            # DISABLED so it stops counting against the K-cap's real
+            # non-terminal-artifact count.
+            try:
+                from vinu_research.models import ArtifactStatus as _ArtifactStatus
+                fresh.status = _ArtifactStatus.DISABLED
+                strategy_store.upsert_artifact(fresh)
+            except Exception:
+                LOG.exception("failed to mark %s DISABLED after promotion-bar rejection, continuing without it", artifact_id)
             continue
 
         from ..broker.kill_switch import kill_switch_lock
@@ -304,6 +344,12 @@ def apply_capital_allocator_decision(
                             "failed to write TickerLedger row for %s PENDBLOCK transition, continuing without it",
                             artifact_id,
                         )
+                _write_evaluation_step(
+                    artifact_id=artifact_id, ticker=ticker, step_name="capital_allocator",
+                    step_order=5, verdict="HOLD",
+                    reasoning=f"funding decided (amount={amount}) but Kill Switch engaged",
+                    metrics={"amount": amount},
+                )
                 continue
 
             try:
@@ -316,6 +362,12 @@ def apply_capital_allocator_decision(
                 continue
 
         funded_ids.append(artifact_id)
+
+        _write_evaluation_step(
+            artifact_id=artifact_id, ticker=ticker, step_name="capital_allocator",
+            step_order=5, verdict="PASS",
+            reasoning=f"funded and activated, amount={amount}", metrics={"amount": amount},
+        )
 
         if ticker_ledger_store is not None:
             try:

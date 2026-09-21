@@ -11,7 +11,22 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from vinu_research.models import ArtifactStatus
+
 LOG = logging.getLogger(__name__)
+
+# Every status except DECAYED/DISABLED -- mermaid-explanation.md's Planner
+# section: triage "must span every non-terminal state (CREATED, BENCHING,
+# ACTIVE, MONITORING), not ACTIVE alone." PEND/PENDBLOCK postdate that doc
+# (Phase 2/3) but are non-terminal by the same logic -- a candidate
+# awaiting funding or held by the Kill Switch is still "already in flight."
+# Shared here (not in planner_triage_hook.py, which imports it from this
+# module) since thesis_intake_gate.py's own K-cap check needs it too, once
+# a real strategy_store is provided -- see ThesisIntakeGate.__init__.
+NON_TERMINAL_STATUSES = [
+    ArtifactStatus.CREATED, ArtifactStatus.BENCHING, ArtifactStatus.PEND,
+    ArtifactStatus.PENDBLOCK, ArtifactStatus.ACTIVE, ArtifactStatus.MONITORING,
+]
 
 # Provisional, not tuned -- same "flag it, don't pretend it's settled"
 # discipline as every other un-pinned threshold across this build (N/K
@@ -19,6 +34,28 @@ LOG = logging.getLogger(__name__)
 # gain, shock debounce).
 NEAR_DUPLICATE_THRESHOLD = 0.5
 K_CAP_DEFAULT = 3
+
+# Real bug, found live 2026-09-21 (missing-pieces-of-system/
+# startegy-enhancer/00-explanation.md section 1): this K-cap's count_events()
+# call never passed `since=`, so the count was all-time/lifetime with no
+# reset -- a ticker with 3 real candidate_proposed events, ever (rejected,
+# expired, or successful), was silently locked out of ever getting another
+# proposal again, despite the check's own name ("...cap... this cycle")
+# implying a live, resettable limit. K_CAP_WINDOW_DAYS makes it one --
+# provisional, not tuned, same disclaimer as K_CAP_DEFAULT itself; a real
+# per-candidate "is it still genuinely open" count (01-plan.md's Option B)
+# would be the more correct fix but needs a real run_id->artifact_id join
+# that doesn't exist yet (see 02-implementation.md) -- this rolling window
+# is the honest, buildable fix available today.
+K_CAP_WINDOW_DAYS = 7
+
+
+def _k_cap_window_since() -> str:
+    import time
+
+    return time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - K_CAP_WINDOW_DAYS * 86400)
+    )
 
 # The TickerLedger event_type a "worth checking" hand-off writes -- the
 # shared counter both this gate and (eventually) a watchlist-side writer
@@ -64,11 +101,22 @@ class ThesisIntakeGate:
         *,
         near_duplicate_threshold: float = NEAR_DUPLICATE_THRESHOLD,
         k_cap: int = K_CAP_DEFAULT,
+        strategy_store: Any = None,
     ) -> None:
         self._reader = hypothesis_reader
         self._ticker_ledger = ticker_ledger_store
         self._threshold = near_duplicate_threshold
         self._k_cap = k_cap
+        # Real fix, 2026-09-21 (missing-pieces-of-system/startegy-enhancer/
+        # 02-implementation.md): when provided, the K-cap counts real,
+        # currently non-terminal artifacts for the ticker -- same shape
+        # planner_triage_hook.py's PlannerTriage now uses -- instead of a
+        # rolling time window over ticker_ledger events. Optional (default
+        # None) so the one existing caller (submit_thesis_tool.py) opts in
+        # explicitly rather than this silently changing behavior for any
+        # other untouched caller; falls back to the time-window count when
+        # not provided.
+        self._strategy_store = strategy_store
 
     def check(self, ticker: str, thesis_text: str, human_priority: bool = False) -> ThGateResult:
         """Fail-closed direction here is toward ALLOWING through to
@@ -101,7 +149,14 @@ class ThesisIntakeGate:
                 )
 
         try:
-            count = self._ticker_ledger.count_events(ticker, event_type=CANDIDATE_PROPOSED_EVENT_TYPE)
+            if self._strategy_store is not None:
+                count = len(self._strategy_store.list_artifacts_for_symbol(ticker, statuses=NON_TERMINAL_STATUSES))
+                window_note = "currently non-terminal"
+            else:
+                count = self._ticker_ledger.count_events(
+                    ticker, event_type=CANDIDATE_PROPOSED_EVENT_TYPE, since=_k_cap_window_since(),
+                )
+                window_note = f"in the last {K_CAP_WINDOW_DAYS} days"
         except Exception as exc:
             LOG.warning("K-cap lookup failed for %s, defaulting to allow: %s", ticker, exc)
             return ThGateResult(True, "passed THGATE (K-cap check failed, defaulted to allow)")
@@ -110,7 +165,7 @@ class ThesisIntakeGate:
         # by machine proposal count. Duplicate check above still applies.
         if count >= self._k_cap and not human_priority:
             return ThGateResult(
-                False, f"ticker at distinct-candidate cap ({count}/{self._k_cap}) this cycle",
+                False, f"ticker at distinct-candidate cap ({count}/{self._k_cap}) {window_note}",
             )
         if count >= self._k_cap and human_priority:
             return ThGateResult(True, "passed THGATE (human priority bypasses K-cap)")

@@ -454,6 +454,25 @@ def _decay_db_path(args: argparse.Namespace) -> "Path":
     return load_config().data_root / "strategy_store.db"
 
 
+def _strategy_evaluation_store():
+    """missing-pieces-of-system/startegy-enhancer/01-plan.md section 1 --
+    resolved fresh at call time from VINU_STRATEGY_EVAL_DATA_ROOT, not a
+    module-level constant (same "resolve fresh, don't trust a frozen
+    constant" reasoning already established elsewhere in this codebase
+    for exactly this class of bug). Falls back to this service's own
+    data_root when unset, so a bare local dev run still works."""
+    import os
+    from pathlib import Path as _Path
+
+    from vinu_infra.strategy_evaluation import StrategyEvaluationStore, seed_step_registry
+
+    root = os.environ.get("VINU_STRATEGY_EVAL_DATA_ROOT", "").strip()
+    data_root = _Path(root) if root else load_config().data_root
+    store = StrategyEvaluationStore(data_root / "strategy_evaluation.db")
+    seed_step_registry(store)
+    return store
+
+
 def _trigger_re_research(symbol: str) -> None:
     """Re-run research for a decayed strategy's symbol (sync → async bridge).
 
@@ -503,6 +522,8 @@ def _run_decay_scan(store, thresholds, *, dry_run: bool) -> int:
     print(f"[decay-scan] Scanning {len(artifacts)} artifacts (thresholds: IC>={thresholds.ic_ratio_healthy}, IR>={thresholds.ir_healthy})")
     print()
 
+    eval_store = _strategy_evaluation_store()
+
     for art in artifacts:
         history = store.get_bench_history(art.artifact_id)
         if len(history) < 2:
@@ -537,6 +558,20 @@ def _run_decay_scan(store, thresholds, *, dry_run: bool) -> int:
         else:
             print(f"    Eval: {status_icon} {snapshot.evaluation}  IC_ratio={snapshot.ic_ratio:.2f}  IR={snapshot.rolling_ir:.2f}  IC_pos={snapshot.ic_positive_ratio:.2f}  Sharpe={snapshot.rolling_sharpe:.2f}")
         print()
+
+        eval_store.write_step_result(
+            artifact_id=art.artifact_id,
+            ticker=art.universe[0] if art.universe else art.name,
+            step_name="decay_scan", step_order=7,
+            verdict="PASS" if snapshot.evaluation in ("HEALTHY", "WARNING") else "FAIL",
+            reasoning=f"evaluation={snapshot.evaluation} (was {art.status.value}, now {new_status.value})",
+            metrics={
+                "evaluation": snapshot.evaluation,
+                "ic_ratio": snapshot.ic_ratio,
+                "rolling_ir": snapshot.rolling_ir,
+                "rolling_sharpe": snapshot.rolling_sharpe,
+            },
+        )
 
         if not dry_run:
             store.save_snapshot(snapshot)
@@ -699,6 +734,7 @@ def promote_scan_main(args: argparse.Namespace) -> None:
         # meets_promotion_bar with no verdict at all, silently no-opping
         # promotion_correlation_required for every artifact promoted here.
         svc = ResearchService(config=config, strategy_store=store)
+        eval_store = _strategy_evaluation_store()
         try:
             for artifact in benching:
                 correlation_verdict = asyncio.run(svc.build_correlation_verdict(artifact))
@@ -706,6 +742,34 @@ def promote_scan_main(args: argparse.Namespace) -> None:
                 print(f"  {artifact.artifact_id} ({artifact.name})")
                 print(f"    deflated_sharpe={artifact.deflated_sharpe:.3f}  holdout_passed={artifact.holdout_passed}  "
                       f"stress_test_passed={artifact.stress_test_passed}")
+                ticker = artifact.universe[0] if artifact.universe else artifact.name
+                if correlation_verdict is not None:
+                    eval_store.write_step_result(
+                        artifact_id=artifact.artifact_id, ticker=ticker,
+                        step_name="correlation_gate", step_order=3,
+                        verdict="PASS" if correlation_verdict.eligible else "FAIL",
+                        reasoning="; ".join(correlation_verdict.reasons) if correlation_verdict.reasons else "within correlation threshold",
+                        metrics={
+                            "avg_correlation": correlation_verdict.avg_correlation,
+                            "max_correlation": correlation_verdict.max_correlation,
+                            "n_active": correlation_verdict.n_active,
+                        },
+                    )
+                # Real fix, missing-pieces-of-system/startegy-enhancer/
+                # 00-explanation.md section 3: this verdict used to only
+                # ever be printed to stdout -- gone the moment this CLI
+                # process exits. Now durably recorded.
+                eval_store.write_step_result(
+                    artifact_id=artifact.artifact_id, ticker=ticker,
+                    step_name="promotion_bar", step_order=2,
+                    verdict="PASS" if verdict.eligible else "FAIL",
+                    reasoning="; ".join(verdict.reasons) if verdict.reasons else "cleared promotion bar",
+                    metrics={
+                        "deflated_sharpe": artifact.deflated_sharpe,
+                        "holdout_passed": artifact.holdout_passed,
+                        "stress_test_passed": artifact.stress_test_passed,
+                    },
+                )
                 if verdict.eligible:
                     print(f"    -> PROMOTE" + (" (dry-run, not persisted)" if args.dry_run else ""))
                     if not args.dry_run:
@@ -713,6 +777,20 @@ def promote_scan_main(args: argparse.Namespace) -> None:
                         store.upsert_artifact(artifact)
                 else:
                     print(f"    -> hold: {'; '.join(verdict.reasons)}")
+                    # Real fix, missing-pieces-of-system/startegy-enhancer/
+                    # 02-implementation.md: a promotion-bar FAIL is
+                    # permanent -- deflated_sharpe/holdout/pbo are fixed
+                    # metrics from this artifact's own backtest, so a
+                    # re-scan would only ever reach the same verdict.
+                    # DISABLED (not just "left in BENCHING") so it stops
+                    # counting against the K-cap's real non-terminal-
+                    # artifact count and this scan never re-evaluates it
+                    # again -- same terminal status decay.py's own
+                    # transition_status() already uses for a strategy that
+                    # never recovers.
+                    if not args.dry_run:
+                        artifact.status = ArtifactStatus.DISABLED
+                        store.upsert_artifact(artifact)
                 print()
         finally:
             asyncio.run(svc.close())

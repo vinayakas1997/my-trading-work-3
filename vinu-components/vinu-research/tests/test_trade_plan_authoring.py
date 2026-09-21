@@ -1035,6 +1035,109 @@ class TestFreezeAndApprove:
         assert approved.status == ArtifactStatus.ACTIVE
 
 
+class TestStrategyEvaluationWrite:
+    """missing-pieces-of-system/startegy-enhancer/01-plan.md section 2,
+    trade_score_gate (step_order=8) and approve_trade_plan (step_order=9)."""
+
+    def _sample_plan(self) -> TradePlan:
+        return TradePlan(
+            symbol="AAPL",
+            timeframe="daily",
+            direction="long",
+            position_size_pct=0.05,
+            forecast=Forecast(direction="long", confidence=0.6, magnitude_pct=0.02),
+            invalidation_conditions=[
+                InvalidationCondition(
+                    metric="unrealized_pnl_pct", operator="<=", threshold=-0.08, action="exit",
+                ),
+            ],
+        )
+
+    def _eval_store(self, tmp_path):
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+        return StrategyEvaluationStore(tmp_path / "strategy_evaluation.db")
+
+    def test_bootstrap_success_writes_approve_trade_plan_pass(self, strategy_store, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        strategy = Artifact.create("strategy", "AAPL-strategy", universe=["AAPL"])
+        strategy.status = ArtifactStatus.ACTIVE
+        strategy_store.upsert_artifact(strategy)
+
+        artifact = freeze_trade_plan(strategy_store, self._sample_plan())
+        approve_trade_plan(strategy_store, artifact.artifact_id)
+
+        history = self._eval_store(tmp_path).get_history(artifact.artifact_id)
+        rows = [h for h in history if h["step_name"] == "approve_trade_plan"]
+        assert len(rows) == 1
+        assert rows[0]["verdict"] == "PASS"
+
+    def test_bootstrap_failure_writes_approve_trade_plan_fail(self, strategy_store, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        artifact = freeze_trade_plan(strategy_store, self._sample_plan())
+
+        with pytest.raises(TradePlanApprovalError):
+            approve_trade_plan(strategy_store, artifact.artifact_id)
+
+        history = self._eval_store(tmp_path).get_history(artifact.artifact_id)
+        rows = [h for h in history if h["step_name"] == "approve_trade_plan"]
+        assert len(rows) == 1
+        assert rows[0]["verdict"] == "FAIL"
+
+    def test_calibration_gate_pass_writes_pass(self, strategy_store, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        artifact = freeze_trade_plan(strategy_store, self._sample_plan())
+        cfg = ForecastSkillConfig(min_calibration_window=5)
+        for _ in range(5):
+            record_realized_outcome(strategy_store, artifact.artifact_id, 0.03, cfg)
+
+        approve_trade_plan(strategy_store, artifact.artifact_id, cfg)
+
+        history = self._eval_store(tmp_path).get_history(artifact.artifact_id)
+        rows = [h for h in history if h["step_name"] == "approve_trade_plan"]
+        assert len(rows) == 1
+        assert rows[0]["verdict"] == "PASS"
+        assert rows[0]["reasoning"] == "cleared CalibrationGate"
+
+    def test_no_trade_tier_writes_trade_score_gate_fail(self, strategy_store, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        strategy = Artifact.create("strategy", "AAPL-strategy", universe=["AAPL"])
+        strategy.status = ArtifactStatus.ACTIVE
+        strategy_store.upsert_artifact(strategy)
+
+        plan = self._sample_plan()
+        plan.trade_score = TradeScoreResult(total_score=20.0, tier="no_trade")
+        artifact = freeze_trade_plan(strategy_store, plan)
+
+        with pytest.raises(TradePlanApprovalError):
+            approve_trade_plan(strategy_store, artifact.artifact_id)
+
+        history = self._eval_store(tmp_path).get_history(artifact.artifact_id)
+        rows = [h for h in history if h["step_name"] == "trade_score_gate"]
+        assert len(rows) == 1
+        assert rows[0]["verdict"] == "FAIL"
+        # A rejected trade_score_gate must short-circuit before
+        # approve_trade_plan's own bootstrap/calibration check ever runs.
+        assert not any(h["step_name"] == "approve_trade_plan" for h in history)
+
+    def test_forced_approval_still_records_the_real_underlying_verdict(self, strategy_store, tmp_path, monkeypatch) -> None:
+        """force=True is a human override layered on top -- the gate's own
+        real verdict (FAIL) must still be what gets recorded, not silently
+        flipped to PASS because a human overrode it."""
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        artifact = freeze_trade_plan(strategy_store, self._sample_plan())
+
+        approve_trade_plan(strategy_store, artifact.artifact_id, force=True, approver="alice")
+
+        history = self._eval_store(tmp_path).get_history(artifact.artifact_id)
+        rows = [h for h in history if h["step_name"] == "approve_trade_plan"]
+        assert len(rows) == 1
+        assert rows[0]["verdict"] == "FAIL"
+        import json
+        metrics = json.loads(rows[0]["metrics_json"])
+        assert metrics["forced"] is True
+        assert metrics["approver"] == "alice"
+
+
 class TestUpdateInTradeAction:
     """TradePlan.in_trade_action was defined on the schema since Phase 1 but
     nothing ever called a setter for it -- vinu-live's classify_action() only

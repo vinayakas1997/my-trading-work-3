@@ -1,8 +1,8 @@
 ---
 name: how-to-start
-status: operational guide, matches the actual code/scripts as of 2026-09-11 (v3 — adds the pretrained-model-download step, verified against the real vinu-infra/models.py + docker-compose.yml mounts). 2026-09-15 addendum: added the two new optional env-knob groups from that session's work (reserve fraction, role-based LLM config) -- everything else below unchanged/not re-verified in this pass.
-purpose: step-by-step to bring the vinu-components stack up from a clean machine, plus what to check once it's running.
-note: the "After it's running" and "Ongoing operational checklist" sections below are unchanged from v2 (2026-09-07) and reference some older decision/row IDs from that phase of the project that weren't re-verified in this pass -- Steps 1-8 above them (through the model-download and auth-verification steps) ARE freshly re-verified against the current code as of this edit.
+status: operational guide, matches the actual code/scripts as of 2026-09-11 (v3 — adds the pretrained-model-download step, verified against the real vinu-infra/models.py + docker-compose.yml mounts). 2026-09-15 addendum: added the two new optional env-knob groups from that session's work (reserve fraction, role-based LLM config) -- everything else below unchanged/not re-verified in this pass. 2026-09-21 addendum (v4): added a source-verified knobs inventory for running a real test (date ranges, auto-vs-manual toggles, watchlist seeding, candidate limits). v5 (2026-09-21, same day): restructured the whole doc around one split -- Part A is the shared bring-up steps every deployment needs regardless of purpose; Part B is "run this for real" (production/live-money framing); Part C is "run this as a test" (the v4 knobs inventory + the test-day walkthrough). Content is unchanged from v4, only reorganized, except where noted.
+purpose: step-by-step to bring the vinu-components stack up from a clean machine, plus what to check once it's running -- and, critically, which of what follows applies to a real production deployment vs a supervised test run, since several knobs (credentials, cadences, date ranges) genuinely differ between the two.
+note: the "Ongoing operational checklist" and "test-day walkthrough" sections reference some older decision/row IDs from the 2026-09-07 phase of the project that weren't re-verified in this pass -- Part A's steps (through the model-download and auth-verification steps) ARE freshly re-verified against the current code as of this edit, and Part C's knobs inventory was verified 2026-09-21 directly against config.py/cli.py source.
 ---
 
 # How to start the system
@@ -11,6 +11,15 @@ Everything below refers to the real repo at
 `/home/somic_cps/Vina/my-trading-work-3/vinu-components`. All commands assume you're
 in that directory unless stated otherwise.
 
+**This doc has three parts.** Part A is identical either way — do it once,
+regardless of what you're using the stack for. Then go to **Part B** if
+you're standing this up as a real, running system (live or paper trading
+that's meant to keep running), or **Part C** if you're doing a supervised
+test run (a bounded session to verify behavior, not a long-lived
+deployment). The two diverge on real things — which credentials to use,
+which knobs need setting, what "done" looks like — so pick one path rather
+than reading both as if they were the same checklist.
+
 ## What you'll need from the user before starting (ask for these first)
 
 Before touching any file, get these from whoever is standing the system up
@@ -18,7 +27,10 @@ Before touching any file, get these from whoever is standing the system up
 
 1. **Alpaca API key + secret** — must be a freshly rotated pair, never the
    old leaked one in `alpaca-details/details.md`. Paper or live — either
-   works, `ALPACA_PAPER=true` (default) picks paper.
+   works, `ALPACA_PAPER=true` (default) picks paper. **This is the first
+   real fork between Part B and Part C**: a production deployment (Part B)
+   may want `ALPACA_PAPER=false` for real capital; a test run (Part C)
+   should almost always stay on the `true` default — see Part C for why.
 2. **An LLM provider API key** — whichever provider `vinu-infra/llm/config.py`
    is pointed at for this deployment.
 3. **A `VINU_API_KEY` value** — this one is NOT provided by any external
@@ -39,6 +51,14 @@ Before touching any file, get these from whoever is standing the system up
 
 Everything else below (data-root paths, ports) has a working default or is
 generated, not something to ask the user for.
+
+---
+
+# Part A — Common setup (do this once, either way)
+
+Every step in this part is identical whether you're headed to Part B (real
+system) or Part C (test run) next — the stack has to actually be up and
+authenticated before either kind of use makes sense.
 
 ## Step 1 — copy the env template
 
@@ -258,7 +278,196 @@ service follows the identical pattern: swap the port and path prefix
 each service's prefix matches its `route_prefix` in that service's
 `server/app.py`).
 
-## After it's running — what to actually do (updated 2026-09-07)
+---
+
+# Part B — Running this as a REAL (production) environment
+
+Stack is up (Part A done). This part is for a deployment meant to actually
+keep running — real or paper trading, unattended, on the shipped
+production cadences. **If you're doing a bounded, supervised test session
+instead, skip to Part C** — several of Part C's knobs (shorter date
+ranges, faster cadences, manual gate triggers) would be actively wrong to
+leave set on a real deployment.
+
+## What's different about "real" vs "test"
+
+- **Leave every cadence at its shipped default.** `VINU_AGENT_PLANNER_INTERVAL=1800`,
+  `VINU_AGENT_CAPITAL_ALLOCATOR_INTERVAL=900`, `VINU_LIVE_SHADOW_INTERVAL=3600`, etc.
+  are the real, deliberately-chosen production values (see
+  `01-new-full-explanation-v2.md`'s cadence table) — don't shorten them the
+  way Part C does for a test window.
+- **Leave `VINU_STAGE1_START_DATE` at whatever the real backfill needs**
+  (default `2022-01-01`) — this is hashed into the freeze manifest
+  (`vinu_infra/freeze.py`) for lineage, so it should stay fixed for the
+  life of the deployment, not be tuned down the way a short test would.
+- **Decide `ALPACA_PAPER` deliberately.** `true` (default) is paper —
+  real order flow through a real paper account, safe to leave running
+  unattended. `false` is real capital — only set this once you've actually
+  watched a full cycle behave correctly (Part C's walkthrough is the right
+  way to build that confidence first, even on a paper account).
+- **Watchlist seeding is a one-time bootstrap, not a per-session
+  step.** Set `VINU_AGENT_WATCHLIST_SEED_TICKERS` (and, if you want
+  automatic discovery beyond the static list, `VINU_AGENT_SCREENER_RANKER_ID`
+  — see `vinu-screener seed-default` to create the `core_starter` ranker
+  first) once; the `planner-worker` loop keeps discovering new tickers
+  from it on its own cadence from then on. No manual re-seeding needed.
+- **Promotion and decay stay on their real triggers.** `promotion_bar`
+  only ever runs via `vinu-research promote-scan` or a direct
+  `POST /artifacts/{id}/promote` call — for a live deployment, decide who
+  or what calls this (a human reviewing candidates, or a cron you set up
+  yourself; the codebase doesn't ship one). `decay_scan` already runs on
+  its own internal hourly loop (`ScheduledResearchExecutor`, hardcoded
+  3600s) — nothing to configure there.
+
+## Ongoing operational checklist
+
+- **Secrets rotation**: follow `docs/secrets-rotation.md` — edit the file
+  under `./secrets/<name>`, then `docker compose up -d --force-recreate` for
+  the affected service (keys are read once at process start, no live-reload).
+- **Structured logs**: worker exceptions are now logged with context (which
+  ticker/artifact was being processed) — this is your first place to look if
+  something silently stopped producing new candidates or funding decisions.
+- **Re-run `scripts/setup-secrets.sh --check`** any time before a redeploy,
+  especially after rotating a credential, to confirm nothing required is
+  blank.
+- **Confirm the Kill Switch state is what you expect** before assuming
+  trades will actually execute or that a halt is active when you think it
+  is — check `broker/kill_switch.py`'s current state. `OrderGuard`
+  throttles `10 orders/sec` (`B20`) and blocks even risk-reducing
+  rebalance `REQUEST` by default (`decisions/12`).
+- **Check Significance Triage delivery** periodically if Telegram/Discord
+  credentials are set — confirm alerts actually arrive, not just that the
+  code path ran. Delivery is a manual gate until creds are observed
+  (`decisions/09`). Includes a service-wide `llm_failure_rate` detector
+  (ticker="SYSTEM") that fires if 5+ LLM calls fail within an hour.
+- **New since v1:** `PaperRehearsalResult` (Row 1), `replace` REQUEST
+  (Row 2), `cycle_shock_batch` (Row 3), `composition_view` (Row 4),
+  `OrderGuard` throttle `10/sec` (B20), `freeze_manifest` (B21) — see
+  `01-new-full-explanation-v2.md` + `pending-items-to-be-implemented.md`
+  Status 2026-09-07.
+- **Known follow-up, not urgent**: task 01's capital-allocator-worker test
+   doesn't yet exercise the actual scheduling loop (only the cycle function it
+   calls) — the worker itself is confirmed working in practice, this is just a
+   test-coverage gap to close eventually. Also `ShadowEvaluator` tick wallet still spiked (B24).
+- **If you ever add a new committed file with real credentials in it by
+  mistake**, follow the leaked-credential playbook in
+  `docs/secrets-rotation.md` immediately — rotate at the provider first,
+  don't just delete the file.
+
+---
+
+# Part C — Running this as a TEST environment
+
+Stack is up (Part A done). This part is for a bounded, supervised session
+to verify the pipeline actually behaves as designed — not a long-lived
+deployment. Stay on `ALPACA_PAPER=true` (the default) unless the test's
+explicit purpose is verifying live-order behavior.
+
+## The knobs nobody would guess (verified 2026-09-21 against current source)
+
+Every env knob a real test run silently depends on but that has no obvious
+symptom when left wrong — the container starts fine, logs look clean, and
+the test just quietly produces nothing or produces stale/misleading
+results. Every value below was read directly from the current
+`config.py`/`cli.py` source, not guessed.
+
+### 1. Getting tickers into the pipeline at all — there is no seed command
+
+There is **no standalone "seed the watchlist" CLI command**. Seeding only
+happens *inside* the continuously-running `planner-worker` loop
+(`vinu-agent/vinu_agent/cli.py`'s `planner_worker_main`) — each cycle it
+merges two sources into one seed list, then calls `bootstrap_new_tickers()`
+for anything not already tracked:
+- `VINU_AGENT_WATCHLIST_SEED_TICKERS` — comma-separated symbols, e.g.
+  `AAPL,MSFT,NVDA`. Default `""` — **if you don't set this (or the screener
+  ranker below), nothing ever enters the pipeline, and the stack will run
+  "healthy" forever without a single candidate.**
+- `VINU_AGENT_SCREENER_RANKER_ID` — default `""` (ships inert). When set
+  (e.g. `core_starter`, seeded via `vinu-screener seed-default`), the
+  planner-worker also pulls the screener's live top-ranked symbols into
+  the seed list each cycle. Optional — the static seed list above is
+  enough for a first test.
+
+Either way, this only fires on the `planner-worker`'s own cadence —
+`VINU_AGENT_PLANNER_INTERVAL`, default `1800` (30 min). For a real test you
+either wait out the first cycle after startup, or set this interval lower
+for the duration of the test (see cadence note below) — and set it back
+before treating the deployment as a real one (Part B).
+
+### 2. Date ranges — a short test window can silently starve the backtest/promotion gates
+
+- `VINU_STAGE1_START_DATE` (default `2022-01-01`) — Stage-1 analysis
+  backfill start date, read by both `vinu-initial-analysis/config.py` and
+  `vinu-agent/tools/angles_tool.py`. Also hashed into the freeze manifest
+  for lineage (`vinu_infra/freeze.py`) — **don't change this mid-test**,
+  it's meant to stay fixed once a real run has started against it. For a
+  short, deliberately-bounded test, set it once before the run starts,
+  not adjusted partway through.
+- `VINU_RESEARCH_WF_MIN_TRAIN_DAYS` (default `252`, ~1 trading year) — a
+  symbol with less history than this fails/degrades walk-forward
+  validation. If you're testing against a recently-listed symbol or a
+  deliberately short backfill window, this will silently gate every
+  candidate for that symbol.
+- `VINU_RESEARCH_MIN_TRADES_FOR_PASS` (default `30`) — a backtest that
+  produces fewer than 30 trades over the test window fails promotion
+  regardless of how good it otherwise looks. A short test window or a
+  low-frequency strategy can fail this purely on trade count, not quality
+  — worth checking before concluding a strategy is "bad."
+- `VINU_RESEARCH_HOLDOUT_FRACTION`/`_HOLDOUT_GAP_DAYS` (default `0.2`/`5`)
+  — the promotion-bar holdout split; combined with `WF_MIN_TRAIN_DAYS`
+  above, a short overall history can leave too little data for both a
+  train window and a holdout window to coexist.
+
+### 3. Things that are already ON by default in docker-compose.yml — don't re-set them
+
+`VINU_STRATEGY_EVAL_DATA_ROOT` (the strategy-evaluation audit trail —
+`vinu-agent strategy-eval <TICKER>`'s data source, covering all 10 real
+evaluation/rejection gates) is **already wired to `/strategy-eval` for
+`agent-api`/`research-api`/`live-api`** in `docker-compose.yml` — nothing
+to set in `.env` for this one. It's mentioned here only because the code
+itself describes it as "ships inert when unset," which could read as
+something you need to opt into; under `docker compose up`, you don't.
+
+### 4. Cron-driven vs manual-only — know which one you're waiting for
+
+- **Decay scan** (`decay_scan`, one of the 10 real evaluation gates) runs
+  on an internal hourly loop inside `vinu-research`'s
+  `ScheduledResearchExecutor` — not env-configurable, hardcoded to 3600s.
+  For a real test you will likely NOT see a decay cycle fire naturally;
+  trigger it manually instead: `vinu-research decay-scan`.
+- **Promotion** (`promotion_bar`) is **never** on a cron — it only runs
+  via the manual `vinu-research promote-scan` CLI command or a direct
+  `POST /artifacts/{id}/promote` call. If a test's artifacts are sitting
+  in `BENCHING` and you're waiting for them to move, they won't on their
+  own — run `promote-scan` explicitly.
+- **LLM-assisted candidate generation** is off by default —
+  `VINU_RESEARCH_LLM_ENABLED=false`. The research generator still runs in
+  `hybrid` mode without it (template/rule-based candidates), but if the
+  test is specifically meant to exercise LLM-driven idea generation, this
+  needs to be explicitly set to `true`.
+
+### 5. Candidate limits — not env-configurable, worth knowing before you go looking for a knob
+
+`K_CAP_DEFAULT = 3` and `K_CAP_WINDOW_DAYS`/non-terminal-artifact-count cap
+(how many open candidates one ticker can have at once) are **hardcoded
+Python constants** in
+`vinu-agent/vinu_agent/agent/thesis_intake_gate.py`, not env vars — if a
+test needs a different cap, that's a code change, not a `.env` change.
+
+### 6. Worker cadences too slow to observe inside a short manual test
+
+Several real-pipeline workers run on cadences of 15-60+ minutes by
+default (`VINU_AGENT_PLANNER_INTERVAL=1800`,
+`VINU_AGENT_CAPITAL_ALLOCATOR_INTERVAL=900`, `VINU_LIVE_SHADOW_INTERVAL=3600`,
+`VINU_LIVE_INTERVAL=3600`). For a short, supervised test session, either
+budget real wall-clock time for each stage to fire naturally (see the
+`collect-timings.py predict` step below, which already accounts for this),
+or lower the relevant interval env var for the duration of the test only
+— **this is exactly the setting Part B tells you NOT to touch once the
+deployment is real**, so remember to restore the production defaults
+before treating this environment as anything other than a test.
+
+## Test-day walkthrough
 
 **Predict first, then watch.** Before a test run, estimate it:
 `python3 scripts/collect-timings.py predict --tickers AAPL,MSFT,NVDA`
@@ -272,12 +481,15 @@ After (or during), scan for failures:
 `test-status/failures.jsonl`; exit 1 if open incidents).
 
 1. **Seed a watchlist.** Nothing proposes candidates until the Planner has
-   tickers to look at — check whichever config/table the watchlist lives in
-   (per the design doc, this is the entry point the change-gate reads from).
+   tickers to look at — set `VINU_AGENT_WATCHLIST_SEED_TICKERS` (and
+   optionally `VINU_AGENT_SCREENER_RANKER_ID`) and let the `planner-worker`
+   loop pick it up on its next cycle. See section 1 above — there is no
+   separate one-shot seed command.
 2. **Confirm the Kill Switch state is what you expect.** It's meant to be a
    deliberate, explicit gate — check `broker/kill_switch.py`'s current state
    before assuming trades will actually execute or that a halt is active
-   when you think it is. Note: `OrderGuard` now throttles `10 orders/sec` (`B20`) and blocks even risk-reducing rebalance `REQUEST` by default (`decisions/12`).
+   when you think it is. `OrderGuard` throttles `10 orders/sec` (`B20`) and
+   blocks even risk-reducing rebalance `REQUEST` by default (`decisions/12`).
 3. **Watch the first full cycle end to end** in the logs: Summary Agent →
    Planner triage → Researcher/Executor sweep (+ `PaperRehearsalResult` 7-day) → risk_gatekeeper verdict →
    PEND → capital_allocator (batched, with `replace` unwind `REQUEST` if `PEND deflated_sharpe >= worst ACTIVE +0.8`, composition `gaps` check) →
@@ -293,26 +505,17 @@ After (or during), scan for failures:
    (`telemetry.db`) nothing else in the system consumes yet.
 5. **Sanity-check the TickerLedger** is accumulating real events for tickers
    you're watching — taxonomy now pinned `stage/event_type/source` (`decisions/10`), append-only, `ref_id` points to real row. This is the ticker-keyed audit trail everything else in the design writes to.
-6. **(New) Run freeze manifest** for lineage: `python -c "from vinu_infra.freeze import freeze_manifest; freeze_manifest('freeze.json')"` — hashes `VINU_*` env + `*_DATA_ROOT` file hashes (`B21`, `vinu_infra/freeze.py`). Use `contamination_check(old,new)` between research and live to prove no data drift.
-7. **(New) Check shock batch:** `TradePlanOrchestrator.cycle_shock_batch(max_batch=5)` now scores by `shock_clustering` + `shock_personality` and prioritizes top batch — not just `on_shock_event` debounced 60s per symbol.
+6. **Read the strategy-evaluation audit trail** for any ticker whose
+   candidates you're following: `vinu-agent strategy-eval <TICKER>` — shows
+   every candidate, how far it got through the 10 real evaluation gates,
+   and for any FAIL, the specific real reason plus the general rule from
+   the step registry. This is the fastest way to answer "why didn't this
+   one get promoted" without reading code.
+7. **(New) Run freeze manifest** for lineage: `python -c "from vinu_infra.freeze import freeze_manifest; freeze_manifest('freeze.json')"` — hashes `VINU_*` env + `*_DATA_ROOT` file hashes (`B21`, `vinu_infra/freeze.py`). Use `contamination_check(old,new)` between research and live to prove no data drift.
+8. **(New) Check shock batch:** `TradePlanOrchestrator.cycle_shock_batch(max_batch=5)` now scores by `shock_clustering` + `shock_personality` and prioritizes top batch — not just `on_shock_event` debounced 60s per symbol.
 
-## Ongoing operational checklist
-
-- **Secrets rotation**: follow `docs/secrets-rotation.md` — edit the file
-  under `./secrets/<name>`, then `docker compose up -d --force-recreate` for
-  the affected service (keys are read once at process start, no live-reload).
-- **Structured logs**: worker exceptions are now logged with context (which
-  ticker/artifact was being processed) — this is your first place to look if
-  something silently stopped producing new candidates or funding decisions.
-- **Re-run `scripts/setup-secrets.sh --check`** any time before a redeploy,
-  especially after rotating a credential, to confirm nothing required is
-  blank.
-- **New since v1:** `PaperRehearsalResult` (Row 1), `replace` REQUEST (Row 2), `cycle_shock_batch` (Row 3), `composition_view` (Row 4), `OrderGuard` throttle `10/sec` (B20), `freeze_manifest` (B21) — see `04-new-full-explanation-v2.md` + `pending-items-to-be-implemented.md` Status 2026-09-07.
-- **Known follow-up, not urgent**: task 01's capital-allocator-worker test
-   doesn't yet exercise the actual scheduling loop (only the cycle function it
-   calls) — the worker itself is confirmed working in practice, this is just a
-   test-coverage gap to close eventually. Also `ShadowEvaluator` tick wallet still spiked (B24).
-- **If you ever add a new committed file with real credentials in it by
-  mistake**, follow the leaked-credential playbook in
-  `docs/secrets-rotation.md` immediately — rotate at the provider first,
-  don't just delete the file.
+**Before promoting this from a test to a real deployment**: revert every
+cadence/date-range knob you lowered for the test window back to Part B's
+production defaults, and re-read Part B's "What's different" list — it's
+written as the mirror image of this section specifically so nothing gets
+missed in that direction either.

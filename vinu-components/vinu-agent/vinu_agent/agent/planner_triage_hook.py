@@ -23,21 +23,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from vinu_research.models import ArtifactStatus
-
-from .thesis_intake_gate import CANDIDATE_PROPOSED_EVENT_TYPE, K_CAP_DEFAULT
+from .thesis_intake_gate import CANDIDATE_PROPOSED_EVENT_TYPE, K_CAP_DEFAULT, NON_TERMINAL_STATUSES
 
 LOG = logging.getLogger(__name__)
-
-# Every status except DECAYED/DISABLED -- mermaid-explanation.md's Planner
-# section: triage "must span every non-terminal state (CREATED, BENCHING,
-# ACTIVE, MONITORING), not ACTIVE alone." PEND/PENDBLOCK postdate that doc
-# (Phase 2/3) but are non-terminal by the same logic -- a candidate
-# awaiting funding or held by the Kill Switch is still "already in flight."
-NON_TERMINAL_STATUSES = [
-    ArtifactStatus.CREATED, ArtifactStatus.BENCHING, ArtifactStatus.PEND,
-    ArtifactStatus.PENDBLOCK, ArtifactStatus.ACTIVE, ArtifactStatus.MONITORING,
-]
 
 
 class ArtifactReader(Protocol):
@@ -100,22 +88,29 @@ class PlannerTriage:
         cycle, picked up again next cycle, never a funding/execution risk."""
         ticker = ticker.upper()
 
-        try:
-            count = self._ticker_ledger.count_events(ticker, event_type=CANDIDATE_PROPOSED_EVENT_TYPE)
-        except Exception as exc:
-            LOG.warning("Planner K-cap lookup failed for %s, defaulting to skip: %s", ticker, exc)
-            return PlannerTriageResult(ticker, False, f"K-cap lookup failed, defaulting to skip: {exc}")
-
-        if count >= self._k_cap:
-            return PlannerTriageResult(
-                ticker, False, f"ticker at distinct-candidate cap ({count}/{self._k_cap}) this cycle",
-            )
-
+        # Real fix, 2026-09-21 (missing-pieces-of-system/startegy-enhancer/
+        # 02-implementation.md): the K-cap now counts real, currently
+        # non-terminal artifacts for this ticker -- not a rolling time
+        # window over ticker_ledger events. This is the actually-correct
+        # fix the time-window was a stopgap for: a slot frees the instant
+        # a candidate resolves (promoted to ACTIVE, or DISABLED on a real
+        # promotion_bar rejection -- see promotion.py/cli.py/
+        # capital_allocator_hook.py/routes_read.py, all of which now set
+        # DISABLED on a genuine promotion-bar FAIL), not after a fixed
+        # number of days regardless of what actually happened. Reuses the
+        # exact same query this function already ran for recipe rotation
+        # -- one real lookup, not two.
         try:
             existing = self._strategy_store.list_artifacts_for_symbol(ticker, statuses=NON_TERMINAL_STATUSES)
         except Exception as exc:
             LOG.warning("Planner artifact lookup failed for %s, defaulting to skip: %s", ticker, exc)
             return PlannerTriageResult(ticker, False, f"artifact lookup failed, defaulting to skip: {exc}")
+
+        if len(existing) >= self._k_cap:
+            return PlannerTriageResult(
+                ticker, False,
+                f"ticker at distinct-candidate cap ({len(existing)}/{self._k_cap}) currently non-terminal",
+            )
 
         try:
             prior = self._hypothesis_reader.query_by_symbol(ticker)

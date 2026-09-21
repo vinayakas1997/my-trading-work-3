@@ -1,10 +1,10 @@
 ---
 name: agentic-workflow-current-architecture
-status: v4 — 2026-09-15 — targeted update on top of v3 (2026-09-11), not a full rewrite. v3's structure, diagram, and per-agent detail are still real and were not re-verified line-by-line this pass; what changed is specifically the two things a 2026-09-11 reader would now get wrong — the 28-vs-2-angle disconnect (v3's headline finding) is fixed, and a new cross-cutting LLM-reliability layer plus several new persisted stores were built this session as foundation work. See the two new sections below and the "Real gap... RESOLVED" callout for exactly what changed and why. v1/v2.2 stay in git history as snapshots of earlier phases.
-purpose: how the agentic pipeline actually runs today — the roles, the loop-backs, the cross-cutting safety mechanisms, and an honest statement of what's proven vs. still unverified. Supersedes v3 as the current source of truth for this diagram.
+status: v5 — 2026-09-21 — targeted update on top of v4 (2026-09-15), not a full rewrite. v4's structure, diagram, and per-agent detail are still real and were not re-verified line-by-line this pass; what changed is specifically what a 2026-09-15 reader would now get wrong — the K-cap mechanism the THGATE/Planner nodes reference was rebuilt (real artifact count, not a time window), a new 3-table strategy-evaluation audit trail now records every one of the 10 real evaluation/rejection gates a strategy passes through, and one stale claim about `vinu-screener` being fully decoupled is corrected. See the new "Strategy Evaluation Audit Trail" cross-cutting section below. v1/v2.2/v3 stay in git history as snapshots of earlier phases.
+purpose: how the agentic pipeline actually runs today — the roles, the loop-backs, the cross-cutting safety mechanisms, and an honest statement of what's proven vs. still unverified. Supersedes v4 as the current source of truth for this diagram.
 ---
 
-# Agentic workflow — current architecture (v4, 2026-09-15)
+# Agentic workflow — current architecture (v5, 2026-09-21)
 
 ## The diagram
 
@@ -30,7 +30,7 @@ flowchart TB
     subgraph ENTRY2 ["Second entry point — parallel to the watchlist path, not chained off it"]
         direction TB
         HTHEORY(["Human's own theory<br/>(idea/analogy, not code)"]) --> THGATE
-        THGATE{"Near-duplicate theory,<br/>OR ticker at K-cap this cycle?"}
+        THGATE{"Near-duplicate theory,<br/>OR ticker at K-cap<br/>(real non-terminal<br/>artifact count, not<br/>a time window)?"}
         THGATE -->|"yes — discard, wait<br/>for the next one"| HTHEORY
         THGATE -->|"no"| TI
         TI["<b>Thesis Intake</b><br/>(matches a theory against real<br/>evidence; writes no code)"]
@@ -67,8 +67,15 @@ flowchart TB
     LS --> MON
 
     MON["<b>7. Monitor</b><br/>(vinu-live's TradePlanOrchestrator<br/>— sole authority on a live<br/>position's close/hold)<br/><i>invalidation exit, contingency<br/>rules, bracket-partial at 1R+,<br/>correlation trim — verified<br/>scenario-by-scenario, see below</i>"]
-    MON -->|"decay / drop — outcome<br/>+ reason written back"| P
+    MON -->|"decay / drop — outcome<br/>+ reason written back<br/>(for the Planner/<br/>HypothesisRegistry to learn<br/>from — does NOT itself<br/>terminate the artifact)"| P
     MON -->|"hold"| LS
+    MON -.->|"decay_scan (step 7 of the<br/>strategy_evaluation gates):<br/>degraded reading"| DECAYED
+
+    DECAYED{{"DECAYED<br/>(2 consecutive WARNING/<br/>CRITICAL readings —<br/>vinu-research/decay.py)"}}
+    DECAYED -.->|"further consecutive<br/>CRITICAL while decayed"| DISABLED
+    DECAYED -.->|"a real re-evaluation<br/>can still recover it"| MON
+
+    DISABLED[["<b>Terminal: DISABLED</b><br/>never re-evaluated again.<br/>Reached from: sustained decay<br/>(above) OR a genuine, non-forced<br/>promotion_bar FAIL — the manual/<br/>CLI 'promote-scan' &amp; POST<br/>.../artifacts/id/promote paths,<br/>NOT part of this automated<br/>worker loop, see the Strategy<br/>Evaluation Audit Trail section"]]
 
     HR[("HypothesisRegistry")]
     HR -.->|"must consult before<br/>proposing again"| P
@@ -323,6 +330,40 @@ capped 75% — fixed this session from a flat 50%, `the-resaoning-ineffciency/00
   `project-understanding/05-full-recorded-information/` for the full
   inventory of what's stored where, and which stores are genuinely
   consumed vs. built ahead of their reader.
+- **Strategy Evaluation Audit Trail** (new 2026-09-21,
+  `missing-pieces-of-system/startegy-enhancer/`) — a real, queryable
+  answer to "did we pass or fail, and why" for any strategy candidate.
+  Both machine-proposed and human-submitted strategies produce the same
+  `Artifact` row (one `artifact_id` space, no separate path for either
+  source), and every one of the 10 real evaluation/rejection gates it
+  passes through — `risk_critic`, `promotion_bar`, `correlation_gate`,
+  `risk_gatekeeper`, `capital_allocator`, `shadow_evaluator`,
+  `decay_scan`, `trade_score_gate`, `approve_trade_plan`, `order_guard`
+  — now writes a PASS/FAIL/HOLD row to a new 3-table store
+  (`vinu-infra/strategy_evaluation.py`:
+  `strategy_evaluation_history`/`_status`/`_step_registry`), readable
+  via `vinu-agent strategy-eval <TICKER>`. Ships inert when
+  `VINU_STRATEGY_EVAL_DATA_ROOT` is unset — a data-mount addition, not a
+  gating change to the pipeline itself.
+  - **K-cap fixed as part of the same work** — the THGATE/Planner
+    "ticker at K-cap" check (diagram above) now counts **real,
+    currently-non-terminal `Artifact` rows** for the ticker
+    (`list_artifacts_for_symbol(ticker, NON_TERMINAL_STATUSES)`)
+    instead of a 7-day rolling window over ledger events. No separate
+    time-based control needed on top of it: `decay_scan` (step 7 above)
+    already auto-transitions a stale strategy to `DECAYED`/`DISABLED`,
+    which frees its K-cap slot the moment that happens.
+  - **A real gap this closed**: a genuine (non-forced) `promotion_bar`
+    rejection used to leave the artifact stuck in `BENCHING`/`PEND`
+    forever — permanently occupying a K-cap slot with a dead candidate.
+    Now transitions to `ArtifactStatus.DISABLED` at all four real
+    `promotion_bar` call sites (`cli.py`'s `promote-scan`,
+    `capital_allocator_hook.py`, `service.py`'s `approve_run`, and
+    `routes_read.py`'s `POST /artifacts/{id}/promote` — the last one
+    found and wired for the first time during this work). Deliberately
+    not applied to `risk_gatekeeper`/`correlation_gate` rejections,
+    which stay re-checkable since portfolio state and inter-strategy
+    correlation can legitimately change over time.
 - **A real latent bug found and fixed**: `trade_score_gate.py`'s
   approval-recheck used a fresh default-thresholds object instead of
   `load_active_thresholds()` (the same calibrated thresholds authoring
@@ -352,10 +393,18 @@ the way (`scenarios-test/01-07`, all 7 closed).
    mechanical scenarios deliberately bypass the LLM entirely.
    `llm-scenarios-test/` exists as a folder with a README stub — not
    started.
-2. **`vinu-screener`** — fully decoupled from this whole pipeline
-   (confirmed zero imports into `vinu-agent`/`vinu-research`/`vinu-live`),
-   currently only consumed manually via Telegram `/rank`. Zero scenario
-   coverage.
+2. **`vinu-screener`** — **no longer fully decoupled** (stale as of this
+   version): a real starter ranker (`core_starter`) and a real consumer
+   now exist — `vinu-agent`'s watchlist-discovery worker
+   (`planner_worker_main`) merges the screener's top-ranked tickers into
+   its seed list when `VINU_AGENT_SCREENER_RANKER_ID` is set, feeding
+   the same `bootstrap_new_tickers` path a manually-seeded ticker uses.
+   Manual Telegram `/rank` still works too, unchanged. Still zero
+   scenario coverage, and the weight-tuning/feedback-loop pieces
+   discussed alongside this remain unbuilt (need real closed-trade
+   outcomes to exist first — not fabricated ahead of real data). See
+   `missing-pieces-of-system/(pcomp)vinu-screener-research/` for the
+   full design history.
 3. **No live track record.** Every scenario so far is synthetic,
    deterministic, offline. Nothing here has survived a real incident.
 4. ~~The 28-vs-2-angle disconnect~~ — **fixed 2026-09-14**, see the

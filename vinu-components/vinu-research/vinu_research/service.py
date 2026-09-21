@@ -295,6 +295,7 @@ class ResearchService:
             return None
 
         correlation_blocked = False
+        correlation_verdict = None
         if self._config.promotion_correlation_required and result.strategy_code and result.from_date and result.to_date:
             try:
                 active = await self._run_in_thread(
@@ -304,7 +305,7 @@ class ResearchService:
                 if active:
                     tools = ResearchTools(self._config)
                     try:
-                        verdict = await check_correlation_gate(
+                        correlation_verdict = await check_correlation_gate(
                             candidate_code=result.strategy_code,
                             candidate_symbol=result.symbol,
                             from_date=result.from_date,
@@ -314,13 +315,13 @@ class ResearchService:
                             config=self._config,
                             interval=self._config.interval,
                         )
-                        if not verdict.eligible:
+                        if not correlation_verdict.eligible:
                             correlation_blocked = True
                             LOG.warning(
                                 "Correlation gate blocked promotion for run %s on %s: "
                                 "avg_corr=%.3f with %d active strategy(ies)",
                                 run_id, result.symbol,
-                                verdict.avg_correlation, verdict.n_active,
+                                correlation_verdict.avg_correlation, correlation_verdict.n_active,
                             )
                     finally:
                         await tools.close()
@@ -329,6 +330,56 @@ class ResearchService:
 
         target_status = ArtifactStatus.BENCHING if correlation_blocked else ArtifactStatus.ACTIVE
         artifact = await self._run_in_thread(self._create_artifact_from_run, result, target_status)
+        # missing-pieces-of-system/startegy-enhancer/01-plan.md section 2 --
+        # written here, not inside the try block above, since the real
+        # artifact_id doesn't exist until _create_artifact_from_run runs.
+        try:
+            from vinu_infra.strategy_evaluation import StrategyEvaluationStore, seed_step_registry
+            import os
+            from pathlib import Path as _Path
+
+            eval_root = os.environ.get("VINU_STRATEGY_EVAL_DATA_ROOT", "").strip()
+            eval_store = StrategyEvaluationStore(
+                (_Path(eval_root) if eval_root else self._config.data_root) / "strategy_evaluation.db"
+            )
+            seed_step_registry(eval_store)
+
+            # risk_critic (step 1): the loop's own iterative refinement
+            # only ever persisted the final iteration's *verdict* string
+            # to `iteration_checkpoints.critic_verdict` -- the full
+            # reasoning text (CriticFeedback.reasoning) was never
+            # persisted anywhere (00-explanation.md section 3's own
+            # flagged gap), so it genuinely can't be recovered here.
+            # Documented honestly in the reasoning field rather than
+            # invented.
+            checkpoint = await self._run_in_thread(self._storage.get_last_checkpoint, run_id)
+            if checkpoint is not None and checkpoint.get("critic_verdict"):
+                critic_verdict = str(checkpoint["critic_verdict"]).strip().upper()
+                eval_store.write_step_result(
+                    artifact_id=artifact.artifact_id, ticker=result.symbol,
+                    step_name="risk_critic", step_order=1,
+                    verdict="PASS" if critic_verdict == "PASS" else "FAIL",
+                    reasoning=(
+                        f"final iteration critic_verdict={critic_verdict} "
+                        "(full reasoning text not persisted in run storage)"
+                    ),
+                    metrics={"critic_verdict": critic_verdict},
+                )
+
+            if correlation_verdict is not None:
+                eval_store.write_step_result(
+                    artifact_id=artifact.artifact_id, ticker=result.symbol,
+                    step_name="correlation_gate", step_order=3,
+                    verdict="PASS" if correlation_verdict.eligible else "FAIL",
+                    reasoning="; ".join(correlation_verdict.reasons) if correlation_verdict.reasons else "within correlation threshold",
+                    metrics={
+                        "avg_correlation": correlation_verdict.avg_correlation,
+                        "max_correlation": correlation_verdict.max_correlation,
+                        "n_active": correlation_verdict.n_active,
+                    },
+                )
+        except Exception:
+            LOG.exception("failed to write strategy_evaluation rows for %s, continuing without them", artifact.artifact_id)
         response = result.to_dict()
         response["artifact_id"] = artifact.artifact_id
         return response

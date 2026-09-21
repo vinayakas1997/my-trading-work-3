@@ -188,9 +188,16 @@ class TestPromotionBarGate:
         with patch("vinu_agent.broker.kill_switch.is_trading_halted", return_value=False):
             apply_capital_allocator_decision(content, strategy_store=strategy_store)
 
-        # Stays PEND -- funding was decided but the statistical bar wasn't
-        # met, distinct from PENDBLOCK (which is specifically kill-switch).
-        assert strategy_store.get_artifact(artifact_id).status == ArtifactStatus.PEND
+        # Real fix, 2026-09-21 (missing-pieces-of-system/startegy-enhancer/
+        # 02-implementation.md): used to stay PEND forever -- a real gap,
+        # since deflated_sharpe/holdout/pbo are fixed metrics from this
+        # artifact's own backtest, so a re-check would only ever reach the
+        # same verdict. Now DISABLED, a real permanent terminal state
+        # (distinct from PENDBLOCK, which is specifically kill-switch and
+        # genuinely temporary) -- so it stops counting against the K-cap's
+        # real non-terminal-artifact count instead of blocking a slot
+        # forever.
+        assert strategy_store.get_artifact(artifact_id).status == ArtifactStatus.DISABLED
 
     def test_promotion_bar_failure_never_reaches_the_kill_switch_check(self, strategy_store) -> None:
         artifact_id = _pend_artifact(strategy_store, "AAPL", clears_promotion_bar=False)
@@ -479,3 +486,60 @@ class TestUnwindCrossProcessWire:
 
         kwargs = mock_post.call_args[1]
         assert kwargs["headers"] == {}
+
+
+class TestStrategyEvaluationWrite:
+    """missing-pieces-of-system/startegy-enhancer/01-plan.md section 2 --
+    promotion_bar (2nd real call site found, step_order=2) and
+    capital_allocator itself (step_order=5)."""
+
+    def test_funded_writes_promotion_bar_pass_and_capital_allocator_pass(self, strategy_store, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        artifact_id = _pend_artifact(strategy_store, "AAPL")
+        content = _content([{"artifact_id": artifact_id, "funded": True, "amount": 15000.0}])
+
+        with patch("vinu_agent.broker.kill_switch.is_trading_halted", return_value=False):
+            apply_capital_allocator_decision(content, strategy_store=strategy_store)
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        eval_store = StrategyEvaluationStore(tmp_path / "strategy_evaluation.db")
+        history = eval_store.get_history(artifact_id)
+        by_step = {h["step_name"]: h for h in history}
+        assert by_step["promotion_bar"]["verdict"] == "PASS"
+        assert by_step["capital_allocator"]["verdict"] == "PASS"
+        status = eval_store.get_status(artifact_id)
+        assert status["status"] == "active"
+
+    def test_promotion_bar_failure_writes_fail_and_skips_funding(self, strategy_store, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        artifact_id = _pend_artifact(strategy_store, "AAPL", clears_promotion_bar=False)
+        content = _content([{"artifact_id": artifact_id, "funded": True, "amount": 15000.0}])
+
+        with patch("vinu_agent.broker.kill_switch.is_trading_halted", return_value=False):
+            apply_capital_allocator_decision(content, strategy_store=strategy_store)
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        eval_store = StrategyEvaluationStore(tmp_path / "strategy_evaluation.db")
+        history = eval_store.get_history(artifact_id)
+        promo_rows = [h for h in history if h["step_name"] == "promotion_bar"]
+        assert len(promo_rows) == 1
+        assert promo_rows[0]["verdict"] == "FAIL"
+        assert not any(h["step_name"] == "capital_allocator" for h in history)
+
+    def test_halted_writes_hold(self, strategy_store, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        artifact_id = _pend_artifact(strategy_store, "AAPL")
+        content = _content([{"artifact_id": artifact_id, "funded": True, "amount": 15000.0}])
+
+        with patch("vinu_agent.broker.kill_switch.is_trading_halted", return_value=True):
+            apply_capital_allocator_decision(content, strategy_store=strategy_store)
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        eval_store = StrategyEvaluationStore(tmp_path / "strategy_evaluation.db")
+        history = eval_store.get_history(artifact_id)
+        ca_rows = [h for h in history if h["step_name"] == "capital_allocator"]
+        assert len(ca_rows) == 1
+        assert ca_rows[0]["verdict"] == "HOLD"
