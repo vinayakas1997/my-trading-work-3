@@ -56,10 +56,22 @@ Every one of the 28 real angle ids from `angles.yaml`, assigned to one
 of 7 thematic clusters — grounded in each angle's actual `title`, not
 guessed:
 
-**Cluster A — Classical statistical forecasts (3)**
-`arima`, `exponential_smoothing`, `kalman_filters` — traditional
-statistical time-series methods (AR/MA-family models, smoothing,
-state-space estimation).
+**Cluster A — Classical statistical methods (3)**
+`arima`, `exponential_smoothing`, `kalman_filters` — traditional,
+pre-deep-learning statistical time-series methods. **Not fully
+uniform in output shape, unlike every other cluster's grouping
+principle**: `arima`/`exponential_smoothing` each produce a forward
+point forecast; `kalman_filters` explicitly does not (`angle-reference/
+09-kalman_filters.md`: "Reports the present/recent filtered and
+smoothed state plus its uncertainty ... not a forward forecast").
+Grouped together by methodological era, not output shape — real, live
+LLM testing independently confirmed this seam is genuinely felt by the
+model (`03-real-llm-findings-and-guardrails.md`'s Chapter 3 run
+misassigned `kalman_filters` into Cluster B, unprompted). Fixed
+2026-09-22: `angle_synthesizer/prompt.md` gained an explicit Cluster-A
+rule instructing the model to report `kalman_filters`' filtered
+level/trend as a separate present-state read, never as a third vote
+alongside the other two angles' forecasts.
 
 **Cluster B — Deep-learning / foundation-model forecasts (14)**
 `chronos`, `dlinear`, `itransformer`, `kronos`, `lag_llama`, `lpatchtst`,

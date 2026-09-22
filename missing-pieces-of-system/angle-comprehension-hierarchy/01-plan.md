@@ -232,6 +232,189 @@ trying the upstream fix (steps 1-6) first and only reopening this if
 checkpoint 01's re-run in step 6 still shows real failures after the
 cluster digest is in place.
 
+## Step 8 — gate comprehension on real angle coverage, not just "a run_id changed" (DONE, 2026-09-22)
+
+**Real gap found by the user, not this doc**: the trigger that fires the
+7 cluster-synthesis LLM calls (`RunLogTrigger.check()`,
+`vinu-agent/vinu_agent/agent/ticker_gate.py`) only checks whether
+`vinu-initial-analysis` reports a *new* `run_id` for the ticker — but a
+`run_id` is written **per angle** (`orchestration_registry.py`'s
+`record_run(..., run_id=run_id)`, called once per angle-run, confirmed
+by reading the real code), not once per full 28-angle batch. So "a new
+run_id" can genuinely mean just 1 of 28 angles finished — the comprehension
+LLM calls could fire on almost-empty data, wastefully and prematurely.
+
+**Fix**: a new, optional coverage gate in `RunLogTrigger.refresh_if_stale()`:
+- `vinu-agent/vinu_agent/tools/angles_tool.py::fetch_angle_coverage()` —
+  a cheap, non-LLM HTTP check (reuses the same `_fetch_angle_results`
+  helper `GetAllAnglesTool`/`GetClusterAnglesTool` already share) that
+  reports `(angles_with_data, angle_count)` for a ticker.
+- `ticker_gate.py::AngleCoverageReader`/`HttpAngleCoverageReader` — same
+  Protocol/real-transport-class pattern as `RunLogReader`/
+  `HttpRunLogReader`, so tests inject a fake exactly the same way.
+- `RunLogTrigger` gains `angle_coverage_reader`, `min_angle_coverage_fraction`
+  (default `0.0` — **ships inert**, identical to pre-existing behavior
+  unless explicitly configured), `max_angle_coverage_deferrals` (default
+  `3`). When coverage is below the fraction, `refresh_if_stale` returns
+  `should_refresh=False` **without** advancing `TickerSummaryStore`'s
+  `source_run_id` — so the next cycle's `check()` still sees the run_id
+  as "new" and re-checks coverage, until it either clears the bar or
+  hits the deferral cap.
+- **Fail-safe against a permanently-broken angle silently stalling a
+  ticker forever**: if a ticker has been deferred `max_angle_coverage_deferrals`
+  times within the trailing 24h (counted via `TickerLedgerStore.count_events`,
+  same shared-counter discipline used for the K-cap fix) without ever
+  clearing the threshold, comprehension proceeds anyway — logged loudly,
+  not silently accepted as "good enough."
+- New config: `VINU_AGENT_ANGLE_COVERAGE_MIN_FRACTION` (default `"0.0"`),
+  `VINU_AGENT_ANGLE_COVERAGE_MAX_DEFERRALS` (default `"3"`), wired into
+  `cli.py`'s real `RunLogTrigger` construction in `planner_worker_main`.
+
+**Every real deferral is logged**, not hidden: a new `TickerLedgerStore`
+event type, `angle_comprehension_deferred`, records the real
+`with_data/total` fraction each time comprehension is held back —
+readable the same way every other real ledger event already is.
+
+6 new tests in `test_ticker_gate.py` (`TestAngleCoverageGate`): ships
+inert by default (coverage reader never even consulted), low coverage
+defers without advancing `source_run_id`, high coverage proceeds
+normally, gives up after `max_angle_coverage_deferrals` within 24h, and
+a coverage-check transport failure fails **open** (deliberately the
+opposite direction from `RunLogReader`'s own failure, which fails
+closed — there, a failure means "don't even know if anything changed";
+here, something is already known to have changed, and the worse outcome
+is never comprehending the ticker at all, not comprehending it slightly
+early). Full `vinu-agent` suite green (1296 passed, 4 pre-existing
+skips unrelated).
+
+**Not yet done**: real end-to-end verification against a live
+`vinu-initial-analysis` deployment that this actually changes when
+comprehension fires for a genuinely slow-finishing ticker — built and
+unit-tested against fakes, same "real but not live-verified" posture as
+everything else still open in this folder (see `04-implemented.md`'s
+caveat list).
+
+## Step 9 — manual override for the coverage gate (DONE, 2026-09-22)
+
+**User's own follow-up to Step 8**: the automatic 24h/`max_angle_coverage_deferrals`
+fail-safe eventually proceeds on its own, but the user wanted a way to
+force it sooner for one specific ticker, not wait it out.
+
+- `ticker_gate.py`'s `RunLogTrigger` gained `force_refresh(ticker,
+  summary_agent_fn)` — runs comprehension immediately, bypassing both
+  `check()`'s run_id-staleness comparison and the coverage gate
+  entirely. Refactored the persistence logic shared with
+  `refresh_if_stale` into one private `_run_and_persist()` so the two
+  paths can't drift on how a result actually gets written.
+- Logged as a **distinct** ledger event type,
+  `angle_comprehension_forced` — deliberately separate from
+  `angle_comprehension_deferred` (the automatic path), so the audit
+  trail always shows *why* comprehension ran when it did: a human
+  override, vs. the fail-safe timing out, vs. real coverage clearing
+  normally.
+- New CLI command: `vinu-agent force-comprehension <TICKER>` —
+  constructs the real `RunLogTrigger`/`make_summary_agent_fn` the same
+  way `planner-worker` does, calls `force_refresh`, prints the real
+  `angles_with_data/angle_count` result.
+- **Only affects the one ticker it's run against** — every other
+  ticker's automatic `refresh_if_stale` path, coverage gate included, is
+  completely untouched.
+
+5 new tests (3 in `test_ticker_gate.py`'s `TestForceRefresh`: ignores
+both the run_id check and the coverage gate, logs the distinct event
+type not the deferred one, a RunLog lookup failure still proceeds
+rather than aborting the forced run; 2 in the new
+`test_cli_force_comprehension.py`: arg parsing, and that the command
+calls `force_refresh` — never `refresh_if_stale` — with the real
+constructed dependencies). Full `vinu-agent` suite green (1301 passed,
+4 pre-existing skips unrelated).
+
+**Real correction found while building this**: the handler was
+initially written `async def` using `async with AgentService()`,
+copying a pattern already present at a few other call sites in
+`cli.py` (`_send`, `_chat_loop`, the swarm command) — but `AgentService`
+only defines sync `__enter__`/`__exit__`, never `__aenter__`/`__aexit__`.
+`async with` on a sync-only context manager raises `AttributeError` at
+runtime. Neither `force_refresh` nor `make_summary_agent_fn`'s returned
+callable actually need an event loop, so the fix was to make the
+handler plain sync (`with AgentService()`), matching every other real
+worker command (`planner-worker`, `risk-gatekeeper-worker`, etc.), not
+to add `__aenter__`/`__aexit__` to `AgentService`. **Not fixed**: the
+other `async with AgentService()` call sites already in `cli.py` before
+this session — out of scope for this change, but a real, latent bug
+worth flagging separately; not touched here since they weren't part of
+this ask.
+
+## Step 10 — the real first live end-to-end attempt (2026-09-22 — INCOMPLETE, real findings)
+
+**What this was**: the first time the actual `vinu-agent` team-loop
+machinery was run end-to-end against a live model for this design —
+every prior "proof" in this folder (checkpoints, `ticker-book-example/`)
+used standalone scripts shaped like the real code, never the real code
+itself. This closes that specific gap, honestly: it did NOT succeed at
+producing a persisted result, but it found and fixed one real bug along
+the way, and surfaced one real, still-open question.
+
+**What was done, in order**:
+1. Discovered the running containers (`agent-api`, `research-api`,
+   `live-api`, `screener-api`) were built from images dated 2026-09-21,
+   predating every code change from this whole session — rebuilt and
+   redeployed all 4, confirmed the new code was actually inside
+   (`hasattr(RunLogTrigger, "force_refresh")` → `True` inside the
+   container, `force-comprehension` visible in `vinu-agent --help`).
+2. Found and fixed two real, pre-existing permission bugs while getting
+   the stack healthy (same root-owned-directory class of bug seen
+   earlier this project): `./data/strategy-evaluation` and
+   `./data/agent/trade_audit.log` were both unwritable by the
+   container's `app` user. Fixed both.
+3. Ran `vinu-agent force-comprehension AAPL` for real, live, against the
+   real `hindsight-llm` endpoint. **First real attempt (killed after
+   ~85 min, 109+ LLM calls, never finished)**: found a real bug —
+   `cross_cluster_analyst`'s own prompt already says "call
+   `get_all_angles` once," but the model called it **15 separate
+   times** in one run anyway. Confirmed via the real ledger and log
+   output, not assumed.
+4. **Real fix built and shipped**: `GetAllAnglesTool` gained a
+   per-instance cache keyed on `(ticker, time_format)`
+   (`angles_tool.py`) — a repeat call within the same tool instance
+   returns the already-fetched result instantly instead of re-hitting
+   `vinu-initial-analysis`. Chosen deliberately over strengthening the
+   prompt wording, because the instruction already existed and the
+   model ignored it anyway — same "instruction alone doesn't hold
+   against this model, only a structural fix does" lesson this folder
+   already learned from the prompt-injection redaction fix (1f).
+   Correctly scoped: `build_registry()` constructs a fresh tool
+   instance per ticker-run (`scheduler_workers.py::run_team_for_ticker`),
+   so the cache never leaks across tickers or across separate runs. 4
+   new tests in `test_angles_tool.py`, full `vinu-agent` suite green
+   (1305/1305). Rebuilt and redeployed `agent-api` with the fix.
+5. **Second real attempt, with the fix live**: real improvement,
+   confirmed — full 28-angle re-fetches dropped from 15 to **3**. But
+   the run still did not finish. Killed after ~55 minutes, 76 LLM
+   calls, with the call rate visibly slowing over time (from roughly
+   1.7 calls/min early on to ~0.3 calls/min near the end).
+
+**Real, still-open question, not answered today**: is the 8-delegation
+design (7 `angle_synthesizer` cluster calls + 1 `cross_cluster_analyst`
+call, each its own multi-turn tool-calling loop — realistically 70-100+
+individual LLM calls for one ticker) practical to run against this
+specific local model (`qwen3.5-4b-local`) at all, on any reasonable
+timescale? The fixed bug was a real, confirmed waste; removing it
+measurably helped (15→3 refetches) but did not get the run to actually
+complete. Whether the remaining slowness is (a) inherent to this small
+model needing many turns per delegation, (b) a second, not-yet-found
+inefficiency similar to the first one, or (c) the context growing large
+enough across 8 delegations to slow generation down turn-over-turn
+(the observed deceleration is at least consistent with this) is
+**genuinely unknown** — not diagnosed, not guessed at here.
+
+**Nothing was left in a broken state**: the killed process left no
+partial/corrupt data (comprehension either fully persists via
+`_run_and_persist` or doesn't run at all — there's no partial-write
+path), the container is healthy, and every other worker (planner,
+risk-gatekeeper, capital-allocator, live) kept running normally and
+unaffected throughout.
+
 ## Dependency summary
 
 Steps 1-4 are **done** (2026-09-22): glossary + `explain_angle` tool,

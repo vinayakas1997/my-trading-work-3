@@ -89,6 +89,92 @@ open decision, not made.
   `=== Angle Digest ===` section, per the plan's transition note (lets
   both shapes be compared directly, which is exactly what Step 6 did).
 
+### 1g. Comprehension no longer fires on a single finished angle (2026-09-22)
+
+Real gap, found by the user: `RunLogTrigger.check()` (`ticker_gate.py`)
+triggers the 7-LLM-call comprehension pass whenever
+`vinu-initial-analysis` reports a new `run_id` for a ticker — but a
+`run_id` is written per angle (`orchestration_registry.py`), not per
+full batch, so 1 of 28 angles finishing was enough to fire all 7
+delegations against mostly-empty data.
+
+Fixed: an optional coverage gate. `angles_tool.py::fetch_angle_coverage()`
+does a cheap, non-LLM check of real `(angles_with_data, angle_count)`;
+`RunLogTrigger` defers `refresh_if_stale` (without advancing
+`source_run_id`, so the next cycle re-checks) until coverage clears a
+configured fraction (`VINU_AGENT_ANGLE_COVERAGE_MIN_FRACTION`, default
+`0.0` — ships inert), with a fail-safe cap
+(`VINU_AGENT_ANGLE_COVERAGE_MAX_DEFERRALS`, default `3` within 24h) so a
+permanently-broken angle can't stall a ticker's comprehension forever.
+Every deferral is logged as a real `TickerLedgerStore` event
+(`angle_comprehension_deferred`), not hidden. 6 new tests in
+`test_ticker_gate.py`, full `vinu-agent` suite green (1296/1296). See
+`01-plan.md` Step 8 for the full account.
+
+### 1i. First real live end-to-end attempt — INCOMPLETE, real findings (2026-09-22)
+
+**Read this section first if you're picking this up next.** Everything
+above (1a-1h) was verified with real code and real unit tests, but never
+run as the actual `vinu-agent` team-loop against a live model until
+today. Full account in `01-plan.md` Step 10 — short version:
+
+- Containers were running stale, day-old images the whole time — had to
+  rebuild `agent-api`/`research-api`/`live-api`/`screener-api` before
+  any of today's code was even reachable. **If you're testing this
+  again, check the image build date matches your last code change
+  first** (`docker inspect <container> --format '{{.Created}}'`).
+- Found and fixed a real bug: `cross_cluster_analyst`'s prompt already
+  said "call `get_all_angles` once" — the model called it 15 times
+  anyway. Fixed structurally (a per-instance cache on `GetAllAnglesTool`,
+  not a stronger prompt), confirmed live: refetches dropped 15 → 3.
+- **Still did not complete.** Two real attempts, killed at ~85 min/109
+  calls and ~55 min/76 calls respectively. No crash, no error at any
+  point — the model was still steadily making real, successful calls
+  both times, just very slowly, and the call rate was visibly slowing
+  over the second run's own lifetime.
+- **Not yet answered**: whether the 8-delegation design (realistically
+  70-100+ individual LLM calls per ticker once each specialist's own
+  multi-turn tool-calling is counted) is practical on this local model
+  at all, or whether there's a second inefficiency still to find. Not
+  guessed at — genuinely unknown, stopped deliberately rather than
+  left running indefinitely or reported as a false success.
+- **Not broken by any of this**: no corrupt/partial data anywhere (the
+  persistence step is all-or-nothing), every other worker kept running
+  normally throughout, two real pre-existing permission bugs (unrelated
+  to this folder's own work) were found and fixed along the way
+  (`./data/strategy-evaluation`, `./data/agent/trade_audit.log`).
+
+### 1h. Manual override for the coverage gate (2026-09-22)
+
+`RunLogTrigger.force_refresh(ticker, summary_agent_fn)` — runs
+comprehension for one ticker immediately, bypassing both the run_id
+check and the coverage gate from 1g. New CLI command
+`vinu-agent force-comprehension <TICKER>`. Logged as a distinct ledger
+event (`angle_comprehension_forced`), never conflated with the
+automatic fail-safe's proceed-anyway path. Only affects the one ticker
+it's run against. 5 new tests, full `vinu-agent` suite green
+(1301/1301). See `01-plan.md` Step 9.
+
+### 1f-bis. Cluster A's mixed forecast/non-forecast members disambiguated (2026-09-22)
+
+Real seam found during review, independently corroborated by this
+session's own live-LLM test: Cluster A groups `arima`/
+`exponential_smoothing` (forward point forecasts) with `kalman_filters`
+(explicitly NOT a forward forecast — a present-state filtered
+level/trend estimate) under one "classical statistical" label, unlike
+every other cluster's shared-output-shape grouping principle. The
+Chapter 3 live run (`03-real-llm-findings-and-guardrails.md`)
+independently misassigned `kalman_filters` into Cluster B on its own,
+unprompted — the same seam surfacing as a real model error, not just a
+naming quibble. Fixed with a targeted prompt rule rather than
+restructuring the cluster scheme (membership unchanged, still 3+14+2+3+
+2+2+2=28): `angle_synthesizer/prompt.md` gained a Cluster-A-only rule
+telling the model to report `kalman_filters`' filtered level/trend
+separately, never as a third forecast vote alongside `arima`/
+`exponential_smoothing`. Not yet re-tested live against a real model —
+same "wiring is real, live re-confirmation still open" caveat as the
+rest of this file's Section 4.
+
 ### 1f. Prompt-injection defense (found broken, then fixed, both confirmed live)
 
 Real testing (Step 6, checkpoint 01 trial 04) found that just labeling
@@ -153,15 +239,18 @@ explaining it excluded the flagged cluster.
 
 ## 4. Real caveats — what's still missing or unproven
 
-1. **No end-to-end test through the actual `vinu-agent` team-loop
-   machinery.** Every live-LLM result above was produced by standalone
-   scripts that call the real functions (`_build_forecast_prompt`,
-   `cluster_digest_validator`, etc.) directly, or that mimic the real
-   prompts closely — not by actually running `TeamManager.run()` with
-   a live LLM behind it end to end. The wiring is real and unit-tested,
-   but a genuine integration run (real screener team, real 8
-   delegations, real persistence, real forecast call, all against a
-   live model in one pass) has not been done.
+1. **UPDATED 2026-09-22 — attempted, still not completed.** A real
+   attempt was made (see section 1i above, full account in
+   `01-plan.md` Step 10): `vinu-agent force-comprehension AAPL` run
+   live, twice, against the real `hindsight-llm` endpoint. Found and
+   fixed one real bug (a redundant `get_all_angles` refetch loop). Even
+   with that fixed, neither attempt actually completed within ~55-85
+   minutes — not diagnosed further, not guessed at. So: the wiring is
+   real, unit-tested, AND has now been genuinely attempted live for the
+   first time — but a live run has still never actually finished and
+   persisted a real result. Whether that's fixable, or whether this
+   design needs a bigger/faster model to be practical at all, is the
+   next real open question, not yet answered.
 2. **Trial 01's regression is not root-caused, only observed.** A
    plausible mechanism is noted (the Cluster Digest section restates
    the bullish Cluster B signal a second time before Risk State
@@ -206,3 +295,27 @@ explaining it excluded the flagged cluster.
 10. **Checkpoint 02 (screener)** has never been run at all, live or
     otherwise — only checkpoint 01 (`forecast_skill`) has real trial
     coverage.
+11. **The angle-coverage gate (1g) is not yet live-verified either.**
+    Built and unit-tested against fakes (`FakeAngleCoverageReader`), but
+    never run against a real `vinu-initial-analysis` deployment to
+    confirm it actually changes when comprehension fires for a
+    genuinely slow-finishing ticker in practice.
+12. **The Cluster-A `kalman_filters` disambiguation rule (1f-bis) is
+    prompt-only, not re-verified live.** Added in response to a real,
+    independently-confirmed live-LLM error (the model misassigning
+    `kalman_filters` into Cluster B on its own), but the fix itself
+    hasn't been re-run against a live model yet to confirm it actually
+    stops that misassignment — same open item as Trial 01's regression
+    above (a fix proposed and applied, not yet proven).
+13. **Found but NOT fixed, out of scope of this folder's own work**: a
+    handful of `cli.py` call sites predating this session (`_send`,
+    `_chat_loop`, the swarm command) use `async with AgentService()`,
+    but `AgentService` only defines sync `__enter__`/`__exit__` —
+    confirmed via `hasattr(AgentService, "__aenter__")` → `False`. Any
+    of those code paths would raise `AttributeError` at runtime if
+    actually exercised. Found while building 1h's `force-comprehension`
+    command (which was initially written the same broken way, then
+    fixed to plain sync before merging — see `01-plan.md` Step 9's
+    "Real correction" note). Flagged here as a real, separate bug for
+    whoever picks it up next, not silently worked around by leaving it
+    undocumented.

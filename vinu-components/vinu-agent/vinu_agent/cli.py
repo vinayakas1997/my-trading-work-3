@@ -147,6 +147,13 @@ def _parse_args(argv=None) -> argparse.Namespace:
     se_p.add_argument("ticker", help="Symbol, e.g. AAPL")
     se_p.add_argument("--db", default="", help="Override VINU_STRATEGY_EVAL_DATA_ROOT")
 
+    # ── force-comprehension (missing-pieces-of-system/angle-comprehension-hierarchy) ──
+    fc_p = sub.add_parser(
+        "force-comprehension",
+        help="Run angle comprehension for a ticker right now, bypassing the run_id/coverage gate",
+    )
+    fc_p.add_argument("ticker", help="Symbol, e.g. AAPL")
+
     return parser.parse_args(argv)
 
 
@@ -342,6 +349,37 @@ def _cmd_strategy_eval(args) -> None:
         print()
 
 
+def _cmd_force_comprehension(args) -> None:
+    """The manual override for the angle-coverage gate
+    (missing-pieces-of-system/angle-comprehension-hierarchy/ Step 8): run
+    the Summary Agent's 7 cluster-synthesis LLM calls for one ticker
+    right now, regardless of whether vinu-initial-analysis has a new
+    run_id or how much real angle coverage currently exists. For a human
+    who's decided waiting isn't worth it for this one ticker -- every
+    other ticker's automatic refresh_if_stale path (including its
+    coverage gate, if configured) is completely unaffected. Synchronous,
+    like every other worker's own AgentService usage (planner_worker_main
+    etc.) -- force_refresh/make_summary_agent_fn's returned callable are
+    both plain sync calls, nothing here needs an event loop."""
+    ticker = args.ticker.strip().upper()
+    with AgentService() as service:
+        run_log_reader = HttpRunLogReader(service.config.services.get("vinu_initial_analysis"))
+        trigger = RunLogTrigger(
+            run_log_reader,
+            service.ticker_summary_store, service.ticker_ledger,
+            ticker_snapshot_store=service.ticker_snapshot_store,
+        )
+        summary_agent_fn = make_summary_agent_fn(service)
+        print(f"[force-comprehension] Running angle comprehension for {ticker} now...")
+        result = trigger.force_refresh(ticker, summary_agent_fn)
+        summary = service.ticker_summary_store.get_summary(ticker)
+        print(
+            f"[force-comprehension] Done. run_id={result.new_run_id or 'unknown'} "
+            f"angles_with_data={getattr(summary, 'angles_with_data', '?')}/"
+            f"{getattr(summary, 'angle_count', '?')}"
+        )
+
+
 def resolve_worker_interval(args: argparse.Namespace | None, config, config_field: str = "skill_audit_worker_interval_sec") -> int:
     """Unlike vinu-live's own resolve_worker_interval (vinu_live/cli.py),
     there's no dedicated per-worker console script for any vinu-agent
@@ -416,10 +454,17 @@ def planner_worker_main(args: argparse.Namespace) -> None:
     log = logging.getLogger("vinu.agent.planner_worker")
     with AgentService() as service:
         run_log_reader = HttpRunLogReader(config.services.get("vinu_initial_analysis"))
+        angle_coverage_reader = None
+        if config.angle_coverage_min_fraction > 0.0:
+            from .agent.ticker_gate import HttpAngleCoverageReader
+            angle_coverage_reader = HttpAngleCoverageReader(config.services.get("vinu_initial_analysis"))
         run_log_trigger = RunLogTrigger(
             run_log_reader,
             service.ticker_summary_store, service.ticker_ledger,
             ticker_snapshot_store=service.ticker_snapshot_store,
+            angle_coverage_reader=angle_coverage_reader,
+            min_angle_coverage_fraction=config.angle_coverage_min_fraction,
+            max_angle_coverage_deferrals=config.angle_coverage_max_deferrals,
         )
         change_gate = ChangeGate(service.ticker_summary_store, service._strategy_store, service.ticker_ledger)
         triage = PlannerTriage(service._strategy_store, hypothesis_reader_for(service), service.ticker_ledger)
@@ -677,6 +722,8 @@ def main() -> None:
         _cmd_mandate(args)
     elif args.command == "strategy-eval":
         _cmd_strategy_eval(args)
+    elif args.command == "force-comprehension":
+        _cmd_force_comprehension(args)
     else:
         _parse_args(["--help"])
 

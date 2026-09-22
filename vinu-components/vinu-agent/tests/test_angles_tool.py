@@ -182,6 +182,66 @@ class TestGetAllAnglesTool:
         assert not v1_calls  # v1 was never attempted for an unsupported granularity
         assert result["angles"]["regime_analysis"]["row_count"] == 1
 
+    def test_repeat_call_same_ticker_and_time_format_is_cached(self) -> None:
+        """Real fix, found live 2026-09-22: cross_cluster_analyst's own
+        prompt already says 'call get_all_angles once', but the model
+        called it 15 times in one real run anyway (same lesson as the
+        prompt-injection fix: an instruction alone doesn't reliably hold
+        against this local model). A repeat call for the same
+        (ticker, time_format) must hit the network exactly once."""
+        angles_list = {"angles": [{"name": "arima", "title": "", "purpose": "", "path": "", "spec": {}}]}
+        angle_responses = {"arima": {"symbol": "AAPL", "angle": "arima", "row_count": 1, "data": [{"x": 1}]}}
+        client = _mock_client(angles_list, angle_responses)
+        tool = _tool()
+
+        with patch("httpx.Client", return_value=client) as mock_client_cls:
+            first = tool.execute(ticker="AAPL")
+            second = tool.execute(ticker="AAPL")
+
+        assert first == second
+        # httpx.Client() itself (the "with httpx.Client(...) as client" line)
+        # was only ever constructed once -- the second call never opened a
+        # new connection at all, let alone re-fetched all 28 angles.
+        assert mock_client_cls.call_count == 1
+
+    def test_different_ticker_is_not_cached_together(self) -> None:
+        angles_list = {"angles": [{"name": "arima", "title": "", "purpose": "", "path": "", "spec": {}}]}
+        angle_responses = {"arima": {"symbol": "AAPL", "angle": "arima", "row_count": 1, "data": [{"x": 1}]}}
+        client = _mock_client(angles_list, angle_responses)
+        tool = _tool()
+
+        with patch("httpx.Client", return_value=client) as mock_client_cls:
+            tool.execute(ticker="AAPL")
+            tool.execute(ticker="MSFT")
+
+        assert mock_client_cls.call_count == 2
+
+    def test_different_time_format_is_not_cached_together(self) -> None:
+        angles_list = {"angles": [{"name": "arima", "title": "", "purpose": "", "path": "", "spec": {}}]}
+        angle_responses = {"arima": {"symbol": "AAPL", "angle": "arima", "row_count": 1, "data": [{"x": 1}]}}
+        client = _mock_client(angles_list, angle_responses)
+        tool = _tool()
+
+        with patch("httpx.Client", return_value=client) as mock_client_cls:
+            tool.execute(ticker="AAPL", time_format="1D")
+            tool.execute(ticker="AAPL", time_format="1H")
+
+        assert mock_client_cls.call_count == 2
+
+    def test_cache_is_per_instance_not_shared_across_tools(self) -> None:
+        """build_registry() constructs a fresh GetAllAnglesTool per
+        ticker-run (scheduler_workers.py::run_team_for_ticker) -- confirm
+        a new instance never sees another instance's cached result."""
+        angles_list = {"angles": [{"name": "arima", "title": "", "purpose": "", "path": "", "spec": {}}]}
+        angle_responses = {"arima": {"symbol": "AAPL", "angle": "arima", "row_count": 1, "data": [{"x": 1}]}}
+        client = _mock_client(angles_list, angle_responses)
+
+        with patch("httpx.Client", return_value=client) as mock_client_cls:
+            _tool().execute(ticker="AAPL")
+            _tool().execute(ticker="AAPL")
+
+        assert mock_client_cls.call_count == 2
+
 
 def _cluster_tool(services_config: dict | None = None) -> GetClusterAnglesTool:
     tool = GetClusterAnglesTool()

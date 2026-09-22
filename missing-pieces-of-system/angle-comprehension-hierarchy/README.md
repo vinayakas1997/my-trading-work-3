@@ -11,6 +11,31 @@ cross-cluster corroboration analysis). See "Real implementation
 Real gaps confirmed against current code, full 28-angle clustering scheme
 drafted below. See `01-plan.md` for the ordered build steps.
 
+**Also fixed same day**: comprehension no longer fires the moment ANY
+single one of the 28 angles finishes. The real trigger
+(`RunLogTrigger.check()`) only ever checked for "a new `run_id`," and
+`run_id`s are written per-angle, not per-batch — so 1/28 was enough to
+burn all 7 cluster-synthesis LLM calls on mostly-empty data. Now gated
+by a real, optional angle-coverage check (`01-plan.md` Step 8), with a
+fail-safe so a permanently-broken angle can't stall a ticker forever —
+plus a manual override, `vinu-agent force-comprehension <TICKER>`
+(Step 9), for running it immediately on one ticker without waiting out
+the fail-safe.
+
+**First real live end-to-end attempt, same day — did not complete.**
+Used the manual override above to run `force-comprehension` live against
+a real running stack for the first time ever (every prior "proof" in
+this folder was a standalone script, never the real team-loop). Found
+and fixed one real bug (`cross_cluster_analyst` calling `get_all_angles`
+15 times despite its own prompt saying "once" — fixed structurally with
+a per-instance cache, confirmed live: 15→3 refetches). Even with that
+fixed, two real attempts (~85 min/109 calls, then ~55 min/76 calls) were
+both stopped before finishing — no crash, no error, just very slow
+against the local model in use, with the second run's pace visibly
+slowing over time. **Real open question, not answered**: is this
+8-delegation design practical on this specific local model at all. Full
+account: `01-plan.md` Step 10, `04-implemented.md` section 1i.
+
 ## The idea, in one paragraph
 
 Today, every LLM prompt that touches angle data (the `Angle Digest` in

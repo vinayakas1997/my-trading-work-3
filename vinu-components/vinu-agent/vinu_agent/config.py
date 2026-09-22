@@ -145,6 +145,24 @@ class AgentConfig:
     # change unless explicitly set, same "skip, don't guess" contract as
     # watchlist_seed_tickers above.
     screener_ranker_id: str = ""
+    # Angle-comprehension coverage gate (missing-pieces-of-system/
+    # angle-comprehension-hierarchy/): RunLogTrigger fires the Summary
+    # Agent's 7 cluster-synthesis LLM calls the moment vinu-initial-
+    # analysis reports ANY new run_id for a ticker -- but a run_id is
+    # written per-angle (orchestration_registry.py), not per-batch, so
+    # "a new run_id" can mean just 1 of 28 angles finished. 0.0 (default)
+    # ships inert -- no coverage check, identical to today's behavior.
+    # Set to e.g. 0.75 to require at least that fraction of the 28 real
+    # angles to have data before the LLM calls fire, deferring (and
+    # re-checking every cycle) otherwise.
+    angle_coverage_min_fraction: float = 0.0
+    # Fail-safe: if a ticker has been deferred this many times in the
+    # trailing 24h without ever clearing the fraction above (e.g. one
+    # angle is genuinely broken and will never report data), give up
+    # waiting and refresh anyway rather than silently stalling that
+    # ticker's comprehension forever. Provisional, not tuned -- same
+    # disclaimer as K_CAP_DEFAULT.
+    angle_coverage_max_deferrals: int = 3
     services: dict = field(default_factory=lambda: {
         "vinu_simulator": os.environ.get("VINU_SIMULATOR_API_URL", "http://localhost:8084"),
         "vinu_tools": os.environ.get("VINU_TOOLS_API_URL", "http://localhost:8082"),
@@ -268,4 +286,6 @@ def load_config() -> AgentConfig:
             t.strip() for t in os.environ.get("VINU_AGENT_WATCHLIST_SEED_TICKERS", "").split(",") if t.strip()
         ],
         screener_ranker_id=os.environ.get("VINU_AGENT_SCREENER_RANKER_ID", ""),
+        angle_coverage_min_fraction=float(os.environ.get("VINU_AGENT_ANGLE_COVERAGE_MIN_FRACTION", "0.0")),
+        angle_coverage_max_deferrals=int(os.environ.get("VINU_AGENT_ANGLE_COVERAGE_MAX_DEFERRALS", "3")),
     )

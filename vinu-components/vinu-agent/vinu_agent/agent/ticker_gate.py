@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
 
 from .. import config as _config_module
@@ -24,6 +25,28 @@ LOG = logging.getLogger(__name__)
 
 class RunLogReader(Protocol):
     def latest_run_id(self, ticker: str) -> str | None: ...
+
+
+class AngleCoverageReader(Protocol):
+    def coverage(self, ticker: str) -> tuple[int, int]:
+        """Returns (angles_with_data, angle_count)."""
+        ...
+
+
+class HttpAngleCoverageReader:
+    """Real transport for the angle-coverage gate -- thin wrapper around
+    `angles_tool.fetch_angle_coverage`, kept as its own class (rather than
+    calling the function directly from RunLogTrigger) so tests can inject
+    a fake exactly like RunLogReader/HttpRunLogReader above."""
+
+    def __init__(self, base_url: str | None = None) -> None:
+        self._base_url = base_url or _config_module.load_config().services.get(
+            "vinu_initial_analysis", "http://localhost:8083"
+        )
+
+    def coverage(self, ticker: str) -> tuple[int, int]:
+        from ..tools.angles_tool import fetch_angle_coverage
+        return fetch_angle_coverage(self._base_url, ticker)
 
 
 class HttpRunLogReader:
@@ -84,6 +107,9 @@ class RunLogTrigger:
         ticker_summary_store: TickerSummaryStore,
         ticker_ledger_store: TickerLedgerStore,
         ticker_snapshot_store: TickerSnapshotStore | None = None,
+        angle_coverage_reader: AngleCoverageReader | None = None,
+        min_angle_coverage_fraction: float = 0.0,
+        max_angle_coverage_deferrals: int = 3,
     ) -> None:
         self._reader = run_log_reader
         self._summaries = ticker_summary_store
@@ -92,6 +118,15 @@ class RunLogTrigger:
         # RunLogTrigger without one working unchanged -- the dated snapshot
         # is additive, not a required dependency of this trigger's core job.
         self._snapshots = ticker_snapshot_store
+        # Angle-comprehension coverage gate (missing-pieces-of-system/
+        # angle-comprehension-hierarchy/): None or fraction<=0.0 ships
+        # inert, identical to pre-existing behavior -- a `should_refresh`
+        # result fires the Summary Agent (7 real cluster-synthesis LLM
+        # calls) the instant it's returned, same as before this gate
+        # existed.
+        self._angle_coverage_reader = angle_coverage_reader
+        self._min_coverage_fraction = min_angle_coverage_fraction
+        self._max_coverage_deferrals = max_angle_coverage_deferrals
 
     def check(self, ticker: str) -> RunLogTriggerResult:
         ticker = ticker.upper()
@@ -120,6 +155,58 @@ class RunLogTrigger:
 
         return RunLogTriggerResult(should_refresh=True, new_run_id=latest)
 
+    def _defer_for_low_angle_coverage(
+        self, ticker: str, result: RunLogTriggerResult,
+    ) -> RunLogTriggerResult | None:
+        """Returns a should_refresh=False result if comprehension should
+        wait for more angles to finish, or None if it's clear to proceed
+        (either coverage is high enough, or this ticker has already been
+        deferred `max_angle_coverage_deferrals` times in the last 24h and
+        waiting further risks stalling it indefinitely -- e.g. one angle
+        that's genuinely broken and will never report data again)."""
+        try:
+            with_data, total = self._angle_coverage_reader.coverage(ticker)
+        except Exception as exc:  # noqa: BLE001 -- fail OPEN: don't let a
+            # transport failure on this deterministic pre-check silently
+            # block comprehension forever (distinct from check()'s
+            # RunLogReader failure above, which fails closed -- there, a
+            # failure means "don't even know if anything changed"; here,
+            # we already know something changed, and the worse outcome is
+            # never comprehending this ticker at all, not comprehending it
+            # slightly early).
+            LOG.warning("angle coverage check failed for %s, proceeding without it: %s", ticker, exc)
+            return None
+
+        fraction = (with_data / total) if total else 1.0
+        if fraction >= self._min_coverage_fraction:
+            return None
+
+        since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        deferred_recently = self._ledger.count_events(
+            ticker, stage="runlog_trigger", event_type="angle_comprehension_deferred", since=since,
+        )
+        if deferred_recently >= self._max_coverage_deferrals:
+            LOG.warning(
+                "angle coverage for %s still below threshold after %d deferrals in the last 24h "
+                "(%d/%d, %.0f%% < %.0f%% required) -- proceeding anyway rather than stalling "
+                "comprehension indefinitely",
+                ticker, deferred_recently, with_data, total, fraction * 100, self._min_coverage_fraction * 100,
+            )
+            return None
+
+        self._ledger.add_event(
+            ticker=ticker,
+            stage="runlog_trigger",
+            event_type="angle_comprehension_deferred",
+            text=(
+                f"deferring angle comprehension: {with_data}/{total} angles ready "
+                f"({fraction:.0%} < {self._min_coverage_fraction:.0%} required)"
+            ),
+            ref_id=result.new_run_id or "",
+            source="watchlist",
+        )
+        return RunLogTriggerResult(should_refresh=False, new_run_id=result.new_run_id)
+
     def refresh_if_stale(
         self,
         ticker: str,
@@ -134,6 +221,51 @@ class RunLogTrigger:
         if not result.should_refresh:
             return result
 
+        if self._angle_coverage_reader is not None and self._min_coverage_fraction > 0.0:
+            deferred = self._defer_for_low_angle_coverage(ticker, result)
+            if deferred is not None:
+                return deferred
+
+        return self._run_and_persist(ticker, summary_agent_fn, result.new_run_id)
+
+    def force_refresh(
+        self,
+        ticker: str,
+        summary_agent_fn: Callable[[str], tuple[str, dict[str, Any]]],
+    ) -> RunLogTriggerResult:
+        """The manual override for the angle-coverage gate above: run
+        comprehension right now, regardless of whether vinu-initial-
+        analysis reports a new run_id and regardless of real angle
+        coverage. For a human (or another system) who has decided
+        waiting isn't worth it for this one ticker right now -- the
+        automatic path (refresh_if_stale) is unaffected, still deferring
+        by default. Logged as a distinct ledger event type
+        (angle_comprehension_forced), never mistaken in the audit trail
+        for the automatic 24h-deferral-cap proceed-anyway path."""
+        try:
+            new_run_id = self._reader.latest_run_id(ticker) or ""
+        except Exception as exc:  # noqa: BLE001 -- best-effort: a forced
+            # run shouldn't fail just because the run_id lookup itself
+            # failed; persist under an empty run_id rather than abort.
+            LOG.warning("RunLog lookup failed during forced refresh for %s, proceeding without it: %s", ticker, exc)
+            new_run_id = ""
+
+        self._ledger.add_event(
+            ticker=ticker,
+            stage="runlog_trigger",
+            event_type="angle_comprehension_forced",
+            text=f"angle comprehension forced (manual override), run_id={new_run_id or 'unknown'}",
+            ref_id=new_run_id,
+            source="watchlist",
+        )
+        return self._run_and_persist(ticker, summary_agent_fn, new_run_id)
+
+    def _run_and_persist(
+        self,
+        ticker: str,
+        summary_agent_fn: Callable[[str], tuple[str, dict[str, Any]]],
+        new_run_id: str,
+    ) -> RunLogTriggerResult:
         summary_text, meta = summary_agent_fn(ticker)
         angles_with_data = int(meta.get("angles_with_data", 0))
         angle_count = int(meta.get("angle_count", 0))
@@ -147,7 +279,7 @@ class RunLogTrigger:
             summary_text,
             angles_with_data=angles_with_data,
             angle_count=angle_count,
-            source_run_id=result.new_run_id or "",
+            source_run_id=new_run_id or "",
             angle_digest=angle_digest,
             cluster_digest=cluster_digest,
             cross_cluster=cross_cluster,
@@ -161,7 +293,7 @@ class RunLogTrigger:
                     angle_digest=angle_digest,
                     angles_with_data=angles_with_data,
                     angle_count=angle_count,
-                    source_run_id=result.new_run_id or "",
+                    source_run_id=new_run_id or "",
                 )
             except Exception as exc:  # noqa: BLE001 -- best-effort, never blocks the refresh
                 LOG.warning("Daily snapshot write failed for %s: %s", ticker, exc)
@@ -174,7 +306,7 @@ class RunLogTrigger:
             coverage_note = " WARNING: 0 angles with data — thin/failed upstream fetch, treat downstream verdicts as provisional"
             LOG.warning(
                 "summary for %s has 0/%d angles with data (run %s)%s",
-                ticker, angle_count, result.new_run_id, coverage_note,
+                ticker, angle_count, new_run_id, coverage_note,
             )
         trust_note = ""
         if low_trust:
@@ -186,11 +318,11 @@ class RunLogTrigger:
             ticker=ticker,
             stage="summary_agent",
             event_type="summary_refreshed",
-            text=f"summary refreshed from run {result.new_run_id} ({angles_with_data}/{angle_count} angles with data){coverage_note}{trust_note}",
-            ref_id=result.new_run_id or "",
+            text=f"summary refreshed from run {new_run_id} ({angles_with_data}/{angle_count} angles with data){coverage_note}{trust_note}",
+            ref_id=new_run_id or "",
             source="watchlist",
         )
-        return result
+        return RunLogTriggerResult(should_refresh=True, new_run_id=new_run_id)
 
 
 class ArtifactStatusReader(Protocol):

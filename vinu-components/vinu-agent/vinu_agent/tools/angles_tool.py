@@ -111,6 +111,47 @@ def _fetch_angle_results(
     return results
 
 
+def fetch_angle_coverage(base_url: str, ticker: str, *, time_format: str = "1D") -> tuple[int, int]:
+    """Cheap, non-LLM coverage check: how many of the real registered
+    angles currently have data for `ticker`, out of how many total.
+    Deliberately reuses `_fetch_angle_results` (the same fetch
+    `GetAllAnglesTool`/`GetClusterAnglesTool` use) rather than a
+    lighter-weight probe, so this reports the exact same coverage the
+    LLM team's own tool calls would see -- no drift between "should we
+    even start comprehension" and "how much data comprehension itself
+    found". Used by RunLogTrigger's angle-coverage gate (ticker_gate.py)
+    to decide whether it's worth firing the 7 cluster-synthesis LLM
+    calls yet, or worth deferring until vinu-initial-analysis has
+    actually finished more of its real per-angle runs -- see
+    missing-pieces-of-system/angle-comprehension-hierarchy/."""
+    import os
+
+    import httpx
+
+    try:
+        from vinu_infra.auth import internal_auth_headers as _iah
+        _h = _iah() or None
+    except Exception:
+        _h = None
+
+    base = base_url.rstrip("/")
+    url = f"{base}/analysis"
+    v1_base = f"{base}/v1/stage1/vinu-initial-analysis"
+    stage1 = os.getenv("VINU_STAGE1_START_DATE", "2022-01-01")
+    time_range = f"{stage1}T00:00:00Z_2026-07-01T00:00:00Z"
+
+    with httpx.Client(timeout=60.0, headers=_h) as client:
+        angles_resp = client.get(f"{url}/angles")
+        angles_resp.raise_for_status()
+        angle_names = [a["name"] for a in angles_resp.json().get("angles", [])]
+        results = _fetch_angle_results(
+            client, url, v1_base, ticker.strip().upper(), time_format, angle_names, time_range, stage1,
+        )
+
+    with_data = sum(1 for r in results.values() if r.get("row_count", 0) > 0)
+    return with_data, len(angle_names)
+
+
 class GetAllAnglesTool(BaseTool):
     name = "get_all_angles"
     description = (
@@ -143,6 +184,24 @@ class GetAllAnglesTool(BaseTool):
 
     def __init__(self):
         self._services_config = {}
+        # Real fix, found live 2026-09-22: cross_cluster_analyst's own
+        # prompt already says "call get_all_angles once" -- the model
+        # called it 15 times in one real run anyway (same lesson this
+        # folder already learned from the prompt-injection fix: an
+        # instruction alone doesn't reliably hold against this local
+        # model, only a structural change does). Since build_registry()
+        # constructs a fresh GetAllAnglesTool per ticker-run
+        # (scheduler_workers.py::run_team_for_ticker), a per-instance
+        # cache is correctly scoped to "once per ticker per run" -- a
+        # repeat call for the same (ticker, time_format) returns the
+        # already-fetched result instantly instead of re-hitting
+        # vinu-initial-analysis 28 times again. Deliberately a cache, not
+        # a refusal: the model calling it twice is never actually wrong
+        # (data can't have changed in the same run), so there's no
+        # correctness reason to error -- only a cost reason to avoid
+        # re-fetching, and caching removes that cost entirely regardless
+        # of how many times the model calls it.
+        self._cache: dict[tuple[str, str], str] = {}
 
     def execute(self, **kwargs) -> str:
         import json
@@ -155,6 +214,12 @@ class GetAllAnglesTool(BaseTool):
 
         ticker = kwargs["ticker"].strip().upper()
         time_format = str(kwargs.get("time_format") or "1D").strip()
+
+        cache_key = (ticker, time_format)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         base = self._services_config.get("vinu_initial_analysis", "http://localhost:8083").rstrip("/")
         url = f"{base}/analysis"
         v1_base = f"{base}/v1/stage1/vinu-initial-analysis"
@@ -172,13 +237,15 @@ class GetAllAnglesTool(BaseTool):
             )
 
         with_data = sum(1 for r in results.values() if r.get("row_count", 0) > 0)
-        return json.dumps({
+        payload = json.dumps({
             "ticker": ticker,
             "time_format": time_format,
             "angle_count": len(angle_names),
             "angles_with_data": with_data,
             "angles": results,
         })
+        self._cache[cache_key] = payload
+        return payload
 
 
 class GetClusterAnglesTool(BaseTool):

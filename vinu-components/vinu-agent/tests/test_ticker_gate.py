@@ -290,6 +290,188 @@ class TestRunLogTrigger:
         assert calls == []
 
 
+class FakeAngleCoverageReader:
+    def __init__(self, coverage_by_ticker: dict[str, tuple[int, int]] | None = None, *, raises: bool = False) -> None:
+        self._coverage = coverage_by_ticker or {}
+        self._raises = raises
+        self.call_count = 0
+
+    def coverage(self, ticker: str) -> tuple[int, int]:
+        self.call_count += 1
+        if self._raises:
+            raise ConnectionError("vinu-initial-analysis unreachable")
+        return self._coverage.get(ticker.upper(), (0, 28))
+
+
+class TestAngleCoverageGate:
+    """missing-pieces-of-system/angle-comprehension-hierarchy/: a new
+    run_id is written per-angle (orchestration_registry.py), not per full
+    28-angle batch, so `check()` alone can trigger the Summary Agent's 7
+    cluster-synthesis LLM calls after just 1 of 28 angles has data. This
+    gate defers `refresh_if_stale` until real coverage clears a
+    configured fraction, unless it's been deferred too many times."""
+
+    def test_ships_inert_when_fraction_unset(self, stores) -> None:
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old", source_run_id="run-1")
+        reader = FakeRunLogReader({"AAPL": "run-2"})
+        coverage = FakeAngleCoverageReader({"AAPL": (1, 28)})
+        # min_angle_coverage_fraction defaults to 0.0 -- gate never fires.
+        trigger = RunLogTrigger(reader, summaries, ledger, angle_coverage_reader=coverage)
+
+        calls = []
+        result = trigger.refresh_if_stale("AAPL", lambda t: calls.append(t) or ("new", {}))
+
+        assert result.should_refresh is True
+        assert calls == ["AAPL"]
+        assert coverage.call_count == 0  # never even consulted
+
+    def test_low_coverage_defers_and_does_not_call_summary_agent(self, stores) -> None:
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old", source_run_id="run-1")
+        reader = FakeRunLogReader({"AAPL": "run-2"})
+        coverage = FakeAngleCoverageReader({"AAPL": (2, 28)})  # 7%, well below 75%
+        trigger = RunLogTrigger(
+            reader, summaries, ledger,
+            angle_coverage_reader=coverage, min_angle_coverage_fraction=0.75,
+        )
+
+        calls = []
+        result = trigger.refresh_if_stale("AAPL", lambda t: calls.append(t) or ("new", {}))
+
+        assert result.should_refresh is False
+        assert calls == []
+        # source_run_id NOT advanced -- next cycle re-checks coverage again.
+        assert summaries.get_summary("AAPL").source_run_id == "run-1"
+
+        events = ledger.get_events("AAPL")
+        deferred = [e for e in events if e.event_type == "angle_comprehension_deferred"]
+        assert len(deferred) == 1
+        assert "2/28" in deferred[0].text
+
+    def test_high_coverage_proceeds_normally(self, stores) -> None:
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old", source_run_id="run-1")
+        reader = FakeRunLogReader({"AAPL": "run-2"})
+        coverage = FakeAngleCoverageReader({"AAPL": (25, 28)})  # 89%, clears 75%
+        trigger = RunLogTrigger(
+            reader, summaries, ledger,
+            angle_coverage_reader=coverage, min_angle_coverage_fraction=0.75,
+        )
+
+        calls = []
+        result = trigger.refresh_if_stale("AAPL", lambda t: calls.append(t) or ("new summary", {}))
+
+        assert result.should_refresh is True
+        assert calls == ["AAPL"]
+        assert summaries.get_summary("AAPL").source_run_id == "run-2"
+
+    def test_gives_up_waiting_after_max_deferrals_within_24h(self, stores) -> None:
+        """A permanently-broken angle must not stall comprehension for
+        this ticker forever -- after max_angle_coverage_deferrals
+        deferrals in the trailing 24h, proceed anyway."""
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old", source_run_id="run-1")
+        coverage = FakeAngleCoverageReader({"AAPL": (2, 28)})  # never improves
+
+        # Simulate 3 prior deferrals already logged in the last 24h.
+        for _ in range(3):
+            ledger.add_event(
+                ticker="AAPL", stage="runlog_trigger",
+                event_type="angle_comprehension_deferred", text="deferred",
+                source="watchlist",
+            )
+
+        reader = FakeRunLogReader({"AAPL": "run-2"})
+        trigger = RunLogTrigger(
+            reader, summaries, ledger,
+            angle_coverage_reader=coverage, min_angle_coverage_fraction=0.75,
+            max_angle_coverage_deferrals=3,
+        )
+
+        calls = []
+        result = trigger.refresh_if_stale("AAPL", lambda t: calls.append(t) or ("new summary", {}))
+
+        assert result.should_refresh is True
+        assert calls == ["AAPL"]
+
+    def test_coverage_reader_failure_fails_open(self, stores) -> None:
+        """Unlike RunLogReader's own failure (fails closed -- don't even
+        know if anything changed), a coverage-check failure fails open:
+        we already know something changed, so the worse outcome is never
+        comprehending this ticker, not comprehending it slightly early."""
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old", source_run_id="run-1")
+        reader = FakeRunLogReader({"AAPL": "run-2"})
+        coverage = FakeAngleCoverageReader(raises=True)
+        trigger = RunLogTrigger(
+            reader, summaries, ledger,
+            angle_coverage_reader=coverage, min_angle_coverage_fraction=0.75,
+        )
+
+        calls = []
+        result = trigger.refresh_if_stale("AAPL", lambda t: calls.append(t) or ("new summary", {}))
+
+        assert result.should_refresh is True
+        assert calls == ["AAPL"]
+
+
+class TestForceRefresh:
+    """The manual override for the angle-coverage gate -- runs
+    comprehension immediately regardless of run_id/coverage state, for a
+    human who's decided waiting isn't worth it for this one ticker."""
+
+    def test_ignores_coverage_gate_and_stale_run_id(self, stores) -> None:
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old", source_run_id="run-1")
+        # Same run_id as last_seen -- refresh_if_stale would skip this
+        # entirely, and low coverage would defer it even if it didn't.
+        reader = FakeRunLogReader({"AAPL": "run-1"})
+        coverage = FakeAngleCoverageReader({"AAPL": (1, 28)})
+        trigger = RunLogTrigger(
+            reader, summaries, ledger,
+            angle_coverage_reader=coverage, min_angle_coverage_fraction=0.75,
+        )
+
+        calls = []
+        result = trigger.force_refresh("AAPL", lambda t: calls.append(t) or ("forced summary", {}))
+
+        assert result.should_refresh is True
+        assert calls == ["AAPL"]
+        assert coverage.call_count == 0  # coverage gate never consulted
+        updated = summaries.get_summary("AAPL")
+        assert updated.summary == "forced summary"
+        assert updated.source_run_id == "run-1"
+
+    def test_logs_a_distinct_forced_event_type(self, stores) -> None:
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old", source_run_id="run-1")
+        reader = FakeRunLogReader({"AAPL": "run-1"})
+        trigger = RunLogTrigger(reader, summaries, ledger)
+
+        trigger.force_refresh("AAPL", lambda t: ("forced summary", {}))
+
+        events = ledger.get_events("AAPL")
+        forced = [e for e in events if e.event_type == "angle_comprehension_forced"]
+        assert len(forced) == 1
+        assert forced[0].stage == "runlog_trigger"
+        # Distinct from the automatic 24h-deferral-cap proceed-anyway path.
+        assert not any(e.event_type == "angle_comprehension_deferred" for e in events)
+
+    def test_run_log_lookup_failure_still_proceeds(self, stores) -> None:
+        summaries, ledger = stores
+        summaries.upsert_summary("AAPL", "old", source_run_id="run-1")
+        reader = FakeRunLogReader(raises=True)
+        trigger = RunLogTrigger(reader, summaries, ledger)
+
+        calls = []
+        result = trigger.force_refresh("AAPL", lambda t: calls.append(t) or ("forced summary", {}))
+
+        assert result.should_refresh is True
+        assert calls == ["AAPL"]
+        assert summaries.get_summary("AAPL").summary == "forced summary"
+
+
 class TestChangeGate:
     def test_gate_no_change_returns_no_and_advances(self, stores) -> None:
         summaries, ledger = stores
