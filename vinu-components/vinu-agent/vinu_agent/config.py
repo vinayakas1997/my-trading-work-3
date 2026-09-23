@@ -152,9 +152,13 @@ class AgentConfig:
     # written per-angle (orchestration_registry.py), not per-batch, so
     # "a new run_id" can mean just 1 of 28 angles finished. 0.0 (default)
     # ships inert -- no coverage check, identical to today's behavior.
-    # Set to e.g. 0.75 to require at least that fraction of the 28 real
-    # angles to have data before the LLM calls fire, deferring (and
-    # re-checking every cycle) otherwise.
+    # Set to e.g. 0.75 to require at least that fraction of real
+    # (angle, time_format) pairs to have data before the LLM calls fire
+    # -- since Step 13, comprehension reads every angle at every one of
+    # its own declared timeframes, not just 1D, so this fraction is over
+    # that full pair count too (e.g. arima at 1min/5min/15min/1H/4H/1D
+    # each count separately), deferring (and re-checking every cycle)
+    # otherwise.
     angle_coverage_min_fraction: float = 0.0
     # Fail-safe: if a ticker has been deferred this many times in the
     # trailing 24h without ever clearing the fraction above (e.g. one

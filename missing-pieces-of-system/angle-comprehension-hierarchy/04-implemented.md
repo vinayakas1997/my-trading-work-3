@@ -155,6 +155,41 @@ automatic fail-safe's proceed-anyway path. Only affects the one ticker
 it's run against. 5 new tests, full `vinu-agent` suite green
 (1301/1301). See `01-plan.md` Step 9.
 
+### 1j. Coverage gate's 1D assumption fixed (2026-09-23)
+
+Real gap found while reviewing 1g's coverage gate: `fetch_angle_
+coverage()` always checked coverage at `time_format="1D"`, but not
+every angle produces 1D data at all — confirmed by reading `angles.
+yaml`/each angle's own `spec.yaml`: 27 of 28 angles declare `1D` in
+their `time_formats`, but `trend_session_structure` does not (only
+`1min`/`5min`/`15min`/`1H`/`4H`). The real API route has no
+"not applicable" signal, so querying that angle at 1D returned the same
+empty result as "hasn't run yet" — meaning coverage could never exceed
+27/28 (96.4%) for any ticker, forever. A `min_angle_coverage_fraction=
+1.0` (the natural "wait for full coverage" setting) would have deferred
+every ticker's comprehension permanently, with no way to ever satisfy
+the gate — a real dead end, not a rare edge case.
+
+Fix: `fetch_angle_coverage()` now reads each angle's own `spec.time_
+formats` from the `/analysis/angles` response it already fetches, and
+excludes any angle that doesn't declare the requested `time_format` at
+all from both the numerator and denominator (not-applicable, not
+not-ready). An angle with missing/malformed spec data is also excluded
+(fails safe). 4 new unit tests (`TestFetchAngleCoverage` in `test_
+angles_tool.py`) cover: full coverage when every angle supports the
+format, the real `trend_session_structure` case (confirmed excluded via
+asserting on the actual HTTP calls made — it's never even fetched),
+missing-spec entries excluded, and a non-default `time_format` (`1H`)
+filtering correctly. Full `vinu-agent` suite: 1309 passed, 4 skipped.
+
+**Not yet verified live** — code-level + unit-test fix only, not
+re-run against the real stack (live testing is paused per Step 10's
+"stop fully" direction). Also still open, deliberately not addressed
+here: the gate only ever checks one timeframe per call (default `1D`)
+— it says nothing about whether an angle's *other* real timeframes
+(the couple that also declare `1W`/`1M`/`6M`) are ready. See `01-plan.md`
+Step 11 for the full account.
+
 ### 1f-bis. Cluster A's mixed forecast/non-forecast members disambiguated (2026-09-22)
 
 Real seam found during review, independently corroborated by this

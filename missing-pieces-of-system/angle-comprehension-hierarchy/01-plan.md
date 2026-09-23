@@ -415,6 +415,250 @@ path), the container is healthy, and every other worker (planner,
 risk-gatekeeper, capital-allocator, live) kept running normally and
 unaffected throughout.
 
+## Step 11 — fix the coverage gate's own 1D assumption (DONE, 2026-09-23)
+
+While reviewing Step 8's coverage gate, a real gap surfaced: `fetch_
+angle_coverage()` always checked coverage at the default `time_format=
+"1D"`, but not every one of the 28 real angles actually produces 1D
+data — confirmed by reading `angles.yaml`/each angle's own `spec.yaml`:
+27 of 28 declare `1D` in their `time_formats`, but `trend_session_
+structure` does not (`['1min', '5min', '15min', '1H', '4H']` only, no
+`1D`, no coarser format at all). The real API route
+(`vinu-initial-analysis/.../routes_read.py::get_angle`) has no
+"not applicable" signal — querying an angle at a timeframe it can never
+produce returns the same empty/`row_count=0` result as "hasn't run yet."
+So before this fix, `trend_session_structure` would read as permanently
+missing at 1D, capping real coverage at 27/28 (96.4%) forever — anyone
+configuring `min_angle_coverage_fraction=1.0` (the natural "wait for
+everything" setting) would defer that ticker's comprehension forever,
+with no way to ever satisfy the gate.
+
+**Fix**: `fetch_angle_coverage()` (`vinu-agent/vinu_agent/tools/angles_
+tool.py`) now reads each angle's own `spec.time_formats` from the same
+`/analysis/angles` list response it already fetches, and excludes any
+angle that doesn't declare the requested `time_format` at all from
+*both* the numerator and the denominator — treated as not-applicable,
+not as not-ready. An angle with a missing/malformed `spec` is also
+excluded (fails safe, doesn't assume universal support). Verified with
+4 new unit tests in `test_angles_tool.py`'s `TestFetchAngleCoverage`
+(full coverage when all angles support the format; the real
+`trend_session_structure`-shaped case — excluded, never even fetched,
+confirmed via asserting on the actual HTTP calls made; missing-spec
+entries excluded; a non-default `time_format` like `1H` filters
+correctly). Full `vinu-agent` suite still green: 1309 passed, 4 skipped.
+
+**Not yet verified live** — this is a targeted, code-level + unit-test
+fix only; it has not been re-run against the real stack (testing is
+paused per the "stop fully, we will plan again" direction after Step
+10's incomplete live attempts). Also not addressed in this step: the
+gate still only ever checks *one* timeframe at a time (whichever `time_
+format` its caller passes, default `1D`) — it says nothing about
+whether an angle's *other* real timeframes (e.g. the couple of angles
+that also declare `1W`/`1M`/`6M`) are ready. That's explicitly a
+separate, still-open question, not something this fix claims to solve.
+
+## Step 12 — fix the real price-fetch API gaps behind non-1D time_formats (DONE, 2026-09-23)
+
+While checking Step 11's "all angles properly fetched with proper time
+formats" question, traced the real fetch chain for every declared
+time_format (`runner._fetch_bars` → `PriceClient`/`LocalPriceClient` →
+vinu-stock-price's `aggregate_bars`) and found two real, confirmed bugs,
+not guessed:
+
+1. **`5min` was silently broken for all 28 angles.** `PriceClient.
+   _INTERVAL_MAP` (`vinu-initial-analysis/clients/price_client.py`)
+   mapped `15min→15m`/`1min→1m`/`1W→1wk`/`1M→1mo`/`6M→6mo` but had no
+   entry for `5min` — it was sent to vinu-stock-price literally as
+   `"5min"`, which `interval_to_seconds()` doesn't recognize (only
+   `"5m"`). Confirmed directly: `interval_to_seconds("5min")` raises
+   `ValueError: Unsupported interval: 5min`. That exception is caught by
+   `_fetch_bars`'s blanket `except Exception`, which returns an empty
+   DataFrame — the angle then computes on empty bars, gets nothing, and
+   `_run_angle` just `continue`s: no storage write, no `RunLog` row.
+   Since every one of the 28 angles declares `5min`, this meant 5min
+   data has never actually existed for any angle, ever, and — because
+   nothing is ever recorded, `has_existing_run` never finds a prior
+   attempt — every single scheduled cycle re-fetches and re-fails this
+   forever, for every angle × every ticker. Same externally-invisible
+   "looks like not-run-yet" failure shape as Step 11's bug, at a
+   different timeframe. Fix: added `"5min": "5m"` to `_INTERVAL_MAP`.
+2. **`LocalPriceClient.get_candles` had NO interval mapping at all** —
+   it passed the raw angle format string straight to `fetch_candles`.
+   Every format except `1H`/`4H`/`1D` (which happen to lowercase into
+   valid keys) would raise the same "Unsupported interval" error,
+   including `1min`/`5min`/`15min`/`1W`/`1M`/`6M`. This is a second,
+   separate consumer of the same interval space (used for
+   `peer_relative_strength`'s batch orchestrator path, per
+   `orchestration_registry.py`'s own docstring), so it had the identical
+   bug independently. Fix: reuses the same `_INTERVAL_MAP` from
+   `price_client.py` so the two clients can't drift on what a given
+   time_format resolves to.
+3. **`1W`/`1M`/`6M` aggregation used naive fixed-second buckets**, not
+   real calendar boundaries: `1mo` was a flat 2592000s (30 days) and
+   `6mo` a flat 15552000s (180 days), both epoch-aligned. Real months
+   are 28-31 days, so a bucket labeled "March" would drift to actually
+   containing late-February bars over time; `1wk` buckets were also
+   epoch-aligned, which starts weeks on **Thursday** (1970-01-01 was a
+   Thursday), not the conventional Monday. Fix
+   (`vinu-stock-price/vinu_stock/query/aggregate.py`): `1wk` now
+   Monday-aligned via a fixed offset; `1mo`/`6mo` now bucket by real
+   calendar month/half-year (`datetime`-based, not a fixed duration) —
+   removed from `INTERVAL_SECONDS` entirely since they have none.
+
+Verified: 5 new tests in `vinu-initial-analysis/tests/test_price_client.py`
+(new file — no test for either client existed before), 4 new tests in
+`vinu-stock-price/tests/test_aggregate.py`. Full suites re-run:
+`vinu-stock-price` (6/6 new tests pass, 1 pre-existing unrelated failure
+confirmed via `git stash` — `test_quote_route_unconfigured_is_200_not_ok`,
+same failure with or without this change), `vinu-initial-analysis` (5/5
+new tests pass; remaining failures all confirmed pre-existing
+`ModuleNotFoundError: torch`, same with or without this change — this
+package's heavy-dependency gap noted elsewhere in this project), full
+`vinu-agent` suite still 1309 passed / 4 skipped.
+
+**Not yet verified live** — same posture as every other fix in this
+folder while testing stays paused: code-level + unit-test confirmed
+only, not re-run against the real running stack.
+
+## Step 13 — comprehension actually reads every real timeframe, not just 1D (DONE, 2026-09-23)
+
+Real scope decision (`AskUserQuestion`, user chose the full option
+knowing the cost): comprehension's whole aim is genuinely understanding
+a ticker, which means reading it across its real timeframes, not only
+the daily bar. Until this step, `angle_synthesizer` (the per-cluster
+specialist that does the actual reasoning) only ever fetched `1D` — the
+"note cross-timeframe divergence" rule already in its prompt was
+aspirational, never actually true, since the tool call underneath it
+never fetched more than one timeframe.
+
+**Fetch layer** (`vinu-agent/vinu_agent/tools/angles_tool.py`):
+- New `_fetch_multi_format_results()`: given a ticker and a list of
+  angle metadata objects (each with its own real `spec.time_formats`),
+  fetches every angle at every one of its own declared formats, grouped
+  by format (reuses `_fetch_angle_results`'s existing per-name v1/
+  fallback loop unchanged — no second fetch implementation to drift).
+  Returns `{angle_name: {time_format: result}}`.
+- `GetAllAnglesTool`/`GetClusterAnglesTool` both gained a new accepted
+  `time_format="ALL"` value (case-insensitive) alongside their existing
+  single-format default (`"1D"`, unchanged, still byte-identical
+  behavior when omitted or set to a real format — this was deliberately
+  NOT made the default, since `scheduler_workers.py`'s deterministic
+  `build_angle_digest()` path and other agents (`idea_generator`,
+  `theory_reviewer`) call `get_all_angles` expecting the existing
+  single-format shape; changing the default would have silently broken
+  all of them). `"ALL"` returns the nested per-format shape instead of
+  the flat one, plus new summary fields
+  (`angle_time_format_pairs`/`angle_time_format_pairs_with_data`).
+- `GetClusterAnglesTool` previously never fetched `/analysis/angles`
+  metadata at all (it only needed `ANGLE_CLUSTERS`' static member list)
+  -- `"ALL"` mode fetches it now, filtered down to just this cluster's
+  own real members, to learn each member's own declared formats.
+  Structural cluster isolation (Step 3's whole point) still holds: a
+  cluster specialist in ALL mode still only ever sees its own members,
+  confirmed by a new test.
+- `GetClusterAnglesTool` gained its own per-instance cache (same
+  rationale and shape as `GetAllAnglesTool`'s existing one from Step
+  10's live-testing fix) -- ALL mode is more expensive than a single
+  format, so a repeat call mattering more here.
+
+**Prompt layer** (`angle_synthesizer/prompt.md`): now explicitly calls
+`get_cluster_angles(ticker, cluster, time_format="ALL")`, documents the
+new nested result shape, and the existing "row_count > 0" / "N of M
+have data" rules were rewritten to operate per (angle, timeframe) pair
+correctly rather than per angle. `manager_prompt.md` needed no change —
+`angles_with_data` (summed across the 7 clusters) keeps its existing
+name/type, its meaning just naturally shifts from "1D row_count > 0" to
+"has data at any of its own timeframes," computed by `angle_synthesizer`
+itself, not by the manager.
+
+**Deliberately NOT changed**: `cross_cluster_analyst` still fetches
+`get_all_angles` at the default `1D` only -- its job (cross-cluster
+consensus/calibration comparison) is a different kind of comparison than
+per-cluster synthesis, and widening its already-heavy single call by
+~6-9x more data risked making the one delegation that already showed
+signs of struggling (Step 10's incomplete live attempts) meaningfully
+worse. This scoping decision can be revisited later if needed.
+
+**Real, accepted cost** (the tradeoff the user explicitly chose over 2
+cheaper alternatives): `angle_synthesizer`'s per-cluster fetch volume
+goes from ~2-14 HTTP calls (cluster size dependent) to ~2-14x however
+many real formats each member declares (mostly 5-6, a few clusters'
+members declare more) -- multiple times more real network calls per
+cluster delegation than before, on top of a design that already hadn't
+finished a full live run in two prior attempts (Step 10). This step does
+NOT re-attempt live testing -- testing stays paused per the "stop fully"
+direction; this is a code-level + unit-test-verified change only.
+
+Verified: 4 new tests (`test_all_mode_fetches_every_angles_own_declared_
+formats`, `test_all_mode_is_cached_separately_from_single_format_calls`
+for `GetAllAnglesTool`; `test_all_mode_fetches_only_this_clusters_
+members_at_their_own_formats`, `test_all_mode_is_cached_separately_per_
+cluster` for `GetClusterAnglesTool`), all existing tests for both tools'
+unchanged default behavior re-run and still pass (regression safety for
+the other 3 real consumers of `get_all_angles`). Full `vinu-agent` suite:
+1313 passed, 4 skipped (up from 1309/4 before this step).
+
+## Step 14 — the gate's real starting condition is now full multi-format coverage (DONE, 2026-09-23)
+
+Direct correction from the user after Step 13: comprehension now
+genuinely reads every angle at every one of its own real timeframes
+(Step 13), but the coverage *gate* deciding WHEN to start still only
+checked `1D` coverage (Step 11's fix, which corrected the 1D check's
+own bug but never widened what it checked). That's an inconsistency --
+the gate was answering "is `1D` ready" while comprehension itself now
+needs every timeframe ready. Fixed by changing what the gate actually
+checks, not by adding an opt-in toggle: **comprehension's real starting
+point is now every real angle fetchable at every one of its own
+declared time_formats**, full stop.
+
+`angles_tool.py`:
+- New `fetch_full_angle_coverage(base_url, ticker) -> (pairs_with_data,
+  pairs_total)` -- reuses `_fetch_multi_format_results` (the exact same
+  fetch Step 13's `time_format="ALL"` mode uses), so the gate and
+  comprehension itself can never drift on what "ready" means. Counts
+  every real `(angle, time_format)` pair, not angles.
+- `fetch_angle_coverage` (the single-format, 1D-only function from Step
+  8/11) is left in place, still tested, but is no longer called by the
+  gate -- kept as a smaller, cheaper building block `_fetch_multi_format_
+  results`/`fetch_full_angle_coverage` are built from the same
+  primitives as, and still independently useful/testable.
+
+`ticker_gate.py`: `HttpAngleCoverageReader.coverage()` now calls
+`fetch_full_angle_coverage` instead of `fetch_angle_coverage` -- the
+real production wiring change. `RunLogTrigger`'s own logic
+(`_defer_for_low_angle_coverage`) needed NO change at all: it already
+just calls `self._angle_coverage_reader.coverage(ticker)` generically
+and compares the returned fraction against `min_angle_coverage_fraction`
+-- it was always agnostic to what "coverage" counts, so redefining the
+reader's own definition of coverage is the entire fix.
+
+Config docs updated (`config.py`, `.env-example`) to state plainly that
+`VINU_AGENT_ANGLE_COVERAGE_MIN_FRACTION=1.0` now means "every real
+(angle, time_format) pair has data," not "every angle has 1D data."
+Still ships inert by default (`0.0`) -- this step changes what the gate
+means once an operator turns it on, not whether it's on by default.
+
+**Real, larger cost accepted**: one coverage check now fetches the
+exact same (larger) volume Step 13's `ALL` mode does -- every angle at
+every declared timeframe, once per gate check, on every cycle a ticker
+hasn't cleared the threshold yet. This runs MORE often than
+comprehension itself (every scheduler cycle vs. once comprehension
+actually fires), so this is the single most expensive piece added in
+this whole folder. Deliberately accepted per the user's explicit,
+repeated direction that the starting condition must be genuinely "all
+angles, all timeframes," not an approximation.
+
+Verified: 3 new tests for `fetch_full_angle_coverage` (full coverage,
+partial coverage when one timeframe is still missing -- confirmed
+NOT reported as ready just because 1D alone is done, and an angle
+with no declared time_formats falling back to `1D`), 1 new wiring test
+confirming `HttpAngleCoverageReader` calls the new function and not the
+old one. Full `vinu-agent` suite: 1317 passed, 4 skipped (up from
+1313/4 before this step).
+
+**Not yet verified live** -- same posture as every other change in this
+folder while testing stays paused.
+
 ## Dependency summary
 
 Steps 1-4 are **done** (2026-09-22): glossary + `explain_angle` tool,

@@ -10,10 +10,21 @@ LOG = logging.getLogger(__name__)
 _INTERVAL_MAP: dict[str, str] = {
     "15min": "15m",
     "1min": "1m",
+    "5min": "5m",
     "1W": "1wk",
     "1M": "1mo",
     "6M": "6mo",
 }
+# "1H"/"4H"/"1D" are deliberately absent -- vinu-stock-price's own
+# interval_to_seconds() lowercases and already accepts "1h"/"4h"/"1d"
+# verbatim, so the identity fallback below (_map_interval's .get default)
+# already worked for them. "5min" was NOT covered the same way (found
+# 2026-09-23: vinu-stock-price expects "5m", never accepts "5min") --
+# every one of the 28 angles declares "5min", so every angle's 5min
+# fetch was silently failing (caught by _fetch_bars's blanket except,
+# returning an empty DataFrame) and retrying forever on every scheduled
+# cycle, since a df.empty result is never written or recorded in
+# RunLog. See missing-pieces-of-system/angle-comprehension-hierarchy/.
 
 # 1-minute bars are dense enough that a single request over a multi-year
 # window silently truncates at the server's row limit (Bug-8: price_change_5m

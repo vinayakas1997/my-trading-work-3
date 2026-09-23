@@ -20,6 +20,8 @@ from typing import Any
 
 from vinu_stock.query.engine import fetch_candles
 
+from .price_client import _INTERVAL_MAP
+
 
 class LocalPriceClient:
     def __init__(self, data_root: Path | str, symbols: list[str]):
@@ -37,7 +39,16 @@ class LocalPriceClient:
         interval: str = "1D",
         limit: int = 50000,
     ) -> list[dict[str, Any]]:
+        # Real bug found 2026-09-23: this passed `interval` straight through
+        # unmapped -- every angle time_format string except "1H"/"4H"/"1D"
+        # (which happen to lowercase into what vinu-stock-price's
+        # interval_to_seconds() accepts) would raise "Unsupported interval"
+        # inside fetch_candles, e.g. "1min"/"5min"/"15min"/"1W"/"1M"/"6M".
+        # Reuses the exact same real->vinu-stock-price mapping `PriceClient`
+        # (the HTTP sibling of this client) uses, so the two clients can't
+        # drift on what a given time_format string actually resolves to.
+        mapped = _INTERVAL_MAP.get(interval, interval)
         return fetch_candles(
             self._data_root, symbol,
-            interval=interval, from_ts=from_ts, to_ts=to_ts, limit=limit,
+            interval=mapped, from_ts=from_ts, to_ts=to_ts, limit=limit,
         )

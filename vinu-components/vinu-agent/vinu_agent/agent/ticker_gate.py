@@ -35,9 +35,18 @@ class AngleCoverageReader(Protocol):
 
 class HttpAngleCoverageReader:
     """Real transport for the angle-coverage gate -- thin wrapper around
-    `angles_tool.fetch_angle_coverage`, kept as its own class (rather than
-    calling the function directly from RunLogTrigger) so tests can inject
-    a fake exactly like RunLogReader/HttpRunLogReader above."""
+    `angles_tool.fetch_full_angle_coverage`, kept as its own class (rather
+    than calling the function directly from RunLogTrigger) so tests can
+    inject a fake exactly like RunLogReader/HttpRunLogReader above.
+
+    The real starting condition for comprehension (2026-09-23, by
+    explicit direction): every one of the 28 real angles must be
+    fetchable at EVERY one of its own declared `time_formats`, not just
+    `1D` -- this is what Step 13's `angle_synthesizer` now actually
+    reads once comprehension runs, so the gate deciding WHEN to start
+    has to match what comprehension will actually use, not a narrower
+    single-timeframe proxy for it. See missing-pieces-of-system/
+    angle-comprehension-hierarchy/01-plan.md Step 14."""
 
     def __init__(self, base_url: str | None = None) -> None:
         self._base_url = base_url or _config_module.load_config().services.get(
@@ -45,8 +54,8 @@ class HttpAngleCoverageReader:
         )
 
     def coverage(self, ticker: str) -> tuple[int, int]:
-        from ..tools.angles_tool import fetch_angle_coverage
-        return fetch_angle_coverage(self._base_url, ticker)
+        from ..tools.angles_tool import fetch_full_angle_coverage
+        return fetch_full_angle_coverage(self._base_url, ticker)
 
 
 class HttpRunLogReader:

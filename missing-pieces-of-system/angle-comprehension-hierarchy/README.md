@@ -36,6 +36,59 @@ slowing over time. **Real open question, not answered**: is this
 8-delegation design practical on this specific local model at all. Full
 account: `01-plan.md` Step 10, `04-implemented.md` section 1i.
 
+**Also fixed same week (2026-09-23)**: the coverage gate above always
+checked coverage at `1D`, but one real angle (`trend_session_structure`)
+never produces 1D data at all (confirmed via its own `spec.yaml`) — so
+coverage could never reach 100% for any ticker, and a
+`min_angle_coverage_fraction=1.0` setting would have deferred every
+ticker forever. Fixed: angles that don't declare the requested `time_
+format` in their own spec are now excluded from both numerator and
+denominator (not-applicable, not not-ready), verified with 4 new unit
+tests, full suite still green (1309 passed). Not yet re-verified live —
+see `01-plan.md` Step 11, `04-implemented.md` section 1j.
+
+**Also found and fixed the same day**: tracing the real price-fetch
+chain behind those non-1D formats turned up two more confirmed bugs —
+`5min` was silently broken for **all 28 angles** (a missing entry in
+`PriceClient._INTERVAL_MAP` meant it was sent to vinu-stock-price
+unmapped, always raised, always swallowed, always empty — never once
+worked, and retried forever every cycle since nothing was ever
+recorded), and `LocalPriceClient` (the second, non-HTTP price client
+used for `peer_relative_strength`'s batch path) had no interval mapping
+at all. Also fixed: `1W`/`1M`/`6M` aggregation used naive fixed-second
+buckets instead of real calendar week/month/half-year boundaries. All
+three fixed, 9 new tests added, full suites re-run clean (only
+confirmed pre-existing, unrelated failures remain). See `01-plan.md`
+Step 12.
+
+**Real scope expansion, same day (2026-09-23), by explicit request**:
+comprehension previously only ever read each angle at `1D` -- the "note
+cross-timeframe divergence" rule already in `angle_synthesizer`'s prompt
+was aspirational, never actually true. `get_all_angles`/`get_cluster_
+angles` gained an opt-in `time_format="ALL"` mode (existing default
+single-format behavior kept byte-identical, since 3 other real
+consumers depend on it), and `angle_synthesizer` now calls it in ALL
+mode -- genuinely reading a ticker across every real timeframe its
+cluster's own angles declare, not just the daily bar. Accepted,
+deliberate cost (chosen explicitly over 2 cheaper alternatives): several
+times more real HTTP fetches per cluster delegation, on a design that
+already hadn't finished a full live run (Step 10). Not live-tested — see
+`01-plan.md` Step 13.
+
+**Corrected same day, by explicit user direction**: the coverage gate
+(the thing deciding WHEN comprehension is allowed to start) still only
+checked `1D` coverage after Step 13 — inconsistent with what
+comprehension itself now actually reads. Fixed directly, not behind a
+toggle: `HttpAngleCoverageReader` now calls a new `fetch_full_angle_
+coverage()`, which checks every real `(angle, time_format)` pair, not
+just `1D`. This is now genuinely the real starting condition — "all
+angles, all their own real timeframes" — when the gate is turned on
+(still off/inert by default). Real, accepted cost: this check now runs
+on every scheduler cycle a ticker hasn't cleared yet, fetching the same
+large volume Step 13's `ALL` mode does, more often than comprehension
+itself runs. 4 new tests, full suite: 1317 passed. Not live-tested — see
+`01-plan.md` Step 14.
+
 ## The idea, in one paragraph
 
 Today, every LLM prompt that touches angle data (the `Angle Digest` in

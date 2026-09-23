@@ -15,7 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from vinu_agent.agent.ticker_gate import ChangeGate, RunLogTrigger, run_gate_cycle
+from unittest.mock import patch
+
+from vinu_agent.agent.ticker_gate import ChangeGate, HttpAngleCoverageReader, RunLogTrigger, run_gate_cycle
 from vinu_agent.storage.ticker_ledger import TickerLedgerStore
 from vinu_agent.storage.ticker_snapshots import TickerSnapshotStore
 from vinu_agent.storage.ticker_summaries import TickerSummaryStore
@@ -301,6 +303,21 @@ class FakeAngleCoverageReader:
         if self._raises:
             raise ConnectionError("vinu-initial-analysis unreachable")
         return self._coverage.get(ticker.upper(), (0, 28))
+
+
+class TestHttpAngleCoverageReader:
+    def test_delegates_to_the_real_full_coverage_function_not_1D_only(self) -> None:
+        """The real starting condition since 2026-09-23: every angle at
+        every one of its own declared timeframes, not just 1D -- see
+        01-plan.md Step 14. Confirms the wiring calls the right function,
+        not the single-format one."""
+        with patch("vinu_agent.tools.angles_tool.fetch_full_angle_coverage") as mock_fetch:
+            mock_fetch.return_value = (5, 6)
+            reader = HttpAngleCoverageReader(base_url="http://svc")
+            result = reader.coverage("AAPL")
+
+        assert result == (5, 6)
+        mock_fetch.assert_called_once_with("http://svc", "AAPL")
 
 
 class TestAngleCoverageGate:

@@ -111,6 +111,43 @@ def _fetch_angle_results(
     return results
 
 
+_ALL_TIME_FORMATS_SENTINEL = "ALL"
+
+
+def _fetch_multi_format_results(
+    client, url: str, v1_base: str, ticker: str, angle_metas: list[dict], time_range: str, stage1: str,
+) -> dict[str, dict[str, dict]]:
+    """Real "angle comprehension = every real timeframe, not just 1D"
+    fetch: every angle at every one of its OWN declared `time_formats`
+    (per `angles.yaml`/each angle's real `spec.yaml`), not one global
+    format applied uniformly. Returns {angle_name: {time_format: result}}.
+
+    Deliberately groups the fetch by format (every angle that declares
+    "1H" fetched together, then every angle that declares "1D", etc.)
+    rather than looping angle-then-format, so this reuses
+    `_fetch_angle_results`'s own per-name v1/fallback loop unchanged --
+    no second fetch implementation to drift from the single-format path.
+    Total real HTTP volume is unavoidably higher than a single-format
+    fetch (each angle has 5-9 real declared formats) -- an accepted,
+    deliberate cost for genuine cross-timeframe comprehension, chosen
+    over a cheaper partial/summary-only approach. See
+    missing-pieces-of-system/angle-comprehension-hierarchy/01-plan.md
+    Step 13."""
+    formats_to_names: dict[str, list[str]] = {}
+    for meta in angle_metas:
+        name = meta["name"]
+        formats = (meta.get("spec") or {}).get("time_formats") or ["1D"]
+        for fmt in formats:
+            formats_to_names.setdefault(fmt, []).append(name)
+
+    nested: dict[str, dict[str, dict]] = {meta["name"]: {} for meta in angle_metas}
+    for fmt, names in formats_to_names.items():
+        per_format = _fetch_angle_results(client, url, v1_base, ticker, fmt, names, time_range, stage1)
+        for name, result in per_format.items():
+            nested[name][fmt] = result
+    return nested
+
+
 def fetch_angle_coverage(base_url: str, ticker: str, *, time_format: str = "1D") -> tuple[int, int]:
     """Cheap, non-LLM coverage check: how many of the real registered
     angles currently have data for `ticker`, out of how many total.
@@ -123,7 +160,14 @@ def fetch_angle_coverage(base_url: str, ticker: str, *, time_format: str = "1D")
     to decide whether it's worth firing the 7 cluster-synthesis LLM
     calls yet, or worth deferring until vinu-initial-analysis has
     actually finished more of its real per-angle runs -- see
-    missing-pieces-of-system/angle-comprehension-hierarchy/."""
+    missing-pieces-of-system/angle-comprehension-hierarchy/.
+
+    Angles whose own `spec.time_formats` doesn't include `time_format`
+    at all (e.g. `trend_session_structure` has no "1D") are excluded
+    from both the numerator and the denominator -- they can never
+    produce data at this granularity, so querying them at it would
+    read as permanently "missing" and cap coverage below 100% forever.
+    They're treated as not-applicable, not as not-ready."""
     import os
 
     import httpx
@@ -143,13 +187,64 @@ def fetch_angle_coverage(base_url: str, ticker: str, *, time_format: str = "1D")
     with httpx.Client(timeout=60.0, headers=_h) as client:
         angles_resp = client.get(f"{url}/angles")
         angles_resp.raise_for_status()
-        angle_names = [a["name"] for a in angles_resp.json().get("angles", [])]
+        all_angles = angles_resp.json().get("angles", [])
+        angle_names = [
+            a["name"] for a in all_angles
+            if time_format in (a.get("spec", {}) or {}).get("time_formats", [])
+        ]
         results = _fetch_angle_results(
             client, url, v1_base, ticker.strip().upper(), time_format, angle_names, time_range, stage1,
         )
 
     with_data = sum(1 for r in results.values() if r.get("row_count", 0) > 0)
     return with_data, len(angle_names)
+
+
+def fetch_full_angle_coverage(base_url: str, ticker: str) -> tuple[int, int]:
+    """The real "is this ticker actually ready for comprehension" check
+    (2026-09-23): every one of the 28 real angles, at EVERY one of its
+    own declared `time_formats`, not just `1D`. Returns
+    (angle_time_format_pairs_with_data, angle_time_format_pairs_total).
+
+    Reuses `_fetch_multi_format_results` (the same fetch Step 13's
+    `time_format="ALL"` mode uses) so this coverage check can never drift
+    from what comprehension itself will actually see once it runs --
+    same "no drift between the gate and the real fetch" principle
+    `fetch_angle_coverage` above already established for the single-
+    format case. This is the function `HttpAngleCoverageReader` (ticker_
+    gate.py) calls -- the angle-coverage gate's real starting condition
+    is "every angle fetchable at every one of its own real timeframes,"
+    not "1D coverage alone." See missing-pieces-of-system/
+    angle-comprehension-hierarchy/01-plan.md Step 14."""
+    import os
+
+    import httpx
+
+    try:
+        from vinu_infra.auth import internal_auth_headers as _iah
+        _h = _iah() or None
+    except Exception:
+        _h = None
+
+    base = base_url.rstrip("/")
+    url = f"{base}/analysis"
+    v1_base = f"{base}/v1/stage1/vinu-initial-analysis"
+    stage1 = os.getenv("VINU_STAGE1_START_DATE", "2022-01-01")
+    time_range = f"{stage1}T00:00:00Z_2026-07-01T00:00:00Z"
+
+    with httpx.Client(timeout=60.0, headers=_h) as client:
+        angles_resp = client.get(f"{url}/angles")
+        angles_resp.raise_for_status()
+        all_angles = angles_resp.json().get("angles", [])
+        nested = _fetch_multi_format_results(
+            client, url, v1_base, ticker.strip().upper(), all_angles, time_range, stage1,
+        )
+
+    total_pairs = sum(len(by_fmt) for by_fmt in nested.values())
+    pairs_with_data = sum(
+        1 for by_fmt in nested.values() for r in by_fmt.values() if r.get("row_count", 0) > 0
+    )
+    return pairs_with_data, total_pairs
 
 
 class GetAllAnglesTool(BaseTool):
@@ -162,7 +257,12 @@ class GetAllAnglesTool(BaseTool):
         "granularity instead -- e.g. '1H' to check whether a shorter-term read confirms "
         "or diverges from the daily picture. Not every angle declares every timeframe "
         "(see each angle's real time_formats list); a timeframe an angle doesn't support "
-        "reports as no data for that angle, same as any other missing-data case."
+        "reports as no data for that angle, same as any other missing-data case. Pass "
+        "time_format='ALL' for genuine cross-timeframe comprehension: every angle's data "
+        "at every one of its own declared real timeframes, not just one -- the result "
+        "shape changes to {angle_name: {time_format: result}} instead of a single flat "
+        "result per angle. Costs more real fetches; use it when you actually need to "
+        "compare timeframes, not by default."
     )
     parameters = {
         "type": "object",
@@ -174,7 +274,8 @@ class GetAllAnglesTool(BaseTool):
                     "Real granularity to fetch, e.g. '1min', '5min', '15min', '1H', "
                     "'4H', '1D', '1W', '1M', '6M' -- matches the angle's own declared "
                     "time_formats. Defaults to '1D' (today's only behavior before this "
-                    "parameter existed)."
+                    "parameter existed). Pass 'ALL' to fetch every real timeframe each "
+                    "angle declares, for genuine cross-timeframe comprehension."
                 ),
             },
         },
@@ -231,7 +332,28 @@ class GetAllAnglesTool(BaseTool):
         with httpx.Client(timeout=60.0, headers=_h) as client:
             angles_resp = client.get(f"{url}/angles")
             angles_resp.raise_for_status()
-            angle_names = [a["name"] for a in angles_resp.json().get("angles", [])]
+            all_angles = angles_resp.json().get("angles", [])
+            angle_names = [a["name"] for a in all_angles]
+
+            if time_format.upper() == _ALL_TIME_FORMATS_SENTINEL:
+                nested = _fetch_multi_format_results(
+                    client, url, v1_base, ticker, all_angles, time_range, stage1,
+                )
+                pairs_with_data = sum(
+                    1 for by_fmt in nested.values() for r in by_fmt.values() if r.get("row_count", 0) > 0
+                )
+                total_pairs = sum(len(by_fmt) for by_fmt in nested.values())
+                payload = json.dumps({
+                    "ticker": ticker,
+                    "time_format": "ALL",
+                    "angle_count": len(angle_names),
+                    "angle_time_format_pairs": total_pairs,
+                    "angle_time_format_pairs_with_data": pairs_with_data,
+                    "angles": nested,
+                })
+                self._cache[cache_key] = payload
+                return payload
+
             results = _fetch_angle_results(
                 client, url, v1_base, ticker, time_format, angle_names, time_range, stage1,
             )
@@ -274,7 +396,10 @@ class GetClusterAnglesTool(BaseTool):
         "you've been asked to synthesize just one cluster -- it never returns another "
         "cluster's angles, so there's no way to accidentally cite the wrong cluster's "
         "angle. Defaults to daily (1D) data; pass time_format for a different real "
-        "granularity, same as get_all_angles."
+        "granularity, same as get_all_angles. Pass time_format='ALL' for genuine "
+        "cross-timeframe comprehension of this cluster's own members: every real "
+        "timeframe each member declares, not just one -- result shape becomes "
+        "{angle_name: {time_format: result}}."
     )
     parameters = {
         "type": "object",
@@ -286,7 +411,11 @@ class GetClusterAnglesTool(BaseTool):
             },
             "time_format": {
                 "type": "string",
-                "description": "Real granularity to fetch, e.g. '1min'/'1H'/'1D'/'1W'. Defaults to '1D'.",
+                "description": (
+                    "Real granularity to fetch, e.g. '1min'/'1H'/'1D'/'1W'. Defaults to "
+                    "'1D'. Pass 'ALL' to fetch every real timeframe this cluster's own "
+                    "members declare, for genuine cross-timeframe comprehension."
+                ),
             },
         },
         "required": ["ticker", "cluster"],
@@ -295,6 +424,11 @@ class GetClusterAnglesTool(BaseTool):
 
     def __init__(self):
         self._services_config = {}
+        # Same caching rationale as GetAllAnglesTool's own cache (see its
+        # __init__ docstring) -- 'ALL' mode is more expensive than a
+        # single-format fetch, so a repeat call for the same (ticker,
+        # cluster, time_format) matters even more here.
+        self._cache: dict[tuple[str, str, str], str] = {}
 
     def execute(self, **kwargs) -> str:
         import json
@@ -320,6 +454,11 @@ class GetClusterAnglesTool(BaseTool):
                 "error": f"Unknown cluster {cluster!r}. Real clusters: {sorted(ANGLE_CLUSTERS)}",
             })
 
+        cache_key = (ticker, cluster, time_format)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         base = self._services_config.get("vinu_initial_analysis", "http://localhost:8083").rstrip("/")
         url = f"{base}/analysis"
         v1_base = f"{base}/v1/stage1/vinu-initial-analysis"
@@ -328,12 +467,36 @@ class GetClusterAnglesTool(BaseTool):
         time_range = f"{stage1}T00:00:00Z_2026-07-01T00:00:00Z"
 
         with httpx.Client(timeout=60.0, headers=_h) as client:
+            if time_format.upper() == _ALL_TIME_FORMATS_SENTINEL:
+                angles_resp = client.get(f"{url}/angles")
+                angles_resp.raise_for_status()
+                member_metas = [a for a in angles_resp.json().get("angles", []) if a["name"] in members]
+                nested = _fetch_multi_format_results(
+                    client, url, v1_base, ticker, member_metas, time_range, stage1,
+                )
+                pairs_with_data = sum(
+                    1 for by_fmt in nested.values() for r in by_fmt.values() if r.get("row_count", 0) > 0
+                )
+                total_pairs = sum(len(by_fmt) for by_fmt in nested.values())
+                payload = json.dumps({
+                    "ticker": ticker,
+                    "cluster": cluster,
+                    "cluster_members": members,
+                    "time_format": "ALL",
+                    "angle_count": len(members),
+                    "angle_time_format_pairs": total_pairs,
+                    "angle_time_format_pairs_with_data": pairs_with_data,
+                    "angles": nested,
+                })
+                self._cache[cache_key] = payload
+                return payload
+
             results = _fetch_angle_results(
                 client, url, v1_base, ticker, time_format, members, time_range, stage1,
             )
 
         with_data = sum(1 for r in results.values() if r.get("row_count", 0) > 0)
-        return json.dumps({
+        payload = json.dumps({
             "ticker": ticker,
             "cluster": cluster,
             "cluster_members": members,
@@ -342,6 +505,8 @@ class GetClusterAnglesTool(BaseTool):
             "angles_with_data": with_data,
             "angles": results,
         })
+        self._cache[cache_key] = payload
+        return payload
 
 
 class ExplainAngleTool(BaseTool):
