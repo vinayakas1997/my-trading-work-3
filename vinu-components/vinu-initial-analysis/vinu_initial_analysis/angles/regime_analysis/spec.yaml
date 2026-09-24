@@ -1,4 +1,5 @@
 title: Regime Analysis
+category: raw_data
 purpose: 4-regime classifier (bull/bear/high_vol/sideways), transition matrix, per-regime
   Sharpe ratio
 time_formats:

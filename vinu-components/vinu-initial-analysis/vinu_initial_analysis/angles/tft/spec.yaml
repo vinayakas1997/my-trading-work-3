@@ -1,4 +1,5 @@
 title: TFT Temporal Fusion Transformer (Quantile Forecast)
+category: model
 purpose: >
   Trained-from-scratch, lightweight Temporal Fusion Transformer (method 22
   of the 32-method plan, see

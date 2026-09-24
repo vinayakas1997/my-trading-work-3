@@ -1,4 +1,5 @@
 title: Chronos Time-Series Foundation Model
+category: model
 purpose: >
   Zero-shot probabilistic forecast from Amazon's Chronos-T5 time-series
   foundation model (method 10 of the 32-method plan, see

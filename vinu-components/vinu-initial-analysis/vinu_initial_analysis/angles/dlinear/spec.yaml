@@ -1,4 +1,5 @@
 title: DLinear Decomposition Linear Forecast
+category: model
 purpose: >
   Trained-from-scratch DLinear model (method 18 of the 32-method plan, see
   New-talk-/Final-implementation/01-present-considerations/18-dlinear.md) —

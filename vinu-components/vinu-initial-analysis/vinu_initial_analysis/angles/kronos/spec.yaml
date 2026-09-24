@@ -1,4 +1,5 @@
 title: Kronos Financial K-Line Foundation Model
+category: model
 purpose: >
   Next-K-line forecast using the real Kronos pretrained model (method 9 of
   the 32-method plan, see

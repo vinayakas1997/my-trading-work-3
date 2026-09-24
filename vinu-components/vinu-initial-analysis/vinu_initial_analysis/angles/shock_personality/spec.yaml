@@ -1,4 +1,5 @@
 title: Shock Personality
+category: raw_data
 purpose: >
   Post-shock behavioral characterization — gap_fill_rate, vol_persistence (real
   GARCH, vinu_tools.compute.risk.volatility), drift_persistence_days (sign-streak)

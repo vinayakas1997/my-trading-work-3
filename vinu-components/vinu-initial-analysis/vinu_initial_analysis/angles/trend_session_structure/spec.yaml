@@ -1,4 +1,5 @@
 title: Trend Session Structure
+category: raw_data
 purpose: Session-level analysis of trend_lifecycle peaks/troughs — which trading
   session (premarket/regular/afterhours) produces reliable tops, with per-session
   drawdown, recovery, and match-similarity statistics

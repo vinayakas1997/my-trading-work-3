@@ -57,6 +57,18 @@ class TestReadSummaryContext:
         assert ctx["cluster_digest"] == {}
         assert ctx["cross_cluster"] == {}
         assert ctx["cluster_anomalies"] == {}
+        assert ctx["cluster_titles"] == {}
+
+    def test_sends_cluster_titles_from_book_index_for_present_clusters_only(self) -> None:
+        """vinu-research can't import vinu-agent's book_index, so titles
+        travel with the data (missing-pieces-of-system/
+        gatekeeper-initial-analysis/)."""
+        tool = _tool_with_store(_row(cluster_digest={"A": "x", "B": "y"}))
+        ctx = tool._read_summary_context("AAPL")
+        assert ctx["cluster_titles"] == {
+            "A": "Classical statistical forecasts",
+            "B": "Deep-learning / foundation-model forecasts",
+        }
 
     def test_no_store_configured_returns_none(self) -> None:
         tool = TradePlanTool()

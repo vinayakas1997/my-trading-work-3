@@ -15,6 +15,8 @@ from vinu_initial_analysis.storage.parquet import AngleStorage
 from vinu_initial_analysis.storage.meta import RunLog
 from vinu_initial_analysis.storage.run_id import generate_run_id
 from vinu_infra.debug import sync_timer
+from vinu_infra.model_policy import models_enabled, policy_version
+from vinu_infra.system_manifest import resolve_active_angles
 
 LOG = logging.getLogger(__name__)
 
@@ -128,7 +130,17 @@ class AngleRunner:
         self._bar_cache.clear()
         self._news_cache.clear()
         results: dict[str, Any] = {}
-        to_run = [a for a in self._angles if angle_names is None or a["name"] in angle_names]
+        # Model policy (Decision 4/5 of missing-pieces-of-system/
+        # new-theory-of-trading/01-planning.md) is applied before the
+        # caller's own angle_names filter, not instead of it -- a caller
+        # can never force-run a permanently-disabled angle or a
+        # model-category angle while VINU_MODELS_ENABLED is false by
+        # naming it explicitly in angle_names.
+        policy_active = {a["name"] for a in resolve_active_angles(self._angles)}
+        to_run = [
+            a for a in self._angles
+            if a["name"] in policy_active and (angle_names is None or a["name"] in angle_names)
+        ]
 
         for angle in to_run:
             # Generated here (not left to _run_angle) so a real run_id exists
@@ -188,6 +200,8 @@ class AngleRunner:
                     error=str(exc),
                     duration_seconds=duration,
                     granularity=time_format or "1D",
+                    policy_version=policy_version(),
+                    models_enabled=models_enabled(),
                 )
                 results[angle["name"]] = {"status": "error", "error": str(exc)}
 
@@ -301,6 +315,8 @@ class AngleRunner:
                 row_count=len(df),
                 duration_seconds=time.perf_counter() - tf_t0,
                 granularity=tf,
+                policy_version=policy_version(),
+                models_enabled=models_enabled(),
             )
             total_rows += len(df)
 

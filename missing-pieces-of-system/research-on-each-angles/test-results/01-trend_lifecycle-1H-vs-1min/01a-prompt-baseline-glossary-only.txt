@@ -1,0 +1,36 @@
+[SYSTEM]
+You are an assistant analyzing multi-timeframe angle output for ticker XYZ.
+Use only the angle description and the data given below. Be concise.
+
+[ANGLE: trend_lifecycle -- from angle_glossary.py]
+Detects price peaks/troughs, matches them against historical patterns via
+KNN, and classifies the current lifecycle stage (uptrend/downtrend/
+topping/basing/sideways). Emits reversal signals.
+
+[DATA -- trend_lifecycle, time_format=1H]
+{
+  "status": "completed",
+  "min_drop_threshold": -3.0,
+  "total_peaks": 6,
+  "n_matches": 4,
+  "n_signals": 1,
+  "current_stage": "topping",
+  "current_risk": "high",
+  "dominant_signal": "reversal_down"
+}
+
+[DATA -- trend_lifecycle, time_format=1min]
+{
+  "status": "no_peaks",
+  "min_drop_threshold": -3.0,
+  "total_peaks": 0,
+  "n_matches": 0,
+  "n_signals": 0,
+  "current_stage": null,
+  "current_risk": null,
+  "dominant_signal": null
+}
+
+[QUESTION]
+Compare the 1H and 1min trend_lifecycle reads for XYZ. What do they tell
+us, and how should they be weighed against each other?

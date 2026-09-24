@@ -300,15 +300,20 @@ def _build_forecast_prompt(
             # attack surface is redaction: a flagged cluster's real
             # synthesis sentence never reaches the prompt at all, only a
             # neutral marker plus the anomaly description.
+            cluster_titles = summary_context.get("cluster_titles")
+            if not isinstance(cluster_titles, dict):
+                cluster_titles = {}
             for cluster, sentence in cluster_digest.items():
+                title = cluster_titles.get(cluster)
+                label = f"Cluster {cluster} ({title})" if title else f"Cluster {cluster}"
                 anomalies_here = cluster_anomalies.get(cluster) or []
                 if anomalies_here:
                     lines.append(
-                        f"  Cluster {cluster}: [WITHHELD -- this cluster's synthesis was "
+                        f"  {label}: [WITHHELD -- this cluster's synthesis was "
                         f"flagged as anomalous and is not shown; see FLAGGED ANOMALY below]"
                     )
                 else:
-                    lines.append(f"  Cluster {cluster}: {sentence}")
+                    lines.append(f"  {label}: {sentence}")
                 for anomaly in anomalies_here:
                     lines.append(f"    FLAGGED ANOMALY in Cluster {cluster}: {anomaly}")
             lines.append("")

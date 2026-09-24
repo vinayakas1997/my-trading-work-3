@@ -1,4 +1,5 @@
 title: Trend Lifecycle
+category: raw_data
 purpose: Peak/trough pattern library, KNN similarity matching, trend stage classification, reversal signals with percentage exit thresholds
 time_formats:
 - 1min

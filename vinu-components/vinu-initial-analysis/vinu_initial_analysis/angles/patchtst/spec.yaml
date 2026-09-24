@@ -1,4 +1,5 @@
 title: PatchTST Channel-Independent Patch Transformer
+category: model
 purpose: >
   Trained-from-scratch PatchTST model (method 20 of the 32-method plan,
   see New-talk-/Final-implementation/01-present-considerations/20-patchtst.md)

@@ -1,0 +1,66 @@
+[SYSTEM]
+You are an assistant analyzing multi-timeframe angle output for ticker XYZ.
+Use only the angle context and the data given below. Be concise.
+
+[ANGLE: trend_lifecycle -- from 27-trend_lifecycle-angle.md, sections
+1/2/5/6 only ("passed to the LLM" fields -- citations and the
+comprehensive explanation are human-only and not included here)]
+
+Short definition:
+Detects this ticker's own price peaks/troughs, snapshots each one's
+indicator profile, matches new peaks against a growing historical
+library via KNN, classifies the current lifecycle stage (uptrend /
+downtrend / topping / basing / sideways, from higher-highs/higher-lows
+logic), and emits reversal signals. The peak-drop threshold table is
+missing entries for two of its seven declared timeframes (1min, 5min)
+-- a real, confirmed gap, not a design choice.
+
+Assumptions:
+- A2: Peak/trough matching must be walk-forward safe -- a query peak is
+  only ever compared against strictly earlier history.
+- A3: A peak-drop threshold should scale with the ticker's own recent
+  volatility (via ATR), not stay flat regardless of how calm or
+  volatile the stock currently is.
+
+Output fields:
+- min_drop_threshold: the *effective*, ATR-adjusted drop threshold
+  actually used this run.
+- current_stage / current_risk / dominant_signal: only populated when
+  peaks were actually detected.
+
+Status values:
+- completed: normal run, peaks/matches/signals/lifecycle all computed.
+- no_peaks: bars supplied, but no peaks detected -- this is the status
+  a 1min/5min run without a real peak-drop threshold entry would
+  frequently land in, because the code falls back to the 1H-scale
+  threshold (-3.0%) for those two timeframes, and the ATR adjustment
+  next to it can only tighten that threshold, never loosen it, so it
+  cannot compensate for the missing entries.
+
+[DATA -- trend_lifecycle, time_format=1H]
+{
+  "status": "completed",
+  "min_drop_threshold": -3.0,
+  "total_peaks": 6,
+  "n_matches": 4,
+  "n_signals": 1,
+  "current_stage": "topping",
+  "current_risk": "high",
+  "dominant_signal": "reversal_down"
+}
+
+[DATA -- trend_lifecycle, time_format=1min]
+{
+  "status": "no_peaks",
+  "min_drop_threshold": -3.0,
+  "total_peaks": 0,
+  "n_matches": 0,
+  "n_signals": 0,
+  "current_stage": null,
+  "current_risk": null,
+  "dominant_signal": null
+}
+
+[QUESTION]
+Compare the 1H and 1min trend_lifecycle reads for XYZ. What do they tell
+us, and how should they be weighed against each other?

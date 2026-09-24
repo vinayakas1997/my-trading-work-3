@@ -1,0 +1,38 @@
+{
+  "symbol": "XYZ",
+  "note": "FABRICATED for demonstration -- not a real compute() run.",
+  "calls": [
+    {
+      "time_format": "1H",
+      "summary_row": {
+        "type": "summary",
+        "status": "completed",
+        "min_drop_threshold": -3.0,
+        "total_peaks": 6,
+        "new_snapshots": 1,
+        "total_patterns": 6,
+        "n_matches": 4,
+        "n_signals": 1,
+        "current_stage": "topping",
+        "current_risk": "high",
+        "dominant_signal": "reversal_down"
+      }
+    },
+    {
+      "time_format": "1min",
+      "summary_row": {
+        "type": "summary",
+        "status": "no_peaks",
+        "min_drop_threshold": -3.0,
+        "total_peaks": 0,
+        "new_snapshots": 0,
+        "total_patterns": 0,
+        "n_matches": 0,
+        "n_signals": 0,
+        "current_stage": null,
+        "current_risk": null,
+        "dominant_signal": null
+      }
+    }
+  ]
+}

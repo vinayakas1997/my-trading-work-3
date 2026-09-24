@@ -1,4 +1,5 @@
 title: TIPS Regime-Aware Transformer Forecast
+category: model
 purpose: >
   Trained-from-scratch regime-aware transformer (method 24 of the
   32-method plan, see

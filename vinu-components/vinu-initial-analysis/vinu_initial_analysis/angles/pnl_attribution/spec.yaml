@@ -1,4 +1,5 @@
 title: PnL Attribution
+category: raw_data
 purpose: >
   Realized-trade PnL statistics per symbol -- win rate, average win/loss, trade
   count -- computed from Phase 6 (vinu-live) execution logs. Every field

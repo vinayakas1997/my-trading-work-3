@@ -1,5 +1,11 @@
 # Plan: one shared gatekeeper in front of the ticker book
 
+**Status (2026-09-24)**: steps 1-3 built and tested (`book_index.py`,
+`book_gatekeeper_tool.py` / `ask_ticker_book`, cluster titles reaching
+the forecast prompt). Step 4 blocked on where the ticker's overall
+prose summary belongs in the book -- see step 4 below. Nothing live-
+tested; no agent's tool list includes `ask_ticker_book` yet.
+
 See `problem-explanation.md` for the confirmed gaps this closes. The
 end goal, stated plainly by direction: stop letting each consumer of
 ticker knowledge build its own separate read/parse logic in its own
@@ -195,29 +201,51 @@ wiring (`_ticker_summary_store` gets injected the same way
 `trade_plan_tool.py`'s does today) -- no change needed to
 `build_registry()` itself.
 
-### 3. `forecast_skill.py` reads titles from the same index, not a bare letter
+### 3. `forecast_skill.py` shows cluster titles, not a bare letter (DONE, 2026-09-24 -- design corrected)
 
-`vinu-research/vinu_research/forecast_skill.py:303-311` changes from:
+**The original design here was wrong and would have crashed in
+production.** It had `forecast_skill.py` import `CLUSTER_INDEX` from
+`vinu-agent` -- but `vinu-research` has no access to `vinu-agent` at
+all (its Dockerfile never copies it, and nothing in it imports it).
+Checked before building, not after.
 
-```python
-lines.append(f"  Cluster {cluster}: {sentence}")
-```
+What was built instead -- the titles travel WITH the data, over the
+HTTP payload that already carries `cluster_digest`:
+- `vinu-agent/.../trade_plan_tool.py::_read_summary_context` adds
+  `cluster_titles: {letter: title}` (only for letters present in
+  `cluster_digest`), sourced from `book_index.cluster_title` -- still
+  the one shared source of meaning.
+- `vinu-research/.../trade_plan_authoring.py::_normalize_summary_context`
+  whitelists payload keys, so a new field would have been silently
+  dropped. Added `cluster_titles` to the whitelist via a new
+  `_bound_cluster_titles` (max 7 entries, max 80 chars each, strings
+  only) -- same re-bounding every other field crossing into this
+  prompt gets, even though these come from static constants.
+- `forecast_skill.py` renders `Cluster A (Classical statistical
+  forecasts): ...`; with no title sent, it falls back to the old bare
+  `Cluster A: ...` (backward compatible, existing test unchanged). A
+  withheld (anomaly-flagged) cluster gets its title too; its synthesis
+  sentence is still never shown.
 
-to importing `CLUSTER_INDEX` and rendering:
+Tests: 3 in `vinu-research/tests/test_trade_plan_authoring.py`
+(pass-through, bounding, bad-type dropping), 2 in `test_forecast_skill.py`
+(title rendered, withheld cluster labeled), 1 in `vinu-agent/tests/
+test_read_summary_context.py`. `vinu-agent` 1338 passed, `vinu-research`
+976 passed.
 
-```python
-title = CLUSTER_INDEX.get(cluster, {}).get("title", "")
-lines.append(f"  Cluster {cluster} ({title}): {sentence}")
-```
+### 4. Migrate `trade_plan_tool.py` onto the gatekeeper -- BLOCKED on a book-structure decision
 
-Small, deliberately separate from the gatekeeper tool itself -- this is
-a different consumer (the forecast prompt-builder, not an
-agent-callable tool) reusing the SAME shared index rather than the
-gatekeeper duplicating cluster-title logic that forecast_skill also
-needs. This is the concrete proof of the "one shared space, not
-separate copies" goal: two different consumers, one source of meaning.
+Found while starting this step: `_read_summary_context` needs three
+fields the gatekeeper doesn't return at all -- `summary` (the Summary
+Agent's own prose read of the ticker), `angles_with_data`, and
+`angle_count`. Without `summary`, `vinu-research`'s
+`_normalize_summary_context` returns `None` and the whole summary
+context is dropped. So this step can't be done as a pure refactor: the
+book would first need a home for the ticker's overall prose summary,
+which isn't one of the settled sub-chapters (1a-1d). Where it goes is
+a book-structure decision, not something to invent here.
 
-### 4. Migrate `trade_plan_tool.py` onto the gatekeeper, don't leave it duplicated
+Original intent, kept for reference:
 
 `_read_summary_context` gets replaced with a call to
 `AskTickerBookTool(chapter="all")` (constructed the same way any other

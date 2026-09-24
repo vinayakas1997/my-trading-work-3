@@ -1,4 +1,5 @@
 title: GARCH Volatility Forecast
+category: raw_data
 purpose: >
   Standalone GARCH(1,1) conditional-variance forecast — the classical,
   zero-footprint volatility baseline (method 26 of the 32-method plan,

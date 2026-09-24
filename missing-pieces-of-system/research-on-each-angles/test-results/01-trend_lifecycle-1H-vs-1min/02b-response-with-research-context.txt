@@ -1,0 +1,20 @@
+[RESPONSE]
+The 1H read is meaningful: min_drop_threshold is -3.0%, which is a real,
+intended threshold at that resolution, and it found 6 peaks, 4 historical
+matches, and classifies the current stage as "topping" with high risk
+(reversal_down signal firing).
+
+The 1min read is not meaningful, and shouldn't be treated as a genuine
+absence of pattern. min_drop_threshold is also -3.0% on the 1min call --
+but per this angle's known gap, 1min has no threshold entry of its own,
+so it silently inherits the 1H-scale value. A 3% move essentially never
+happens inside a single 1-minute bar, so peak detection is structurally
+almost guaranteed to find nothing at this resolution regardless of what
+the price is actually doing. no_peaks here is a symptom of the
+miscalibrated threshold, not evidence that the intraday chart is flat or
+that the topping pattern is unconfirmed.
+
+Weighing them: trust the 1H topping/high-risk read on its own merits.
+Discard the 1min result entirely rather than reading it as either
+confirming or contradicting the 1H signal -- it isn't informative in
+either direction.

@@ -77,6 +77,20 @@ def list_angles():
     return {"angles": svc.list_angles()}
 
 
+@router.get("/coverage/{ticker}")
+def get_ticker_coverage(ticker: str):
+    """Decisions 9 and 11 of missing-pieces-of-system/new-theory-of-
+    trading/01-planning.md: the wide, one-row-per-ticker status view --
+    covered date range, whether models were on, and per-angle status
+    (a real status, "pending", or "not_required" per current policy) --
+    pivoted fresh from RunLog on every call, not a separately-maintained
+    copy."""
+    from vinu_initial_analysis.storage.ticker_coverage import build_ticker_coverage
+
+    svc = _get_svc()
+    return build_ticker_coverage(svc.run_log, ticker.upper(), svc.list_angles())
+
+
 def _json_safe(value: Any) -> Any:
     if isinstance(value, np.ndarray):
         return [_json_safe(v) for v in value.tolist()]

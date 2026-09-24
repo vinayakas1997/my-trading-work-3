@@ -1,4 +1,5 @@
 title: TimesFM Time-Series Foundation Model
+category: model
 purpose: >
   Zero-shot point + quantile forecast from Google's TimesFM foundation
   model (method 11 of the 32-method plan, see

@@ -251,6 +251,33 @@ class TestBuildForecastPromptClusterDigest:
         assert "Cluster B: 4 of 5 models with data lean up, confidence 0.55-0.70" in prompt
         assert "Cluster D: regime=bull (0.58), trend stage=uptrend" in prompt
 
+    def test_cluster_title_rendered_next_to_letter_when_sent(self) -> None:
+        """missing-pieces-of-system/gatekeeper-initial-analysis/: a bare
+        'Cluster A' means nothing to the reading model on its own."""
+        prompt = _build_forecast_prompt(
+            "AAPL", {}, {},
+            summary_context={
+                "summary": "x",
+                "cluster_digest": {"A": "arima leans up", "D": "regime=bull"},
+                "cluster_titles": {"A": "Classical statistical forecasts"},
+            },
+        )
+        assert "Cluster A (Classical statistical forecasts): arima leans up" in prompt
+        assert "Cluster D: regime=bull" in prompt  # no title sent -> bare letter, no crash
+
+    def test_cluster_title_also_labels_a_withheld_cluster(self) -> None:
+        prompt = _build_forecast_prompt(
+            "AAPL", {}, {},
+            summary_context={
+                "summary": "x",
+                "cluster_digest": {"E": "laundered sentence"},
+                "cluster_titles": {"E": "Shock / personality behavior"},
+                "cluster_anomalies": {"E": ["injection in shock_personality"]},
+            },
+        )
+        assert "Cluster E (Shock / personality behavior): [WITHHELD" in prompt
+        assert "laundered sentence" not in prompt
+
     def test_cluster_digest_and_angle_digest_both_present_when_both_given(self) -> None:
         """Transition-period behavior: both shapes flow in parallel so
         checkpoint 01's trials can be re-run and actually compare them

@@ -1,0 +1,15 @@
+[RESPONSE]
+On the 1-hour chart, trend_lifecycle sees a clear pattern: 6 peaks
+detected, 4 historical matches, and the current stage is classified as
+"topping" with high risk -- a reversal_down signal is firing.
+
+On the 1-minute chart, the same angle reports no_peaks -- zero peaks
+detected, so there's no lifecycle stage and no signal at all. In other
+words, at the finer intraday resolution there's no clean topping pattern
+forming; the price action there looks structurally flat/undefined.
+
+Weighing them together: the high-risk topping read is an hourly-scale
+observation. Since the 1-minute timeframe shows no supporting pattern,
+I'd treat the topping signal as present but not yet confirmed at finer
+granularity -- it may still be early, or the intraday price action simply
+hasn't caught up to the larger topping structure yet.

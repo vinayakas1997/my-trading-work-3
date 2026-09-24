@@ -1,4 +1,7 @@
 title: MOIRAI Any-Variate Time-Series Foundation Model (fallback proxy)
+category: disabled
+disabled_reason: >
+  permanently pinned to a statistical fallback_proxy -- uni2ts needs torch==2.4.1, conflicting with the shared torch==2.13.0+cpu install.
 purpose: >
   Forecast in the spirit of Salesforce's MOIRAI (method 13 of the
   32-method plan, see

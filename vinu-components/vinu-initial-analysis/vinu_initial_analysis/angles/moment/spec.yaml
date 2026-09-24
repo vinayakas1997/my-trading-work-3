@@ -1,4 +1,7 @@
 title: MOMENT Multi-Task Time-Series Foundation Model (fallback proxy)
+category: disabled
+disabled_reason: >
+  permanently pinned to a statistical fallback_proxy -- momentfm fails to build on the shared Py3.12 environment.
 purpose: >
   Forecast in the spirit of MOMENT's forecasting task (method 14 of the
   32-method plan, see

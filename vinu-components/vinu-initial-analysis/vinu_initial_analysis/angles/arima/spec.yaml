@@ -1,4 +1,5 @@
 title: ARIMA Classical Statistical Baseline
+category: raw_data
 purpose: >
   AutoRegressive Integrated Moving Average forecast — the classical
   statistical baseline (method 25 of the 32-method plan, see

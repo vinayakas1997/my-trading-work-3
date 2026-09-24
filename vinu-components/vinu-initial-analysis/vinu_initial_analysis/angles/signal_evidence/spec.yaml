@@ -1,0 +1,29 @@
+title: Signal Evidence
+category: raw_data
+purpose: >
+  Historical-backfill half of missing-pieces-of-system/new-theory-of-
+  trading (Decision 10, 01-planning.md): walks this symbol's own bars for
+  every historical SMA(5) x SMA(50) crossing, snapshots point-in-time
+  supporting indicators (ADX, RSI, volume-vs-avg20) at each one, computes
+  the forward outcome path, and POSTs both to vinu-research's
+  SignalEvidenceStore over HTTP. Pure numpy/pandas math, no model —
+  deliberately category: raw_data, unaffected by the MODELS on/off
+  switch.
+time_formats:
+- 15min
+- 1H
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: >
+    Summary counts only (crossings_found, triggers_recorded,
+    triggers_already_recorded, triggers_skipped_incomplete_horizon,
+    triggers_record_errors) — the actual evidence rows land in
+    vinu-research's signal_evidence tables, not this angle's own parquet
+    storage, since they belong to a different symbol/schema shape
+    (one row per trigger event, not one row per angle run).

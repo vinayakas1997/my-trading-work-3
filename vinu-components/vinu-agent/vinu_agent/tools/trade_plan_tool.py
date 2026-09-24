@@ -105,6 +105,9 @@ class TradePlanTool(BaseTool):
             summary = str(getattr(row, "summary", "") or "").strip()
             if not summary or summary.lower().startswith("analysis unavailable"):
                 return None
+            from .book_index import cluster_title
+
+            cluster_digest = getattr(row, "cluster_digest", {}) or {}
             return {
                 "summary": summary,
                 "source_run_id": str(getattr(row, "source_run_id", "") or ""),
@@ -118,7 +121,12 @@ class TradePlanTool(BaseTool):
                 # 01's trials can be re-run with both shapes present and
                 # actually compare them (step 6), instead of assuming the
                 # new shape is better without a real before/after.
-                "cluster_digest": getattr(row, "cluster_digest", {}) or {},
+                "cluster_digest": cluster_digest,
+                # vinu-research can't import vinu-agent's book_index, so
+                # the titles travel with the data instead.
+                "cluster_titles": {
+                    letter: cluster_title(letter) for letter in cluster_digest if cluster_title(letter)
+                },
                 "cross_cluster": getattr(row, "cross_cluster", {}) or {},
                 # cluster_anomalies is SEPARATE from cluster_digest on
                 # purpose -- real finding (2026-09-22): a cluster's

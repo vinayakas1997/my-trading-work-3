@@ -1,4 +1,5 @@
 title: Timer / Timer-XL Patch-Based Foundation Model
+category: model
 purpose: >
   Patch-based forecast using the real Timer pretrained model (method 15 of
   the 32-method plan, see

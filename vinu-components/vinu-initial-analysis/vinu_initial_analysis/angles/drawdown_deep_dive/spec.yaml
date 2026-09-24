@@ -1,4 +1,5 @@
 title: Drawdown Deep-Dive
+category: raw_data
 purpose: Drawdown detection, news attribution, max drawdown duration, recovery time
   across multi-timeframe
 time_formats:

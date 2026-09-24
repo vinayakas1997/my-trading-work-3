@@ -16,6 +16,7 @@ from vinu_research.llm_generator import LlmStrategyGenerator, _build_memory_cont
 from vinu_research.models import Artifact, ArtifactStatus, BenchEntry, Goal
 from vinu_research.storage import ResearchStorage
 from vinu_research.storage.models import ResearchRunRecord, STATUS_DONE, STATUS_FAILED, STATUS_PENDING, STATUS_RUNNING
+from vinu_research.storage.signal_evidence_store import SignalEvidenceStore
 from vinu_research.storage.strategy_store import SqliteStrategyStore
 from vinu_research.gates.correlation_gate import CorrelationVerdict, check_correlation_gate
 from vinu_research.strategy_family import classify_strategy_family
@@ -39,6 +40,7 @@ class ResearchService:
         config: ResearchConfig | None = None,
         storage: ResearchStorage | None = None,
         strategy_store: SqliteStrategyStore | None = None,
+        signal_evidence_store: SignalEvidenceStore | None = None,
     ) -> None:
         self._config = config or load_config()
         self._storage = storage or ResearchStorage(
@@ -49,6 +51,16 @@ class ResearchService:
             self._config.data_root / "strategy_store.db"
         )
         self._owns_strategy_store = strategy_store is None
+        self._owns_signal_evidence_store = signal_evidence_store is None
+        # Phase 2 of missing-pieces-of-system/new-theory-of-trading
+        # (Decisions 1/2/3/7/8): raw must-condition-trigger + supporting-
+        # indicator evidence, separate from strategy_store's own artifact/
+        # calibration data -- deliberately its own db file, not a table
+        # bolted onto strategy_store.db, since this one is expected to grow
+        # much faster (one row per trigger event, not per artifact).
+        self._signal_evidence_store = signal_evidence_store or SignalEvidenceStore(
+            self._config.data_root / "signal_evidence.db"
+        )
         try:
             from vinu_infra.auth import internal_auth_headers
             _headers = internal_auth_headers() or None
@@ -59,6 +71,10 @@ class ResearchService:
     @property
     def strategy_store(self) -> SqliteStrategyStore:
         return self._strategy_store
+
+    @property
+    def signal_evidence_store(self) -> SignalEvidenceStore:
+        return self._signal_evidence_store
 
     @property
     def config(self) -> ResearchConfig:
@@ -714,6 +730,8 @@ class ResearchService:
             await self._run_in_thread(self._storage.close)
         if self._owns_strategy_store:
             await self._run_in_thread(self._strategy_store.close)
+        if self._owns_signal_evidence_store:
+            await self._run_in_thread(self._signal_evidence_store.close)
         await self._http.aclose()
 
     async def __aenter__(self) -> ResearchService:

@@ -740,6 +740,28 @@ def _bound_cluster_digest(cluster_digest: Any) -> dict[str, str]:
     return bounded
 
 
+_CLUSTER_TITLE_MAX_LEN = 80
+
+
+def _bound_cluster_titles(cluster_titles: Any) -> dict[str, str]:
+    """Human-readable cluster titles, sent by vinu-agent alongside
+    cluster_digest so the prompt shows "Cluster A (Classical statistical
+    forecasts)" instead of a bare letter (missing-pieces-of-system/
+    gatekeeper-initial-analysis/). Sourced from vinu-agent's static
+    book_index, but still re-bounded here like every other field that
+    crosses this boundary into a prompt."""
+    if not isinstance(cluster_titles, dict):
+        return {}
+    bounded: dict[str, str] = {}
+    for cluster, title in cluster_titles.items():
+        if len(bounded) >= _CLUSTER_DIGEST_MAX_CLUSTERS:
+            break
+        if not isinstance(title, str) or not title.strip():
+            continue
+        bounded[str(cluster)] = title.strip()[:_CLUSTER_TITLE_MAX_LEN]
+    return bounded
+
+
 def _bound_cluster_anomalies(cluster_anomalies: Any) -> dict[str, list[str]]:
     """Kept SEPARATE from cluster_digest -- real finding (2026-09-22, live
     LLM test against a real prompt-injection payload): a cluster's own
@@ -802,6 +824,7 @@ def _normalize_summary_context(summary_context: dict[str, Any] | None) -> dict[s
         "angle_count": summary_context.get("angle_count", 28),
         "angle_digest": _bound_angle_digest(summary_context.get("angle_digest")),
         "cluster_digest": _bound_cluster_digest(summary_context.get("cluster_digest")),
+        "cluster_titles": _bound_cluster_titles(summary_context.get("cluster_titles")),
         "cross_cluster": _bound_cross_cluster(summary_context.get("cross_cluster")),
         "cluster_anomalies": _bound_cluster_anomalies(summary_context.get("cluster_anomalies")),
     }

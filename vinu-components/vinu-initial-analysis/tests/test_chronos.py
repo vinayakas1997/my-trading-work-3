@@ -58,3 +58,42 @@ def test_pretrained_backend_actually_loads_in_this_environment():
     assert row["model_backend"] == "pretrained"
     assert row["checkpoint"] == "amazon/chronos-t5-large"
     assert row["fallback_reason"] is None
+
+
+def test_checkpoint_override_resolves_via_shared_model_registry(monkeypatch):
+    """VINU_CHRONOS_CHECKPOINT names a REGISTRY entry (Decision 4 of
+    missing-pieces-of-system/new-theory-of-trading/01-planning.md), not a
+    raw HF repo id -- resolved against vinu-infra/models.py's MODELS dict,
+    so an override can only select an already-registered checkpoint.
+    Reloading the module re-evaluates its module-level CHECKPOINT/
+    _MODEL_REGISTRY_NAME constants, the same boot-only pattern MIN_OBSERVATIONS
+    already uses."""
+    import importlib
+
+    from vinu_initial_analysis.angles.chronos import compute as chronos_compute
+
+    monkeypatch.setenv("VINU_CHRONOS_CHECKPOINT", "chronos-t5-tiny")
+    try:
+        importlib.reload(chronos_compute)
+        assert chronos_compute._MODEL_REGISTRY_NAME == "chronos-t5-tiny"
+        assert chronos_compute.CHECKPOINT == "amazon/chronos-t5-tiny"
+    finally:
+        monkeypatch.delenv("VINU_CHRONOS_CHECKPOINT", raising=False)
+        importlib.reload(chronos_compute)
+
+
+def test_checkpoint_unknown_override_falls_back_to_default(monkeypatch):
+    """An override naming an entry that isn't in the shared registry falls
+    back to the decided default rather than resolving to an unusable repo
+    id -- `_MODEL_REGISTRY.get(name, default)` behavior, checked directly."""
+    import importlib
+
+    from vinu_initial_analysis.angles.chronos import compute as chronos_compute
+
+    monkeypatch.setenv("VINU_CHRONOS_CHECKPOINT", "not-a-real-registry-entry")
+    try:
+        importlib.reload(chronos_compute)
+        assert chronos_compute.CHECKPOINT == "amazon/chronos-t5-large"
+    finally:
+        monkeypatch.delenv("VINU_CHRONOS_CHECKPOINT", raising=False)
+        importlib.reload(chronos_compute)

@@ -42,6 +42,25 @@ class RunLog(SQLiteBackend):
     """
 
     SCHEMA = SCHEMA_SQL
+    # Decision 7 of missing-pieces-of-system/new-theory-of-trading/
+    # 01-planning.md: every run stamps which model-policy version was
+    # active when it ran, so a historical row can always answer "how many
+    # angles ran, with which models, for this ticker's analysis at that
+    # time" instead of only reflecting the CURRENT policy. Added as a real
+    # migration (not a clean-slate schema rewrite) -- this table already
+    # has real production rows, unlike the redesign phase that originally
+    # added `granularity`/`tier` to a still-empty table.
+    SCHEMA_VERSION = 3
+    MIGRATIONS = [
+        ("ALTER TABLE runs ADD COLUMN policy_version TEXT", "2.0.0: Decision 7 policy_version stamp"),
+        # The per-ticker coverage table (new-theory-of-trading/01-planning.md
+        # Decision 9) needs a human-readable "were models on for this run"
+        # answer. policy_version alone can't give that back -- it's a hash,
+        # deliberately one-way (see vinu-infra/model_policy.py's own
+        # docstring) -- so this stores the real boolean directly rather than
+        # asking every reader to somehow reverse a hash.
+        ("ALTER TABLE runs ADD COLUMN models_enabled INTEGER", "3.0.0: Decision 9 models_enabled flag"),
+    ]
 
     def record_run(
         self,
@@ -57,13 +76,15 @@ class RunLog(SQLiteBackend):
         granularity: str = "1D",
         tier: str = "tier2",
         duration_seconds: float | None = None,
+        policy_version: str | None = None,
+        models_enabled: bool | None = None,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
         conn.execute(
             """INSERT OR REPLACE INTO runs
-               (symbol, angle_name, run_id, started_at, analysis_from, analysis_until, stored_at, status, error, row_count, granularity, tier, duration_seconds)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (symbol, angle_name, run_id, started_at, analysis_from, analysis_until, stored_at, status, error, row_count, granularity, tier, duration_seconds, policy_version, models_enabled)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 symbol,
                 angle_name,
@@ -78,6 +99,8 @@ class RunLog(SQLiteBackend):
                 granularity,
                 tier,
                 duration_seconds,
+                policy_version,
+                None if models_enabled is None else int(models_enabled),
             ),
         )
         conn.commit()

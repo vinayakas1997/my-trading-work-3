@@ -1,4 +1,5 @@
 title: Backtesting Metrics
+category: raw_data
 purpose: Compute 44+ portfolio metrics — Sharpe, Sortino, MaxDD, WinRate, CAGR, VaR,
   CVaR, tail ratio
 time_formats:

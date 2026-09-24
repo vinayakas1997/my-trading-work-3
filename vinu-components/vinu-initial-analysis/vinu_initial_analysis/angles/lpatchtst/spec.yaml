@@ -1,4 +1,5 @@
 title: LPatchTST LSTM+PatchTST Hybrid Forecast
+category: model
 purpose: >
   Trained-from-scratch LPatchTST model (method 23 of the 32-method plan,
   see New-talk-/Final-implementation/01-present-considerations/23-lpatchtst.md)

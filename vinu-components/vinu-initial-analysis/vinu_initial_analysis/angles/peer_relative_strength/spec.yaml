@@ -1,4 +1,5 @@
 title: Peer Relative Strength
+category: raw_data
 purpose: >
   Measures how a symbol performs relative to its watchlist peer basket over
   time using rolling correlation and relative (excess) returns. Stands apart

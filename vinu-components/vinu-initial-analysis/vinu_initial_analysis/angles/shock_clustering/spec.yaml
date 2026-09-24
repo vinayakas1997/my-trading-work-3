@@ -1,4 +1,5 @@
 title: Shock Clustering
+category: raw_data
 purpose: >
   Identifies which watchlist peers tend to shock together with this
   symbol: co-shock rate (did the peer also register its own shock within

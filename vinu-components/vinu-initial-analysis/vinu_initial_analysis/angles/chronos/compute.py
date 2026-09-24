@@ -32,6 +32,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vinu_infra.model_policy import get_model_checkpoint
+from vinu_infra.models import MODELS as _MODEL_REGISTRY
 from vinu_initial_analysis.config import get_angle_setting
 
 ANGLE_NAME = "chronos"
@@ -47,8 +49,14 @@ PREDICTION_LENGTH = 5
 # Decided checkpoint (04-enhancement-of-each-angle/03-chronos.md SS3):
 # upgraded from the code's prior default (chronos-t5-tiny, 8M params) to
 # chronos-t5-large (710M params) for forecast quality over speed.
-CHECKPOINT = "amazon/chronos-t5-large"
-_MODEL_REGISTRY_NAME = "chronos-t5-large"
+# Overridable via VINU_CHRONOS_CHECKPOINT, per Decision 4 of
+# missing-pieces-of-system/new-theory-of-trading/01-planning.md -- the
+# override names a REGISTRY entry (e.g. "chronos-t5-tiny"), resolved
+# against vinu-infra/models.py's MODELS dict, not a raw HF repo id, so an
+# override can only select an already-registered/downloadable checkpoint
+# rather than an arbitrary unvetted one.
+_MODEL_REGISTRY_NAME = get_model_checkpoint(ANGLE_NAME, "chronos-t5-large")
+CHECKPOINT = _MODEL_REGISTRY.get(_MODEL_REGISTRY_NAME, "amazon/chronos-t5-large")
 
 _PIPELINE_CACHE: dict[str, Any] = {}
 

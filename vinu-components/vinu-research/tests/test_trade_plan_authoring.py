@@ -232,6 +232,27 @@ class TestNormalizeSummaryContextClusterDigest:
         result = _normalize_summary_context({"summary": "", "cluster_digest": {"A": "x"}})
         assert result is None
 
+    def test_cluster_titles_pass_through_the_whitelist(self) -> None:
+        """Regression: _normalize_summary_context whitelists keys, so a
+        new field sent by vinu-agent is silently dropped unless added
+        here explicitly."""
+        result = _normalize_summary_context({
+            "summary": "x", "cluster_titles": {"A": "Classical statistical forecasts"},
+        })
+        assert result["cluster_titles"] == {"A": "Classical statistical forecasts"}
+
+    def test_cluster_titles_are_bounded(self) -> None:
+        titles = {str(i): "t" for i in range(20)}
+        titles["A"] = "x" * 500
+        result = _normalize_summary_context({"summary": "x", "cluster_titles": titles})
+        assert len(result["cluster_titles"]) <= 7
+        assert all(len(t) <= 80 for t in result["cluster_titles"].values())
+
+    def test_cluster_titles_non_string_or_non_dict_is_dropped(self) -> None:
+        assert _normalize_summary_context({"summary": "x", "cluster_titles": "nope"})["cluster_titles"] == {}
+        result = _normalize_summary_context({"summary": "x", "cluster_titles": {"A": 5, "B": "real"}})
+        assert result["cluster_titles"] == {"B": "real"}
+
     def test_cluster_anomalies_passes_through(self) -> None:
         result = _normalize_summary_context({
             "summary": "x",

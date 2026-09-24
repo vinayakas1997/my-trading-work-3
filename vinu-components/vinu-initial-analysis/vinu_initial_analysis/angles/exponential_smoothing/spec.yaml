@@ -1,4 +1,5 @@
 title: Exponential Smoothing Classical Baseline
+category: raw_data
 purpose: >
   Double exponential smoothing (Holt's linear trend method) forecast — the
   classical, essentially-free statistical baseline (method 28 of the
