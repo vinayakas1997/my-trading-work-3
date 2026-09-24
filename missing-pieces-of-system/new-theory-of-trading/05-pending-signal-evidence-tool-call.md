@@ -1,7 +1,8 @@
-# Pending: expose signal-evidence via a tool call
+# Expose signal-evidence via a tool call
 
 **Priority: high.**
-**Status: not started -- planning only.**
+**Status: done (2026-09-24) -- read-only tool built, tested, and wired
+into theory_reviewer. See "What was built" at the end of this file.**
 
 **Note on scope, stated up front**: the request that produced this file
 was "the signal evidence is there, we can use the tool call [for it]" --
@@ -55,11 +56,66 @@ meant, correct this file's scope before building anything from it.
   count/list honestly (`N triggers recorded, M with outcomes filled in`)
   rather than trying to compute real statistics before Phase 3 exists.
 
-## Suggested next step (not started)
+## What was built (2026-09-24)
 
-Confirm the read-only-first scope, then add a new tool file in
-`vinu-agent/vinu_agent/tools/` (e.g. `signal_evidence_tool.py`) following
-the exact shape of an existing simple tool (`ticker_summary_tool.py` is
-probably the closest analog -- a thin HTTP-calling wrapper around an
-existing route, not new business logic), calling `vinu-research`'s
-already-built `GET /research/signal-evidence` route.
+The three open questions above were resolved as follows, all matching
+the file's own default recommendations:
+
+- **Read-only, as recommended.** `GetSignalEvidenceTool`
+  (`vinu-agent/vinu_agent/tools/signal_evidence_tool.py`) only reads --
+  no write path. `is_readonly = True`. Writing new trigger rows stays
+  exclusively the `signal_evidence` angle's job, so the look-ahead-bias
+  risk noted above never gets reopened.
+- **Wired into `theory_reviewer`** (`thesis_intake` team) only, for now
+  -- the closest existing analog (it already reviews a submitted theory
+  against `query_hypotheses`' evidence trail; checking
+  `get_signal_evidence` for a theory built around the SMA(5)/SMA(50)
+  cross is the same pattern applied to this new evidence source). Its
+  `prompt.md` gained an explicit step: if the theory resembles that must-
+  condition, call the tool and weigh the real recorded trigger count/
+  outcomes -- but treat `count=0` as "nothing recorded yet," never as
+  evidence against the theory. Other teams (screener, summary) are a
+  deliberate, separate future decision, not wired by default.
+- **Interface**: `symbol` (optional -- filters to one ticker),
+  `trigger_id` (optional -- fetches one event's full indicator snapshot
+  instead of the summary list), `limit` (optional, default 50). The
+  summary-list path returns exactly what this doc predicted it should:
+  `{count, outcomes_recorded, triggers}` -- honest raw counts, no
+  computed win rate or statistic, since Phase 3's analysis layer still
+  doesn't exist.
+
+**Implementation shape**: not quite `ticker_summary_tool.py` after all --
+the actual closest analog turned out to be `query_hypotheses_tool.py`,
+since `SignalEvidenceStore` lives in `vinu-research` (a separate
+service), same as `HypothesisRegistry`. Follows that exact pattern: try
+an in-process read first via a new `vinu_agent/broker/research_link.py`
+getter (`get_signal_evidence_store()`, added alongside its existing
+`get_hypothesis_registry()`/`get_strategy_store()` siblings, same
+`_research_data_root() / "<db>.db"` construction `ResearchService`
+itself uses), falling back to HTTP against `GET /research/signal-
+evidence[/{trigger_id}]` on any exception (missing package, service not
+reachable, etc.).
+
+**Tests**: `vinu-agent/tests/test_signal_evidence_tool.py`, 11 tests
+mirroring `test_query_hypotheses_tool.py`'s structure -- in-process
+list/filter/outcome-counting/not-found behavior against a real temp
+`SignalEvidenceStore`, plus HTTP-fallback tests (correct URL/params,
+404-as-not-found, error propagation). All passing.
+
+**Sandbox gap fixed, not just noted**: this sandbox was missing the
+`tenacity` package (a real declared dependency,
+`vinu-infra/pyproject.toml` line 15: `tenacity>=8.2` -- just not
+installed in this environment), which had blocked
+`test_generate_tool_catalog.py` and `test_phase6_thesis_intake_scoping.py`
+before this change and was initially only worked around (verified
+indirectly via YAML-parsing and reading test logic, see prior version of
+this note). Installed `tenacity` (`pip install tenacity`, resolved to
+9.1.4, satisfies the `>=8.2` constraint) and re-ran both previously-
+blocked files for real: **7/7 passed**, including
+`test_discovers_real_tools_with_expected_shape` (confirms
+`build_registry()`'s real auto-discovery actually finds
+`GetSignalEvidenceTool`, not just that the module parses) and
+`test_theory_reviewer_has_the_real_evidence_tools` (confirms the real
+scoped registry, not just the YAML file). Also confirmed directly:
+`get_signal_evidence` appears in `build_registry()`'s real tool-name
+list.

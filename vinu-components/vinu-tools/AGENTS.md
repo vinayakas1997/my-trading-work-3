@@ -1,7 +1,7 @@
 # vinu-tools (renamed from vinu-features)
 
 Trading factor computation toolkit — a library of 461 alpha factor formulas, 
-24 TA indicators, and 11 recipe presets, accessible to both code and LLMs.
+28 TA indicators, and 11 recipe presets, accessible to both code and LLMs.
 
 ## Architecture: Three Pillars
 
@@ -175,7 +175,7 @@ from vinu_tools.compute.registry import (
 )
 reg = get_alpha_registry()
 reg.count()       # 307 alphas
-list_indicators() # 24 indicators
+list_indicators() # 28 indicators
 list_presets()    # 11 presets
 ```
 

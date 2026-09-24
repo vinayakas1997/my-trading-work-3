@@ -26,9 +26,10 @@ or similar will fail every time; use the angle's conclusion to shape your
 logic, then implement that logic using real indicator columns instead.
 
 Call list_available_features at least once before your first
-get_features call — the real catalog has 24 indicators (not just
+get_features call — the real catalog has 28 indicators (not just
 SMA/RSI/MACD: supertrend, cmf, aroon, session, bollinger, stochastic,
-and more) plus preset bundles (e.g. full_ta for all 32, mean_reversion_pack,
+ichimoku, parabolic_sar, mfi, ad_line, and more) plus preset bundles
+(e.g. full_ta for all 32, mean_reversion_pack,
 momentum, alpha101_benchmark for WorldQuant's 101 alphas). Use these freely
 to LOOK AT the data and inform your idea. But a SMALLER set is actually
 mergeable into the backtest DataFrame your code runs against — ONLY:

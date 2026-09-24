@@ -25,4 +25,8 @@ INDICATOR_MODULE_NAMES: tuple[str, ...] = (
     "chaikin_money_flow",
     "aroon",
     "session",
+    "ichimoku",
+    "parabolic_sar",
+    "mfi",
+    "accumulation_distribution_line",
 )

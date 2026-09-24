@@ -132,6 +132,21 @@ class TestCrossingDetectionAndRecording:
         assert "rsi" in payload["indicators"]
         assert "volume_vs_avg20" in payload["indicators"]
         assert "policy_version" in payload
+        # vinu_tools-backed indicators added alongside adx/rsi (short
+        # lookbacks only -- the 150-bar fixture doesn't clear sma_100/200's
+        # warmup, so those are correctly absent, not asserted here).
+        for key in ("sma_5", "sma_10", "sma_20", "sma_50", "ema_5", "ema_10",
+                    "dist_from_sma_5", "dist_from_sma_50", "dist_from_ema_5",
+                    "roc_5", "roc_10", "roc_20", "atr_14", "stoch_k_14",
+                    "stoch_d_14", "bollinger_band_width", "bollinger_percent_b",
+                    "macd_line", "macd_signal", "macd_histogram",
+                    "aroon_up", "aroon_down", "cci_20", "williams_r_14",
+                    "supertrend", "high_low_spread", "open_close_return",
+                    "momentum_10", "obv", "cmf_20",
+                    "ichimoku_tenkan", "ichimoku_kijun", "ichimoku_senkou_a",
+                    "ichimoku_senkou_b", "parabolic_sar", "mfi_14",
+                    "accumulation_distribution_line", "vwap_dist"):
+            assert key in payload["indicators"], f"missing {key}"
 
     def test_flat_series_finds_no_crossing(self):
         df = compute("AAPL", bars=_make_flat_bars(150))
@@ -182,6 +197,30 @@ class TestCrossingDetectionAndRecording:
         row = df.iloc[0]
         assert row["triggers_record_errors"] >= 1
         assert row["triggers_recorded"] == 0
+
+    def test_vwap_dist_resets_per_session_not_cumulative_since_start(self):
+        """The whole point of session-slicing vwap_dist (see
+        06-mistake-duplicated-indicator-logic.md / all-possible-
+        supporting-indicators.md's vwap_dist note): a cumulative-
+        since-start VWAP would drag day 2's value toward day 1's price
+        level. A correctly session-reset VWAP should not."""
+        from vinu_initial_analysis.angles.signal_evidence.compute import _vwap_supporting
+
+        n_per_day = 10
+        day1_ts = pd.date_range("2024-01-01 09:30", periods=n_per_day, freq="15min", tz="UTC")
+        day2_ts = pd.date_range("2024-01-02 09:30", periods=n_per_day, freq="15min", tz="UTC")
+        ts = day1_ts.append(day2_ts)
+        close = pd.Series([100.0] * n_per_day + [200.0] * n_per_day)
+        high = close + 0.5
+        low = close - 0.5
+        volume = pd.Series([1000.0] * (2 * n_per_day))
+        session_date = pd.Series(ts).dt.date
+
+        vwap = _vwap_supporting(high, low, close, volume, session_date)
+        # Day 2 trades flat at 200 -- its VWAP should land near 200, not
+        # be pulled toward day 1's ~100 the way a cumulative-since-start
+        # VWAP would.
+        assert abs(vwap.iloc[-1] - 200.0) < 1.0
 
     def test_outcome_values_are_computed_from_real_forward_prices(self):
         bars = _make_bars_with_crossing()

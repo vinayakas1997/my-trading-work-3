@@ -116,33 +116,90 @@ various lengths"), but each concrete variant becomes its own column when
 actually wired in — per the earlier discussion, one column per
 individual term, not one shared column per family. This section is that
 explosion, written as the literal column name each one would use. `✅`
-marks the 3 already implemented in `signal_evidence/compute.py` today
-(exact key names, not renamed here); everything else is still just a
-candidate from Sections B-G, not yet wired into any angle.
+marks columns implemented in `signal_evidence/compute.py` today (exact
+key names, not renamed here) — all via `vinu_tools`' real indicator
+library, never hand-rolled (see
+`06-mistake-duplicated-indicator-logic.md`). Everything else is still
+just a candidate, not yet wired into any angle.
 
 **From B — classic price/trend:**
-- `sma_5`, `sma_10`, `sma_20`, `sma_50`, `sma_100`, `sma_200`
-- `ema_5`, `ema_10`, `ema_20`, `ema_50`, `ema_100`, `ema_200`
+- `sma_5`, `sma_10`, `sma_20`, `sma_50`, `sma_100`, `sma_200` ✅
+  (implemented — `sma_100`/`sma_200` will simply be absent for triggers
+  early in a ticker's history that don't have 100/200 bars yet)
+- `ema_5`, `ema_10`, `ema_20`, `ema_50`, `ema_100`, `ema_200` ✅ (implemented)
 - `dist_from_sma_5`, `dist_from_sma_10`, `dist_from_sma_20`,
-  `dist_from_sma_50`, `dist_from_sma_100`, `dist_from_sma_200`
+  `dist_from_sma_50`, `dist_from_sma_100`, `dist_from_sma_200` ✅
+  (implemented, derived from the `sma_*` columns above:
+  `(price - sma_N) / sma_N`)
 - `dist_from_ema_5`, `dist_from_ema_10`, `dist_from_ema_20`,
-  `dist_from_ema_50`, `dist_from_ema_100`, `dist_from_ema_200`
-- `adx` ✅ (implemented, ADX(14))
-- `macd_line`, `macd_signal`, `macd_histogram`
-- `rsi` ✅ (implemented, RSI(14))
-- `stoch_k`, `stoch_d`
-- `bollinger_band_width`, `bollinger_percent_b`
-- `atr_14`
-- `roc_5`, `roc_10`, `roc_20`
-- `ichimoku_tenkan`, `ichimoku_kijun`, `ichimoku_senkou_a`, `ichimoku_senkou_b`
-- `parabolic_sar`
+  `dist_from_ema_50`, `dist_from_ema_100`, `dist_from_ema_200` ✅
+  (implemented, same derivation from `ema_*` above)
+- `adx` ✅ (implemented, ADX(14), via `vinu_tools`)
+- `macd_line`, `macd_signal`, `macd_histogram` ✅ (implemented — via
+  `vinu_tools`' shared internal `_macd()`, not the two separate wrapper
+  modules, so EMA12/EMA26 aren't computed twice; histogram is
+  `macd_line - macd_signal`)
+- `rsi` ✅ (implemented, RSI(14), via `vinu_tools`)
+- `stoch_k`, `stoch_d` ✅ (implemented as `stoch_k_14`/`stoch_d_14`, via
+  `vinu_tools`' `stochastic` module — period/smooth deliberately NOT
+  configurable, see the note on this below)
+- `bollinger_band_width`, `bollinger_percent_b` ✅ (implemented, derived
+  from `vinu_tools`' `bollinger` module's `bb_upper`/`bb_mid`/`bb_lower`:
+  `(upper-lower)/mid`, `(close-lower)/(upper-lower)` — period likewise
+  not configurable)
+- `atr_14` ✅ (implemented, via `vinu_tools`, same module
+  `drawdown_deep_dive/drawdown.py` already uses)
+- `roc_5`, `roc_10`, `roc_20` ✅ (implemented, via `vinu_tools`)
+- `ichimoku_tenkan`, `ichimoku_kijun`, `ichimoku_senkou_a`,
+  `ichimoku_senkou_b` ✅ (implemented — was NOT in `vinu_tools`, so a
+  real new `ichimoku` module was added there first, following its own
+  conventions, rather than hand-rolled inline; standard 9/26/52 periods,
+  values NOT forward-shifted the way a charted cloud normally is, since
+  this is a point-in-time snapshot not a chart plot)
+- `parabolic_sar` ✅ (implemented — also added to `vinu_tools` as a new
+  module, Wilder's original algorithm. `vinu_tools`' pre-existing
+  `supertrend` is a genuinely different indicator, not a substitute for
+  real Parabolic SAR, hence the new module)
+
+**New candidates found while auditing `vinu_tools` (not previously
+listed anywhere in this design) — all now implemented:**
+- `cci_20`, `williams_r_14`, `supertrend`, `aroon_up`/`aroon_down`,
+  `high_low_spread`, `open_close_return`, `momentum_10` ✅ (all
+  implemented, via `vinu_tools`)
+- `cmf_20` ✅ (implemented, Chaikin Money Flow — a bounded rolling
+  oscillator, a legitimate new indicator but NOT the same as
+  `accumulation_distribution_line` below, which is an unbounded
+  cumulative running total using a different formula)
+
+**A configurability trap caught while wiring `stoch_k`/`stoch_d`,
+`bollinger_*`, and `aroon_*`**: `vinu_tools`' multi-output modules only
+return every named column from one call (avoiding redundant
+recomputation) when called with a name that matches none of their own
+columns — but that also makes them silently use THEIR OWN hardcoded
+default params, ignoring any period this angle might configure. Making
+`STOCH_PERIOD`/`BOLLINGER_PERIOD`/`AROON_PERIOD` overridable via
+`get_angle_setting` (matching this file's own convention for adx/rsi)
+would have been a live KeyError the first time anyone actually changed
+one of those settings. Fixed by leaving those three as plain,
+non-overridable constants — honest about what the single-call
+optimization actually computes, and Section H never asked for multiple
+lengths of these anyway (unlike SMA/EMA/ROC).
 
 **From C — volume/participation:**
-- `volume_vs_avg20` ✅ (implemented)
-- `obv`
-- `vwap_dist`
-- `accumulation_distribution_line`
-- `mfi_14`
+- `volume_vs_avg20` ✅ (implemented, now via `vinu_tools`' `volume_ratio`
+  module, replacing the last hand-rolled rolling-mean version)
+- `obv` ✅ (implemented, via `vinu_tools`)
+- `vwap_dist` ✅ (implemented — bars sliced into per-session groups by
+  UTC calendar date from `bar_ts` before calling `vinu_tools`' `vwap`
+  module independently per slice, so each session gets its own VWAP
+  starting from 0 rather than drifting cumulative-since-first-bar; see
+  `06-mistake-duplicated-indicator-logic.md` item 5)
+- `accumulation_distribution_line` ✅ (implemented — also added to
+  `vinu_tools` as a new module, explicitly distinguished in its own
+  docstring from `chaikin_money_flow`/`cmf_20` above, which is a
+  different, bounded-oscillator formula, not a substitute)
+- `mfi_14` ✅ (implemented — also added to `vinu_tools` as a new module,
+  same parametric-period convention as `cci`/`williams_r`)
 
 **From D — volatility/risk-state:**
 - `realized_vol_10`, `realized_vol_20`, `realized_vol_60`
@@ -193,17 +250,30 @@ having at all (checked directly, not assumed).
 
 ### Readily workable (bars + existing internal tools only)
 
-**Section B, in full** — every SMA/EMA/distance variant, `macd_line`/
-`macd_signal`/`macd_histogram`, `stoch_k`/`stoch_d`,
-`bollinger_band_width`/`bollinger_percent_b`, `atr_14`, `roc_5`/`10`/`20`,
-the four `ichimoku_*` components, `parabolic_sar` — all pure OHLC math,
-same pandas/numpy footing as the ADX/RSI already implemented. (Parabolic
-SAR is iterative/stateful rather than a simple rolling calc, so it's
-more implementation effort than the rest of this group, but still needs
-nothing beyond bars already in hand.)
+**Confirmed audited against `vinu_tools`' real 24-indicator library, not
+assumed** (see `06-mistake-duplicated-indicator-logic.md` item 2) — most
+of Section B/C turned out to already exist there, ready to reuse rather
+than build:
 
-**Section C, in full** — `obv`, `vwap_dist`, `accumulation_distribution_line`,
-`mfi_14` — all computable from OHLCV bars alone.
+**All of the below is now implemented in `signal_evidence/compute.py`**
+— every candidate indicator identified in this file, nothing left unwired:
+
+- **Wired directly via `vinu_tools`, zero new math**: `sma_*`, `ema_*`,
+  `adx`, `rsi`, `stoch_k`/`stoch_d`, `atr_14`, `roc_5`/`10`/`20`, `obv`,
+  `volume_vs_avg20`.
+- **Wired via a small derived step on top of a `vinu_tools` output**
+  (arithmetic on an already-computed value, not new indicator math):
+  `dist_from_sma_*`/`dist_from_ema_*`, `macd_line`/`macd_signal`/
+  `macd_histogram`, `bollinger_band_width`/`bollinger_percent_b`.
+- **Wired via a real design decision, not just a formula** (see
+  `06-mistake-duplicated-indicator-logic.md` item 5): `vwap_dist` —
+  `vinu_tools`' `vwap` has no session reset, so bars are sliced into
+  per-session groups (by UTC calendar date from `bar_ts`) before calling
+  it, giving each session its own VWAP.
+- **Wired, newly discovered while auditing `vinu_tools`** (wasn't
+  previously listed in this design at all): `cci_20`, `williams_r_14`,
+  `supertrend`, `aroon_up`/`down`, `high_low_spread`,
+  `open_close_return`, `momentum_10`, `cmf_20`.
 
 **`realized_vol_10`/`20`/`60`** (Section D) — plain rolling return
 volatility, bars only.
@@ -228,7 +298,12 @@ price provider actually carries a VIX-equivalent symbol — not
 independently confirmed, flagged here rather than assumed.
 
 **`session_time_of_day`, `day_of_week`, `candles_since_trigger`**
-(Sections F/G) — derived directly from `bar_ts`, no lookup needed at all.
+(Sections F/G) — derivable directly from `bar_ts`, no lookup needed at
+all. `vinu_tools` also has a `session` module giving a categorical
+bucket (`asia`/`london`/`ny_regular`/`london_ny_overlap`/`off_hours`) as
+a ready-made alternative to a hand-rolled time-of-day bucketing — note
+its row dicts need a key named `ts`, not `bar_ts` like every other
+indicator wired so far, a silent bridging trap if copied blindly.
 
 **`correlation_regime_dcc`** (Section F) — the calculation already runs
 inside `vinu-live`'s `_check_runtime_correlation`; reusing it here means
@@ -239,6 +314,14 @@ extracting/calling that existing logic, not inventing new math.
 **All 25 active angle columns (Section A)** — blocked on `read_as_of()`
 not existing yet (the point-in-time-safe historical read discussed
 above). Deferred by explicit decision, not forgotten.
+
+**~~`ichimoku_tenkan`/`kijun`/`senkou_a`/`senkou_b`, `parabolic_sar`,
+`mfi_14`, `accumulation_distribution_line`~~ — no longer blocked, now
+implemented** (see `06-mistake-duplicated-indicator-logic.md` item 4).
+These were confirmed genuinely absent from `vinu_tools`' original
+24-indicator library, so real new modules were added there (following
+its own conventions) rather than hand-rolled inline in the angle —
+`vinu_tools` is now a 28-indicator library.
 
 **`iv_rank`** (Section D) — needs options data. No evidence anywhere in
 this codebase (`vinu-stock-price`, `vinu-news`, or elsewhere) of an

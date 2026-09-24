@@ -77,6 +77,21 @@ def list_angles():
     return {"angles": svc.list_angles()}
 
 
+@router.get("/manifest")
+def get_manifest():
+    """Decision 13 of missing-pieces-of-system/new-theory-of-trading/
+    01-planning.md: the one place to check "what's actually on right
+    now" before trusting a run's evidence data -- angle inventory by
+    category, current model policy + version, active angle count,
+    recording time-format in effect, and the evidence-table column
+    count. Always live (no caching, same posture as /coverage/{ticker}),
+    no auth beyond whatever this file's other routes already have."""
+    from vinu_infra.system_manifest import build_manifest
+
+    svc = _get_svc()
+    return build_manifest(svc.list_angles())
+
+
 @router.get("/coverage/{ticker}")
 def get_ticker_coverage(ticker: str):
     """Decisions 9 and 11 of missing-pieces-of-system/new-theory-of-

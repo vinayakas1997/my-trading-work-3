@@ -12,7 +12,10 @@ from tests.conftest import MockCandleClient
 
 
 def test_feature_catalog_lists_all_indicators():
-    assert len(list_indicators()) == 24
+    # 24 original + ichimoku/parabolic_sar/mfi/accumulation_distribution_line,
+    # added to close the gap flagged in
+    # missing-pieces-of-system/new-theory-of-trading/06-mistake-duplicated-indicator-logic.md
+    assert len(list_indicators()) == 28
 
 
 def test_features_help_rsi_shows_period_default():
@@ -101,5 +104,5 @@ def test_http_features_catalog(config, backend):
     client = TestClient(create_app(service))
     resp = client.get("/features/catalog")
     assert resp.status_code == 200
-    assert resp.json()["count"] == 24
+    assert resp.json()["count"] == 28
     service.close()

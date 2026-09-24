@@ -162,18 +162,16 @@ work:
   `vinu-infra/angles_models_config.py` (new file, tested) for the
   per-angle breakdown with this finding recorded directly in code
   comments, ready for whoever does the remaining 3 angles' wiring.
-- No HTTP endpoint exposes `build_manifest()` yet. **Update:** this is
-  now tracked as its own high-priority planning file --
-  `04-pending-manifest-http-endpoint.md` -- since it turned out to have
-  real open questions (which service owns the route, auth, response
-  shape stability) worth settling before just bolting on a route.
-- **New, high-priority, not yet started:** exposing signal-evidence via
-  a `vinu-agent` tool call (an LLM-callable `BaseTool`, not just the raw
-  HTTP routes) -- tracked in
-  `05-pending-signal-evidence-tool-call.md`, including the real design
-  question of whether it should be read-only (recommended) or allow an
-  LLM to write trigger rows directly (which would reopen the
-  look-ahead-bias risk Decision 10 was built to avoid).
+- **Done (2026-09-24):** `build_manifest()` is now exposed at
+  `GET /analysis/manifest` in `vinu-initial-analysis`. The four open
+  questions (which service owns it, auth, caching, response-shape
+  stability) are settled as Decision 13 in `01-planning.md`. Full account
+  in `04-pending-manifest-http-endpoint.md`.
+- **Done (2026-09-24):** signal-evidence is now exposed via a `vinu-agent`
+  tool call, not just the raw HTTP routes -- `GetSignalEvidenceTool`
+  (`get_signal_evidence`), read-only as recommended, wired into
+  `theory_reviewer` (`thesis_intake` team). Full account in
+  `05-pending-signal-evidence-tool-call.md`.
 
 ## Phase 2 -- recording layer in `vinu-research` (Decisions 1, 2, 3, 7, 8)
 
@@ -419,14 +417,40 @@ exists at all").
   one -- Layer 5's continuous, every-cycle lookup for open positions
   still has nothing generating new triggers as they happen in real time,
   only this angle's periodic historical/backfill sweep.
-- **Only 3 supporting indicators are computed by this angle** (ADX, RSI,
-  volume-vs-avg20) -- a deliberate, honest scope limit, not an oversight:
-  every other candidate in `all-possible-supporting-indicators.md`
-  either needs data this angle doesn't have in point-in-time form (the
-  28 angles' own outputs, for the look-ahead-bias reason above) or
-  wasn't implemented yet (MACD, Bollinger Bands, ATR, etc. -- these are
-  straightforward additions following the same ADX/RSI pattern, just not
-  built in this pass).
+- **Update (see 06-mistake-duplicated-indicator-logic.md):** ADX and RSI
+  were originally hand-rolled here instead of reusing `vinu-tools`'
+  existing tested indicator library -- flagged as a mistake, now fixed.
+  While fixing it, the supporting-indicator set was expanded to every
+  "readily workable" candidate from `all-possible-supporting-indicators.md`
+  Section H/I: SMA(5/10/20/50/100/200), EMA(same lengths),
+  dist_from_sma_*/dist_from_ema_* (derived), ROC(5/10/20), ATR(14),
+  Stochastic %K/%D, Bollinger band width/%B (derived), MACD line/signal/
+  histogram (via `vinu_tools`' shared internal `_macd()`, avoiding
+  redundant EMA12/EMA26 computation), Aroon up/down, CCI(20),
+  Williams %R(14), Supertrend, high-low spread, open-close return,
+  momentum(10), OBV, and Chaikin Money Flow(20) -- 30+ indicators total,
+  all thin wrappers around `vinu_tools.compute.indicators.*`, one
+  vectorized pass per indicator over the full bar history, per-trigger
+  values read out by position when each row is assembled to write
+  (column-wise compute, row-wise write, per Decision 1). A real
+  configurability bug was caught and fixed while wiring the multi-output
+  modules (`stochastic`/`bollinger`/`aroon`) -- see 06's own writeup.
+  `vwap_dist` is wired too: `vinu_tools`' `vwap` module has no session
+  reset (cumulative-since-first-bar), so bars are sliced into per-session
+  groups by UTC calendar date before calling it, giving each session its
+  own VWAP -- a real design decision (see
+  06-mistake-duplicated-indicator-logic.md item 5), verified with a
+  dedicated test proving the reset actually happens, not just that a key
+  shows up. Ichimoku, Parabolic SAR, MFI, and the true
+  Accumulation/Distribution line -- confirmed genuinely absent from
+  `vinu_tools`' original 24-indicator library -- were added there as four
+  new real modules (not hand-rolled inline in this angle, same
+  anti-duplication reasoning as everything else in this file) and are
+  wired in too. `vinu_tools` is a 28-indicator library as of this pass;
+  see 06-mistake-duplicated-indicator-logic.md item 4. Every candidate
+  indicator identified anywhere in this design track is now implemented
+  -- `signal_evidence` records 51 supporting indicators per trigger
+  event, up from the original 3.
 - **`FORWARD_HORIZON_BARS` (default 20) is a guessed constant**, not yet
   derived from real data the way Decision 1's own reasoning says it
   eventually should be (median time-to-target from history) -- there's

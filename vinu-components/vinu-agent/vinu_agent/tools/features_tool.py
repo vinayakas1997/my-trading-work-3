@@ -11,7 +11,7 @@ class FeaturesTool(BaseTool):
     name = "get_features"
     description = (
         "Compute technical indicators for a symbol over a date range, from vinu-tools' real "
-        "catalog (24 indicators, not just SMA/RSI/MACD -- call list_available_features first "
+        "catalog (28 indicators, not just SMA/RSI/MACD -- call list_available_features first "
         "to see the real, current list rather than guessing names). Pass EITHER `indicators` "
         "(specific ones) OR `preset` (a named bundle, e.g. alpha101_benchmark for WorldQuant's "
         "101 alphas, or full_ta for all 32) -- not both."

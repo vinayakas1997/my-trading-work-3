@@ -405,6 +405,96 @@ function Phase 1's model-policy filtering in `AngleRunner.run()` already
 uses -- rather than re-deriving the required/not-required split a
 second, possibly-inconsistent way.
 
+## Decision 12 (2026-09-24): every workable supporting indicator gets wired before Phase 3, not a curated subset
+
+**The rule**: rather than hand-picking a "reasonable" subset of
+supporting indicators to implement, every candidate identified as
+computable from bars alone (Section H/I of
+`all-possible-supporting-indicators.md`) gets wired into
+`signal_evidence/compute.py`, full stop — including indicators that
+didn't exist in `vinu_tools` yet (built there first as real modules,
+never hand-rolled inline) and `vwap_dist` (which needed a real design
+decision, not just a formula, before it could be wired).
+
+**Why**: this follows directly from Decision 1's own reasoning —
+hand-picking which indicators "should" matter is exactly the kind of
+bias the whole design is trying to avoid; Layer 4's future analysis is
+what's supposed to decide which indicators separate winners from losers,
+not a human guessing up front which ones look promising. Stopping at a
+"reasonable-looking" subset (the original ADX/RSI/volume-vs-avg20, or
+even the first expansion pass) would have silently reintroduced that
+bias at the recording layer instead. The origin was a real bug report,
+not a feature request: `06-mistake-duplicated-indicator-logic.md`
+started as "ADX/RSI were hand-rolled instead of reusing `vinu-tools`",
+and the fix for that bug surfaced the fact that most of Section H/I was
+already sitting unwired in a real, tested library — so the natural
+extension of fixing the bug was finishing the whole column list per this
+decision, not stopping once the original two were fixed.
+
+**What this added**: 48 more supporting indicators beyond the original 3
+(51 total), four new real `vinu_tools` modules (`ichimoku`,
+`parabolic_sar`, `mfi`, `accumulation_distribution_line` — `vinu_tools`
+is now a 28-indicator library, up from 24, with every place that
+hardcoded "24" found and corrected), and a real design decision for
+`vwap_dist` (session-slice bars by UTC calendar date from `bar_ts`
+before calling `vinu_tools`' cumulative-since-first-bar `vwap` module
+independently per slice, since this angle has no exchange-local
+trading-session machinery). Full account, including the real
+configurability bug caught and fixed along the way (the multi-output
+`vinu_tools` modules silently ignoring a period override when called via
+the "return every column at once" optimization), is in
+`06-mistake-duplicated-indicator-logic.md`.
+
+**What this does NOT change**: Phase 3 (Layer 4's analysis/bucketing
+layer) is still deliberately deferred — more columns recorded per
+trigger doesn't create real accumulated rows to bucket against any
+faster; that still needs live/backfill time to pass.
+
+## Decision 13 (2026-09-24): the manifest is exposed at `GET /analysis/manifest` in `vinu-initial-analysis`, unauthed, always-live, unversioned
+
+**The rule**: `04-pending-manifest-http-endpoint.md`'s four open
+questions, settled:
+
+1. **Which service owns the route?** `vinu-initial-analysis`, via its
+   existing `routes_read.py` — the same file `GET /analysis/coverage/
+   {ticker}` already lives in, following the exact same thin-route
+   pattern (`svc.list_angles()` for the angle list, delegate everything
+   else to the already-tested `build_manifest()`). This is the ONLY
+   place the manifest is exposed — `vinu-live`/`vinu-research` needing
+   "is MODELS on right now" call out to this one route rather than each
+   getting their own copy, same reasoning as Decision 9's "derived pivot,
+   not a second copy" applied to routes instead of storage.
+2. **Auth**: none beyond whatever the rest of `routes_read.py` already
+   has — confirmed directly by reading the file: not one of its existing
+   routes (`/angles`, `/coverage/{ticker}`, `/story/{ticker}`, etc.) has
+   an auth dependency today. The manifest reveals model-policy state, not
+   trading data, so it doesn't warrant being the one route in this file
+   that's suddenly stricter than its neighbors.
+3. **Caching**: none — always live. `build_manifest()` is pure
+   computation over an already-in-memory angle list (confirmed cheap,
+   same cost profile as `/coverage/{ticker}`, which already recomputes
+   its own pivot fresh on every call with no caching).
+4. **Response shape stability**: unversioned, same posture as every
+   other route in this file — internal tooling, shape can move if
+   `build_manifest()`'s own return shape ever changes. No separate
+   contract to maintain.
+
+**Why now, not deferred further**: all four questions turned out to have
+an existing, already-established answer elsewhere in this same
+codebase (Decision 9's routing precedent, `routes_read.py`'s own real
+auth posture, `/coverage/{ticker}}`'s own no-caching precedent) — there
+was no genuinely new architectural decision left to make once each
+question was actually checked against real code, only a should-copy-
+the-existing-pattern check.
+
+**Implementation**: `GET /analysis/manifest` in
+`vinu-initial-analysis/vinu_initial_analysis/server/routes_read.py`,
+calling `vinu_infra.system_manifest.build_manifest(svc.list_angles())`
+directly — `svc.list_angles()` already returns exactly the shape
+`build_manifest()` expects (confirmed by reading both signatures: `list
+[dict]` with `name`/`spec`, the same object `/angles` and
+`/coverage/{ticker}` already pass around).
+
 ## Decision log (pending / to be added next — deliberately left open, not blocking)
 
 - The analysis-layer design (Layer 4): quantile-based bucket edges,

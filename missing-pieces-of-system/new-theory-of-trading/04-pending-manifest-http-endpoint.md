@@ -1,8 +1,8 @@
-# Pending: expose the Phase 1 manifest over HTTP
+# Expose the Phase 1 manifest over HTTP
 
 **Priority: high.**
-**Status: not started -- planning only, do not implement yet without a
-proper look first.**
+**Status: done (2026-09-24) -- `GET /analysis/manifest` live in
+`vinu-initial-analysis`. See "What was built" at the end of this file.**
 
 ## What exists already
 
@@ -44,12 +44,52 @@ instance in hand.
   the response or just accept "this is internal tooling, shape can move"
   before locking it in.
 
-## Suggested next step (not started)
+## What was built (2026-09-24)
 
-Settle the four questions above as short decisions (same format as
-`01-planning.md`'s numbered entries), THEN add the route -- likely
-`GET /analysis/manifest` in `vinu-initial-analysis/vinu_initial_analysis/
-server/routes_read.py`, following the exact same pattern
-`GET /analysis/coverage/{ticker}` already uses (thin route function,
-`svc.list_angles()` for the angle list, delegate everything else to the
-existing tested function).
+The four open questions were settled as **Decision 13** in
+`01-planning.md` — short version: `vinu-initial-analysis` owns the route
+(the only place it's exposed; other services call out to it rather than
+each getting a copy, same reasoning as Decision 9), no auth beyond what
+the file's other routes already have (none), no caching (always live),
+unversioned (same posture as every other route here). All four turned
+out to already have an established answer elsewhere in this same
+codebase once actually checked — no genuinely new architectural call
+needed.
+
+**Route**: `GET /analysis/manifest` in
+`vinu-initial-analysis/vinu_initial_analysis/server/routes_read.py`,
+exactly the suggested shape — a thin function calling
+`build_manifest(svc.list_angles())` directly, no new logic.
+
+**Verified against a real running app** (not just unit-tested in
+isolation): a real `TestClient` request against `/analysis/manifest`
+returns the genuine current state — 29 angles discovered (including
+`signal_evidence`, angle #29), 26 active under the default policy,
+`policy_version`/`evidence_table` populated correctly.
+
+**Tests** (`vinu-initial-analysis/tests/test_manifest_route.py`, 3
+tests, all passing):
+- The response has the real `build_manifest()` shape.
+- The route's response is byte-for-byte identical to calling
+  `build_manifest(service.list_angles())` directly (not just "returns
+  some keys").
+- `build_manifest()` is genuinely invoked fresh on every request (proven
+  by mocking it and asserting call count == number of requests) --
+  confirms the "no caching" decision holds structurally, not just by
+  claim. (`MODELS_ENABLED` itself is intentionally boot-only per
+  `model_policy.py`'s own docstring -- a module-level constant read once
+  at import -- so this test deliberately doesn't try to prove the policy
+  flag is live-editable within a running process, since Decision 4
+  explicitly says it shouldn't be.)
+
+**Side effect of doing this properly**: this sandbox was also missing
+`cachetools` (declared dependency, `vinu-initial-analysis/pyproject.toml`
+line 21: `cachetools>=5.3`), which had been silently blocking
+`test_ticker_coverage_route.py` before this change (same class of gap as
+`tenacity` in `05-pending-signal-evidence-tool-call.md`). Installed it
+and re-ran that file for real: 3/3 passed. Broader regression across
+`vinu-initial-analysis` (excluding the already-known `torch`/
+`statsmodels`-dependent files, unrelated to this route): 286 passed, 22
+pre-existing failures independently confirmed unrelated (missing
+`statsmodels`/`torch`, plus the previously-confirmed pre-existing SQLite
+temp-file lock issue on Windows), no new regressions.

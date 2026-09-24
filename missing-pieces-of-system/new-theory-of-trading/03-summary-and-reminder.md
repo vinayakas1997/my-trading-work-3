@@ -1,5 +1,9 @@
 # Quick summary: how it should work, what's actually built, and a standing reminder
 
+*Last refreshed 2026-09-24 after the indicator-set expansion described in
+`06-mistake-duplicated-indicator-logic.md` -- see "What's actually built
+right now" below for what changed.*
+
 ## How it should work (the intended end-to-end flow)
 
 1. A strategy fires its **must-condition** (e.g. SMA5 crosses SMA50) while
@@ -43,12 +47,37 @@ dated as each one got decided.
   **A LIVE detector for real-time execution still doesn't exist** --
   nothing generates a NEW trigger the moment it happens during live
   trading, only this angle's periodic historical sweep.
+- **The supporting-indicator set was expanded from 3 to 51** (this
+  session, see `06-mistake-duplicated-indicator-logic.md` for the full
+  account). It started as a bug report -- ADX/RSI were hand-rolled in
+  `signal_evidence/compute.py` instead of reusing `vinu-tools`' real
+  indicator library -- and grew into wiring every candidate from
+  `all-possible-supporting-indicators.md` Section H/I: every
+  `vinu_tools` indicator that fit (SMA/EMA family, ROC, ATR, Stochastic,
+  Bollinger, MACD, Aroon, CCI, Williams %R, Supertrend, OBV, CMF, and
+  more), plus four genuinely-missing indicators (Ichimoku, Parabolic
+  SAR, MFI, the true Accumulation/Distribution line) built as new real
+  `vinu_tools` modules rather than hand-rolled inline (`vinu_tools` is
+  now a 28-indicator library, up from 24), plus `vwap_dist` wired via a
+  real session-slicing decision (vinu_tools' `vwap` has no session reset
+  on its own). Nothing from the design doc's candidate list is left
+  unwired. Full regression clean across both `vinu-tools` (154 tests)
+  and the `signal_evidence` angle (9 tests, including a dedicated test
+  proving the VWAP session-reset actually works, not just that a key
+  shows up).
 - **Per-ticker coverage view** -- `GET /analysis/coverage/{ticker}` in
   `vinu-initial-analysis` gives the wide "ticker, date range covered,
   models on/off, per-angle status" view requested, pivoted live from
   `RunLog`, not a separate table.
 - **Phase 3 (the analysis/bucketing layer)** -- not started, deliberately
   deferred until Phase 2 has real accumulated data to test against.
+- **Signal-evidence is now queryable by an LLM agent, not just HTTP** --
+  `get_signal_evidence`, a read-only `vinu-agent` tool, wired into
+  `theory_reviewer` (see `05-pending-signal-evidence-tool-call.md`).
+- **The Phase 1 manifest is now live over HTTP** --
+  `GET /analysis/manifest` in `vinu-initial-analysis` (see
+  `04-pending-manifest-http-endpoint.md`). All four items originally
+  flagged as pending in this folder (03/04/05/06) are now done.
 
 Full detail, including exactly which tests were run and what's honestly
 still missing, is in `02-implementation-status.md`.

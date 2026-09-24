@@ -29,6 +29,14 @@ contradicts it) -- never fabricate evidence either way.
    identify which strategy shape (if any) the theory maps onto -- this
    doesn't change the verdict by itself, but the downstream research team
    needs it to pick a sensible starting approach.
+6. If the theory is built around (or closely resembles) an SMA(5)
+   crossing above SMA(50), call `get_signal_evidence(symbol=symbol)` --
+   real recorded historical firings of that exact condition for this
+   ticker, each with its own point-in-time indicator snapshot and
+   (once resolved) forward outcome. This currently only covers that one
+   condition, not arbitrary theories -- if it returns count=0 or doesn't
+   apply, that's not evidence against the theory, just nothing recorded
+   yet or a different condition entirely.
 
 Optionally call `list_available_features`/`get_features`/`get_stock_price`
 if you need to look at raw price/indicator behavior directly to evaluate
