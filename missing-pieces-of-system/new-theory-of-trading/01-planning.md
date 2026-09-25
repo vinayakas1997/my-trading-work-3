@@ -495,6 +495,97 @@ directly — `svc.list_angles()` already returns exactly the shape
 [dict]` with `name`/`spec`, the same object `/angles` and
 `/coverage/{ticker}` already pass around).
 
+## Decision 14 (2026-09-25): Track 2's move-detection threshold is ATR-multiple, starting at 2×ATR(14)
+
+**The rule**: a move counts as "big" (Track 2's Step 1 detection, see
+`how-to-use-29th-angle/03-move-detection-threshold-options.md` for the
+full trade-off writeup against the two alternatives — return z-score and
+rolling percentile) when it exceeds `2 × ATR(14)`, computed on the same
+ticker's own recent bars. Chosen over a flat fixed percentage because a
+flat number means something different for every ticker's own volatility
+regime; ATR-multiple self-normalizes per ticker automatically.
+
+2× is the deliberate starting multiplier, not a permanently fixed one —
+2.5× and 3× remain live comparison points/bins once real recorded moves
+exist to check the choice against, the same way `FORWARD_HORIZON_BARS`
+(Decision 12's own note) is a guessed constant awaiting real data.
+`ATR(14)` reuses the exact `atr_14` indicator Track 1 already computes
+via `vinu_tools` — no new indicator infrastructure needed for this.
+
+**Still open**: the ATR computation window is assumed to match Track 1's
+existing period conventions (14) unless a reason to diverge shows up;
+PRE/DURING/POST window lengths and Track 2's architectural home/storage
+location remain undecided (see `how-to-use-29th-angle/02-track2-design.md`,
+"What's still genuinely open").
+
+## Decision 15 (2026-09-25): Track 2 records a checkpoint sequence, failed attempts, and four supporting fields
+
+**The rule**: Track 2's DURING phase (see
+`how-to-use-29th-angle/02-track2-design.md`, Step 2) is not a single
+averaged blob — it's a sequence of checkpoints, one every time the move
+crosses a new ATR-multiple level above the 2×ATR floor (2×, 2.5×, 3×,
+...), each with a full 52-indicator snapshot, candles-since-previous, a
+per-indicator rate-of-change since the previous checkpoint, and a
+volume-divergence flag (price extending while `volume_vs_avg20` falls).
+
+Alongside this, six things agreed together as one package:
+1. **No ceiling** — 2×ATR is a floor to qualify as "big," never an upper
+   cap; a move that runs to 7×ATR or beyond is recorded with its real
+   magnitude, nothing discarded for being "too big."
+2. **Failed attempts are recorded too**, tagged `outcome: "failed"` —
+   a move that touches 2×ATR and reverses without reaching 2.5×ATR gets
+   its own row with just the one checkpoint. Without these, Step 5's
+   edge-finding comparison only ever sees moves that worked.
+3. **Rate-of-change per checkpoint** — a level can look identical at two
+   checkpoints while its trajectory says the opposite about what's next.
+4. **Volume-divergence flag** — an explicit derived flag rather than
+   left for later eyeballing.
+5. **Relative-strength vs. benchmark** — one field distinguishing an
+   idiosyncratic move from a market/sector-wide one.
+6. **Retest behavior post-move** — did price return to the breakout
+   level and hold, or fail through it.
+
+**Why as one package**: together these turn Step 5's edge-finding from a
+single pre/during/post comparison into a genuine extended-vs-failed,
+checkpoint-by-checkpoint comparison — which is the actual mechanism that
+answers "what differentiates a move that keeps going from one that
+doesn't," not just "what does a big move look like on average."
+
+## Decision 16 (2026-09-25): Track 2's engine lives in `vinu_tools`, storage is a new `MoveEvidenceStore`, windows are config knobs, and the query tool is `get_move_evidence`
+
+**Engine**: the move-detection/checkpoint logic (ATR-floor crossing,
+checkpoint discovery, rate-of-change, volume-divergence) is a new module
+in `vinu_tools`, called identically by the historical backfill angle and
+the future live detector — same reasoning as
+`how-to-use-29th-angle/06-mistake-duplicated-indicator-logic.md`: one
+shared implementation so historical evidence and live detection can
+never silently drift apart. Full detail:
+`how-to-use-29th-angle/04-track2-engine-and-storage.md`.
+
+**Storage**: a new `MoveEvidenceStore` in `vinu-research` (not an
+extension of `SignalEvidenceStore` — genuinely different shape, per
+Decision 8's reasoning), four tables mirroring `SignalEvidenceStore`'s
+normalized-child-table pattern: `move_events`, `move_phase_indicators`,
+`move_checkpoints`, `move_checkpoint_indicators`. Full schema in the same
+file above.
+
+**PRE/DURING/POST windows**: fixed, config-knob candle counts
+(`VINU_MOVE_EVIDENCE_PRE_WINDOW_CANDLES` etc.), following Track 1's own
+env-override convention — not a dynamic quiet-detection algorithm to
+start; that's flagged as a documented future upgrade, not a blocker.
+
+**Query tool**: `get_move_evidence`, mirroring `get_signal_evidence`'s
+in-process-then-HTTP-fallback pattern, with `symbol`/`move_id`/
+`outcome`/`session`/`checkpoint_range`/`limit` params and a raw-list mode
+plus an `aggregate=true` descriptive-statistics mode. Full detail:
+`how-to-use-29th-angle/05-track2-how-to-ask.md`.
+
+**Still open**: which agent `get_move_evidence` gets wired into, the
+exact aggregate-mode response field names, and the three items already
+listed in Decision 15/`02-track2-design.md` (window lengths as fixed
+values, architectural home beyond "vinu_tools has the engine," genuinely
+dynamic PRE-window detection as a future option).
+
 ## Decision log (pending / to be added next — deliberately left open, not blocking)
 
 - The analysis-layer design (Layer 4): quantile-based bucket edges,
