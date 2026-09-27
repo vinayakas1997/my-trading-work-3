@@ -158,6 +158,7 @@ class HypothesisRegistry:
                     "report_path": e.report_path,
                     "source": e.source,
                     "ref_id": e.ref_id,
+                    "metric_kind": e.metric_kind,
                 }
                 for e in h.evidence
             ],
@@ -184,6 +185,11 @@ class HypothesisRegistry:
                     report_path=e.get("report_path"),
                     source=e.get("source", "system"),
                     ref_id=e.get("ref_id", ""),
+                    # Pre-existing rows have no metric_kind column -- they
+                    # all predate this field and are all Sharpe-based
+                    # research-run evidence, so "sharpe" is the accurate
+                    # default, not a guess.
+                    metric_kind=e.get("metric_kind", "sharpe"),
                 ))
         return Hypothesis(
             hypothesis_id=d["hypothesis_id"],
@@ -274,18 +280,24 @@ class HypothesisRegistry:
                 return None
             h = self._from_dict(raw)
             h.evidence.append(evidence)
-            if evidence.value > h.best_sharpe:
-                h.best_sharpe = evidence.value
-            if h.status == HypothesisStatus.rejected:
-                LOG.warning(
-                    "Evidence added to rejected hypothesis %s — status unchanged",
-                    hypothesis_id,
-                )
-            else:
-                if evidence.conclusion == "supports" and h.best_sharpe > 0.3:
-                    h.status = HypothesisStatus.testing if h.status == HypothesisStatus.exploring else h.status
-                if evidence.conclusion == "supports" and h.best_sharpe > 0.5:
-                    h.status = HypothesisStatus.validated
+            # item #1: this promotion math (best_sharpe tracking, the
+            # 0.3/0.5 status thresholds) is Sharpe-specific -- only run it
+            # for evidence that's actually a Sharpe ratio. Non-sharpe
+            # evidence (metric_kind != "sharpe") is still appended above,
+            # visible and queryable, it just never drives status here.
+            if evidence.metric_kind == "sharpe":
+                if evidence.value > h.best_sharpe:
+                    h.best_sharpe = evidence.value
+                if h.status == HypothesisStatus.rejected:
+                    LOG.warning(
+                        "Evidence added to rejected hypothesis %s — status unchanged",
+                        hypothesis_id,
+                    )
+                else:
+                    if evidence.conclusion == "supports" and h.best_sharpe > 0.3:
+                        h.status = HypothesisStatus.testing if h.status == HypothesisStatus.exploring else h.status
+                    if evidence.conclusion == "supports" and h.best_sharpe > 0.5:
+                        h.status = HypothesisStatus.validated
             h.updated_at = __import__("datetime").datetime.now(
                 __import__("datetime").timezone.utc
             ).isoformat()
@@ -305,6 +317,8 @@ class HypothesisRegistry:
             now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
             for evidence in evidence_list:
                 h.evidence.append(evidence)
+                if evidence.metric_kind != "sharpe":
+                    continue
                 if evidence.value > h.best_sharpe:
                     h.best_sharpe = evidence.value
                 if h.status == HypothesisStatus.rejected:
@@ -345,6 +359,47 @@ class HypothesisRegistry:
                 if status is None or h.status == status:
                     result.append(h)
         return sorted(result, key=lambda h: h.updated_at, reverse=True)
+
+    def pool_evidence_by_indicator(self) -> dict[str, dict[str, Any]]:
+        """item #8 (02-open-questions-strategy-and-simulation.md): does a
+        supporting indicator (e.g. ADX>25) matter *in general*, independent
+        of which strategy/must-condition it happened to be paired with?
+        Read-time query over evidence that already exists here -- the same
+        "derived pivot, not duplicated storage" rule ticker_coverage.py
+        already established (Decision 9), no new table.
+
+        Grouped by (indicator, metric_kind) rather than just indicator:
+        item #1's own fix established that mixing metric kinds (a Sharpe
+        ratio vs. a signal_evidence average forward return) under one
+        number would be silently wrong, since the same literal threshold
+        means a different claim for each kind -- pooling here must not
+        re-introduce that exact mistake one level up.
+        """
+        data = self._load()
+        pools: dict[str, dict[str, list[tuple[str, Evidence]]]] = {}
+        for raw in data["hypotheses"].values():
+            h = self._from_dict(raw)
+            if not h.indicators_used or not h.evidence:
+                continue
+            for indicator in h.indicators_used:
+                by_kind = pools.setdefault(indicator, {})
+                for ev in h.evidence:
+                    by_kind.setdefault(ev.metric_kind, []).append((h.hypothesis_id, ev))
+
+        result: dict[str, dict[str, Any]] = {}
+        for indicator, by_kind in pools.items():
+            kinds: dict[str, Any] = {}
+            for metric_kind, entries in by_kind.items():
+                values = [ev.value for _, ev in entries]
+                supports = sum(1 for _, ev in entries if ev.conclusion == "supports")
+                kinds[metric_kind] = {
+                    "evidence_count": len(entries),
+                    "hypothesis_count": len({hid for hid, _ in entries}),
+                    "avg_value": sum(values) / len(values),
+                    "support_rate": supports / len(entries),
+                }
+            result[indicator] = kinds
+        return result
 
     def search(self, query: str) -> list[Hypothesis]:
         q = query.lower()

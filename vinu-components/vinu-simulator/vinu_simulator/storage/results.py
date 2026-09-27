@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -78,13 +77,6 @@ class ResultStorage:
             trade_table = pa.Table.from_pylist(rows, schema=TRADE_SCHEMA)
             pq.write_table(trade_table, rdir / "trades.parquet")
 
-        meta = {
-            "strategy_name": result.strategy_name,
-            "run_id": result.run_id,
-            "timestamp": result.timestamp.isoformat(),
-        }
-        (rdir / "meta.json").write_text(json.dumps(meta, indent=2))
-
     def load_equity(self, run_id: str) -> pd.DataFrame:
         p = self._result_path(run_id) / "equity.parquet"
         if not p.exists():
@@ -135,12 +127,6 @@ class ResultStorage:
             else:
                 rec["date"] = str(dt)
         return records
-
-    def load_meta(self, run_id: str) -> dict[str, Any] | None:
-        p = self._result_path(run_id) / "meta.json"
-        if not p.exists():
-            return None
-        return json.loads(p.read_text())
 
     def delete(self, run_id: str) -> bool:
         rdir = self._result_path(run_id)

@@ -417,3 +417,24 @@ def seed_step_registry(store: StrategyEvaluationStore) -> None:
             pass_rule=defn["pass_rule"],
             source_file=defn["source_file"],
         )
+
+
+def resolve_strategy_evaluation_store(fallback_data_root) -> StrategyEvaluationStore:
+    """The `VINU_STRATEGY_EVAL_DATA_ROOT`-env-var-with-service-data-root-
+    fallback resolution every write call site in vinu-research/vinu-agent
+    already re-derives independently (cli.py's own `_strategy_evaluation_
+    store`, service.py, trade_plan_authoring.py, routes_read.py) --
+    shared here once for new READ-side call sites (system-wide-audit-
+    and-design item #2: a real, already-built "why isn't this trading"
+    view existed via `get_status`/`get_history` but had no HTTP surface
+    anywhere) rather than re-deriving it a 5th time. Existing write call
+    sites are left exactly as they are, not retrofitted onto this --
+    out of scope for what this was needed for."""
+    import os
+    from pathlib import Path
+
+    root = os.environ.get("VINU_STRATEGY_EVAL_DATA_ROOT", "").strip()
+    data_root = Path(root) if root else fallback_data_root
+    store = StrategyEvaluationStore(data_root / "strategy_evaluation.db")
+    seed_step_registry(store)
+    return store

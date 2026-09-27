@@ -12,17 +12,32 @@ from pydantic import BaseModel, Field, model_validator
 
 from vinu_research.generator import list_recipe_details
 from vinu_research.sweep import ParameterNotFoundError, SweepCandidateResult, run_sweep_candidate
-from vinu_research.sweep_grid import GridTooLargeError, SweepGridResult, run_sweep_grid
+from vinu_research.sweep_grid import (
+    GridTooLargeError,
+    SweepGridResult,
+    param_diff_from_winner,
+    run_sweep_grid,
+)
+from vinu_research.sweep_store import SweepGridStore
 from vinu_research.tools import ResearchTools
 
 router = APIRouter()
 
 _tools: ResearchTools | None = None
+# item #3: the read side of the persisted comparison -- set alongside
+# _tools at the same app.py wiring point, same "module-level, set once at
+# startup" convention this file already uses.
+_sweep_store: SweepGridStore | None = None
 
 
 def set_tools(tools: ResearchTools) -> None:
     global _tools
     _tools = tools
+
+
+def set_sweep_store(store: SweepGridStore) -> None:
+    global _sweep_store
+    _sweep_store = store
 
 
 class SweepCandidateRequest(BaseModel):
@@ -128,7 +143,20 @@ class SweepGridRequest(BaseModel):
 
 
 def _serialize_grid(result: SweepGridResult) -> dict[str, Any]:
+    # item #14B: "the single most valuable field" the senior-quant
+    # recommendation names -- a direct, readable answer to "what
+    # specifically cost this candidate the win" instead of just a worse
+    # score. result.ranked is already best-first (comparison.py's
+    # rank_candidates), so index 0 is the winner; every candidate
+    # (including the winner itself, against its own params -- always
+    # empty) gets a diff so a caller doesn't need to special-case rank 0.
+    winner_params = result.ranked[0].params if result.ranked else {}
     return {
+        # item #3: the real handle onto this search round's own persisted
+        # comparison record (sweep_store.py) -- "" if persistence failed
+        # or was disabled, never omitted, so a caller can tell the two
+        # cases apart instead of a missing key meaning either.
+        "sweep_id": result.sweep_id,
         "requested": result.requested,
         "succeeded": result.succeeded,
         "completeness": result.completeness,
@@ -144,6 +172,7 @@ def _serialize_grid(result: SweepGridResult) -> dict[str, Any]:
                 "strategy_code": r.sweep_result.strategy_code,
                 "metrics": r.sweep_result.metrics,
                 "trade_count": r.sweep_result.trade_count,
+                "param_diff_from_winner": param_diff_from_winner(r.params, winner_params),
             }
             for r in result.ranked
         ],
@@ -173,9 +202,35 @@ async def sweep_grid(body: SweepGridRequest) -> dict[str, Any]:
             indicators=body.indicators,
             initial_capital=body.initial_capital,
             tools=_tools,
+            sweep_store=_sweep_store,
         )
     except GridTooLargeError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return _serialize_grid(result)
+
+
+@router.get("/sweep/grid/{sweep_id}")
+async def get_sweep(sweep_id: str) -> dict[str, Any]:
+    """item #3: the actual point of persisting the comparison -- a future
+    strategy-writer (or the same LLM, a session later) can read back not
+    just who won, but why every other point in that search round lost,
+    without needing the original HTTP response still in context."""
+    if _sweep_store is None:
+        raise HTTPException(status_code=503, detail="sweep store not configured")
+    sweep = _sweep_store.get_sweep(sweep_id)
+    if sweep is None:
+        raise HTTPException(status_code=404, detail="no sweep found for this sweep_id")
+    return sweep
+
+
+@router.get("/sweep/grid")
+async def list_sweeps(symbol: str | None = None, limit: int = 50) -> dict[str, Any]:
+    """Header rows only (see GET /sweep/grid/{sweep_id} for one sweep's
+    full point-by-point detail) -- "has a search round like this already
+    been tried for this symbol" without pulling every point of every past
+    sweep."""
+    if _sweep_store is None:
+        raise HTTPException(status_code=503, detail="sweep store not configured")
+    return {"sweeps": _sweep_store.list_sweeps(symbol=symbol, limit=limit)}

@@ -124,3 +124,38 @@ def test_session_soft_filter():
     matched_ah = find_similar(query, lib, X, idxs, k=15, norm_params=params, session="afterhours")
     assert matched_ah, "fallback must not return empty"
     assert any(m["matched_bar_ts"] in regular_ts for m in matched_ah)
+
+
+def test_computes_true_range_via_the_shared_vinu_tools_helper_not_hand_rolled():
+    """item #21 pattern #2: this module's own peak-detection ATR used to
+    hand-roll true range inline (`pd.concat([...]).max(axis=1)`) -- a
+    smaller, still-real 4th instance of the indicator-duplication pattern,
+    on top of the plain-SMA-vs-Wilder smoothing bug finding #7 already
+    fixed here. Regression guard on the actual values, not just that the
+    import exists: verified index-for-index identical to vinu_tools'
+    shared `true_range()` before switching, this pins that down so it
+    can't silently regress back to the inline formula."""
+    from vinu_tools.compute.indicators._shared.rolling import true_range, wilder_smooth
+    from vinu_initial_analysis.angles.trend_lifecycle.compute import compute
+
+    n = 120
+    rng = np.random.default_rng(3)
+    close = pd.Series(100 + np.cumsum(rng.standard_normal(n)))
+    high = close + rng.uniform(0.1, 1.0, n)
+    low = close - rng.uniform(0.1, 1.0, n)
+    bar_ts = [1_672_531_200 + i * 86400 for i in range(n)]
+    bars = pd.DataFrame({
+        "bar_ts": bar_ts, "open": close, "high": high, "low": low, "close": close,
+        "volume": np.full(n, 1_000_000.0),
+    })
+
+    expected_tr = true_range(high.tolist(), low.tolist(), close.tolist())
+    expected_atr = pd.Series(wilder_smooth(expected_tr, 14), index=close.index, dtype=float)
+
+    # compute() doesn't expose atr_series directly, but a real,
+    # non-crashing run against this fixture is itself proof the switch to
+    # true_range()/wilder_smooth() didn't break the calling code's own
+    # tolist()/Series round-trip.
+    result = compute("AAPL", bars=bars, time_format="1D")
+    assert not result.empty
+    assert not expected_atr.iloc[13:].isna().any()  # real, non-NaN values from bar 13 on

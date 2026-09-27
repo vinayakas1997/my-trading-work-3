@@ -85,6 +85,130 @@ def test_list_runs_filters_by_symbol():
             store.close()
 
 
+def test_list_runs_filters_by_symbol_and_strategy_together():
+    with TemporaryDirectory() as tmp:
+        store = _make_store(tmp)
+        try:
+            store.insert_run(
+                run_id="run-1", strategy_name="s1",
+                timestamp=datetime.now(timezone.utc), config={}, metrics={},
+                symbols=["AAPL"],
+            )
+            store.insert_run(
+                run_id="run-2", strategy_name="s2",
+                timestamp=datetime.now(timezone.utc), config={}, metrics={},
+                symbols=["AAPL"],
+            )
+            runs = store.list_runs(strategy_name="s1", symbol="AAPL")
+            assert {r["run_id"] for r in runs} == {"run-1"}
+        finally:
+            store.close()
+
+
+def test_reinserting_a_run_id_replaces_its_symbol_join_rows_not_accumulates():
+    # item #13 finding #3: INSERT OR REPLACE on simulation_runs means a
+    # re-run under the same run_id can change its symbol list -- the join
+    # table must reflect the new list, not both old and new.
+    with TemporaryDirectory() as tmp:
+        store = _make_store(tmp)
+        try:
+            store.insert_run(
+                run_id="run-1", strategy_name="s1",
+                timestamp=datetime.now(timezone.utc), config={}, metrics={},
+                symbols=["AAPL"],
+            )
+            store.insert_run(
+                run_id="run-1", strategy_name="s1",
+                timestamp=datetime.now(timezone.utc), config={}, metrics={},
+                symbols=["MSFT"],
+            )
+            assert store.list_runs(symbol="AAPL") == []
+            assert {r["run_id"] for r in store.list_runs(symbol="MSFT")} == {"run-1"}
+        finally:
+            store.close()
+
+
+def test_delete_run_removes_its_symbol_join_rows():
+    with TemporaryDirectory() as tmp:
+        store = _make_store(tmp)
+        try:
+            store.insert_run(
+                run_id="run-1", strategy_name="s1",
+                timestamp=datetime.now(timezone.utc), config={}, metrics={},
+                symbols=["AAPL"],
+            )
+            store.delete_run("run-1")
+            assert store.list_runs(symbol="AAPL") == []
+            rows = store._get_conn().execute(
+                "SELECT * FROM simulation_run_symbols WHERE run_id = 'run-1'"
+            ).fetchall()
+            assert rows == []
+        finally:
+            store.close()
+
+
+def test_delete_runs_by_strategy_removes_only_that_strategys_join_rows():
+    with TemporaryDirectory() as tmp:
+        store = _make_store(tmp)
+        try:
+            store.insert_run(
+                run_id="run-1", strategy_name="s1",
+                timestamp=datetime.now(timezone.utc), config={}, metrics={},
+                symbols=["AAPL"],
+            )
+            store.insert_run(
+                run_id="run-2", strategy_name="s2",
+                timestamp=datetime.now(timezone.utc), config={}, metrics={},
+                symbols=["MSFT"],
+            )
+            store.delete_runs(strategy_name="s1")
+            assert store.list_runs(symbol="AAPL") == []
+            assert {r["run_id"] for r in store.list_runs(symbol="MSFT")} == {"run-2"}
+        finally:
+            store.close()
+
+
+def test_migration_backfills_run_symbols_table_from_existing_json_column():
+    # Simulate a pre-existing DB that predates simulation_run_symbols but
+    # already has rows with a populated `symbols` JSON column.
+    with TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "meta.db"
+        import json
+        import sqlite3
+        conn = sqlite3.connect(str(db_path))
+        conn.executescript(
+            """
+            CREATE TABLE simulation_runs (
+                run_id TEXT PRIMARY KEY,
+                strategy_name TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                config TEXT NOT NULL,
+                metrics TEXT NOT NULL,
+                benchmark_metrics TEXT,
+                equity_points INTEGER DEFAULT 0,
+                trade_count INTEGER DEFAULT 0,
+                config_hash TEXT NOT NULL DEFAULT '',
+                validation TEXT,
+                symbols TEXT
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO simulation_runs "
+            "(run_id, strategy_name, timestamp, config, metrics, benchmark_metrics, symbols) "
+            "VALUES ('old-run', 's1', '2026-01-01T00:00:00', '{}', '{}', '{}', ?)",
+            (json.dumps(["AAPL"]),),
+        )
+        conn.commit()
+        conn.close()
+
+        store = MetaStorage(db_path)
+        try:
+            assert {r["run_id"] for r in store.list_runs(symbol="AAPL")} == {"old-run"}
+        finally:
+            store.close()
+
+
 def test_migration_adds_validation_columns_to_existing_db():
     # Simulate a pre-Phase-1 database: schema without validation/symbols columns.
     with TemporaryDirectory() as tmp:

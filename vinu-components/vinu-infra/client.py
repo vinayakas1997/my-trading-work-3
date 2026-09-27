@@ -141,6 +141,14 @@ class ResilientClient:
         path: str,
         params: dict[str, Any] | None = None,
         fallback: Any = None,
+        # item #17 finding #1: default (False) preserves every existing
+        # caller's graceful-fallback behavior. Opt in when a caller has
+        # its own real handling for the underlying exception (e.g.
+        # vinu-research's run_backtest() wants the simulator's actual
+        # HTTPStatusError to extract its real error detail) -- without
+        # this, `except Exception: return fb` below silently swallows
+        # it, and the caller's own handler for it can never run.
+        raise_on_error: bool = False,
     ) -> Any:
         url = f"{self._base_url}{path}"
         if not self._allow_local:
@@ -156,6 +164,8 @@ class ResilientClient:
         except ValueError:
             raise
         except Exception:
+            if raise_on_error:
+                raise
             return fb
 
     async def post(
@@ -163,6 +173,7 @@ class ResilientClient:
         path: str,
         json: dict[str, Any] | None = None,
         fallback: Any = None,
+        raise_on_error: bool = False,
     ) -> Any:
         url = f"{self._base_url}{path}"
         if not self._allow_local:
@@ -178,6 +189,8 @@ class ResilientClient:
         except ValueError:
             raise
         except Exception:
+            if raise_on_error:
+                raise
             return fb
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> Any:

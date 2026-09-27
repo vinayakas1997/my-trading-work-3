@@ -5,10 +5,20 @@ from typing import Any
 
 import pandas as pd
 
+from vinu_simulator.clients._cache import LRUCache
 from vinu_simulator.clients.base import BaseClient
 
 
 class PriceClient(BaseClient):
+
+    def __init__(self, base_url: str, timeout: float = 30.0, cache_maxsize: int = 256):
+        super().__init__(base_url, timeout=timeout)
+        # item #13 finding #4: one cache per fetch shape (get_ohclv's
+        # per-symbol DataFrame dict vs _fetch_price_data's stacked
+        # long-format frame) -- same symbol/date-range request key would
+        # otherwise collide across two incompatible return shapes.
+        self._ohclv_cache = LRUCache(maxsize=cache_maxsize)
+        self._price_data_cache = LRUCache(maxsize=cache_maxsize)
 
     def get_ohclv(
         self,
@@ -18,6 +28,17 @@ class PriceClient(BaseClient):
         resolution: str = "1d",
         indicators: list[str] | None = None,
     ) -> dict[str, pd.DataFrame]:
+        # Not case-normalized: `sym` is passed through verbatim into the
+        # real `/candles/{sym}` request, so a case difference is a
+        # different real request, not a cache-equivalent one.
+        cache_key = (
+            tuple(sorted(symbols)), from_date, to_date,
+            resolution, tuple(sorted(indicators or [])),
+        )
+        cached = self._ohclv_cache.get(cache_key)
+        if cached is not None:
+            return {sym: df.copy() for sym, df in cached.items()}
+
         from_ts = int(pd.Timestamp(from_date).timestamp())
         to_ts = int(pd.Timestamp(to_date).timestamp())
 
@@ -56,7 +77,8 @@ class PriceClient(BaseClient):
                 sym, df = future.result()
                 if df is not None:
                     result[sym] = df
-        return result
+        self._ohclv_cache.set(cache_key, result)
+        return {sym: df.copy() for sym, df in result.items()}
 
     def get_prices(
         self,
@@ -84,6 +106,16 @@ class PriceClient(BaseClient):
         to_date: str,
         resolution: str,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        # Exact requested order, NOT sorted -- unlike get_ohclv's dict-keyed
+        # cache, the two DataFrames returned here are column-selected via
+        # `pivot_prices[symbols]` in this exact order, so a differently
+        # ordered request must miss (and refetch) rather than return
+        # mis-ordered columns from a cache hit.
+        cache_key = (tuple(symbols), from_date, to_date, resolution)
+        cached = self._price_data_cache.get(cache_key)
+        if cached is not None:
+            return cached[0].copy(), cached[1].copy()
+
         from_ts = int(pd.Timestamp(from_date).timestamp())
         to_ts = int(pd.Timestamp(to_date).timestamp())
 
@@ -149,4 +181,6 @@ class PriceClient(BaseClient):
                 f"Available: {list(pivot_prices.columns)}"
             )
 
-        return pivot_prices[symbols], pivot_volumes[symbols]
+        result = (pivot_prices[symbols], pivot_volumes[symbols])
+        self._price_data_cache.set(cache_key, result)
+        return result[0].copy(), result[1].copy()

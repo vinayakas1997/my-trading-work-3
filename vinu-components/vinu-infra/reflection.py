@@ -289,6 +289,32 @@ CREATE TABLE IF NOT EXISTS reflection_reference_config (
     reason                       TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (analyst_name, scope_type, metric_name)
 );
+
+-- Step 8 ("the brain", thinking-1/02-decided-pattern/00-decided-pattern.md
+-- + 01-table-schemas.md's own "reflection_synthesis_outcomes -- 12
+-- columns" spec, followed exactly). Written only by the brain
+-- (vinu-reflection/vinu_reflection/reflection/brain.py), never by the
+-- 24 analysts above. The brain's own self-trust log: what it predicted
+-- vs. what actually happened, so it has to earn trust the same way
+-- every other mechanism in this codebase earns trust in a number.
+CREATE TABLE IF NOT EXISTS reflection_synthesis_outcomes (
+    synthesis_id               TEXT PRIMARY KEY,
+    computed_at                REAL NOT NULL,
+    trigger_reason             TEXT NOT NULL,
+    inputs_snapshot            TEXT NOT NULL DEFAULT '[]',
+    prediction_json            TEXT NOT NULL DEFAULT '{}',
+    proposed_action_type       TEXT,
+    resolution_criteria        TEXT NOT NULL DEFAULT '',
+    resolve_by                 REAL NOT NULL,
+    observed_outcome_json      TEXT,
+    outcome_match              TEXT,
+    resolved_at                REAL,
+    evidence_count_at_synthesis INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_reflection_synthesis_computed_at
+    ON reflection_synthesis_outcomes(computed_at);
+CREATE INDEX IF NOT EXISTS idx_reflection_synthesis_pending
+    ON reflection_synthesis_outcomes(resolve_by, resolved_at);
 """
 
 SCHEMA_VERSION = 1
@@ -393,6 +419,86 @@ class ReflectionStore(SQLiteBackend):
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    # -- synthesis outcomes (step 8, "the brain") --------------------------
+
+    def record_synthesis(
+        self,
+        *,
+        trigger_reason: str,
+        inputs_snapshot: list[dict[str, Any]],
+        prediction_json: dict[str, Any],
+        proposed_action_type: Optional[str],
+        resolution_criteria: str,
+        resolve_by: float,
+        evidence_count_at_synthesis: int,
+    ) -> str:
+        """One row per brain cycle that actually produced a synthesis
+        (most cycles produce nothing -- see `brain.py`'s own gate, same
+        "routine, nothing written" posture `write_finding` already uses).
+        `resolve_by`/`resolution_criteria` are fixed here, at prediction
+        time, never decided after the fact -- 01-table-schemas.md's own
+        rule for this table."""
+        synthesis_id = _new_id()
+        self.upsert(
+            "reflection_synthesis_outcomes",
+            {
+                "synthesis_id": synthesis_id,
+                "computed_at": _now_ts(),
+                "trigger_reason": trigger_reason,
+                "inputs_snapshot": json.dumps(inputs_snapshot),
+                "prediction_json": json.dumps(prediction_json),
+                "proposed_action_type": proposed_action_type,
+                "resolution_criteria": resolution_criteria,
+                "resolve_by": resolve_by,
+                "evidence_count_at_synthesis": evidence_count_at_synthesis,
+            },
+            conflict_columns=["synthesis_id"],
+        )
+        return synthesis_id
+
+    def get_latest_synthesis(self) -> Optional[dict[str, Any]]:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM reflection_synthesis_outcomes ORDER BY computed_at DESC LIMIT 1",
+        ).fetchone()
+        return self._decode_synthesis_row(row) if row is not None else None
+
+    def list_pending_syntheses(self, as_of: Optional[float] = None) -> list[dict[str, Any]]:
+        """Rows past their own `resolve_by` with `resolved_at` still
+        null -- what a periodic resolver (`brain.resolve_pending_
+        syntheses`) scans, same shape 01-table-schemas.md itself
+        describes ("same shape as significance-worker")."""
+        conn = self._get_conn()
+        cutoff = _now_ts() if as_of is None else as_of
+        rows = conn.execute(
+            "SELECT * FROM reflection_synthesis_outcomes "
+            "WHERE resolve_by <= ? AND resolved_at IS NULL "
+            "ORDER BY resolve_by ASC",
+            (cutoff,),
+        ).fetchall()
+        return [self._decode_synthesis_row(r) for r in rows]
+
+    def resolve_synthesis(
+        self, synthesis_id: str, *, observed_outcome_json: dict[str, Any], outcome_match: str,
+    ) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE reflection_synthesis_outcomes "
+            "SET observed_outcome_json = ?, outcome_match = ?, resolved_at = ? "
+            "WHERE synthesis_id = ?",
+            (json.dumps(observed_outcome_json), outcome_match, _now_ts(), synthesis_id),
+        )
+        conn.commit()
+
+    @staticmethod
+    def _decode_synthesis_row(row: Any) -> dict[str, Any]:
+        d = dict(row)
+        d["inputs_snapshot"] = json.loads(d.get("inputs_snapshot") or "[]")
+        d["prediction_json"] = json.loads(d.get("prediction_json") or "{}")
+        raw_outcome = d.get("observed_outcome_json")
+        d["observed_outcome_json"] = json.loads(raw_outcome) if raw_outcome else None
+        return d
 
 
 def write_finding(store: ReflectionStore, finding: Finding) -> Optional[str]:

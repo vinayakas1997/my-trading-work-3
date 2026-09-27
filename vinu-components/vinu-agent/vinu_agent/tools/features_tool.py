@@ -1,10 +1,6 @@
 import json
-import time
 from ..agent.tools import BaseTool
-
-
-def _date_to_epoch(date_str: str) -> int:
-    return int(time.mktime(time.strptime(date_str, "%Y-%m-%d")))
+from ._date_utils import date_to_epoch as _date_to_epoch
 
 
 class FeaturesTool(BaseTool):

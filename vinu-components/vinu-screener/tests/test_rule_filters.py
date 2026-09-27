@@ -95,11 +95,12 @@ class TestFilterChain:
     def test_trace_records_before_after_counts(self) -> None:
         chain = FilterChain([HardFilterRule(HardFilterConfig(min_price=10.0))])
         candidates = [Candidate("A", {"price": 5.0}), Candidate("B", {"price": 20.0})]
-        survivors, trace = chain.run(candidates, FilterContext())
+        survivors, trace, rejected = chain.run(candidates, FilterContext())
         assert len(survivors) == 1
         assert trace[0].before == 2
         assert trace[0].after == 1
         assert trace[0].stage == "hard_filter"
+        assert [c.symbol for c in rejected["hard_filter"]] == ["A"]
 
     def test_chained_stages_narrow_progressively(self) -> None:
         chain = FilterChain([
@@ -110,7 +111,35 @@ class TestFilterChain:
             Candidate("A", {"price": 5.0, "pe": -1.0}),  # passes hard filter, vetoed by risk (penalty 4 >= 3)
             Candidate("B", {"price": 5.0, "pe": 10.0}),  # passes both
         ]
-        survivors, trace = chain.run(candidates, FilterContext())
+        survivors, trace, rejected = chain.run(candidates, FilterContext())
         assert [c.symbol for c in survivors] == ["B"]
         assert trace[0].after == 2
         assert trace[1].after == 1
+        assert "hard_filter" not in rejected
+        assert [c.symbol for c in rejected["risk_veto"]] == ["A"]
+
+    def test_hard_filter_reasons_are_attached_to_the_dropped_candidate(self) -> None:
+        """item #18 finding #3: hard_filter_reasons() used to be computed
+        and thrown away -- now attached via the same veto_reason field
+        RiskVetoRule already used, so FilterChain's rejected-sample
+        collection has something real to read for hard-filter drops too."""
+        chain = FilterChain([HardFilterRule(HardFilterConfig(min_price=10.0))])
+        candidates = [Candidate("A", {"price": 5.0})]
+        _, _, rejected = chain.run(candidates, FilterContext())
+        dropped = rejected["hard_filter"][0]
+        assert "min_price" in dropped.veto_reason
+        assert "5.0" in dropped.veto_reason
+
+    def test_rejected_sample_is_bounded_per_stage(self) -> None:
+        from vinu_screener.pipeline.rule_filters import MAX_REJECTED_SAMPLE_PER_STAGE
+
+        chain = FilterChain([HardFilterRule(HardFilterConfig(min_price=10.0))])
+        candidates = [Candidate(f"S{i}", {"price": 1.0}) for i in range(MAX_REJECTED_SAMPLE_PER_STAGE + 10)]
+        _, _, rejected = chain.run(candidates, FilterContext())
+        assert len(rejected["hard_filter"]) == MAX_REJECTED_SAMPLE_PER_STAGE
+
+    def test_no_rejected_entry_for_a_stage_that_drops_nothing(self) -> None:
+        chain = FilterChain([HardFilterRule(HardFilterConfig(min_price=1.0))])
+        candidates = [Candidate("A", {"price": 5.0})]
+        _, _, rejected = chain.run(candidates, FilterContext())
+        assert rejected == {}

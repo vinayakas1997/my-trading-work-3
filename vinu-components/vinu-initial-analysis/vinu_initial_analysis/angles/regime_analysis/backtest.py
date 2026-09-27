@@ -24,7 +24,7 @@ import pandas as pd
 
 from vinu_initial_analysis.angles._helpers import calendar_quarter_key
 from vinu_initial_analysis.angles._tagging import tag_row as calendar_tag_row
-from vinu_initial_analysis.angles.regime_analysis.compute import MIN_OBSERVATIONS, _compute_regime_frame
+from vinu_initial_analysis.angles.regime_analysis.compute import MIN_OBSERVATIONS, compute_regime_frame
 
 _DATE_ONLY_TAGS = ("day_of_week", "week_of_month", "month", "quarter")
 
@@ -37,7 +37,7 @@ def run_per_bar_regime_backtest(
     if bars is None or len(bars) < MIN_OBSERVATIONS:
         return pd.DataFrame()
 
-    rf = _compute_regime_frame(bars, time_format)
+    rf = compute_regime_frame(bars, time_format)
     if rf.empty:
         return pd.DataFrame()
 

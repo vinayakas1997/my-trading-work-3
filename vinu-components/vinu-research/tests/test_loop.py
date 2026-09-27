@@ -1,26 +1,27 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import numpy as np
 import pandas as pd
 
 from vinu_research.config import ResearchConfig
-from vinu_research.loop import StrategyResearchLoop, _LRUCache, _match_score, _split_research_and_holdout
-from vinu_research.models import BacktestMetrics, BacktestResult, CriticFeedback, IterationRecord, LlmCandidate
-
-
-class TestMatchScore:
-    def test_high_overlap_returns_ge_05(self):
-        assert _match_score("mean reversion with bollinger bands", "mean reversion using bollinger bands strategy") >= 0.5
-
-    def test_no_overlap_returns_zero(self):
-        assert _match_score("mean reversion with bollinger bands", "trend following momentum breakout") == 0.0
-
-    def test_identical_strings_returns_one(self):
-        assert _match_score("momentum strategy", "momentum strategy") == 1.0
-
-    def test_empty_string_returns_zero(self):
-        assert _match_score("", "some strategy") == 0.0
-        assert _match_score("some strategy", "") == 0.0
+from vinu_research.loop import (
+    INFRA_FAILURE_REASONING_PREFIX,
+    StrategyResearchLoop,
+    _classify_outcome_status,
+    _LRUCache,
+    _split_research_and_holdout,
+)
+from vinu_research.models import (
+    BacktestMetrics,
+    BacktestResult,
+    CriticFeedback,
+    Evidence,
+    Hypothesis,
+    IterationRecord,
+    LlmCandidate,
+)
 
 
 class TestNormalizeSuggestionKey:
@@ -625,6 +626,130 @@ class _FakeConfiguredLlm:
         return True
 
 
+def _fake_llm_with_duplicate_check(configured: bool = True, result=None, side_effect=None) -> MagicMock:
+    llm = MagicMock()
+    llm.is_configured.return_value = configured
+    llm.check_duplicate_idea = AsyncMock(
+        side_effect=side_effect if side_effect is not None else None,
+        return_value=result if side_effect is None else None,
+    )
+    return llm
+
+
+class TestMatchExistingHypothesis:
+    """item #16 finding #4: replaces the old bare token-overlap
+    `_match_score` dedup. TF-IDF similarity screens out candidates with
+    essentially no shared vocabulary (no LLM call spent on them); the LLM
+    makes the real semantic judgment for anything left; a pure-similarity
+    threshold is the fallback only when the LLM is unavailable."""
+
+    def _loop(self, llm=None) -> StrategyResearchLoop:
+        loop = StrategyResearchLoop(config=ResearchConfig(generator_mode="llm"))
+        loop._llm = llm
+        return loop
+
+    async def test_no_existing_hypotheses_returns_none_without_calling_the_llm(self):
+        llm = _fake_llm_with_duplicate_check()
+        loop = self._loop(llm)
+        result = await loop._match_existing_hypothesis("SMA crossover", "AAPL", [])
+        assert result is None
+        llm.check_duplicate_idea.assert_not_called()
+
+    async def test_completely_unrelated_candidates_skip_the_llm_call_entirely(self):
+        llm = _fake_llm_with_duplicate_check()
+        loop = self._loop(llm)
+        existing = [Hypothesis.create("H1", "H1", universe=["AAPL"])]
+        existing[0].strategy_type = "options gamma scalping around earnings"
+        result = await loop._match_existing_hypothesis(
+            "SMA crossover trend following", "AAPL", existing,
+        )
+        assert result is None
+        llm.check_duplicate_idea.assert_not_called()
+
+    async def test_llm_confirms_a_duplicate_above_confidence_floor(self):
+        h1 = Hypothesis.create("H1", "H1", universe=["AAPL"])
+        h1.strategy_type = "SMA crossover trend following on tech stocks"
+        llm = _fake_llm_with_duplicate_check(
+            result={"duplicate_index": 0, "confidence": 0.9, "reasoning": "same concept"},
+        )
+        loop = self._loop(llm)
+        result = await loop._match_existing_hypothesis(
+            "Moving average crossover trend-following on technology names", "AAPL", [h1],
+        )
+        assert result is h1
+        llm.check_duplicate_idea.assert_awaited_once()
+
+    async def test_llms_explicit_negative_is_trusted_not_overridden_by_fallback(self):
+        # High lexical overlap (would pass the fallback threshold on its
+        # own), but the LLM explicitly says it's not a duplicate -- that
+        # verdict must win, not get second-guessed by the cheaper signal.
+        h1 = Hypothesis.create("H1", "H1", universe=["AAPL"])
+        h1.strategy_type = "RSI mean reversion strategy RSI RSI RSI RSI RSI RSI"
+        llm = _fake_llm_with_duplicate_check(
+            result={"duplicate_index": None, "confidence": 0.9, "reasoning": "different entry logic"},
+        )
+        loop = self._loop(llm)
+        result = await loop._match_existing_hypothesis(
+            "RSI mean reversion strategy RSI RSI RSI RSI RSI RSI", "AAPL", [h1],
+        )
+        assert result is None
+
+    async def test_llm_confidence_below_floor_is_not_matched(self):
+        h1 = Hypothesis.create("H1", "H1", universe=["AAPL"])
+        h1.strategy_type = "SMA crossover trend following on tech stocks"
+        llm = _fake_llm_with_duplicate_check(
+            result={"duplicate_index": 0, "confidence": 0.3, "reasoning": "maybe"},
+        )
+        loop = self._loop(llm)
+        result = await loop._match_existing_hypothesis(
+            "Moving average crossover trend-following on technology names", "AAPL", [h1],
+        )
+        assert result is None
+
+    async def test_llm_call_failing_falls_back_to_similarity_threshold(self):
+        h1 = Hypothesis.create("H1", "H1", universe=["AAPL"])
+        h1.strategy_type = "SMA crossover trend following momentum strategy"
+        llm = _fake_llm_with_duplicate_check(side_effect=RuntimeError("LLM down"))
+        loop = self._loop(llm)
+        result = await loop._match_existing_hypothesis(
+            "SMA crossover trend following momentum strategy", "AAPL", [h1],
+        )
+        assert result is h1  # identical text easily clears the fallback threshold
+
+    async def test_llm_not_configured_uses_similarity_fallback_directly(self):
+        h1 = Hypothesis.create("H1", "H1", universe=["AAPL"])
+        h1.strategy_type = "SMA crossover trend following momentum strategy"
+        llm = _fake_llm_with_duplicate_check(configured=False)
+        loop = self._loop(llm)
+        result = await loop._match_existing_hypothesis(
+            "SMA crossover trend following momentum strategy", "AAPL", [h1],
+        )
+        assert result is h1
+        llm.check_duplicate_idea.assert_not_called()
+
+    async def test_fallback_below_threshold_does_not_match(self):
+        h1 = Hypothesis.create("H1", "H1", universe=["AAPL"])
+        h1.strategy_type = "RSI mean reversion for oversold conditions"
+        llm = _fake_llm_with_duplicate_check(configured=False)
+        loop = self._loop(llm)
+        result = await loop._match_existing_hypothesis(
+            "trend following momentum strategy using moving averages", "AAPL", [h1],
+        )
+        assert result is None
+
+    async def test_llm_receives_every_candidate_that_passed_the_skip_screen(self):
+        h1 = Hypothesis.create("H1", "H1", universe=["AAPL"])
+        h1.strategy_type = "SMA crossover trend following"
+        h2 = Hypothesis.create("H2", "H2", universe=["AAPL"])
+        h2.strategy_type = "moving average crossover momentum strategy"
+        llm = _fake_llm_with_duplicate_check(result={"duplicate_index": None, "confidence": 0.9})
+        loop = self._loop(llm)
+        await loop._match_existing_hypothesis("crossover trend momentum idea", "AAPL", [h1, h2])
+        args, kwargs = llm.check_duplicate_idea.call_args
+        candidate_ideas = args[2] if len(args) > 2 else kwargs["candidate_ideas"]
+        assert len(candidate_ideas) == 2
+
+
 class TestDefaultQuantCoderRefinement:
     """Iteration 2+ should route through LLM refinement (feedback-informed,
     using the previous code + backtest + critique) rather than always falling
@@ -664,6 +789,11 @@ class TestDefaultQuantCoderRefinement:
         loop._symbol = "AAPL"
         loop._from_date = "2024-01-01"
         loop._to_date = "2024-12-31"
+        # item #12 finding #2: refined candidates are now backtested for
+        # real before ranking -- no real simulator here, so this returns
+        # "no backtest data" (falls back to the pre-backtest heuristic
+        # score alone, same ordering these tests already assume).
+        monkeypatch.setattr(loop, "_run_backtest", AsyncMock(return_value=None))
 
         code = await loop._default_quant_coder(
             "SMA crossover", 2, self._make_result(), self._make_critique(),
@@ -721,6 +851,428 @@ class TestDefaultQuantCoderRefinement:
 
         assert "PREVIOUS" not in code
         assert "adx" in code.lower()
+
+
+class TestBacktestAndRankCandidates:
+    """item #12 finding #2: `diverse_top_n`/`rank_candidates` accepted a
+    `backtest_results` param from the start but nothing ever called it
+    with real data -- every candidate not ranked #1 by the pre-backtest
+    complexity-penalty heuristic alone was discarded on a guess, never
+    proven worse. Approved explicitly to also spend real backtest budget
+    on this (LLM cost is unchanged -- the candidates are already drafted
+    in one generation call either way)."""
+
+    def _patch_generate(self, monkeypatch, candidates):
+        import vinu_research.loop as loop_module
+
+        class _FakeGenerator:
+            def __init__(self, llm_client):
+                pass
+
+            async def generate(self, **kwargs):
+                return candidates
+
+            async def refine(self, **kwargs):
+                return candidates
+
+        monkeypatch.setattr(loop_module, "LlmStrategyGenerator", _FakeGenerator)
+
+    def _result(self, sharpe: float, max_dd: float = -0.1, win_rate: float = 0.5) -> BacktestResult:
+        metrics = BacktestMetrics(sharpe_ratio=sharpe, max_drawdown=max_dd, win_rate=win_rate)
+        return BacktestResult(
+            run_id="r", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=30, equity_points=100,
+        )
+
+    async def test_real_backtest_performance_can_override_the_pre_backtest_heuristic(self, monkeypatch):
+        # "simple" scores higher than "complex" on complexity alone, but a
+        # terrible real backtest vs. a great one must be able to flip that
+        # -- otherwise the extra backtest cost would buy nothing.
+        simple = LlmCandidate(code="class A:\n    def generate_weights(self, d): return d.close*0", reasoning="simple")
+        complex_ = LlmCandidate(
+            code="class B:\n" + "    x = 1\n" * 30 + "    def generate_weights(self, d): return d.close*0",
+            reasoning="complex",
+        )
+        self._patch_generate(monkeypatch, [simple, complex_])
+
+        loop = StrategyResearchLoop(config=ResearchConfig(generator_mode="llm"))
+        loop._llm = _FakeConfiguredLlm()
+        loop._symbol = "AAPL"
+        loop._from_date = "2024-01-01"
+        loop._to_date = "2024-12-31"
+
+        results_by_code = {
+            simple.code: self._result(sharpe=-2.0, max_dd=-0.9, win_rate=0.1),
+            complex_.code: self._result(sharpe=3.0, max_dd=-0.05, win_rate=0.7),
+        }
+        monkeypatch.setattr(
+            loop, "_run_backtest",
+            AsyncMock(side_effect=lambda code, *a, **kw: results_by_code[code]),
+        )
+
+        code = await loop._default_quant_coder("SMA crossover", 1, None, None)
+        assert code == complex_.code
+
+    async def test_one_candidates_backtest_raising_does_not_abort_the_others(self, monkeypatch):
+        good = LlmCandidate(code="class Good:\n    def generate_weights(self, d): return d.close*0", reasoning="good")
+        crashes = LlmCandidate(code="class Bad:\n    def generate_weights(self, d): raise ValueError()", reasoning="crashes")
+        self._patch_generate(monkeypatch, [good, crashes])
+
+        loop = StrategyResearchLoop(config=ResearchConfig(generator_mode="llm"))
+        loop._llm = _FakeConfiguredLlm()
+        loop._symbol = "AAPL"
+        loop._from_date = "2024-01-01"
+        loop._to_date = "2024-12-31"
+
+        async def _fake_backtest(code, *a, **kw):
+            if code == crashes.code:
+                raise RuntimeError("Backtest failed: strategy crashed")
+            return self._result(sharpe=1.0)
+
+        monkeypatch.setattr(loop, "_run_backtest", AsyncMock(side_effect=_fake_backtest))
+
+        code = await loop._default_quant_coder("SMA crossover", 1, None, None)
+        assert code == good.code
+
+    async def test_every_candidate_failing_reraises_instead_of_silently_picking_one(self, monkeypatch):
+        c1 = LlmCandidate(code="class A:\n    def generate_weights(self, d): return d.close*0", reasoning="a")
+        c2 = LlmCandidate(code="class B:\n    def generate_weights(self, d): return d.close*0", reasoning="b")
+        self._patch_generate(monkeypatch, [c1, c2])
+
+        loop = StrategyResearchLoop(config=ResearchConfig(generator_mode="llm"))
+        loop._llm = _FakeConfiguredLlm()
+        loop._symbol = "AAPL"
+        loop._from_date = "2024-01-01"
+        loop._to_date = "2024-12-31"
+        monkeypatch.setattr(
+            loop, "_run_backtest",
+            AsyncMock(side_effect=RuntimeError("simulator unreachable")),
+        )
+
+        import pytest
+        with pytest.raises(RuntimeError, match="simulator unreachable"):
+            await loop._default_quant_coder("SMA crossover", 1, None, None)
+
+    async def test_generation_round_is_recorded_with_post_backtest_scores(self, monkeypatch):
+        from vinu_research.generation_candidate_store import GenerationCandidateStore
+
+        weak = LlmCandidate(code="class A:\n    def generate_weights(self, d): return d.close*0", reasoning="weak")
+        strong = LlmCandidate(
+            code="class B:\n" + "    x = 1\n" * 30 + "    def generate_weights(self, d): return d.close*0",
+            reasoning="strong",
+        )
+        self._patch_generate(monkeypatch, [weak, strong])
+
+        store = GenerationCandidateStore(":memory:")
+        loop = StrategyResearchLoop(
+            config=ResearchConfig(generator_mode="llm"), generation_candidate_store=store,
+        )
+        loop._llm = _FakeConfiguredLlm()
+        loop._symbol = "AAPL"
+        loop._from_date = "2024-01-01"
+        loop._to_date = "2024-12-31"
+
+        results_by_code = {
+            weak.code: self._result(sharpe=-2.0, max_dd=-0.9, win_rate=0.1),
+            strong.code: self._result(sharpe=3.0, max_dd=-0.05, win_rate=0.7),
+        }
+        monkeypatch.setattr(
+            loop, "_run_backtest",
+            AsyncMock(side_effect=lambda code, *a, **kw: results_by_code[code]),
+        )
+
+        await loop._default_quant_coder("SMA crossover", 1, None, None)
+
+        rounds = store.list_rounds(symbol="AAPL")
+        candidates = store.get_round(rounds[0]["generation_id"])["candidates"]
+        chosen = next(c for c in candidates if c["chosen"])
+        from vinu_research.generation_candidate_store import code_hash
+        assert chosen["code_hash"] == code_hash(strong.code)
+
+
+class TestRecordGenerationRound:
+    """item #16 finding #2: 3 candidates get drafted per generation call,
+    2 discarded on a heuristic complexity-penalty score with no backtest
+    behind it -- never recorded before this. No store injected (the
+    default) must stay a total no-op; a store injected must actually
+    capture every candidate, winner included, from both the iteration-1
+    generate path and the iteration-2+ refine path."""
+
+    def _make_result(self, sharpe: float = 0.8) -> BacktestResult:
+        metrics = BacktestMetrics(sharpe_ratio=sharpe, max_drawdown=-0.1, win_rate=0.5)
+        return BacktestResult(
+            run_id="r1", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=30, equity_points=100,
+        )
+
+    def _make_critique(self) -> CriticFeedback:
+        return CriticFeedback(verdict="REFINE", reasoning="needs work", suggestions=[])
+
+    def _patch_generate(self, monkeypatch, candidates):
+        import vinu_research.loop as loop_module
+
+        class _FakeGenerator:
+            def __init__(self, llm_client):
+                pass
+
+            async def generate(self, **kwargs):
+                return candidates
+
+            async def refine(self, **kwargs):
+                return candidates
+
+        monkeypatch.setattr(loop_module, "LlmStrategyGenerator", _FakeGenerator)
+
+    async def test_no_store_injected_is_a_total_no_op(self, monkeypatch):
+        self._patch_generate(monkeypatch, [
+            LlmCandidate(code="class A: pass", reasoning="best"),
+            LlmCandidate(code="class B: much_longer_and_more_complex_code_here", reasoning="worse"),
+        ])
+        loop = StrategyResearchLoop(config=ResearchConfig(generator_mode="llm"))
+        loop._llm = _FakeConfiguredLlm()
+        loop._symbol = "AAPL"
+        loop._from_date = "2024-01-01"
+        loop._to_date = "2024-12-31"
+        monkeypatch.setattr(loop, "_run_backtest", AsyncMock(return_value=None))
+
+        # Must not raise even though no generation_candidate_store was given.
+        await loop._default_quant_coder("SMA crossover", 1, None, None)
+
+    async def test_generate_path_records_every_candidate_with_winner_flagged(self, monkeypatch):
+        from vinu_research.generation_candidate_store import GenerationCandidateStore, code_hash
+
+        self._patch_generate(monkeypatch, [
+            LlmCandidate(code="class Simple: pass", reasoning="best"),
+            LlmCandidate(code="class VeryLong:\n" + "    x = 1\n" * 50, reasoning="worse"),
+        ])
+        store = GenerationCandidateStore(":memory:")
+        loop = StrategyResearchLoop(
+            config=ResearchConfig(generator_mode="llm"), generation_candidate_store=store,
+        )
+        loop._llm = _FakeConfiguredLlm()
+        loop._symbol = "AAPL"
+        loop._from_date = "2024-01-01"
+        loop._to_date = "2024-12-31"
+        monkeypatch.setattr(loop, "_run_backtest", AsyncMock(return_value=None))
+
+        await loop._default_quant_coder("SMA crossover", 1, None, None)
+
+        rounds = store.list_rounds(symbol="AAPL")
+        assert len(rounds) == 1
+        assert rounds[0]["mode"] == "generate"
+        candidates = store.get_round(rounds[0]["generation_id"])["candidates"]
+        assert len(candidates) == 2
+        assert candidates[0]["chosen"] is True
+        assert candidates[0]["code_hash"] == code_hash("class Simple: pass")
+
+    async def test_refine_path_records_with_mode_refine(self, monkeypatch):
+        from vinu_research.generation_candidate_store import GenerationCandidateStore
+
+        self._patch_generate(monkeypatch, [
+            LlmCandidate(code="class Refined: pass", reasoning="best"),
+        ])
+        store = GenerationCandidateStore(":memory:")
+        loop = StrategyResearchLoop(
+            config=ResearchConfig(generator_mode="llm"), generation_candidate_store=store,
+        )
+        loop._llm = _FakeConfiguredLlm()
+        loop._symbol = "AAPL"
+        monkeypatch.setattr(loop, "_run_backtest", AsyncMock(return_value=None))
+
+        await loop._default_quant_coder(
+            "SMA crossover", 2, self._make_result(), self._make_critique(),
+            previous_code="class UserStrategy: PREVIOUS",
+        )
+
+        rounds = store.list_rounds(symbol="AAPL")
+        assert len(rounds) == 1
+        assert rounds[0]["mode"] == "refine"
+
+    async def test_a_broken_store_does_not_break_generation_itself(self, monkeypatch):
+        self._patch_generate(monkeypatch, [LlmCandidate(code="class A: pass", reasoning="best")])
+
+        class _BrokenStore:
+            def record_round(self, *args, **kwargs):
+                raise RuntimeError("disk full")
+
+        loop = StrategyResearchLoop(
+            config=ResearchConfig(generator_mode="llm"), generation_candidate_store=_BrokenStore(),
+        )
+        loop._llm = _FakeConfiguredLlm()
+        loop._symbol = "AAPL"
+        monkeypatch.setattr(loop, "_run_backtest", AsyncMock(return_value=None))
+
+        code = await loop._default_quant_coder("SMA crossover", 1, None, None)
+        assert code == "class A: pass"
+
+    async def test_no_candidates_at_all_does_not_call_the_store(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        self._patch_generate(monkeypatch, [])
+        store = MagicMock()
+        loop = StrategyResearchLoop(
+            config=ResearchConfig(generator_mode="llm"), generation_candidate_store=store,
+        )
+        loop._llm = _FakeConfiguredLlm()
+        loop._symbol = "AAPL"
+
+        await loop._default_quant_coder("SMA crossover", 1, None, None)
+        store.record_round.assert_not_called()
+
+
+class TestClassifyOutcomeStatus:
+    """item #17 finding #2: an automated scheduler with no LLM reading
+    report_md's prose couldn't tell "the simulator was down, try again
+    later" from "we tested this for real and it's genuinely not a good
+    strategy" -- both used to look identical (a run with no
+    best_result)."""
+
+    def _record(self, verdict: str, reasoning: str) -> IterationRecord:
+        metrics = BacktestMetrics(sharpe_ratio=0.1, max_drawdown=-0.1, win_rate=0.5)
+        result = BacktestResult(
+            run_id="r1", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=10, equity_points=50,
+        )
+        return IterationRecord(
+            iteration=1, strategy_code="class UserStrategy: pass", result=result,
+            critique=CriticFeedback(verdict=verdict, reasoning=reasoning, suggestions=[]),
+        )
+
+    def _passing_result(self) -> BacktestResult:
+        metrics = BacktestMetrics(sharpe_ratio=0.8, max_drawdown=-0.1, win_rate=0.6)
+        return BacktestResult(
+            run_id="r2", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=40, equity_points=200,
+        )
+
+    def test_infra_failure_reasoning_classifies_as_infra_failure(self) -> None:
+        history = [self._record("STOP", f"{INFRA_FAILURE_REASONING_PREFIX} (not a strategy problem): simulator down")]
+        assert _classify_outcome_status(history, None) == "infra_failure"
+
+    def test_a_genuine_stop_with_no_best_result_is_no_strategy_found(self) -> None:
+        """The same "no best_result" shape as an infra failure, but a real
+        quality-based STOP -- must not be misclassified as infra_failure
+        just because the verdict string happens to match."""
+        history = [self._record("STOP", "Sharpe too low across all attempts, not worth continuing")]
+        assert _classify_outcome_status(history, None) == "no_strategy_found"
+
+    def test_no_history_and_no_best_result_is_no_strategy_found(self) -> None:
+        assert _classify_outcome_status([], None) == "no_strategy_found"
+
+    def test_a_real_best_result_is_passed_even_with_earlier_refine_iterations(self) -> None:
+        history = [
+            self._record("REFINE", "needs work"),
+            self._record("PASS", "looks good"),
+        ]
+        assert _classify_outcome_status(history, self._passing_result()) == "passed"
+
+    def test_infra_failure_mid_run_overrides_an_earlier_best_result_check(self) -> None:
+        """The infra check reads the LAST history entry specifically --
+        if the run then hit an infra wall (loop.py's own `break` on
+        InfrastructureError), that's the real terminal state even if an
+        earlier iteration in this same history looked fine, since nothing
+        later confirmed it under fresh conditions."""
+        history = [
+            self._record("REFINE", "needs work"),
+            self._record("STOP", f"{INFRA_FAILURE_REASONING_PREFIX} (not a strategy problem): simulator down"),
+        ]
+        assert _classify_outcome_status(history, None) == "infra_failure"
+
+
+class TestHypothesisEvidenceInStory:
+    """item #16 finding #1: Track 1's signal-evidence entries (item #1's
+    bridge) must actually reach the LLM's prompt, not just be reachable
+    on the hypothesis. hyp.evidence[-3:] was already being pulled into
+    story["memory_context"] -- the gap was the formatting line dropping
+    `reasoning` (where a signal-evidence entry's real content lives),
+    keeping only a bare metric=value pair."""
+
+    def _make_result(self, sharpe: float = 0.8) -> BacktestResult:
+        metrics = BacktestMetrics(sharpe_ratio=sharpe, max_drawdown=-0.1, win_rate=0.5)
+        return BacktestResult(
+            run_id="r1", strategy_name="s", metrics=metrics,
+            benchmark_metrics={}, trade_count=30, equity_points=100,
+        )
+
+    def _make_critique(self) -> CriticFeedback:
+        return CriticFeedback(verdict="REFINE", reasoning="needs work", suggestions=[])
+
+    async def _story_from_refine(self, monkeypatch, hyp: Hypothesis) -> dict:
+        import vinu_research.loop as loop_module
+
+        refine_calls = []
+
+        class _FakeGenerator:
+            def __init__(self, llm_client):
+                pass
+
+            async def refine(self, **kwargs):
+                refine_calls.append(kwargs)
+                return [LlmCandidate(code="class UserStrategy: REFINED", validated=True)]
+
+        monkeypatch.setattr(loop_module, "LlmStrategyGenerator", _FakeGenerator)
+
+        loop = StrategyResearchLoop(config=ResearchConfig(generator_mode="llm"))
+        loop._llm = _FakeConfiguredLlm()
+        loop._symbol = "AAPL"
+        loop._from_date = "2024-01-01"
+        loop._to_date = "2024-12-31"
+        loop._current_hypothesis = hyp
+        monkeypatch.setattr(loop, "_run_backtest", AsyncMock(return_value=None))
+
+        await loop._default_quant_coder(
+            "SMA crossover", 2, self._make_result(), self._make_critique(),
+            previous_code="class UserStrategy: PREVIOUS",
+        )
+        assert len(refine_calls) == 1
+        return refine_calls[0]["story"] or {}
+
+    async def test_signal_evidence_entry_shows_its_full_reasoning(self, monkeypatch):
+        hyp = Hypothesis.create("Test", "Test thesis", universe=["AAPL"])
+        hyp.evidence.append(Evidence(
+            run_id="signal_evidence", iteration=0, metric="avg_return_at_horizon",
+            value=0.03, conclusion="supports",
+            reasoning="12 historical trigger(s) of 'sma5_cross_sma50', 58% positive, last fired 3 day(s) ago",
+            metric_kind="signal_evidence",
+        ))
+
+        story = await self._story_from_refine(monkeypatch, hyp)
+
+        assert "12 historical trigger(s) of 'sma5_cross_sma50', 58% positive, last fired 3 day(s) ago" in story["memory_context"]
+
+    async def test_sharpe_evidence_keeps_the_existing_terse_format(self, monkeypatch):
+        """Regression guard: a Sharpe evidence entry's reasoning is a full
+        LLM critique, not a short summary -- including it in full for
+        every entry would bloat the prompt, so this format must stay
+        unchanged for metric_kind="sharpe" (the default)."""
+        hyp = Hypothesis.create("Test", "Test thesis", universe=["AAPL"])
+        hyp.evidence.append(Evidence(
+            run_id=1, iteration=3, metric="sharpe", value=0.65,
+            conclusion="supports",
+            reasoning="A very long LLM-generated critique paragraph that should not appear verbatim in the prompt.",
+        ))
+
+        story = await self._story_from_refine(monkeypatch, hyp)
+
+        assert "Iter 3: sharpe=0.65 → supports" in story["memory_context"]
+        assert "very long LLM-generated critique" not in story["memory_context"]
+
+    async def test_mixed_evidence_kinds_each_use_their_own_format(self, monkeypatch):
+        hyp = Hypothesis.create("Test", "Test thesis", universe=["AAPL"])
+        hyp.evidence.append(Evidence(
+            run_id=1, iteration=1, metric="sharpe", value=0.4, conclusion="supports", reasoning="critique text",
+        ))
+        hyp.evidence.append(Evidence(
+            run_id="signal_evidence", iteration=0, metric="avg_return_at_horizon",
+            value=0.02, conclusion="supports",
+            reasoning="5 historical trigger(s) of 'sma5_cross_sma50', 80% positive, last fired 1 day(s) ago",
+            metric_kind="signal_evidence",
+        ))
+
+        story = await self._story_from_refine(monkeypatch, hyp)
+
+        assert "Iter 1: sharpe=0.40 → supports" in story["memory_context"]
+        assert "5 historical trigger(s) of 'sma5_cross_sma50', 80% positive, last fired 1 day(s) ago" in story["memory_context"]
 
 
 class TestBestResultSelection:

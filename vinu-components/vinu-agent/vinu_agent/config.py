@@ -167,6 +167,16 @@ class AgentConfig:
     # ticker's comprehension forever. Provisional, not tuned -- same
     # disclaimer as K_CAP_DEFAULT.
     angle_coverage_max_deferrals: int = 3
+    # high-expectations follow-up, point #3 (00-maturity-agentic-system-
+    # explanation.md's step-3 phasing): the real deciding agent for
+    # live_decision lives here, not in vinu-live (reverse-engineering/
+    # 06-execution-handoff-and-architecture.md point 8) -- so this is the
+    # consumer's own independent knob, matching vinu-live's
+    # risk_gatekeeper_maturity_scaling_enabled in shape (same name is
+    # coincidental; these are two different services' config classes for
+    # two different consumers). Off by default, same cautious-rollout
+    # posture as every other maturity-tier consumer in this codebase.
+    live_decision_maturity_scaling_enabled: bool = False
     services: dict = field(default_factory=lambda: {
         "vinu_simulator": os.environ.get("VINU_SIMULATOR_API_URL", "http://localhost:8084"),
         "vinu_tools": os.environ.get("VINU_TOOLS_API_URL", "http://localhost:8082"),
@@ -292,4 +302,7 @@ def load_config() -> AgentConfig:
         screener_ranker_id=os.environ.get("VINU_AGENT_SCREENER_RANKER_ID", ""),
         angle_coverage_min_fraction=float(os.environ.get("VINU_AGENT_ANGLE_COVERAGE_MIN_FRACTION", "0.0")),
         angle_coverage_max_deferrals=int(os.environ.get("VINU_AGENT_ANGLE_COVERAGE_MAX_DEFERRALS", "3")),
+        live_decision_maturity_scaling_enabled=os.environ.get(
+            "VINU_AGENT_LIVE_DECISION_MATURITY_SCALING_ENABLED", "false",
+        ).lower() in ("1", "true", "yes"),
     )

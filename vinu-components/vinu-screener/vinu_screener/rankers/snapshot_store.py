@@ -32,6 +32,14 @@ MIGRATIONS = [
         "computed on every run but previously dropped before reaching this "
         "store or the on-demand rank_now() response.",
     ),
+    (
+        "ALTER TABLE ranker_snapshots ADD COLUMN rejected_json TEXT NOT NULL DEFAULT '[]'",
+        "item #18 finding #3: a bounded per-stage sample of why each "
+        "dropped candidate was cut (RejectionRecord dicts, PipelineResult."
+        "rejected_samples) -- 'why was ticker Y excluded' had no persisted "
+        "answer before this, unlike a chosen ticker's own full factor "
+        "breakdown.",
+    ),
 ]
 
 
@@ -61,6 +69,11 @@ class RankerSnapshot:
     # computed by ScreenPipeline.run() on every ranking but previously
     # dropped between there and here.
     trace: list[dict] = field(default_factory=list)
+    # item #18 finding #3: the "why was ticker Y excluded" counterpart to
+    # `trace`'s aggregate counts -- a bounded per-stage sample of
+    # RejectionRecord dicts (vinu_infra.rejection_log), built by
+    # PipelineResult.rejected_samples.
+    rejected_samples: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -74,13 +87,19 @@ class RankerSnapshot:
                 }
                 for c in self.top
             ],
+            # `trace` was computed and stored (see MIGRATIONS above) but
+            # never actually reached here until this fix -- both HTTP
+            # consumers (rank_now, latest_ranking, server/app.py) call
+            # this same to_dict(), so it was stranded one hop from the
+            # store despite looking fully wired end to end.
             "trace": self.trace,
+            "rejected_samples": self.rejected_samples,
         }
 
 
 class RankedSnapshotStore(SQLiteBackend):
     SCHEMA = SCHEMA
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
     MIGRATIONS = MIGRATIONS
 
     def set_latest(self, ranker_id: str, result: PipelineResult, *, now: float | None = None) -> RankerSnapshot:
@@ -93,13 +112,15 @@ class RankedSnapshotStore(SQLiteBackend):
             for c in result.top
         ]
         trace = [dataclasses.asdict(sc) for sc in result.trace]
-        snapshot = RankerSnapshot(ranker_id, now, top, trace)
+        rejected_samples = list(getattr(result, "rejected_samples", []))
+        snapshot = RankerSnapshot(ranker_id, now, top, trace, rejected_samples)
         self.upsert(
             "ranker_snapshots",
             {
                 "ranker_id": ranker_id, "generated_at": now,
                 "top_json": json.dumps(snapshot.to_dict()["top"]),
                 "trace_json": json.dumps(trace),
+                "rejected_json": json.dumps(rejected_samples),
             },
             conflict_columns=["ranker_id"],
         )
@@ -124,4 +145,10 @@ class RankedSnapshotStore(SQLiteBackend):
             trace = json.loads(row["trace_json"]) if "trace_json" in row.keys() and row["trace_json"] else []
         except Exception:
             trace = []
-        return RankerSnapshot(row["ranker_id"], float(row["generated_at"]), top, trace)
+        try:
+            rejected_samples = (
+                json.loads(row["rejected_json"]) if "rejected_json" in row.keys() and row["rejected_json"] else []
+            )
+        except Exception:
+            rejected_samples = []
+        return RankerSnapshot(row["ranker_id"], float(row["generated_at"]), top, trace, rejected_samples)

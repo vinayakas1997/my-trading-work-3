@@ -11,11 +11,13 @@ import numpy as np
 import pandas as pd
 
 from vinu_infra.debug import debug_log, debug_timer
-from vinu_research.comparison import rank_candidates
+from vinu_research.comparison import diverse_top_n, rank_candidates
+from vinu_research.generation_candidate_store import GenerationCandidateStore
 from vinu_research.storage.sqlite_backend import ResearchStorage
 from vinu_research.config import ResearchConfig, load_config
 from vinu_research.generator import find_recipe, generate_strategy
 from vinu_research.hypothesis_registry import HypothesisRegistry
+from vinu_research.idea_similarity import build_tfidf_vectors, cosine_similarity
 from vinu_research.llm import LLM_SYSTEM_PROMPT, ResearchLlmClient, _build_risk_critic_prompt
 from vinu_research.llm_generator import LlmStrategyGenerator
 from vinu_research.models import (
@@ -49,16 +51,56 @@ LOG = logging.getLogger(__name__)
 
 _MAX_CACHE_SIZE = 64
 
+# item #17 finding #2: the only existing signal distinguishing "infra was
+# down" from "genuinely no viable strategy" is this exact reasoning
+# prefix (CriticFeedback itself has no structured field for it either) --
+# shared as one constant, not a magic string duplicated at the one place
+# that sets it and the one place that reads it back, so they can't drift
+# apart silently.
+INFRA_FAILURE_REASONING_PREFIX = "INFRASTRUCTURE FAILURE"
 
-def _match_score(a: str, b: str) -> float:
-    a_tokens = set(a.lower().split())
-    b_tokens = set(b.lower().split())
-    if not a_tokens or not b_tokens:
-        return 0.0
-    overlap = a_tokens & b_tokens
-    return len(overlap) / min(len(a_tokens), len(b_tokens))
+
+def _classify_outcome_status(history: list[IterationRecord], best_result: BacktestResult | None) -> str:
+    """`"infra_failure" | "no_strategy_found" | "passed"` -- the exact
+    3-state classification item #17 finding #2 asks for, computed at the
+    one place both signals (the iteration history and the winning
+    result) are already available, so an automated scheduler doesn't
+    need to parse report_md's prose (or worse, `reasoning`) to tell them
+    apart."""
+    if history and history[-1].critique.reasoning.startswith(INFRA_FAILURE_REASONING_PREFIX):
+        return "infra_failure"
+    if best_result is None:
+        return "no_strategy_found"
+    return "passed"
+
+
+# item #16 finding #4: the fragile bare-token-overlap `_match_score` this
+# dedup used to call directly has been replaced by
+# `StrategyResearchLoop._match_existing_hypothesis` (TF-IDF similarity +
+# an LLM tie-breaker, see idea_similarity.py and that method's own
+# docstring) -- removed rather than left as unused dead code.
 _MIN_HOLDOUT_DAYS = 5
 _MIN_RESEARCH_DAYS = 30
+
+# item #16 finding #4: below this TF-IDF cosine similarity, a candidate
+# shares essentially no vocabulary with the new idea at all -- skipped
+# without spending an LLM call, since it is overwhelmingly unlikely to be
+# the same idea. Calibrated empirically (idea_similarity.py's own module
+# docstring): unrelated idea pairs scored 0.0-0.09, any real conceptual
+# overlap (same or merely adjacent ideas) scored 0.25+.
+_DUPLICATE_SIMILARITY_SKIP = 0.1
+# Fallback-only decision threshold, used strictly when the LLM tie-
+# breaker is unavailable (not configured, or the call itself failed) --
+# a real check is still better than none, even if less accurate than the
+# LLM's semantic judgment. Calibrated on the same empirical pass: a true
+# same-idea-reworded pair scored ~0.38, a different-idea-shares-2-words
+# pair scored ~0.25.
+_DUPLICATE_SIMILARITY_FALLBACK_MATCH = 0.35
+# Below this, an LLM-flagged duplicate is treated as too uncertain to
+# act on -- the system prompt already tells it to say "not a duplicate"
+# when unsure; this is a second, structural safety net against a
+# borderline call.
+_DUPLICATE_LLM_MIN_CONFIDENCE = 0.6
 
 
 def _split_research_and_holdout(
@@ -131,6 +173,7 @@ class StrategyResearchLoop:
         on_iteration: Callable | None = None,
         hypothesis_registry: HypothesisRegistry | None = None,
         storage: ResearchStorage | None = None,
+        generation_candidate_store: GenerationCandidateStore | None = None,
     ):
         self._config = config or load_config()
         self._tools = tools or ResearchTools(self._config)
@@ -148,6 +191,18 @@ class StrategyResearchLoop:
         self._hypothesis_registry = hypothesis_registry
         self._suggestion_results: dict[str, list[bool]] = {}
         self._iteration_history_summary: list[str] = []
+        # item #16 finding #2: deliberately NOT lazily constructed at a
+        # default path the way sweep_grid.py's own store is -- this class
+        # is constructed directly (no store) by dozens of existing tests,
+        # and ResearchService (the one real production caller) already
+        # injects a real store explicitly here, the same convention
+        # hypothesis_registry/storage already use on this same
+        # constructor. None means "don't persist," not "persist
+        # somewhere by default" -- the opposite default from
+        # run_sweep_grid's own free-function shape, and correct for this
+        # one: there's always exactly one real owning service to inject
+        # from, unlike a standalone function called directly by a route.
+        self._generation_candidate_store = generation_candidate_store
 
     async def run(
         self,
@@ -206,6 +261,13 @@ class StrategyResearchLoop:
         # was actually requested — if not, the simulator won't have computed it and
         # injecting the filter would just run against a fake constant column.
         self._indicators = indicators or []
+        # item #12 finding #2: _default_quant_coder now backtests each of
+        # several diverse candidates itself (rather than picking one on a
+        # pre-backtest heuristic alone), so it needs the same backtest
+        # inputs run() itself uses -- neither was previously stored on
+        # self at all.
+        self._initial_capital = initial_capital
+        self._backtest_symbols = backtest_symbols
         self._memory_context = memory_context
         self._last_reasoning = ""
         self._run_id = run_id
@@ -227,6 +289,12 @@ class StrategyResearchLoop:
                           f"This symbol has been flagged as exhausted after "
                           f"multiple research runs without producing a viable "
                           f"strategy. Skipping this research request.\n",
+                # A symbol-exhausted skip is a 4th real case the audit's
+                # literal 3-state enum doesn't name -- classified here as
+                # "no_strategy_found" (the closest fit: no strategy comes
+                # out of this call either way), not invented as a 4th
+                # enum value beyond what the finding specified.
+                outcome_status="no_strategy_found",
                 walk_forward=None,
                 holdout=None,
                 portfolio=None,
@@ -274,16 +342,7 @@ class StrategyResearchLoop:
         if self._hypothesis_registry is not None:
             try:
                 existing = self._hypothesis_registry.query_by_symbol(symbol)
-                matched = None
-                if existing:
-                    best_score = 0.0
-                    for h in existing:
-                        score = _match_score(user_idea, h.strategy_type or "")
-                        if score >= 0.5 and score > best_score:
-                            matched = h
-                            best_score = score
-                    if matched:
-                        LOG.info("Matched hypothesis %s (score=%.2f)", matched.hypothesis_id, best_score)
+                matched = await self._match_existing_hypothesis(user_idea, symbol, existing)
                 if matched:
                     self._current_hypothesis = matched
                 else:
@@ -372,7 +431,7 @@ class StrategyResearchLoop:
                     debug_log(f"Iteration {iteration}: infra failure — stopping: {infra_exc}", level=1)
                     critic_feedback = CriticFeedback(
                         verdict="STOP",
-                        reasoning=f"INFRASTRUCTURE FAILURE (not a strategy problem): {infra_exc}",
+                        reasoning=f"{INFRA_FAILURE_REASONING_PREFIX} (not a strategy problem): {infra_exc}",
                         suggestions=[],
                     )
                     record = IterationRecord(
@@ -752,6 +811,7 @@ class StrategyResearchLoop:
             pbo=pbo_result,
             paper_rehearsal=paper_rehearsal_result,
             data_hash=_lineage_hash(symbol, from_date, to_date, _best_code),
+            outcome_status=_classify_outcome_status(history, best_result),
         )
 
     async def _run_backtest(
@@ -1291,6 +1351,78 @@ class StrategyResearchLoop:
             LOG.warning("Idea validation failed: %s", e)
         return None
 
+    async def _match_existing_hypothesis(
+        self, user_idea: str, symbol: str, existing: list[Hypothesis],
+    ) -> Hypothesis | None:
+        """item #16 finding #4: replaces the old bare token-overlap
+        `_match_score` dedup, which could either miss a duplicate phrased
+        differently (wasted research budget re-running the same idea) or
+        merge two genuinely different ideas that happened to share a few
+        words (corrupted evidence attribution on the wrong hypothesis).
+
+        Two tiers, cheapest first: TF-IDF cosine similarity
+        (idea_similarity.py, the same algorithm vinu-news's own
+        cosine_dedup already uses for this class of problem) screens out
+        candidates with essentially no shared vocabulary at all without
+        spending an LLM call on them. Anything above that screen goes to
+        the LLM in one call (covering every such candidate at once, not
+        one call per candidate) for the actual semantic judgment a bare
+        similarity score can't make reliably -- "SMA crossover" and
+        "moving-average crossover" share almost no literal tokens but are
+        the same idea; two different RSI strategies share the word "RSI"
+        but are not. Falls back to a direct (less accurate, but still
+        real) similarity-threshold decision only when the LLM isn't
+        configured or the call itself fails -- this still does something
+        better than pure token-overlap without it, rather than becoming a
+        silent no-op.
+        """
+        if not existing:
+            return None
+
+        texts = [user_idea] + [h.strategy_type or "" for h in existing]
+        vectors = build_tfidf_vectors(texts)
+        new_vec = vectors[0]
+        scored = list(zip(existing, (cosine_similarity(new_vec, v) for v in vectors[1:])))
+        candidates = [(h, score) for h, score in scored if score >= _DUPLICATE_SIMILARITY_SKIP]
+        if not candidates:
+            return None
+
+        if self._llm and self._llm.is_configured():
+            try:
+                result = await self._llm.check_duplicate_idea(
+                    user_idea, symbol, [h.strategy_type or "" for h, _ in candidates],
+                )
+                if result and isinstance(result, dict):
+                    idx = result.get("duplicate_index")
+                    confidence = float(result.get("confidence", 0.0))
+                    if (
+                        idx is not None
+                        and 0 <= int(idx) < len(candidates)
+                        and confidence >= _DUPLICATE_LLM_MIN_CONFIDENCE
+                    ):
+                        matched = candidates[int(idx)][0]
+                        LOG.info(
+                            "LLM matched hypothesis %s as duplicate (confidence=%.2f): %s",
+                            matched.hypothesis_id, confidence, result.get("reasoning", ""),
+                        )
+                        return matched
+                # A successful call that found no duplicate is a real,
+                # trusted negative -- not a reason to fall back further.
+                return None
+            except Exception as e:
+                LOG.warning(
+                    "Duplicate-idea LLM check failed, falling back to similarity threshold: %s", e,
+                )
+
+        best_h, best_score = max(candidates, key=lambda pair: pair[1])
+        if best_score >= _DUPLICATE_SIMILARITY_FALLBACK_MATCH:
+            LOG.info(
+                "Matched hypothesis %s by similarity fallback (score=%.2f, no LLM available)",
+                best_h.hypothesis_id, best_score,
+            )
+            return best_h
+        return None
+
     async def _reflect(self) -> tuple[str, float]:
         if len(self._iteration_history_summary) < 2:
             return "continue", 0.0
@@ -1331,6 +1463,89 @@ class StrategyResearchLoop:
                 LOG.debug("Filtering out ineffective suggestion: %s", s)
         return effective
 
+    def _record_generation_round(self, iteration: int, mode: str, ranked: list) -> None:
+        """item #16 finding #2: 3 candidates get drafted per generation
+        call, 2 discarded immediately on a heuristic complexity-penalty
+        score with no backtest behind it -- never recorded before this.
+        Best-effort, same posture as every other side-write in this
+        codebase: a persistence failure must never break generation
+        itself. No-op when no store was injected (see __init__'s own
+        comment on why the default here is "don't persist," not a lazy
+        default-path store the way run_sweep_grid's is)."""
+        if self._generation_candidate_store is None or not ranked:
+            return
+        try:
+            import uuid
+            self._generation_candidate_store.record_round(
+                str(uuid.uuid4()),
+                symbol=getattr(self, "_symbol", ""), iteration=iteration, mode=mode, ranked=ranked,
+            )
+        except Exception:
+            LOG.exception("Failed to record generation round -- generation itself is unaffected")
+
+    async def _backtest_and_rank_candidates(
+        self, candidates: list, iteration: int, mode: str,
+    ) -> list:
+        """item #12 finding #2: `diverse_top_n`/`rank_candidates`'
+        `backtest_results` param existed from the start but was never
+        actually called with real backtest data anywhere -- every
+        candidate not ranked #1 by the pre-backtest complexity-penalty
+        heuristic alone was discarded on a guess, never proven worse.
+        Approved explicitly (system-wide-audit-and-design item #12
+        finding #2): backtest cost triples per iteration (LLM cost does
+        not -- `llm_candidates` candidates are already drafted in one
+        call either way), in exchange for picking the winner by real
+        deflated-Sharpe performance instead of a pre-backtest guess.
+
+        Diversity-selected (not just "backtest all `n_candidates`") so
+        this stays bounded even if `llm_candidates` is configured higher
+        than the default 3 -- `diverse_top_n`'s own existing shape-based
+        rule already caps it.
+        """
+        pre_ranked = rank_candidates(candidates)
+        diverse = diverse_top_n(pre_ranked, n=len(candidates))
+
+        symbol = getattr(self, "_symbol", "")
+        from_date = getattr(self, "_from_date", "")
+        to_date = getattr(self, "_to_date", "")
+        indicators = ["sma_20", "sma_50", "rsi_14"]
+        initial_capital = getattr(self, "_initial_capital", None)
+        backtest_symbols = getattr(self, "_backtest_symbols", None)
+
+        backtest_results: list[BacktestResult | None] = []
+        last_exc: Exception | None = None
+        for rc in diverse:
+            try:
+                result = await self._run_backtest(
+                    rc.candidate.code, symbol, from_date, to_date,
+                    indicators=indicators, initial_capital=initial_capital,
+                    symbols=backtest_symbols,
+                )
+            except Exception as exc:
+                # A candidate whose generated code crashes or produces no
+                # valid weights is a real, expected outcome of trying
+                # several drafts, not just an infra problem -- scored as
+                # "unbacktested" (rank_candidates' own None-handling)
+                # rather than aborting the whole selection. Only re-raised
+                # below if every diverse candidate fails this way, which
+                # points at the environment rather than any one draft.
+                LOG.warning(
+                    "Candidate backtest failed during selection (iteration %d, mode=%s): %s",
+                    iteration, mode, exc,
+                )
+                last_exc = exc
+                result = None
+            backtest_results.append(result)
+
+        if last_exc is not None and all(r is None for r in backtest_results):
+            raise last_exc
+
+        final_ranked = rank_candidates(
+            [rc.candidate for rc in diverse], backtest_results,
+        )
+        self._record_generation_round(iteration, mode, final_ranked)
+        return final_ranked
+
     async def _default_quant_coder(
         self,
         user_idea: str,
@@ -1368,7 +1583,19 @@ class StrategyResearchLoop:
                 hyp_lines.append(f"Previously rejected: {hyp.invalidation_reason}")
             if hyp.evidence:
                 for e in hyp.evidence[-3:]:
-                    hyp_lines.append(f"  Iter {e.iteration}: {e.metric}={e.value:.2f} → {e.conclusion}")
+                    # item #16 finding #1: signal-evidence entries
+                    # (item #1's Track-1-to-hypothesis bridge) carry their
+                    # real value in `reasoning` -- "N historical triggers,
+                    # X% positive, last fired Y days ago" -- not in a bare
+                    # metric=value pair, which is why they're formatted
+                    # differently here. Sharpe evidence keeps its existing
+                    # terse form unchanged: its own `reasoning` is a full
+                    # LLM critique, not a short summary, and would bloat
+                    # the prompt if included in full for every entry.
+                    if e.metric_kind == "signal_evidence":
+                        hyp_lines.append(f"  {e.reasoning}")
+                    else:
+                        hyp_lines.append(f"  Iter {e.iteration}: {e.metric}={e.value:.2f} → {e.conclusion}")
             hyp_str = "\n".join(hyp_lines)
             if story is None:
                 story = {}
@@ -1400,16 +1627,17 @@ class StrategyResearchLoop:
                     story=story,
                 )
                 if candidates:
-                    # Rank by complexity penalty (no backtest results available yet
-                    # at generation time) rather than blindly taking the first
-                    # candidate the LLM happened to return first.
-                    ranked = rank_candidates(candidates)
+                    # item #12 finding #2: backtests a diverse subset of
+                    # these candidates for real and ranks by actual
+                    # performance, rather than picking #1 on the
+                    # pre-backtest heuristic score alone.
+                    ranked = await self._backtest_and_rank_candidates(candidates, iteration, "generate")
                     best = ranked[0].candidate
                     self._last_reasoning = best.reasoning
                     llm_code = best.code
                     LOG.info(
-                        "LLM generated strategy (ranked best of %d candidates, score=%.1f): %s",
-                        len(candidates), ranked[0].score, best.reasoning[:100],
+                        "LLM generated strategy (backtested and ranked best of %d candidates, score=%.1f): %s",
+                        len(ranked), ranked[0].score, best.reasoning[:100],
                     )
             if llm_code:
                 return llm_code
@@ -1437,12 +1665,12 @@ class StrategyResearchLoop:
                 story=story,
             )
             if candidates:
-                ranked = rank_candidates(candidates)
+                ranked = await self._backtest_and_rank_candidates(candidates, iteration, "refine")
                 best = ranked[0].candidate
                 self._last_reasoning = best.reasoning
                 LOG.info(
-                    "LLM refined strategy (ranked best of %d candidates, score=%.1f): %s",
-                    len(candidates), ranked[0].score, best.reasoning[:100],
+                    "LLM refined strategy (backtested and ranked best of %d candidates, score=%.1f): %s",
+                    len(ranked), ranked[0].score, best.reasoning[:100],
                 )
                 return best.code
 

@@ -23,6 +23,7 @@ dev = ["pytest>=8.0", "httpx>=0.27"]
 [project.scripts]
 vinu-live = "vinu_live.cli:main"
 vinu-live-worker = "vinu_live.cli:worker_main"
+vinu-live-decision-worker = "vinu_live.cli:live_decision_worker_main"
 
 [tool.setuptools.packages.find]
 where = ["."]

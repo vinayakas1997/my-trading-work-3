@@ -17,9 +17,16 @@ class StrategyRegistry:
         self._strategies: dict[str, StrategyConfig] = {}
 
     def load_all(self) -> dict[str, StrategyConfig]:
-        self._strategies = {}
+        # Built in a local dict and swapped in with one assignment at the
+        # end -- a request served concurrently with a reload (get()/list()
+        # from another thread) sees either the fully-old or fully-new
+        # registry, never a partially-repopulated one where a strategy that
+        # exists momentarily looks gone because this loop hasn't reached it
+        # yet.
+        loaded: dict[str, StrategyConfig] = {}
         if not self._strategies_dir.exists():
             LOG.warning("Strategies dir %s does not exist", self._strategies_dir)
+            self._strategies = loaded
             return self._strategies
 
         for yaml_file in sorted(self._strategies_dir.glob("*.yaml")):
@@ -30,11 +37,12 @@ class StrategyRegistry:
                     LOG.warning("Skipping %s: no 'name' field", yaml_file)
                     continue
                 config = StrategyConfig.from_dict(data, source=str(yaml_file))
-                self._strategies[config.name] = config
+                loaded[config.name] = config
                 LOG.info("Loaded strategy '%s' from %s", config.name, yaml_file)
             except Exception as e:
                 LOG.error("Failed to load %s: %s", yaml_file, e)
 
+        self._strategies = loaded
         return self._strategies
 
     def get(self, name: str) -> StrategyConfig | None:

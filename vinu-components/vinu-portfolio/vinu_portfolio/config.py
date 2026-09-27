@@ -98,6 +98,35 @@ class PortfolioConfig:
     # target weight): None (default) is a no-op -- ships inert, no write
     # ever attempted. Env: VINU_SHARED_ROOT.
     shared_root: Path | None = None
+    # system-wide-audit-and-design item #4 (senior-quant "gradual capital
+    # scaling" expectation): a system-wide MaturityAssessment
+    # (cold_start/paper_only/early_live/mature -- vinu-research's own
+    # maturity_assessor.py, already wired into trade-plan-authoring's LLM
+    # prompt) previously never touched capital sizing at all. False
+    # (default) is a no-op -- every existing deployment sizes exactly as
+    # before until this is explicitly enabled, same opt-in posture
+    # vinu-research's own `maturity_tier_enabled` already uses for the
+    # prompt-context wiring. Deliberately fails OPEN (multiplier 1.0, no
+    # restriction) if the maturity assessment is unavailable for any
+    # reason -- unlike a missing risk signal that should conservatively
+    # restrict, an outage in this brand-new bridge must not be able to
+    # silently zero out deployable capital system-wide; every other tilt
+    # in this same pipeline already fails open the same way for an
+    # analogous reason. Env: VINU_PORTFOLIO_MATURITY_CAPITAL_GATING_ENABLED.
+    maturity_capital_gating_enabled: bool = False
+    # Multipliers applied to the WHOLE portfolio's deployable_equity (the
+    # same mechanism drawdown_mult already scales, not a per-strategy
+    # tilt -- MaturityAssessment is a single system-wide value, computed
+    # across every strategy's own trade/paper history, not one per
+    # strategy). Reasonable starting points, not a statistically derived
+    # ramp -- same "revisit once real data exists" caveat trade_score_gate.py's
+    # own scoring weights already carry. `mature` is intentionally not
+    # configurable here: 1.0 there just means "no restriction," not a
+    # separate knob to tune. Env: VINU_PORTFOLIO_MATURITY_MULT_COLD_START /
+    # _PAPER_ONLY / _EARLY_LIVE.
+    maturity_capital_multiplier_cold_start: float = 0.1
+    maturity_capital_multiplier_paper_only: float = 0.25
+    maturity_capital_multiplier_early_live: float = 0.5
 
     @classmethod
     def from_env(cls) -> PortfolioConfig:
@@ -136,6 +165,18 @@ class PortfolioConfig:
             ),
             reserve_fraction=float(os.getenv("VINU_PORTFOLIO_RESERVE_FRACTION", "0.0")),
             shared_root=(Path(_shared) if (_shared := os.getenv("VINU_SHARED_ROOT", "").strip()) else None),
+            maturity_capital_gating_enabled=os.getenv(
+                "VINU_PORTFOLIO_MATURITY_CAPITAL_GATING_ENABLED", "false"
+            ).lower() in ("1", "true", "yes"),
+            maturity_capital_multiplier_cold_start=float(
+                os.getenv("VINU_PORTFOLIO_MATURITY_MULT_COLD_START", "0.1")
+            ),
+            maturity_capital_multiplier_paper_only=float(
+                os.getenv("VINU_PORTFOLIO_MATURITY_MULT_PAPER_ONLY", "0.25")
+            ),
+            maturity_capital_multiplier_early_live=float(
+                os.getenv("VINU_PORTFOLIO_MATURITY_MULT_EARLY_LIVE", "0.5")
+            ),
         )
 
 

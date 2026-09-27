@@ -31,6 +31,39 @@ def ema(values: list[float], span: int) -> list[float]:
     return out
 
 
+def wilder_smooth(values: list[float], period: int) -> list[float | None]:
+    """Wilder's smoothing (RMA), alpha=1/period -- the real method Wilder-
+    family indicators (RSI, ADX, ATR) are defined with, distinct from both
+    plain SMA (no memory of prior bars past the window) and standard EMA
+    (alpha=2/(span+1), decays roughly twice as fast for the same period).
+
+    item #20 findings #1/#2 (system-wide-audit-and-design/
+    02-open-questions-strategy-and-simulation.md): `adx.py` used to smooth
+    via `ema()` and `atr.py` via `sma()` -- two different, both-wrong
+    conventions for what should be the same Wilder-family math `rsi.py`'s
+    own `_rsi()` already implements correctly. Extracted here verbatim
+    from that already-correct recursion (`avg = (avg * (period - 1) +
+    new_value) / period`, seeded by a plain average of the first `period`
+    values) rather than re-derived, so all three indicators now share one
+    real implementation instead of three independent, silently-different
+    ones.
+
+    Returns `None` for every index before the seed (index `period - 1`)
+    is available -- unlike `ema()` above, which fabricates a value from
+    index 0 with no real warmup at all.
+    """
+    n = len(values)
+    result: list[float | None] = [None] * n
+    if period <= 0 or n < period:
+        return result
+    avg = sum(values[:period]) / period
+    result[period - 1] = avg
+    for i in range(period, n):
+        avg = (avg * (period - 1) + values[i]) / period
+        result[i] = avg
+    return result
+
+
 def rolling_std(values: list[float | None], period: int) -> list[float | None]:
     result: list[float | None] = [None] * len(values)
     if period <= 0:

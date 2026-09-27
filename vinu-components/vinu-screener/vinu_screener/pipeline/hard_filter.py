@@ -27,7 +27,24 @@ class HardFilterConfig:
     all-`None` config passes everything). Field names match the keys a
     candidate's `fields` dict is expected to carry for the bounds actually
     set -- a rule only needs to supply the feature values its own filter
-    bands reference."""
+    bands reference.
+
+    item #18 finding #2: `min_volume`/`min_dollar_volume` default to
+    `None` -- nothing protects Layer 5's position sizing from an illiquid
+    name slipping through a ranker that doesn't set one. Deliberately
+    left as a documented recommendation, not a changed class default:
+    flipping the default here would silently change the live behavior of
+    any already-configured ranker that currently has no floor set (a
+    reload picks up a dataclass default change immediately, per
+    `RankerConfig.from_dict`'s `HardFilterConfig(**raw.get("hard_filter",
+    {}))`), which is a real, hard-to-reverse behavior change this finding's
+    own "low severity, worth a documented default" framing doesn't ask
+    for. `rankers/seed.py`'s `CORE_STARTER_HARD_FILTER` already answers
+    "what's a reasonable floor" for the one ranker that ships seeded by
+    default (`min_price=5.0, min_dollar_volume=1_000_000.0`) -- reuse
+    that same pair of numbers for any *new* ranker you configure, unless
+    you have a specific reason not to.
+    """
 
     min_price: float | None = None
     max_price: float | None = None
@@ -43,6 +60,15 @@ class HardFilterConfig:
     max_turnover: float | None = None
     min_turnover: float | None = None
     signal_score_min: float | None = None
+    # item #18 finding #1: neither this config nor CoarseFilter (scan/
+    # universe.py) had any minimum-history bound at all -- a thinly-traded
+    # or recently-listed symbol with as few as 30 bars could land in a
+    # ranker's top-N even though Track 1's signal_evidence needs
+    # min_observations=70 before it does anything useful with that ticker.
+    # Checked in RankerRunner.run(), before factor computation -- not one
+    # of _BOUND_FIELDS below, since it reads the OHLCV frame's own bar
+    # count, not a `fields` value computed from it.
+    min_history_bars: int | None = None
 
 
 _BOUND_FIELDS: tuple[tuple[str, str, str], ...] = (

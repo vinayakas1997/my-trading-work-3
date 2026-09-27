@@ -99,6 +99,7 @@ from vinu_initial_analysis.angles.peer_relative_strength.backtest import (
 )
 from vinu_initial_analysis.angles.pnl_attribution.compute import aggregate_pnl_attribution
 from vinu_initial_analysis.angles.regime_analysis.backtest import run_per_bar_regime_backtest
+from vinu_initial_analysis.angles.search_trends.backtest import run_search_trends_backtest
 from vinu_initial_analysis.angles.shock_clustering.backtest import run_shock_date_backtest
 from vinu_initial_analysis.angles.shock_personality.backtest import run_shock_backtest
 from vinu_initial_analysis.angles.tft.backtest import run_tft_backtest
@@ -181,6 +182,7 @@ ANGLE_REGISTRY: dict[str, tuple[Callable[..., pd.DataFrame], str]] = {
     "news_price_causality_aggregate": (run_aggregate_tests_backtest, "bars_articles"),
     "peer_relative_strength": (run_relative_strength_backtest, "bars_price_client"),
     "peer_relative_strength_forward_validation": (run_forward_return_validation, "bars_price_client"),
+    "search_trends": (run_search_trends_backtest, "bars_only"),
     "trend_session_structure": (_run_trend_session_structure_chained, "bars_time_format"),
     "pnl_attribution": (aggregate_pnl_attribution, "positions"),
 }

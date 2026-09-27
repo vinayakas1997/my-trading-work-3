@@ -23,6 +23,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from vinu_infra.rejection_log import record_rejection
+
 from .candidate import Candidate
 from .concentration import ConcentrationConfig, apply_concentration_overlay
 from .hard_filter import HardFilterConfig
@@ -53,6 +55,13 @@ class PipelineResult:
     top: list[Candidate]             # ranked[:top_n] (or the turnover-gated held set, if configured)
     enrichment: dict[str, Any] = field(default_factory=dict)
     turnover_held: list[str] | None = None
+    # item #18 finding #3: a bounded per-stage sample of {symbol: reason}
+    # for candidates FilterChain dropped -- "why was ticker Y excluded,"
+    # the counterpart to `trace`'s aggregate before/after counts. Built as
+    # a list of vinu_infra.rejection_log.RejectionRecord dicts (shared
+    # shape with item #3/#16.2's own instances of this pattern), not a
+    # new ad hoc reason format.
+    rejected_samples: list[dict] = field(default_factory=list)
 
 
 class ScreenPipeline:
@@ -85,7 +94,16 @@ class ScreenPipeline:
             HardFilterRule(self._cfg.hard_filter),
             RiskVetoRule(self._cfg.risk),
         ])
-        survivors, trace = chain.run(candidates, FilterContext())
+        survivors, trace, rejected_by_stage = chain.run(candidates, FilterContext())
+        rejected_samples = [
+            record_rejection(
+                "screener_symbol", c.symbol, stage,
+                stage,  # no finer-grained category than the stage itself yet -- see this fix's own note
+                c.veto_reason or f"dropped at {stage}",
+            ).to_dict()
+            for stage, dropped in rejected_by_stage.items()
+            for c in dropped
+        ]
 
         for c in survivors:
             try:
@@ -119,7 +137,10 @@ class ScreenPipeline:
                 except Exception:  # noqa: BLE001 -- enrichment failing must not drop the candidate from the shortlist
                     enrichment[c.symbol] = None
 
-        return PipelineResult(ranked=ranked, trace=trace, top=top, enrichment=enrichment, turnover_held=turnover_held)
+        return PipelineResult(
+            ranked=ranked, trace=trace, top=top, enrichment=enrichment,
+            turnover_held=turnover_held, rejected_samples=rejected_samples,
+        )
 
 
 def ranked_symbols_in_order(ranked: list[Candidate], held_set: set[str]) -> list[str]:

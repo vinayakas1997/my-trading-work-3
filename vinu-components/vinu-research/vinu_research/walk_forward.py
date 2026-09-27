@@ -352,6 +352,14 @@ async def run_walk_forward(
                 param_name=param_name, indicators=indicators,
                 initial_capital=initial_capital, config=inner_config,
                 tools=resolved_tools,
+                # item #3: this inner per-window grid is training-slice
+                # scaffolding for the walk-forward verdict, not a search
+                # round in its own right -- the OUTER run_sweep_grid call
+                # that actually returns `walk_forward` to its caller is
+                # what gets persisted, with this window's own result
+                # folded into that one row (item #12 finding #4), not N
+                # separate top-level sweeps for N windows.
+                persist=False,
             )
             if not grid.ranked:
                 LOG.warning(

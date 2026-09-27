@@ -10,6 +10,7 @@ from vinu_infra.runtime_settings import build_admin_settings_router
 from vinu_infra.trade_audit_log import slippage_stats
 from vinu_live.config import load_config
 from vinu_live.feedback_loop import FeedbackLoopWorker
+from vinu_live.live_decision.storage import LiveDecisionBackend, get_stage_state
 from vinu_live.scheduler import LiveScheduler
 from vinu_live.shadow_evaluator import ShadowEvaluator
 from vinu_live.trade_plan.orchestrator import SETTINGS as TRADE_PLAN_SETTINGS
@@ -140,6 +141,66 @@ def create_app() -> FastAPI:
     @router.get("/status")
     async def status() -> dict[str, str]:
         return {"status": "idle", "service": "vinu-live"}
+
+    @router.get("/decision-context/{ticker}/{strategy_id}")
+    async def decision_context(ticker: str, strategy_id: str) -> dict[str, Any]:
+        """Point 5's read side (reverse-engineering/
+        05-deciding-agent-and-precondition-tracking.md Part A) --
+        vinu-agent's get_live_decision_context tool calls this to read
+        the (ticker, strategy_id) pair's current stage + point 3's
+        persisted live_snapshot, before composing it with
+        get_signal_evidence's own historical lookup. A pair never seen
+        by the poller yet is not an error -- same "idle" default
+        get_stage_state itself returns, not a 404."""
+        config = load_config()
+        backend = LiveDecisionBackend(str(config.data_root / "live_decision.db"))
+        try:
+            state = get_stage_state(backend, ticker.upper(), strategy_id)
+        finally:
+            backend.close()
+        return {
+            "status": "ok",
+            "ticker": ticker.upper(),
+            "strategy_id": strategy_id,
+            "stage": state.stage,
+            "trigger_id": state.trigger_id,
+            "live_snapshot": state.last_snapshot,
+            "last_checked_bar_ts": state.last_checked_bar_ts,
+            "grace_window_expires_at": state.grace_window_expires_at,
+        }
+
+    @router.get("/decisions/{ticker}/{strategy_id}")
+    async def decisions(ticker: str, strategy_id: str, limit: int = 20) -> dict[str, Any]:
+        """The "accessing" half of the fix that closed the gap where
+        live_decision_agent's real, evidence-grounded verdicts were only
+        logged, never kept anywhere queryable (LiveDecisionRecord,
+        live_decision/storage.py). Read-only, same posture as
+        get_signal_evidence: honest raw rows, no computed statistic."""
+        from vinu_live.live_decision.storage import list_live_decisions
+
+        config = load_config()
+        backend = LiveDecisionBackend(str(config.data_root / "live_decision.db"))
+        try:
+            records = list_live_decisions(backend, ticker.upper(), strategy_id, limit=limit)
+        finally:
+            backend.close()
+        return {
+            "status": "ok",
+            "ticker": ticker.upper(),
+            "strategy_id": strategy_id,
+            "count": len(records),
+            "decisions": [
+                {
+                    "trigger_id": r.trigger_id,
+                    "bar_ts": r.bar_ts,
+                    "decision": r.decision,
+                    "precondition_held": r.precondition_held,
+                    "reasoning": r.reasoning,
+                    "recorded_at": r.recorded_at,
+                }
+                for r in records
+            ],
+        }
 
     @router.get("/tca/slippage")
     async def tca_slippage(symbol: str | None = None) -> dict[str, Any]:

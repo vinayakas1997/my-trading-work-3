@@ -251,3 +251,87 @@ class TestWriteFindings:
         assert len(written) == 1
         assert store.get_belief("decision_process", "system", "orchestrator") is None
         assert store.get_belief("decision_process", "system", "forecast_skill") is not None
+
+
+class TestSynthesisOutcomes:
+    """Step 8 ("the brain")'s own self-trust log -- 01-table-schemas.md's
+    `reflection_synthesis_outcomes` spec, followed exactly."""
+
+    def test_table_created(self, tmp_path):
+        store = ReflectionStore(tmp_path / "reflection.db")
+        conn = store._get_conn()
+        names = {
+            r["name"]
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        assert "reflection_synthesis_outcomes" in names
+
+    def test_record_and_get_latest_round_trips_json_fields(self, tmp_path):
+        store = ReflectionStore(tmp_path / "reflection.db")
+        sid = store.record_synthesis(
+            trigger_reason="scheduled",
+            inputs_snapshot=[{"analyst_name": "decision_process", "scope_type": "system",
+                               "scope_key": "orchestrator", "computed_at": 123.0}],
+            prediction_json={"connections": [], "maturity_profile": {"Forecast Intelligence": {"status": "healthy"}}},
+            proposed_action_type="threshold_nudge",
+            resolution_criteria="decision_process's belief for (system, orchestrator) should not still be significant",
+            resolve_by=999999999.0,
+            evidence_count_at_synthesis=40,
+        )
+        assert sid
+        latest = store.get_latest_synthesis()
+        assert latest["synthesis_id"] == sid
+        assert latest["inputs_snapshot"][0]["analyst_name"] == "decision_process"
+        assert latest["prediction_json"]["maturity_profile"]["Forecast Intelligence"]["status"] == "healthy"
+        assert latest["proposed_action_type"] == "threshold_nudge"
+        assert latest["outcome_match"] is None
+        assert latest["resolved_at"] is None
+
+    def test_get_latest_synthesis_returns_none_when_empty(self, tmp_path):
+        store = ReflectionStore(tmp_path / "reflection.db")
+        assert store.get_latest_synthesis() is None
+
+    def test_get_latest_synthesis_returns_the_most_recent_row(self, tmp_path):
+        store = ReflectionStore(tmp_path / "reflection.db")
+        store.record_synthesis(
+            trigger_reason="scheduled", inputs_snapshot=[], prediction_json={"tag": "first"},
+            proposed_action_type=None, resolution_criteria="", resolve_by=1.0,
+            evidence_count_at_synthesis=0,
+        )
+        store.record_synthesis(
+            trigger_reason="scheduled", inputs_snapshot=[], prediction_json={"tag": "second"},
+            proposed_action_type=None, resolution_criteria="", resolve_by=2.0,
+            evidence_count_at_synthesis=0,
+        )
+        assert store.get_latest_synthesis()["prediction_json"]["tag"] == "second"
+
+    def test_list_pending_syntheses_only_returns_unresolved_past_due(self, tmp_path):
+        store = ReflectionStore(tmp_path / "reflection.db")
+        past_due = store.record_synthesis(
+            trigger_reason="scheduled", inputs_snapshot=[], prediction_json={},
+            proposed_action_type=None, resolution_criteria="", resolve_by=1.0,
+            evidence_count_at_synthesis=0,
+        )
+        not_due_yet = store.record_synthesis(
+            trigger_reason="scheduled", inputs_snapshot=[], prediction_json={},
+            proposed_action_type=None, resolution_criteria="", resolve_by=99999999999.0,
+            evidence_count_at_synthesis=0,
+        )
+        pending = store.list_pending_syntheses(as_of=1000.0)
+        ids = {row["synthesis_id"] for row in pending}
+        assert past_due in ids
+        assert not_due_yet not in ids
+
+    def test_resolve_synthesis_excludes_it_from_pending_afterward(self, tmp_path):
+        store = ReflectionStore(tmp_path / "reflection.db")
+        sid = store.record_synthesis(
+            trigger_reason="scheduled", inputs_snapshot=[], prediction_json={},
+            proposed_action_type="threshold_nudge", resolution_criteria="x", resolve_by=1.0,
+            evidence_count_at_synthesis=0,
+        )
+        store.resolve_synthesis(sid, observed_outcome_json={"still_significant": False}, outcome_match="correct")
+        assert store.list_pending_syntheses(as_of=1000.0) == []
+        resolved = store.get_latest_synthesis()
+        assert resolved["outcome_match"] == "correct"
+        assert resolved["observed_outcome_json"] == {"still_significant": False}
+        assert resolved["resolved_at"] is not None

@@ -48,6 +48,80 @@ class TestPortfolioDrawdownMonitor:
         assert result["threshold_breached"] is False
         mock_post.assert_not_called()
 
+
+class TestActionLadder:
+    def test_ok_below_halve_threshold(self) -> None:
+        monitor = PortfolioDrawdownMonitor(drawdown_threshold=-0.20, halve_threshold=-0.10, flat_threshold=-0.15)
+        with patch("vinu_portfolio.circuit_breakers.httpx.post"):
+            monitor.update(100_000.0)
+            result = monitor.update(95_000.0)  # -5%
+        assert result["action"] == "ok"
+
+    def test_halve_between_halve_and_flat_thresholds(self) -> None:
+        monitor = PortfolioDrawdownMonitor(drawdown_threshold=-0.20, halve_threshold=-0.10, flat_threshold=-0.15)
+        with patch("vinu_portfolio.circuit_breakers.httpx.post"):
+            monitor.update(100_000.0)
+            result = monitor.update(88_000.0)  # -12%
+        assert result["action"] == "halve"
+
+    def test_flat_between_flat_and_halt_thresholds(self) -> None:
+        monitor = PortfolioDrawdownMonitor(drawdown_threshold=-0.20, halve_threshold=-0.10, flat_threshold=-0.15)
+        with patch("vinu_portfolio.circuit_breakers.httpx.post"):
+            monitor.update(100_000.0)
+            result = monitor.update(83_000.0)  # -17%
+        assert result["action"] == "flat"
+
+    def test_halt_at_drawdown_threshold(self) -> None:
+        monitor = PortfolioDrawdownMonitor(drawdown_threshold=-0.20, halve_threshold=-0.10, flat_threshold=-0.15)
+        with patch("vinu_portfolio.circuit_breakers.httpx.post"):
+            monitor.update(100_000.0)
+            result = monitor.update(75_000.0)  # -25%
+        assert result["action"] == "halt"
+
+
+class TestConsecutiveUnavailableEscalation:
+    """Item #23 finding #4: an extended agent-api outage must eventually
+    escalate to a real halt, not stay silently inert forever."""
+
+    def test_below_threshold_does_not_escalate(self) -> None:
+        monitor = PortfolioDrawdownMonitor(unavailable_halt_threshold=3)
+        with patch("vinu_portfolio.circuit_breakers.httpx.post") as mock_post:
+            r1 = monitor.note_unavailable()
+            r2 = monitor.note_unavailable()
+
+        assert r1["consecutive_unavailable"] == 1
+        assert r2["consecutive_unavailable"] == 2
+        assert r1["escalated_halt"] is False
+        assert r2["escalated_halt"] is False
+        mock_post.assert_not_called()
+
+    def test_crossing_threshold_escalates_to_a_real_halt(self) -> None:
+        monitor = PortfolioDrawdownMonitor(unavailable_halt_threshold=3, agent_api_url="http://agent-api.test")
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.return_value = None
+        with patch("vinu_portfolio.circuit_breakers.httpx.post", return_value=mock_resp) as mock_post:
+            monitor.note_unavailable()
+            monitor.note_unavailable()
+            result = monitor.note_unavailable()
+
+        assert result["consecutive_unavailable"] == 3
+        assert result["escalated_halt"] is True
+        assert result["action"] == "halt"
+        mock_post.assert_called_once()
+        assert mock_post.call_args.args[0] == "http://agent-api.test/agent/broker/halt"
+
+    def test_a_successful_update_resets_the_streak(self) -> None:
+        monitor = PortfolioDrawdownMonitor(unavailable_halt_threshold=3)
+        with patch("vinu_portfolio.circuit_breakers.httpx.post") as mock_post:
+            monitor.note_unavailable()
+            monitor.note_unavailable()
+            monitor.update(100_000.0)  # agent-api reachable again
+            r3 = monitor.note_unavailable()
+
+        assert r3["consecutive_unavailable"] == 1  # streak restarted, not 3
+        assert r3["escalated_halt"] is False
+        mock_post.assert_not_called()
+
     def test_env_var_default_used_when_not_passed(self) -> None:
         with patch.dict("os.environ", {"VINU_AGENT_API_URL": "http://from-env:9999"}):
             monitor = PortfolioDrawdownMonitor()

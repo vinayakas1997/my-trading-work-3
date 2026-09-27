@@ -1,0 +1,30 @@
+title: Search Trends
+category: raw_data
+needs_bars: false
+purpose: >
+  Google search interest over time for a symbol's raw ticker (weekly
+  resolution over a trailing 12-month window, via pytrends -- the
+  unofficial Google Trends API, no paid tier or API key needed).
+  High-expectations cross-check: "alternative data" named search-trends
+  interest explicitly as a signal with no existing ingestion anywhere in
+  this system; order-book depth and on-chain data were checked alongside
+  this one and deferred (paid-tier/no-real-consumer blockers this angle
+  doesn't have). Queried by raw ticker symbol, not a resolved company
+  name -- no symbol-to-company-name mapping exists anywhere in this
+  codebase to reuse, and building one is a separate, real scope decision,
+  left open rather than invented here.
+time_formats:
+- 1D
+inputs:
+  symbol: str
+  from_ts: int | None
+  to_ts: int | None
+outputs:
+- column: angle_data
+  type: dict
+  description: >
+    One row per sampled week: date, bar_ts, search_interest (Google's own
+    0-100 relative scale for the requested window), is_partial (the
+    current, still-accumulating week), search_interest_zscore (rolling
+    12-week z-score -- a genuine spike relative to this series' own
+    recent baseline, not just a raw score above an arbitrary constant).

@@ -8,7 +8,14 @@ import pytest
 from vinu_research.models import BacktestMetrics, BacktestResult
 from vinu_research.config import ResearchConfig
 from vinu_research.server.routes_sweep import _serialize_grid
-from vinu_research.sweep_grid import GridTooLargeError, MAX_GRID_POINTS, SweepGridResult, run_sweep_grid
+from vinu_research.sweep_grid import (
+    GridTooLargeError,
+    MAX_GRID_POINTS,
+    SweepGridResult,
+    param_diff_from_winner,
+    run_sweep_grid,
+)
+from vinu_research.sweep_store import SweepGridStore
 
 
 def _bt_result(run_id: str, sharpe: float, *, equity_points: int = 100, daily_returns=None) -> BacktestResult:
@@ -37,7 +44,7 @@ class TestRunSweepGridRecipeMode:
 
         result = await run_sweep_grid(
             symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31",
-            recipe="crossover", param_grid=grid, tools=mock_tools,
+            recipe="crossover", param_grid=grid, tools=mock_tools, persist=False,
         )
 
         assert mock_tools.run_backtest.await_count == 12  # 12 internal calls...
@@ -65,7 +72,7 @@ class TestRunSweepGridRecipeMode:
 
         result = await run_sweep_grid(
             symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31",
-            recipe="crossover", param_grid=grid, tools=mock_tools,
+            recipe="crossover", param_grid=grid, tools=mock_tools, persist=False,
         )
 
         top = result.ranked[0]
@@ -95,7 +102,7 @@ class TestRunSweepGridRecipeMode:
         grid = [{"fast_period": 5 + i, "slow_period": 40} for i in range(10)]
         result = await run_sweep_grid(
             symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31",
-            recipe="crossover", param_grid=grid, tools=mock_tools,
+            recipe="crossover", param_grid=grid, tools=mock_tools, persist=False,
         )
 
         assert result.requested == 10
@@ -129,7 +136,7 @@ class TestRunSweepGridRecipeMode:
 
         result = await run_sweep_grid(
             symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31",
-            recipe="crossover", param_grid=grid, tools=mock_tools,
+            recipe="crossover", param_grid=grid, tools=mock_tools, persist=False,
         )
 
         assert result.pbo is not None
@@ -143,6 +150,7 @@ class TestRunSweepGridRecipeMode:
         result = await run_sweep_grid(
             symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31",
             recipe="crossover", param_grid=[{"fast_period": 5, "slow_period": 40}], tools=mock_tools,
+            persist=False,
         )
 
         assert result.pbo is None
@@ -188,7 +196,7 @@ class TestRunSweepGridBaseCodeMode:
             symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31",
             base_code=code, param_name="fast_period",
             param_grid=[{"fast_period": 5}, {"fast_period": 10}],
-            tools=mock_tools,
+            tools=mock_tools, persist=False,
         )
 
         assert result.succeeded == 2
@@ -231,7 +239,7 @@ class TestRunSweepGridWalkForwardWiring:
         return await run_sweep_grid(
             symbol="TEST", from_date="2024-01-01", to_date="2024-12-31",
             param_grid=[{"fast_period": 5, "slow_period": 40}, {"fast_period": 10, "slow_period": 40}],
-            recipe="crossover", config=config, tools=mock_tools,
+            recipe="crossover", config=config, tools=mock_tools, persist=False,
         ), calls
 
     @pytest.mark.asyncio
@@ -260,3 +268,171 @@ class TestRunSweepGridWalkForwardWiring:
         payload = _serialize_grid(result)
         assert "walk_forward" in payload
         assert payload["walk_forward"]["stability_verdict"]["passed"] is True
+
+
+class TestRunSweepGridPersistence:
+    """item #3: run_sweep_grid's own comparison is now persisted by
+    default -- the exact "computed, then thrown away" gap this item
+    names. persist=False (used by every other test class above) is what
+    walk_forward.py's own inner per-window grids use, and what the rest
+    of this test file uses to avoid touching a real on-disk store."""
+
+    @pytest.mark.asyncio
+    async def test_persists_to_the_given_store_and_returns_a_real_sweep_id(self) -> None:
+        mock_tools = AsyncMock()
+        mock_tools.run_backtest.side_effect = [
+            _bt_result("run-a", sharpe=1.0), _bt_result("run-b", sharpe=2.0),
+        ]
+        store = SweepGridStore(":memory:")
+        grid = [{"fast_period": 5, "slow_period": 40}, {"fast_period": 10, "slow_period": 40}]
+
+        result = await run_sweep_grid(
+            symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31",
+            recipe="crossover", param_grid=grid, tools=mock_tools,
+            sweep_store=store,
+        )
+
+        assert result.sweep_id
+        stored = store.get_sweep(result.sweep_id)
+        assert stored is not None
+        assert stored["symbol"] == "AAPL"
+        assert stored["requested"] == 2
+        assert len(stored["points"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_persist_false_never_touches_the_store_and_sweep_id_is_blank(self) -> None:
+        mock_tools = AsyncMock()
+        mock_tools.run_backtest.side_effect = [_bt_result("run-a", sharpe=1.0)]
+        store = SweepGridStore(":memory:")
+
+        result = await run_sweep_grid(
+            symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31",
+            recipe="crossover", param_grid=[{"fast_period": 5, "slow_period": 40}],
+            tools=mock_tools, persist=False, sweep_store=store,
+        )
+
+        assert result.sweep_id == ""
+        assert store.list_sweeps() == []
+
+    @pytest.mark.asyncio
+    async def test_a_failed_grid_point_is_persisted_with_its_reason(self) -> None:
+        mock_tools = AsyncMock()
+        mock_tools.run_backtest.side_effect = [
+            _bt_result("run-ok", sharpe=1.0), RuntimeError("simulator rejected candidate"),
+        ]
+        store = SweepGridStore(":memory:")
+
+        result = await run_sweep_grid(
+            symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31",
+            recipe="crossover",
+            param_grid=[{"fast_period": 5, "slow_period": 40}, {"fast_period": 10, "slow_period": 40}],
+            tools=mock_tools, sweep_store=store,
+        )
+
+        stored = store.get_sweep(result.sweep_id)
+        failed = [p for p in stored["points"] if not p["succeeded"]]
+        assert len(failed) == 1
+        assert "simulator rejected candidate" in failed[0]["failure_reason"]
+
+    @pytest.mark.asyncio
+    async def test_persistence_failure_does_not_fail_the_sweep_itself(self, monkeypatch) -> None:
+        """A broken store must never take down a real sweep result --
+        same posture as every other best-effort side-write in this
+        codebase (notifications, escalations, ...)."""
+        mock_tools = AsyncMock()
+        mock_tools.run_backtest.side_effect = [_bt_result("run-a", sharpe=1.0)]
+
+        class _BrokenStore:
+            def record_sweep(self, *args, **kwargs):
+                raise RuntimeError("disk full")
+
+        result = await run_sweep_grid(
+            symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31",
+            recipe="crossover", param_grid=[{"fast_period": 5, "slow_period": 40}],
+            tools=mock_tools, sweep_store=_BrokenStore(),
+        )
+
+        assert result.succeeded == 1
+        assert result.sweep_id  # still generated even though the write failed
+
+    @pytest.mark.asyncio
+    async def test_no_explicit_store_lazily_builds_one_at_configs_data_root(self, tmp_path) -> None:
+        mock_tools = AsyncMock()
+        mock_tools.run_backtest.side_effect = [_bt_result("run-a", sharpe=1.0)]
+        config = ResearchConfig(data_root=tmp_path)
+
+        result = await run_sweep_grid(
+            symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31",
+            recipe="crossover", param_grid=[{"fast_period": 5, "slow_period": 40}],
+            tools=mock_tools, config=config,
+        )
+
+        assert (tmp_path / "sweep_grid.db").exists()
+        store = SweepGridStore(tmp_path / "sweep_grid.db")
+        assert store.get_sweep(result.sweep_id) is not None
+
+
+class TestParamDiffFromWinner:
+    """item #14B: "the single most valuable field" the senior-quant
+    recommendation names -- a direct answer to what specifically cost a
+    candidate the win, not just a worse score."""
+
+    def test_no_difference_is_an_empty_dict(self) -> None:
+        assert param_diff_from_winner({"fast_period": 9}, {"fast_period": 9}) == {}
+
+    def test_a_differing_value_is_reported_both_sides(self) -> None:
+        diff = param_diff_from_winner(
+            {"fast_period": 20, "slow_period": 40}, {"fast_period": 9, "slow_period": 40},
+        )
+        assert diff == {"fast_period": {"candidate": 20, "winner": 9}}
+
+    def test_a_key_present_only_on_the_candidate_side_compares_against_none(self) -> None:
+        diff = param_diff_from_winner({"fast_period": 9, "extra": 1}, {"fast_period": 9})
+        assert diff == {"extra": {"candidate": 1, "winner": None}}
+
+    def test_a_key_present_only_on_the_winner_side_compares_against_none(self) -> None:
+        diff = param_diff_from_winner({"fast_period": 9}, {"fast_period": 9, "extra": 1})
+        assert diff == {"extra": {"candidate": None, "winner": 1}}
+
+    def test_both_empty_is_an_empty_dict(self) -> None:
+        assert param_diff_from_winner({}, {}) == {}
+
+
+class TestSerializeGridIncludesParamDiff:
+    @pytest.mark.asyncio
+    async def test_every_ranked_entry_carries_its_diff_against_the_winner(self) -> None:
+        mock_tools = AsyncMock()
+        # Higher sharpe -> higher score -> winner; the losing candidate's
+        # only differing param is fast_period (20 vs the winner's 9).
+        mock_tools.run_backtest.side_effect = [
+            _bt_result("run-winner", sharpe=2.0),
+            _bt_result("run-loser", sharpe=0.5),
+        ]
+        result = await run_sweep_grid(
+            symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31",
+            recipe="crossover",
+            param_grid=[{"fast_period": 9, "slow_period": 40}, {"fast_period": 20, "slow_period": 40}],
+            tools=mock_tools, persist=False,
+        )
+        payload = _serialize_grid(result)
+        winner_entry = payload["ranked"][0]
+        loser_entry = payload["ranked"][1]
+        assert winner_entry["param_diff_from_winner"] == {}
+        assert loser_entry["param_diff_from_winner"] == {
+            "fast_period": {"candidate": 20, "winner": 9},
+        }
+
+    @pytest.mark.asyncio
+    async def test_all_candidates_failing_leaves_ranked_empty_and_does_not_crash(self) -> None:
+        """result.ranked can be empty (every point crashed) -- winner_params
+        must fail open to {} rather than IndexError."""
+        mock_tools = AsyncMock()
+        mock_tools.run_backtest.side_effect = RuntimeError("boom")
+        result = await run_sweep_grid(
+            symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31",
+            recipe="crossover",
+            param_grid=[{"fast_period": 9, "slow_period": 40}],
+            tools=mock_tools, persist=False,
+        )
+        payload = _serialize_grid(result)
+        assert payload["ranked"] == []

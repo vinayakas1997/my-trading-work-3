@@ -25,6 +25,7 @@ ARTICLE_COLUMNS = (
     "lang", "threat_level", "threat_cat", "threat_conf", "source_flag",
     "entities_json", "cluster_id", "is_lead", "thread_id",
     "finbert_score", "finbert_label",
+    "published_at", "ingested_at", "publish_time_is_estimated",
 )
 
 THREAD_COLUMNS = (
@@ -50,6 +51,9 @@ _MIGRATION_COLUMNS = (
     ("thread_id", "TEXT"),
     ("finbert_score", "REAL"),
     ("finbert_label", "TEXT"),
+    ("published_at", "INTEGER"),
+    ("ingested_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("publish_time_is_estimated", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -294,16 +298,23 @@ class NewsRepository(SQLiteBackend):
         return [dict(row) for row in rows]
 
 
-def parse_pub_date(pub_date: str) -> int:
-    """Parse RSS pubDate string to Unix timestamp (seconds)."""
+def parse_pub_date(pub_date: str) -> tuple[int | None, bool]:
+    """Parse RSS pubDate string to a Unix timestamp (seconds).
+
+    Returns `(timestamp, is_estimated)`. `is_estimated=True` means no real
+    pubDate could be parsed and `timestamp` is `None` -- the caller is
+    responsible for substituting its own real "now" (item #19 finding #1:
+    this function silently returning `now()` here, with no signal that a
+    substitution happened, is exactly the silent look-ahead-bias gap that
+    was found and fixed)."""
     if not pub_date:
-        return int(datetime.now(timezone.utc).timestamp())
+        return None, True
 
     try:
         dt = parsedate_to_datetime(pub_date)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return int(dt.timestamp())
+        return int(dt.timestamp()), False
     except (TypeError, ValueError, OverflowError):
         pass
 
@@ -314,11 +325,11 @@ def parse_pub_date(pub_date: str) -> int:
     ):
         try:
             dt = datetime.strptime(pub_date, fmt).replace(tzinfo=timezone.utc)
-            return int(dt.timestamp())
+            return int(dt.timestamp()), False
         except ValueError:
             continue
 
-    return int(datetime.now(timezone.utc).timestamp())
+    return None, True
 
 
 def utc_date_from_ts(sort_ts: int) -> str:

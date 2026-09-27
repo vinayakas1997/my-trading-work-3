@@ -60,6 +60,17 @@ def _occ_type(symbol: str) -> str | None:
     return symbol[10:11] if len(symbol) >= 11 else None
 
 
+class RetryableOptionsError(RuntimeError):
+    """item #11 finding #5: a transient options-fetch failure -- a 429/5xx
+    status, or a network-level timeout/connection error (the same class
+    vinu_infra.retry's own retry_on_transient treats as retryable) -- as
+    opposed to PermissionError (401/403, a permanent credential/
+    entitlement problem) or any other exception (also permanent: a bad
+    symbol, a malformed response, etc.). Lets a calling LLM (or any other
+    caller) tell whether retrying this exact request makes sense, instead
+    of every failure collapsing into the same generic error."""
+
+
 def fetch_chain(symbol: str, limit: int = 60, expiration: str | None = None) -> list[dict[str, object]]:
     """Return a normalized list of contract rows with greeks + IV + quotes."""
     if not ALPACA_API_KEY or not ALPACA_API_SECRET:
@@ -68,16 +79,23 @@ def fetch_chain(symbol: str, limit: int = 60, expiration: str | None = None) -> 
     if expiration:
         params["expiration_gte"] = expiration
         params["expiration_lte"] = expiration
-    resp = requests.get(
-        f"{ALPACA_DATA_BASE_URL}/v1beta1/options/snapshots/{symbol.upper()}",
-        headers=_auth_headers(),
-        params=params,
-        timeout=20.0,
-    )
-    if resp.status_code == 401:
-        raise PermissionError(
-            "Options data returned HTTP 401 (credential/account lacks options-data entitlement)"
+    try:
+        resp = requests.get(
+            f"{ALPACA_DATA_BASE_URL}/v1beta1/options/snapshots/{symbol.upper()}",
+            headers=_auth_headers(),
+            params=params,
+            timeout=20.0,
         )
+    except (requests.Timeout, requests.ConnectionError) as exc:
+        raise RetryableOptionsError(
+            f"Options data request failed ({type(exc).__name__}): {exc}"
+        ) from exc
+    if resp.status_code in (401, 403):
+        raise PermissionError(
+            f"Options data returned HTTP {resp.status_code} (credential/account lacks options-data entitlement)"
+        )
+    if resp.status_code == 429 or resp.status_code >= 500:
+        raise RetryableOptionsError(f"Options data returned HTTP {resp.status_code} (retryable)")
     resp.raise_for_status()
     body = resp.json()
     snapshots = body.get("snapshots") or {}
@@ -156,9 +174,12 @@ class OptionsGreeksTool(BaseTool):
         limit = int(kwargs.get("limit", 100))
         try:
             rows = fetch_chain(symbol, limit=limit, expiration=expiration)
+        except RetryableOptionsError as exc:
+            logger.warning("Options fetch failed for %s (retryable): %s", symbol, exc)
+            return json.dumps({"status": "error", "error": str(exc), "retryable": True})
         except Exception as exc:
             logger.warning("Options fetch failed for %s: %s", symbol, exc)
-            return json.dumps({"status": "error", "error": str(exc)})
+            return json.dumps({"status": "error", "error": str(exc), "retryable": False})
         if not rows:
             return json.dumps({
                 "status": "empty",

@@ -246,6 +246,22 @@ class TestRankOnDemand:
         assert len(body["trace"]) >= 1
         assert {"stage", "supports_backtesting", "before", "after"} <= set(body["trace"][0].keys())
 
+    def test_rank_now_response_includes_rejected_samples_key(self, client: TestClient) -> None:
+        """item #18 finding #3: the "why was ticker Y excluded" sample
+        must reach the real HTTP response, not just the store -- same
+        wiring check as the trace test above, for the new field."""
+        client.put("/screener/rankers/r1", json=_RANKER_BODY)
+        resp = client.post("/screener/rankers/r1/rank")
+        body = resp.json()
+        assert "rejected_samples" in body
+        assert isinstance(body["rejected_samples"], list)
+
+    def test_latest_response_also_includes_rejected_samples_key(self, client: TestClient) -> None:
+        client.put("/screener/rankers/r1", json=_RANKER_BODY)
+        client.post("/screener/rankers/r1/rank")
+        resp = client.get("/screener/rankers/r1/latest")
+        assert "rejected_samples" in resp.json()
+
     def test_latest_is_404_before_any_run(self, client: TestClient) -> None:
         client.put("/screener/rankers/r1", json=_RANKER_BODY)
         assert client.get("/screener/rankers/r1/latest").status_code == 404

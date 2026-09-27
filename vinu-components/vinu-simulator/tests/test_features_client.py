@@ -45,3 +45,60 @@ class TestGetIndicatorsFailureIsLogged:
         assert result is not None
         assert "rsi_14" in result.columns
         assert len(result) == 2
+
+
+class TestGetIndicatorsCache:
+    """item #13 finding #4: identical requests should not re-hit the
+    network."""
+
+    def test_repeated_identical_request_does_not_refetch(self):
+        client = FeaturesClient(base_url="http://features.invalid")
+        calls = {"n": 0}
+
+        def _get(path, params=None):
+            calls["n"] += 1
+            return [{"ts": 0, "rsi_14": 55.0}]
+
+        client.get = _get
+        client.get_indicators("AAPL", ["rsi_14"], 0, 100)
+        client.get_indicators("AAPL", ["rsi_14"], 0, 100)
+
+        assert calls["n"] == 1
+
+    def test_kind_order_does_not_defeat_the_cache(self):
+        client = FeaturesClient(base_url="http://features.invalid")
+        calls = {"n": 0}
+
+        def _get(path, params=None):
+            calls["n"] += 1
+            return [{"ts": 0, "rsi_14": 55.0, "adx_14": 30.0}]
+
+        client.get = _get
+        client.get_indicators("AAPL", ["rsi_14", "adx_14"], 0, 100)
+        client.get_indicators("AAPL", ["adx_14", "rsi_14"], 0, 100)
+
+        assert calls["n"] == 1
+
+    def test_a_failed_fetch_is_not_cached(self):
+        client = FeaturesClient(base_url="http://features.invalid")
+        calls = {"n": 0}
+
+        def _boom(path, params=None):
+            calls["n"] += 1
+            raise RuntimeError("upstream 500")
+
+        client.get = _boom
+        client.get_indicators("AAPL", ["rsi_14"], 0, 100)
+        client.get_indicators("AAPL", ["rsi_14"], 0, 100)
+
+        assert calls["n"] == 2  # both calls actually tried, nothing bad cached
+
+    def test_cache_hit_returns_an_independent_copy(self):
+        client = FeaturesClient(base_url="http://features.invalid")
+        client.get = lambda path, params=None: [{"ts": 0, "rsi_14": 55.0}]
+
+        first = client.get_indicators("AAPL", ["rsi_14"], 0, 100)
+        second = client.get_indicators("AAPL", ["rsi_14"], 0, 100)
+        second.iloc[0, 0] = 999.0
+
+        assert first.iloc[0, 0] == 55.0

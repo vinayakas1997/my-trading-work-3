@@ -47,6 +47,21 @@ class ReflectionConfig:
     #: vinu_reflection/reflection/_initial_analysis_parquet.py.
     initial_analysis_data_root: Path
     worker_interval_sec: int
+    #: Step 8 ("the brain", thinking-1/02-decided-pattern/
+    #: 00-decided-pattern.md section 8) -- opt-in, off by default, same
+    #: cautious-rollout posture every other maturity-tier/agentic
+    #: consumer in this codebase already uses. Off means the worker loop
+    #: behaves exactly as it did before this existed: 24 analysts,
+    #: nothing else.
+    brain_synthesis_enabled: bool
+    #: How often the brain's own (LLM-calling) cycle runs, decoupled
+    #: from `worker_interval_sec` (the analysts' own, much cheaper,
+    #: non-LLM cycle) -- re-synthesizing on every 5-minute analyst tick
+    #: would mean repeatedly re-running an LLM call over an unchanged
+    #: set of active beliefs. 3600s (hourly), a guessed starting
+    #: constant, same "first-pass, unvalidated" category as every other
+    #: un-pinned interval in this codebase.
+    brain_synthesis_worker_interval_sec: int
 
 
 DEFAULT_WORKER_INTERVAL_SEC = 300
@@ -77,6 +92,12 @@ def load_config() -> ReflectionConfig:
     interval = int(
         os.environ.get("VINU_REFLECTION_WORKER_INTERVAL_SEC", str(DEFAULT_WORKER_INTERVAL_SEC))
     )
+    brain_synthesis_enabled = os.environ.get(
+        "VINU_REFLECTION_BRAIN_SYNTHESIS_ENABLED", "false",
+    ).lower() in ("1", "true", "yes")
+    brain_synthesis_worker_interval_sec = int(
+        os.environ.get("VINU_REFLECTION_BRAIN_SYNTHESIS_INTERVAL_SEC", "3600")
+    )
     return ReflectionConfig(
         data_root=data_root,
         agent_data_root=agent_data_root,
@@ -86,4 +107,6 @@ def load_config() -> ReflectionConfig:
         stock_data_root=stock_data_root,
         initial_analysis_data_root=initial_analysis_data_root,
         worker_interval_sec=interval,
+        brain_synthesis_enabled=brain_synthesis_enabled,
+        brain_synthesis_worker_interval_sec=brain_synthesis_worker_interval_sec,
     )

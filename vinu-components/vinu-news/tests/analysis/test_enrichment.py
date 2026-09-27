@@ -1,6 +1,7 @@
 """Tests mirroring step_1_1_news.md worked examples."""
 
 import tempfile
+import time
 from pathlib import Path
 
 from vinu_news.analysis.enrichment.category import refine_category
@@ -12,7 +13,7 @@ from vinu_news.analysis.enrichment.ticker_dominance import compute_dominance
 from vinu_news.analysis.enrichment.ticker_extractor import extract_tickers
 from vinu_news.analysis.enrichment.threat import classify_threat
 from vinu_news.analysis.pipeline import enrich_article, process_batch
-from vinu_news.analysis.storage.repository import NewsRepository
+from vinu_news.analysis.storage.repository import NewsRepository, parse_pub_date
 
 
 class TestPriority:
@@ -197,6 +198,75 @@ class TestPipeline:
         entities = result.articles[0].article.entities()
         assert "Jerome Powell" in entities["people"]
         assert "US" in entities["countries"]
+
+
+class TestParsePubDate:
+    """item #19 (vinu-news finding #1): `parse_pub_date` used to silently
+    return `now()` on any missing/unparseable pubDate, with no signal
+    that a substitution happened -- a genuine, silent look-ahead-bias
+    risk. It now reports `(timestamp, is_estimated)` instead."""
+
+    def test_a_real_parseable_pubdate_is_not_estimated(self):
+        ts, is_estimated = parse_pub_date("Sun, 14 Jun 2026 12:00:00 GMT")
+        assert ts is not None
+        assert is_estimated is False
+
+    def test_missing_pubdate_is_estimated_with_no_timestamp(self):
+        ts, is_estimated = parse_pub_date("")
+        assert ts is None
+        assert is_estimated is True
+
+    def test_unparseable_pubdate_is_estimated_with_no_timestamp(self):
+        ts, is_estimated = parse_pub_date("not a real date at all")
+        assert ts is None
+        assert is_estimated is True
+
+    def test_iso_format_pubdate_is_not_estimated(self):
+        ts, is_estimated = parse_pub_date("2026-06-14T12:00:00Z")
+        assert ts is not None
+        assert is_estimated is False
+
+
+class TestPointInTimeMetadataOnEnrichedArticles:
+    """Proves the fix actually reaches `ArticleRecord`, not just
+    `parse_pub_date` in isolation -- the exact "front and back" wiring
+    check this audit series keeps applying."""
+
+    def test_a_real_pubdate_sets_published_at_and_is_not_flagged_estimated(self):
+        raw = {
+            "headline": "Test headline",
+            "summary": "Test summary.",
+            "link": "https://example.com/real-pubdate",
+            "pubDate": "Sun, 14 Jun 2026 12:00:00 GMT",
+            "source": "REUTERS",
+            "region": "US",
+            "tier": 1,
+        }
+        enriched = enrich_article(raw)
+        article = enriched.article
+        assert article.published_at is not None
+        assert article.publish_time_is_estimated is False
+        assert article.sort_ts == article.published_at
+        assert article.ingested_at > 0
+
+    def test_a_missing_pubdate_flags_estimated_and_falls_back_sort_ts_to_ingested_at(self):
+        raw = {
+            "headline": "Test headline",
+            "summary": "Test summary.",
+            "link": "https://example.com/missing-pubdate",
+            "source": "REUTERS",
+            "region": "US",
+            "tier": 1,
+        }
+        before = int(time.time())
+        enriched = enrich_article(raw)
+        after = int(time.time())
+        article = enriched.article
+
+        assert article.published_at is None
+        assert article.publish_time_is_estimated is True
+        assert before <= article.ingested_at <= after
+        assert article.sort_ts == article.ingested_at
 
 
 class TestRepository:

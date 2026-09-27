@@ -108,3 +108,16 @@ class TestLoadConfigOrchestratorLlm:
         assert config.orchestrator_llm.model_name == "claude-opus"
         # Teams/specialists' LLMConfig is untouched by the orchestrator override.
         assert config.llm.provider != "anthropic" or config.llm is not config.orchestrator_llm
+
+
+class TestLoadConfigLiveDecisionMaturityScaling:
+    """high-expectations follow-up, point #3's own knob -- off by default,
+    same cautious-rollout posture as every other maturity-tier consumer."""
+
+    def test_defaults_to_false(self, monkeypatch) -> None:
+        monkeypatch.delenv("VINU_AGENT_LIVE_DECISION_MATURITY_SCALING_ENABLED", raising=False)
+        assert load_config().live_decision_maturity_scaling_enabled is False
+
+    def test_picks_up_env_var(self, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_AGENT_LIVE_DECISION_MATURITY_SCALING_ENABLED", "true")
+        assert load_config().live_decision_maturity_scaling_enabled is True

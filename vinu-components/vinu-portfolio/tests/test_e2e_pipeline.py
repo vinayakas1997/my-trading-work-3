@@ -65,6 +65,7 @@ class TestEndToEndPipeline:
             return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0}
         )
         svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+        svc._fetch_positions = AsyncMock(return_value=[])
 
         allocation = asyncio.run(svc.compute_daily_allocation())
         assert allocation["status"] == "ok"

@@ -130,9 +130,19 @@ class ReconciliationDriftRequest(BaseModel):
     than a server log nobody was necessarily tailing."""
 
     symbol: str
-    action: str  # "alert_phantom_broker_position" | "alert_side_conflict"
+    action: str  # "alert_phantom_broker_position" | "alert_side_conflict" | "target_weight_drift"
     book_qty: float | None = None
     broker_qty: float | None = None
+    # item #24 finding #3 (missing-pieces-of-system/new-theory-of-trading/
+    # system-wide-audit-and-design/02-open-questions-strategy-and-
+    # simulation.md): LiveScheduler's own reconciliation (target weight
+    # vs. current broker position, a genuinely different comparison than
+    # book-vs-broker above -- see scheduler.py::_handle_reconciliation_
+    # drift's own docstring) uses these instead of book_qty/broker_qty,
+    # which would be a misleading label for "what the target wants".
+    expected_qty: float | None = None
+    actual_qty: float | None = None
+    drift_pct: float | None = None
 
 
 def _format_reconciliation_drift_message(body: ReconciliationDriftRequest) -> str:
@@ -145,6 +155,14 @@ def _format_reconciliation_drift_message(body: ReconciliationDriftRequest) -> st
         detail = (
             f"book and broker disagree on side (book={body.book_qty}, broker={body.broker_qty}) "
             f"-- NOT auto-corrected, never auto-flipped."
+        )
+    elif body.action == "target_weight_drift":
+        detail = (
+            f"target-weight position has not converged for several consecutive "
+            f"cycles (expected {body.expected_qty}, actually holding "
+            f"{body.actual_qty}, {body.drift_pct}% drift). Orders are being "
+            f"planned but not closing the gap -- may indicate a stuck/failing "
+            f"order, an unpriceable symbol, or a halt."
         )
     else:
         detail = f"{body.action} (book={body.book_qty}, broker={body.broker_qty})"
@@ -163,3 +181,47 @@ async def notify_reconciliation_drift(body: ReconciliationDriftRequest) -> dict[
     key = f"reconciliation-drift:{body.symbol}:{body.action}"
     text = _format_reconciliation_drift_message(body)
     return await _deliver_notification(key, Severity.CRITICAL, text)
+
+
+class SymbolConflictRequest(BaseModel):
+    """item #23 finding #1 (system-wide-audit-and-design/
+    02-open-questions-strategy-and-simulation.md): the net/keep-separate/
+    block policy question is decided -- **net** (a single brokerage
+    account cannot hold two opposing positions in the same symbol at
+    once; `vinu-live`'s `SignalTranslator._net_by_symbol`, item #24
+    finding #2, already enforces this at the one correct point, right
+    before an order is built). This route is not about that decision --
+    it's the escalation `vinu-portfolio`'s `_detect_symbol_conflicts`
+    (the conflict's actual source) was missing for the *severe* case:
+    two strategies whose disagreement is large enough that netting them
+    away quietly is worth a human knowing about, not just a WARNING log
+    line. WARNING severity (not CRITICAL like reconciliation-drift):
+    netting already handles this correctly downstream, so this is
+    informational escalation, not an unmanaged-money-risk alert."""
+
+    symbol: str
+    contributions: list[dict[str, object]]
+    net_weight: float
+    gross_weight: float
+    severity: float
+
+
+def _format_symbol_conflict_message(body: SymbolConflictRequest) -> str:
+    return (
+        f"[Symbol Conflict] {body.symbol}: {len(body.contributions)} strategies disagree "
+        f"({body.contributions}) -- net {body.net_weight:.4f} of gross {body.gross_weight:.4f} "
+        f"({body.severity:.0%} canceled out). Netted automatically before execution "
+        f"(policy: net) -- flagged because the disagreement is large, not because "
+        f"anything is unmanaged."
+    )
+
+
+@router.post("/notify/symbol-conflict")
+async def notify_symbol_conflict(body: SymbolConflictRequest) -> dict[str, object]:
+    """Same 'networked front door' idiom as the routes above --
+    vinu-portfolio has no direct channel access either. Deduped per
+    symbol so a conflict that persists across daily allocation cycles
+    doesn't re-notify every cycle."""
+    key = f"symbol-conflict:{body.symbol}"
+    text = _format_symbol_conflict_message(body)
+    return await _deliver_notification(key, Severity.WARNING, text)

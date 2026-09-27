@@ -127,9 +127,18 @@ class ResearchTools:
         if interval is not None:
             body["interval"] = interval
         try:
+            # item #17 finding #1: ResilientClient.post() used to swallow
+            # every exception (including HTTPStatusError) behind its own
+            # `except Exception: return fb`, so the httpx.HTTPStatusError
+            # branch right below could never actually run -- `data` just
+            # came back None regardless of whether the simulator was
+            # truly down or returned a real, actionable 422 detail.
+            # raise_on_error=True lets this method's own already-written
+            # exception handling (below) actually receive the real error.
             data = await self._simulator_client.post(
                 "/simulate/custom",
                 json=body,
+                raise_on_error=True,
             )
         except httpx.HTTPStatusError as exc:
             # Surface the simulator's own reason (e.g. its 422 detail

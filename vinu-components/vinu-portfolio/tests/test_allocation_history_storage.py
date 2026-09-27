@@ -83,8 +83,34 @@ class TestAllocationHistoryStore:
         assert fetched.interval_sleeves == {}
         assert fetched.account_equity is None
         assert fetched.reserve_fraction == 0.0
+        assert fetched.not_funded == []
 
     def test_created_at_preserved_across_same_day_updates(self, store: AllocationHistoryStore) -> None:
         first = store.record_daily_allocation(allocation_date="2026-09-14", account_equity=1.0)
         second = store.record_daily_allocation(allocation_date="2026-09-14", account_equity=2.0)
         assert second.created_at == first.created_at
+
+
+class TestNotFunded:
+    """item #23 finding #5: this table now also persists why a candidate
+    wasn't funded, not just the final allocation."""
+
+    def test_not_funded_round_trips(self, store: AllocationHistoryStore) -> None:
+        not_funded = [
+            {"entity_type": "portfolio_strategy", "entity_id": "strat-a", "stage": "daily_allocation",
+             "rejection_category": "outcome_confidence", "rejection_detail": "smallest tilt was outcome_confidence=0.2",
+             "compared_against_id": None, "timestamp": "2026-01-01T00:00:00+00:00"},
+        ]
+        store.record_daily_allocation(allocation_date="2026-09-14", not_funded=not_funded)
+        fetched = store.get_allocation("2026-09-14")
+        assert fetched.not_funded == not_funded
+
+    def test_pre_migration_row_with_no_not_funded_column_defaults_to_empty_list(
+        self, store: AllocationHistoryStore
+    ) -> None:
+        store.record_daily_allocation(allocation_date="2026-09-14", account_equity=1.0)
+        conn = store._get_conn()
+        conn.execute("UPDATE allocation_history SET not_funded = '' WHERE allocation_date = ?", ("2026-09-14",))
+        conn.commit()
+        fetched = store.get_allocation("2026-09-14")
+        assert fetched.not_funded == []

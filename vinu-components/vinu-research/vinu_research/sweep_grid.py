@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,10 +23,11 @@ import numpy as np
 LOG = logging.getLogger(__name__)
 
 from vinu_research.comparison import RankedCandidate, rank_candidates
-from vinu_research.config import ResearchConfig
+from vinu_research.config import ResearchConfig, load_config
 from vinu_research.models import BacktestMetrics, BacktestResult, LlmCandidate
 from vinu_research.pbo import probability_of_backtest_overfitting
 from vinu_research.sweep import ParameterNotFoundError, SweepCandidateResult, run_sweep_candidate
+from vinu_research.sweep_store import SweepGridStore
 from vinu_research.tools import ResearchTools
 
 # Grid-size cap: bounds how many points run_sweep_grid will run in a SINGLE
@@ -87,6 +89,12 @@ class SweepGridResult:
     pbo: dict[str, float] | None
     outcomes: list[GridPointOutcome] = field(default_factory=list)
     walk_forward: dict[str, Any] | None = None
+    # item #3: a real handle onto this search round's own persisted
+    # comparison record (sweep_store.py) -- "" only for the walk-forward
+    # engine's own inner per-window grids, which deliberately don't
+    # persist (see `persist` param on run_sweep_grid below), not for any
+    # caller-facing top-level sweep.
+    sweep_id: str = ""
 
 
 async def run_sweep_grid(
@@ -102,6 +110,8 @@ async def run_sweep_grid(
     initial_capital: float | None = None,
     config: ResearchConfig | None = None,
     tools: ResearchTools | None = None,
+    persist: bool = True,
+    sweep_store: SweepGridStore | None = None,
 ) -> SweepGridResult:
     """Run every point in `param_grid` (each a full params dict for recipe
     mode, or a dict containing at least `param_name` for base-code mode),
@@ -112,6 +122,15 @@ async def run_sweep_grid(
     fails to run (e.g. substitute_param_value can't parameterize it) still
     counts against completeness rather than silently shrinking the
     denominator. See phase-1-guard-rail.md.
+
+    item #3: every call also persists the comparison itself (this
+    function's own return value, not just the individual runs
+    vinu-simulator already durably stores) via `sweep_store.py`, unless
+    `persist=False` -- set by `walk_forward.py`'s own inner per-window
+    grids so N walk-forward windows don't each look like N independent
+    top-level search rounds; the outer call that actually reports
+    `walk_forward` to its caller is what gets persisted, with the
+    walk-forward verdict folded into that same row (item #12 finding #4).
     """
     if not param_grid:
         raise ValueError("param_grid must contain at least one point.")
@@ -264,6 +283,27 @@ async def run_sweep_grid(
         except Exception:
             LOG.exception("Walk-forward pass failed, sweep result carries no walk-forward evidence")
 
+    sweep_id = ""
+    if persist:
+        sweep_id = str(uuid.uuid4())
+        result = SweepGridResult(
+            requested=requested, succeeded=succeeded, completeness=completeness,
+            ranked=ranked, pbo=pbo_result, outcomes=outcomes,
+            walk_forward=walk_forward_result, sweep_id=sweep_id,
+        )
+        try:
+            resolved_store = sweep_store or SweepGridStore((config or load_config()).data_root / "sweep_grid.db")
+            resolved_store.record_sweep(
+                sweep_id, symbol=symbol, from_date=from_date, to_date=to_date, result=result,
+            )
+        except Exception:
+            # Persisting the comparison must never fail the sweep itself --
+            # the caller still gets a real, usable result either way, same
+            # "a notification failure must never fail the real thing it's
+            # reporting on" posture used elsewhere in this codebase.
+            LOG.exception("Failed to persist sweep %s -- sweep result is still returned", sweep_id)
+        return result
+
     return SweepGridResult(
         requested=requested,
         succeeded=succeeded,
@@ -313,3 +353,27 @@ def sweep_evidence_verdict(
         "pbo": pbo,
         "walk_forward": walk_forward,
     }
+
+
+def param_diff_from_winner(
+    candidate_params: dict[str, Any], winner_params: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """item #14B: "the single most valuable field" the recommendation
+    names -- a direct, readable answer to "what specifically cost this
+    candidate the win" instead of just a worse score. Needs no new data
+    collection, exactly as the recommendation says: every
+    RankedSweepCandidate already carries its own `params` dict
+    (comparison.py's rank_candidates), this is just a diff against the
+    winner's. Sparse -- identical params produce an empty dict, not the
+    full param set repeated -- and a key present on only one side is
+    compared against `None` on the other rather than silently skipped,
+    so a candidate that dropped or added a param entirely still shows up.
+    """
+    all_keys = set(candidate_params) | set(winner_params)
+    diff: dict[str, dict[str, Any]] = {}
+    for key in sorted(all_keys):
+        c_val = candidate_params.get(key)
+        w_val = winner_params.get(key)
+        if c_val != w_val:
+            diff[key] = {"candidate": c_val, "winner": w_val}
+    return diff

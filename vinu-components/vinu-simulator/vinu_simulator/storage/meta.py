@@ -20,6 +20,7 @@ class MetaStorage:
         self._ensure_config_hash_column()
         self._ensure_validation_columns()
         self._ensure_simulation_catalog()
+        self._ensure_run_symbols_table()
 
     def _get_conn(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn") or self._local.conn is None:
@@ -83,6 +84,45 @@ class MetaStorage:
             ("last_sharpe", "REAL NOT NULL DEFAULT 0.0"),
             ("last_max_dd", "REAL NOT NULL DEFAULT 0.0"),
         ])
+
+    def _ensure_run_symbols_table(self) -> None:
+        """item #13 finding #3: `list_runs(symbol=...)` used to load and
+        JSON-decode every row in `simulation_runs`, then filter in Python --
+        the `symbols` column is an unindexed JSON blob, so there was no way
+        to push that filter into SQL. This normalized join table (one row
+        per run_id/symbol pair) is what `run_symbols(run_id, symbol)` the
+        finding itself proposed, so a symbol-filtered query becomes a real,
+        indexed `WHERE` clause instead of a full-table decode.
+
+        Only backfills from the existing `symbols` JSON column the one time
+        this table doesn't exist yet -- on every later startup the table
+        already exists, so this is a no-op check, not a repeated full scan.
+        """
+        conn = self._get_conn()
+        exists = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='simulation_run_symbols'"
+        ).fetchone()
+        if exists:
+            return
+        conn.executescript("""
+            CREATE TABLE simulation_run_symbols (
+                run_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                PRIMARY KEY (run_id, symbol)
+            );
+            CREATE INDEX idx_run_symbols_symbol ON simulation_run_symbols(symbol);
+        """)
+        rows = conn.execute("SELECT run_id, symbols FROM simulation_runs").fetchall()
+        for row in rows:
+            raw = row["symbols"]
+            if not raw:
+                continue
+            for symbol in json.loads(raw):
+                conn.execute(
+                    "INSERT OR IGNORE INTO simulation_run_symbols (run_id, symbol) VALUES (?, ?)",
+                    (row["run_id"], symbol.upper()),
+                )
+        conn.commit()
 
     def upsert_catalog_entry(
         self,
@@ -169,6 +209,16 @@ class MetaStorage:
                 json.dumps(symbols or []),
             ),
         )
+        # Keep the normalized lookup table (item #13 finding #3) in sync --
+        # INSERT OR REPLACE above means a re-run under the same run_id can
+        # change its symbol list, so the old join rows are cleared first
+        # rather than silently accumulating stale entries.
+        conn.execute("DELETE FROM simulation_run_symbols WHERE run_id = ?", (run_id,))
+        for sym in symbols or []:
+            conn.execute(
+                "INSERT OR IGNORE INTO simulation_run_symbols (run_id, symbol) VALUES (?, ?)",
+                (run_id, sym.upper()),
+            )
         conn.commit()
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
@@ -205,16 +255,24 @@ class MetaStorage:
     def list_runs(
         self, strategy_name: str | None = None, symbol: str | None = None,
     ) -> list[dict[str, Any]]:
+        # item #13 finding #3: symbol filtering now pushed into SQL via the
+        # normalized, indexed simulation_run_symbols join table instead of
+        # loading and JSON-decoding every row to filter in Python.
         conn = self._get_conn()
+        clauses: list[str] = []
+        params: list[str] = []
+        query = "SELECT simulation_runs.* FROM simulation_runs"
+        if symbol:
+            query += " JOIN simulation_run_symbols ON simulation_run_symbols.run_id = simulation_runs.run_id"
+            clauses.append("simulation_run_symbols.symbol = ?")
+            params.append(symbol.upper())
         if strategy_name:
-            rows = conn.execute(
-                "SELECT * FROM simulation_runs WHERE strategy_name = ? ORDER BY timestamp DESC",
-                (strategy_name,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM simulation_runs ORDER BY timestamp DESC"
-            ).fetchall()
+            clauses.append("simulation_runs.strategy_name = ?")
+            params.append(strategy_name)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY simulation_runs.timestamp DESC"
+        rows = conn.execute(query, params).fetchall()
         result = []
         for row in rows:
             r = dict(row)
@@ -223,13 +281,12 @@ class MetaStorage:
             r["benchmark_metrics"] = json.loads(r["benchmark_metrics"])
             r["validation"] = json.loads(r["validation"]) if r.get("validation") else None
             r["symbols"] = json.loads(r["symbols"]) if r.get("symbols") else []
-            if symbol and symbol.upper() not in [s.upper() for s in r["symbols"]]:
-                continue
             result.append(r)
         return result
 
     def delete_run(self, run_id: str) -> bool:
         conn = self._get_conn()
+        conn.execute("DELETE FROM simulation_run_symbols WHERE run_id = ?", (run_id,))
         cur = conn.execute(
             "DELETE FROM simulation_runs WHERE run_id = ?", (run_id,)
         )
@@ -239,10 +296,16 @@ class MetaStorage:
     def delete_runs(self, strategy_name: str | None = None) -> int:
         conn = self._get_conn()
         if strategy_name:
+            conn.execute(
+                "DELETE FROM simulation_run_symbols WHERE run_id IN "
+                "(SELECT run_id FROM simulation_runs WHERE strategy_name = ?)",
+                (strategy_name,),
+            )
             cur = conn.execute(
                 "DELETE FROM simulation_runs WHERE strategy_name = ?", (strategy_name,)
             )
         else:
+            conn.execute("DELETE FROM simulation_run_symbols")
             cur = conn.execute("DELETE FROM simulation_runs")
         conn.commit()
         return cur.rowcount

@@ -47,13 +47,23 @@ def classify_regime(ret_20d: float, vol_z: float) -> str:
     return "sideways"
 
 
-def _compute_regime_frame(bars: pd.DataFrame, time_format: str | None) -> pd.DataFrame:
+def compute_regime_frame(bars: pd.DataFrame, time_format: str | None) -> pd.DataFrame:
     """Point-in-time-safe regime frame: every row's `vol_trailing_z` (and
     therefore its `regime`) depends only on bars up to and including that
     row, never future data -- the fix for the leak described in this
     module's docstring. Columns: bar_ts, ret (single-period, for the
     regime_stats aggregation below -- unchanged from the original code),
     ret_20d/vol/vol_trailing_z (classification inputs), regime.
+
+    Public (item #6, system-wide-audit-and-design/02-open-questions-
+    strategy-and-simulation.md): this is the exact per-bar regime series
+    signal_evidence/compute.py reuses to tag each historical must-
+    condition trigger with the regime active at that bar -- the audit's
+    own "reduce, don't rebuild" principle, calling the one existing
+    point-in-time-safe classifier already in the same service (an angle
+    depending on `vinu_simulator`'s or `vinu_portfolio`'s own regime
+    modules instead would create a Layer 2 -> Layer 5 dependency
+    direction the audit flagged as the wrong one).
     """
     close = bars["close"].astype(float).reset_index(drop=True)
     af = ann_factor(time_format)
@@ -110,7 +120,7 @@ def compute(
             "n_observations": len(bars),
         }])
 
-    rf = _compute_regime_frame(bars, time_format)
+    rf = compute_regime_frame(bars, time_format)
     if rf.empty:
         return pd.DataFrame([{
             "symbol": symbol,

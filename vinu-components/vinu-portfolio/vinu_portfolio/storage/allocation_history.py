@@ -33,8 +33,17 @@ CREATE TABLE IF NOT EXISTS allocation_history (
 );
 """
 
-SCHEMA_VERSION = 1
-MIGRATIONS: list[tuple[str, str]] = []
+SCHEMA_VERSION = 2
+MIGRATIONS: list[tuple[str, str]] = [
+    (
+        "ALTER TABLE allocation_history ADD COLUMN not_funded TEXT NOT NULL DEFAULT '[]'",
+        "item #23 finding #5: this table snapshotted what was allocated "
+        "but nothing about why a candidate wasn't funded -- a bounded "
+        "list of RejectionRecord dicts (vinu_infra.rejection_log), same "
+        "shared shape item #18 finding #3 already used for the screener's "
+        "own instance of this pattern.",
+    ),
+]
 
 
 def _now() -> str:
@@ -56,6 +65,9 @@ class DailyAllocation:
     reserve_amount: float | None = None
     deployable_equity: float | None = None
     created_at: str = ""
+    # item #23 finding #5: RejectionRecord dicts (vinu_infra.rejection_log)
+    # for candidates that were evaluated but ended up unfunded.
+    not_funded: list[dict[str, Any]] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.weights is None:
@@ -64,6 +76,8 @@ class DailyAllocation:
             self.sleeves = {}
         if self.interval_sleeves is None:
             self.interval_sleeves = {}
+        if self.not_funded is None:
+            self.not_funded = []
 
     @classmethod
     def from_row(cls, row: dict[str, Any]) -> "DailyAllocation":
@@ -83,6 +97,11 @@ class DailyAllocation:
             reserve_amount=row.get("reserve_amount"),
             deployable_equity=row.get("deployable_equity"),
             created_at=row.get("created_at", ""),
+            # "not_funded" in row.keys(): pre-migration rows on an
+            # already-running instance mid-upgrade won't have this column
+            # at all -- fail open to [], same convention
+            # RankedSnapshotStore.get_latest() already uses for trace_json.
+            not_funded=_load("not_funded", []) if "not_funded" in row.keys() else [],
         )
 
 
@@ -102,6 +121,7 @@ class AllocationHistoryStore(SQLiteBackend):
         reserve_fraction: float = 0.0,
         reserve_amount: float | None = None,
         deployable_equity: float | None = None,
+        not_funded: list[dict[str, Any]] | None = None,
     ) -> DailyAllocation:
         """Idempotent per allocation_date: repeated on-demand calls the same
         day upsert that day's row rather than accumulating duplicates --
@@ -112,6 +132,7 @@ class AllocationHistoryStore(SQLiteBackend):
         weights = weights or []
         sleeves = sleeves or {}
         interval_sleeves = interval_sleeves or {}
+        not_funded = not_funded or []
         existing = self.get_allocation(date)
         created_at = existing.created_at if existing else _now()
         self.upsert(
@@ -126,6 +147,7 @@ class AllocationHistoryStore(SQLiteBackend):
                 "reserve_amount": reserve_amount,
                 "deployable_equity": deployable_equity,
                 "created_at": created_at,
+                "not_funded": json.dumps(not_funded),
             },
             conflict_columns=["allocation_date"],
         )
@@ -134,6 +156,7 @@ class AllocationHistoryStore(SQLiteBackend):
             interval_sleeves=interval_sleeves, account_equity=account_equity,
             reserve_fraction=reserve_fraction, reserve_amount=reserve_amount,
             deployable_equity=deployable_equity, created_at=created_at,
+            not_funded=not_funded,
         )
 
     def get_allocation(self, allocation_date: str) -> Optional[DailyAllocation]:

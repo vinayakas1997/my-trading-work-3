@@ -145,13 +145,26 @@ class SimulatorService:
 
     def simulate(self, req: SimulateRequest) -> SimulationResult:
         if req.dry_run:
+            # item #13 finding #6: this branch had never actually been
+            # exercised by any test -- SimulationResult gained `config`,
+            # `daily_returns`, and `weights_history` as required (no
+            # default) fields at some point after this call site was
+            # written, and nothing here was updated to match, so any real
+            # dry_run=True request would have crashed with a TypeError.
             LOG.info("DRY RUN: simulate(%s) — skipping execution", req.strategy_name)
             result = SimulationResult(
                 run_id="dry_run",
                 strategy_name=req.strategy_name,
                 timestamp=datetime.now(timezone.utc),
+                config=SimulationConfig(
+                    strategy_name=req.strategy_name,
+                    start_date=req.start_date or "2020-01-01",
+                    end_date=req.end_date or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                ),
                 metrics={"total_return": 0.0, "sharpe_ratio": 0.0, "max_drawdown": 0.0, "win_rate": 0.0, "cagr": 0.0, "total_return_pct": 0.0},
-                portfolio_values=[],
+                portfolio_values=pd.Series(dtype=float),
+                daily_returns=pd.Series(dtype=float),
+                weights_history=pd.DataFrame(),
                 trades=[],
                 benchmark_metrics={},
             )

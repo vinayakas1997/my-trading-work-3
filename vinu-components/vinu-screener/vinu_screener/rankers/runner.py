@@ -9,6 +9,7 @@ universe, not one call per symbol per factor), builds the per-symbol
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -20,6 +21,8 @@ from ..pipeline.pipeline import PipelineConfig, PipelineResult, ScreenPipeline
 from ..pipeline.scorer import make_weighted_scorer
 from ..scan.data_source import SymbolDataSource
 from .config import RankerConfig
+
+LOG = logging.getLogger(__name__)
 
 # A fresh daily bar should be at most a couple of trading days old (weekend
 # gap included). risk_overlay.py's `stale_data`/`fetch_degraded` checks
@@ -61,6 +64,28 @@ class RankerRunner:
                 out[symbol] = df
         return out
 
+    def _apply_min_history_gate(
+        self, ohlcv: dict[str, pd.DataFrame], cfg: RankerConfig,
+    ) -> dict[str, pd.DataFrame]:
+        """item #18 finding #1: dropped before factor computation/scoring,
+        same "gate before the expensive work" point the condition-tree
+        path (scan/monitor.py's `required_bars`/`insufficient_history`)
+        already enforces -- this is the ranker path's own equivalent,
+        since there's no condition tree here to derive a bar requirement
+        from, only this config's own explicit `min_history_bars`."""
+        min_bars = cfg.hard_filter.min_history_bars
+        if not min_bars:
+            return ohlcv
+        kept = {s: df for s, df in ohlcv.items() if len(df) >= min_bars}
+        dropped = ohlcv.keys() - kept.keys()
+        if dropped:
+            LOG.info(
+                "ranker %s: %d/%d symbols excluded for insufficient history "
+                "(need >= %d bars): %s",
+                cfg.ranker_id, len(dropped), len(ohlcv), min_bars, sorted(dropped),
+            )
+        return kept
+
     def run(
         self,
         cfg: RankerConfig,
@@ -71,6 +96,7 @@ class RankerRunner:
         held_symbols: frozenset[str] | None = None,
     ) -> PipelineResult:
         ohlcv = self._fetch_universe(cfg.universe)
+        ohlcv = self._apply_min_history_gate(ohlcv, cfg)
         self._library.clear_cache()
 
         snapshots: dict[str, dict[str, float]] = {symbol: {} for symbol in ohlcv}

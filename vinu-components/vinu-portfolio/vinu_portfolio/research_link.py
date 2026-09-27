@@ -15,6 +15,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from vinu_research.maturity_assessor import MaturityAssessment
+from vinu_research.maturity_assessor import assess as _assess_maturity
 from vinu_research.storage.strategy_store import SqliteStrategyStore
 
 
@@ -28,3 +30,22 @@ def _research_data_root() -> Path:
 
 def get_strategy_store() -> SqliteStrategyStore:
     return SqliteStrategyStore(_research_data_root() / "strategy_store.db")
+
+
+def get_maturity_assessment() -> MaturityAssessment:
+    """item #4 (system-wide-audit-and-design): reuses vinu-research's own
+    `maturity_assessor.assess()` unchanged, through the same in-process
+    bridge `get_strategy_store()` above already established -- not a
+    second, independently-derived maturity computation.
+
+    `agent_data_root=None` always: vinu-portfolio has no configured path
+    to vinu-agent's `paper_performance.db` (a real dependency this
+    service doesn't have today, not an oversight to silently work around
+    here). `assess()`'s own docstring already documents this exact
+    degraded case -- n_paper_trading_days/n_artifacts_with_paper_history
+    fall back to (0, 0), so `cold_start` and `paper_only` become
+    indistinguishable, same honest, already-accepted gap its other
+    caller (`research-api`'s own HTTP-fallback path) has, not a new one
+    introduced here."""
+    store = get_strategy_store()
+    return _assess_maturity(store, agent_data_root=None)

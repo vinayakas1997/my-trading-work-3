@@ -17,6 +17,7 @@ from vinu_infra.reflection import Finding, ReflectionStore, write_findings
 from vinu_reflection.config import load_config
 from vinu_reflection.reflection import (
     angle_trust,
+    brain,
     concentration_coverage,
     consistency_freeze,
     correlation_coverage,
@@ -229,12 +230,38 @@ def reflection_worker_main(args: argparse.Namespace) -> None:
         "vinu_reflection": config.data_root,
     }
 
+    # Step 8 ("the brain") -- opt-in, off by default. Constructing the LLM
+    # client only when enabled means the `openai` dependency (or whichever
+    # provider) never has to be installed for a deployment that never
+    # turns this on -- same "ships inert" posture every other opt-in
+    # feature in this codebase already uses.
+    brain_llm = None
+    if config.brain_synthesis_enabled:
+        from vinu_agent.agent.llm import create_llm_from_config
+        from vinu_agent.config import load_config as load_agent_config
+
+        brain_llm = create_llm_from_config(load_agent_config().llm)
+    last_brain_run = 0.0
+
     print(f"[reflection-worker] Starting (interval={interval}s, analysts={len(ANALYSTS)})")
     print("[reflection-worker] Press Ctrl+C to stop.\n")
     while True:
         written = run_cycle(reflection_store, data_root_paths)
         if written:
             print(f"[reflection-worker] cycle wrote {written} finding(s)")
+        if brain_llm is not None:
+            now = time.time()
+            if now - last_brain_run >= config.brain_synthesis_worker_interval_sec:
+                try:
+                    resolved = brain.resolve_pending_syntheses(reflection_store)
+                    if resolved:
+                        print(f"[reflection-brain] resolved {resolved} pending synthesis outcome(s)")
+                    synthesis_id = brain.run_synthesis(reflection_store, brain_llm)
+                    if synthesis_id:
+                        print(f"[reflection-brain] wrote synthesis {synthesis_id}")
+                except Exception:
+                    LOG.exception("[reflection-brain] cycle failed, skipping")
+                last_brain_run = now
         time.sleep(interval)
 
 

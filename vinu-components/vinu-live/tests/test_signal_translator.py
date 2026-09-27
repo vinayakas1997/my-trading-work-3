@@ -89,3 +89,71 @@ class TestSignalTranslator:
             prices={"AAPL": 0.0},
         )
         assert instrs == []
+
+
+class TestSameSymbolNetting:
+    """item #24 finding #2: two target_weights entries sharing a symbol
+    used to each produce their own independent instruction against the
+    same unchanged current-position snapshot -- a real buy-then-sell
+    whipsaw. Netting is the fix (see translate()'s own docstring for the
+    policy-choice reasoning)."""
+
+    def test_opposite_direction_targets_net_to_one_instruction_not_two(self) -> None:
+        t = SignalTranslator()
+        instrs = t.translate(
+            target_weights=[
+                {"symbol": "AAPL", "target_weight": 0.05, "name": "strategy_a"},
+                {"symbol": "AAPL", "target_weight": -0.03, "name": "strategy_b"},
+            ],
+            current_positions={},
+            portfolio_value=100_000.0,
+            prices={"AAPL": 100.0},
+        )
+        # Exactly one instruction, not the previous buy-then-sell whipsaw
+        # of two independent orders on the same symbol in the same cycle.
+        assert len(instrs) == 1
+        assert instrs[0].symbol == "AAPL"
+        # Net target weight is 0.05 + (-0.03) = 0.02 -> net buy.
+        assert instrs[0].side == "buy"
+        assert instrs[0].qty == 20.0  # 0.02 * 100_000 / 100.0
+
+    def test_same_direction_targets_sum_into_one_larger_instruction(self) -> None:
+        t = SignalTranslator()
+        instrs = t.translate(
+            target_weights=[
+                {"symbol": "AAPL", "target_weight": 0.05, "name": "strategy_a"},
+                {"symbol": "AAPL", "target_weight": 0.05, "name": "strategy_b"},
+            ],
+            current_positions={},
+            portfolio_value=100_000.0,
+            prices={"AAPL": 100.0},
+        )
+        assert len(instrs) == 1
+        assert instrs[0].qty == 100.0  # 0.10 * 100_000 / 100.0
+
+    def test_exactly_offsetting_targets_net_to_zero_and_are_omitted(self) -> None:
+        t = SignalTranslator()
+        instrs = t.translate(
+            target_weights=[
+                {"symbol": "AAPL", "target_weight": 0.05, "name": "strategy_a"},
+                {"symbol": "AAPL", "target_weight": -0.05, "name": "strategy_b"},
+            ],
+            current_positions={},
+            portfolio_value=100_000.0,
+            prices={"AAPL": 100.0},
+        )
+        assert instrs == []
+
+    def test_unrelated_symbols_are_unaffected_by_netting(self) -> None:
+        t = SignalTranslator()
+        instrs = t.translate(
+            target_weights=[
+                {"symbol": "AAPL", "target_weight": 0.05, "name": "strategy_a"},
+                {"symbol": "MSFT", "target_weight": 0.05, "name": "strategy_b"},
+            ],
+            current_positions={},
+            portfolio_value=100_000.0,
+            prices={"AAPL": 100.0, "MSFT": 100.0},
+        )
+        assert {i.symbol for i in instrs} == {"AAPL", "MSFT"}
+        assert len(instrs) == 2

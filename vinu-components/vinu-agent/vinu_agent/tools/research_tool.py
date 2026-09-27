@@ -64,8 +64,23 @@ class ResearchTool(BaseTool):
                 universe=universe, dry_run=bool(kwargs.get("dry_run")),
             ))
             return json.dumps(result, default=str)
-        except Exception as exc:
-            LOG.debug("run_research: in-process run failed, falling back to HTTP: %s", exc)
+        except ImportError as exc:
+            # item #17 finding #3 (the compound retry-storm risk, together
+            # with tools.py's raise_on_error fix above): this used to be a
+            # blanket `except Exception`, so a real InfrastructureError (or
+            # any genuine bug) raised *inside* the multi-iteration research
+            # loop was caught here too -- silently re-running the entire
+            # expensive loop a second time over HTTP on top of the one that
+            # already ran, rather than surfacing the real failure.
+            # research_link.py's own module docstring documents the one
+            # legitimate reason for this fallback: vinu-research isn't
+            # importable in this deployment. That's an ImportError, not a
+            # research-loop failure -- narrowed to just that so everything
+            # else (including InfrastructureError) propagates instead,
+            # where ToolRegistry.execute()'s own except Exception already
+            # turns it into a proper `{"status": "error", ...}` response
+            # the LLM/scheduler can act on directly.
+            LOG.debug("run_research: vinu-research not importable, falling back to HTTP: %s", exc)
 
         import httpx
         try:

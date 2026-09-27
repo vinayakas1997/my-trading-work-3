@@ -25,6 +25,7 @@ column is therefore one of three states, not a bare null:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from vinu_infra.system_manifest import resolve_active_angles
@@ -32,6 +33,26 @@ from vinu_initial_analysis.storage.meta import RunLog
 
 NOT_REQUIRED = "not_required"
 PENDING = "pending"
+
+
+def _days_stale(analysis_until: str | None) -> int | None:
+    """item #15 option (a): "a deliberately small, low-risk first step"
+    -- visibility before automation. Nothing here decides whether or how
+    to fill a detected gap; it only makes the gap visible, computed fresh
+    at read time (never stored), same rule this module already follows
+    for everything else it reports. `None` when there's no real
+    `analysis_until` to measure staleness from (an angle that's never
+    run, or an unparseable value) -- absence of evidence, not zero days
+    stale."""
+    if not analysis_until:
+        return None
+    try:
+        dt = datetime.fromisoformat(analysis_until)
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - dt).days
 
 
 def build_ticker_coverage(run_log: RunLog, symbol: str, all_angles: list[dict[str, Any]]) -> dict[str, Any]:
@@ -71,6 +92,7 @@ def build_ticker_coverage(run_log: RunLog, symbol: str, all_angles: list[dict[st
                 "analysis_until": row["analysis_until"],
                 "policy_version": row["policy_version"],
                 "granularity": row["granularity"],
+                "days_stale": _days_stale(row["analysis_until"]),
             }
         elif name in required_names:
             angles[name] = PENDING

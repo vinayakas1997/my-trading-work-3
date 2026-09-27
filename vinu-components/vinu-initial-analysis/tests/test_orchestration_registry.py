@@ -14,12 +14,13 @@ def _bars(n: int = 5) -> pd.DataFrame:
     return pd.DataFrame({"bar_ts": list(range(1000, 1000 + n)), "close": [float(i) for i in range(n)]})
 
 
-def test_registry_has_exactly_the_30_ready_angles():
+def test_registry_has_exactly_the_31_ready_angles():
     # Checked directly against every angle's real backtest.py signature --
     # see 07-orchestration-suite-test/plan.md, 03-still-open-not-wired.md,
     # and 04-extra-data-angles-wired.md for the full classification and
-    # the two follow-up passes that added the 6 extra-data angles.
-    assert len(ANGLE_REGISTRY) == 30
+    # the two follow-up passes that added the 6 extra-data angles. 31st:
+    # search_trends (high-expectations cross-check, "bars_only" shape).
+    assert len(ANGLE_REGISTRY) == 31
 
 
 _NEEDS_ARTICLES = {"news_price_causality_impact", "news_price_causality_aggregate"}

@@ -32,7 +32,7 @@ class SimulateRequest(BaseModel):
     # assumptions than a real broker would give (see high-expectations
     # gate-conflict audit). Defaults preserve prior behavior exactly --
     # this only ADDS the ability to opt in.
-    position_sizing_model: Literal["fixed", "vol_target", "kelly"] = "fixed"
+    position_sizing_model: Literal["fixed", "vol_target", "kelly", "composite"] = "fixed"
     target_annual_vol: float | None = None
     vol_lookback_days: int | None = None
     kelly_fraction: float | None = None
@@ -52,12 +52,6 @@ class SimulateResponse(BaseModel):
     trade_count: int
     equity_points: int
     validation: dict[str, Any] | None = None
-
-
-class MetricRow(BaseModel):
-    metric: str
-    strategy: float
-    benchmarks: dict[str, float] = Field(default_factory=dict)
 
 
 class RunSummary(BaseModel):
@@ -110,7 +104,7 @@ class CustomSimulateRequest(BaseModel):
     # the path vinu-research's tools.run_backtest actually calls
     # (/simulate/custom), so every backtest that has ever fed strategy
     # selection ran under these same silently-optimistic defaults.
-    position_sizing_model: Literal["fixed", "vol_target", "kelly"] = "fixed"
+    position_sizing_model: Literal["fixed", "vol_target", "kelly", "composite"] = "fixed"
     target_annual_vol: float | None = None
     vol_lookback_days: int | None = None
     kelly_fraction: float | None = None
@@ -144,12 +138,6 @@ class CustomSimulateResponse(BaseModel):
     # all-zero weight series, so a trade_count==0 result caused by a strategy
     # crash is distinguishable from one caused by a legitimate no-trade decision.
     diagnostics: dict[str, Any] = Field(default_factory=dict)
-
-
-class SimulateDryRunResponse(BaseModel):
-    strategy_name: str
-    dry_run: bool = True
-    message: str = "Dry run — no simulation performed"
 
 
 class HealthResponse(BaseModel):

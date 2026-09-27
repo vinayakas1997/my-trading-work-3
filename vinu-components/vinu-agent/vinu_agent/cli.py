@@ -21,6 +21,7 @@ from .agent.scheduler_workers import (
     run_llm_failure_check,
     run_risk_gatekeeper_cycle,
     run_significance_cycle,
+    sync_signal_evidence_for_tickers,
 )
 from .agent.significance_triage import SignificanceFlagStore
 from .agent.skill_audit import SkillAuditStore, check_skill_edits
@@ -495,6 +496,14 @@ def planner_worker_main(args: argparse.Namespace) -> None:
                                 extra={"vinu_ctx": {"worker": "planner-worker", "tickers": bootstrapped}},
                             )
                     tickers = [s.ticker for s in service.ticker_summary_store.list_summaries()]
+
+                    # item #1: bridges Track 1's recorded signal-evidence
+                    # trigger/outcome data into HypothesisRegistry, once
+                    # per cycle, over this same ticker list -- not a
+                    # separate schedule. Fails open (see
+                    # sync_signal_evidence_for_tickers's own docstring);
+                    # never blocks or fails this cycle's real work below.
+                    sync_signal_evidence_for_tickers(tickers)
 
                     def _refresh_one(ticker: str) -> None:
                         try:

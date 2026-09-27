@@ -12,6 +12,7 @@ from vinu_live.feedback_loop import FeedbackLoopWorker
 from vinu_live.shadow_evaluator import ShadowEvaluator
 from vinu_live.trade_plan.orchestrator import TradePlanOrchestrator
 from vinu_live.trade_plan_approval_worker import TradePlanApprovalWorker
+from vinu_live.live_decision.poller import CandleClosePoller
 
 
 def serve_main(args: argparse.Namespace) -> None:
@@ -292,6 +293,62 @@ def feedback_worker_main(args: argparse.Namespace | None = None) -> None:
     asyncio.run(_worker_loop())
 
 
+def run_live_decision_cycle_main(args: argparse.Namespace) -> None:
+    async def _run() -> None:
+        config = load_config()
+        poller = CandleClosePoller(config)
+        try:
+            result = await poller.cycle()
+            print(f"Live-decision cycle complete: {result}")
+        finally:
+            await poller.close()
+    asyncio.run(_run())
+
+
+def live_decision_worker_main(args: argparse.Namespace | None = None) -> None:
+    """Continuous live-decision-loop worker -- points 2+4
+    (reverse-engineering/03-poller-and-state-schema.md): candle-close
+    poller driving the stage/state tracker. Separate loop from
+    worker_main's portfolio rebalancer, same reasoning
+    trade_plan_worker_main's own docstring already gives for why these
+    stay separate -- this closes a different loop (detecting when a
+    strategy's setup is ready) than the rebalancer (executing already-
+    approved weights)."""
+    config = load_config()
+    interval = (
+        args.interval_sec if args and getattr(args, "interval_sec", None)
+        else config.live_decision_poll_interval_sec
+    )
+    print(f"[live-decision-worker] Starting (interval={interval}s)")
+    print(f"[live-decision-worker] Press Ctrl+C to stop.\n")
+
+    log = logging.getLogger("vinu.live.live_decision_worker")
+
+    async def _worker_loop() -> None:
+        poller = CandleClosePoller(config)
+        try:
+            while True:
+                try:
+                    result = await poller.cycle()
+                    log.info(
+                        "live-decision cycle complete",
+                        extra={"vinu_ctx": {"worker": "live-decision-worker", **result}},
+                    )
+                except Exception:
+                    log.exception(
+                        "live-decision cycle failed",
+                        extra={"vinu_ctx": {"worker": "live-decision-worker"}},
+                    )
+                    raise
+                time.sleep(interval)
+        except KeyboardInterrupt:
+            print("\n[live-decision-worker] Stopped by user.")
+        finally:
+            await poller.close()
+
+    asyncio.run(_worker_loop())
+
+
 def resolve_worker_interval(args: argparse.Namespace | None, config) -> int:
     """Shared by both worker_main's call paths — see worker_main's docstring
     for why args can legitimately be None here."""
@@ -390,6 +447,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     tpa_worker_p = sub.add_parser("trade-plan-approval-worker", help="Run continuous trade-plan-approval worker loop")
     tpa_worker_p.add_argument("--interval", type=int, dest="interval_sec", default=None)
     tpa_worker_p.set_defaults(func=trade_plan_approval_worker_main)
+
+    ld_cycle_p = sub.add_parser("live-decision-cycle", help="Run a single candle-close poll cycle (points 2+4)")
+    ld_cycle_p.set_defaults(func=run_live_decision_cycle_main)
+
+    ld_worker_p = sub.add_parser("live-decision-worker", help="Run continuous candle-close poller + state-tracker worker loop")
+    ld_worker_p.add_argument("--interval", type=int, dest="interval_sec", default=None)
+    ld_worker_p.set_defaults(func=live_decision_worker_main)
 
     return parser.parse_args(argv)
 

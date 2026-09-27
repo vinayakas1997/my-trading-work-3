@@ -90,6 +90,14 @@ class HardFilterRule(ScanFilter):
             reasons = hard_filter_reasons(c.fields, self._cfg)
             if reasons:
                 c.dropped_at = self.name
+                # item #18 finding #3: hard_filter_reasons() computed the
+                # exact bound(s) failed, then it evaporated -- nothing
+                # attached it to the candidate before this method
+                # returned, unlike RiskVetoRule's own veto_reason below.
+                # Reused the same field rather than adding a new one --
+                # "why this candidate was dropped" means the same thing
+                # for both filter stages.
+                c.veto_reason = "; ".join(reasons)
             else:
                 survivors.append(c)
         return survivors
@@ -175,15 +183,38 @@ class StageCount:
     after: int
 
 
+# item #18 finding #3: a bounded sample, not every dropped candidate --
+# a universe-wide scan can drop hundreds of symbols per stage, and this
+# is for "why was ticker Y excluded" visibility, not a full audit log of
+# every rejection ever.
+MAX_REJECTED_SAMPLE_PER_STAGE = 20
+
+
 class FilterChain:
     def __init__(self, filters: list[ScanFilter]) -> None:
         self.filters = filters
 
-    def run(self, candidates: list[Candidate], context: FilterContext) -> tuple[list[Candidate], list[StageCount]]:
+    def run(
+        self, candidates: list[Candidate], context: FilterContext,
+    ) -> tuple[list[Candidate], list[StageCount], dict[str, list[Candidate]]]:
         current = candidates
         trace: list[StageCount] = []
+        # item #18 finding #3: "Candidate.veto_reason/dropped_at and
+        # hard_filter_reasons() capture exactly why each candidate was
+        # cut -- but nothing persists it." Each filter's own `apply()`
+        # already sets dropped_at/veto_reason on the candidates it drops
+        # before returning only the survivors -- the dropped ones were
+        # simply never collected anywhere after that. Diffing before/
+        # after by symbol here (rather than changing every ScanFilter's
+        # own return contract) keeps this a FilterChain-level concern,
+        # not a change to what `apply()` returns.
+        rejected_samples: dict[str, list[Candidate]] = {}
         for filt in self.filters:
-            before = len(current)
-            current = filt.apply(current, context)
-            trace.append(StageCount(filt.name, filt.supports_backtesting, before, len(current)))
-        return current, trace
+            before = current
+            current = filt.apply(before, context)
+            trace.append(StageCount(filt.name, filt.supports_backtesting, len(before), len(current)))
+            survivor_symbols = {c.symbol for c in current}
+            dropped = [c for c in before if c.symbol not in survivor_symbols]
+            if dropped:
+                rejected_samples[filt.name] = dropped[:MAX_REJECTED_SAMPLE_PER_STAGE]
+        return current, trace, rejected_samples

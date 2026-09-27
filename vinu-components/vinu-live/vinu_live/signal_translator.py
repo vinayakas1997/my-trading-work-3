@@ -63,19 +63,44 @@ class SignalTranslator:
             0.0 and produce a full close instruction — previously these were
             silently never sold, since the loop only ever considered symbols
             that appeared in target_weights.
+
+            Same-symbol netting (item #24 finding #2, missing-pieces-of-
+            system/new-theory-of-trading/system-wide-audit-and-design/
+            02-open-questions-strategy-and-simulation.md): if two entries
+            in `target_weights` share a symbol (two strategies both
+            wanting exposure to it, possibly in opposite directions),
+            they are summed into ONE net target weight before a single
+            instruction is built — never two independent instructions
+            against the same unchanged current-position snapshot, which
+            previously produced a real buy-then-sell whipsaw in the same
+            cycle. Netting was chosen as the fix: item #23 in the same
+            audit file names this an open policy question the user should
+            decide deliberately ("net" vs. "keep separate as two legs" vs.
+            "block/flag") — netting is the one option that requires no new
+            machinery downstream (vinu-live has no concept of two legs on
+            one symbol) and is a strict improvement over the confirmed
+            whipsaw bug either way, but it is a provisional default, not
+            a claim that the policy question is now closed.
         """
         instructions: list[OrderInstruction] = []
         seen_symbols: set[str] = set()
+        netted = self._net_by_symbol(target_weights)
 
-        for tw in target_weights:
-            symbol = tw.get("symbol", "")
-            if not symbol:
-                continue
+        for symbol, entry in netted.items():
             seen_symbols.add(symbol)
-            target_w = tw.get("target_weight", 0.0)
+            contributions = entry["contributions"]
+            if len(contributions) > 1:
+                signs = {1 if c["target_weight"] >= 0 else -1 for c in contributions}
+                if len(signs) > 1:
+                    LOG.warning(
+                        "Netting opposite-direction targets for %s: %s -> net %.4f "
+                        "(policy: net, per signal_translator.translate's own docstring)",
+                        symbol, contributions, entry["net_weight"],
+                    )
+            strategy_label = ",".join(sorted({c["name"] for c in contributions if c.get("name")}))
             instr = self._build_instruction(
-                symbol, target_w, current_positions, prices, portfolio_value,
-                strategy_name=tw.get("name", ""), max_slippage_pct=self._max_slippage_pct,
+                symbol, entry["net_weight"], current_positions, prices, portfolio_value,
+                strategy_name=strategy_label, max_slippage_pct=self._max_slippage_pct,
             )
             if instr is not None:
                 instructions.append(instr)
@@ -91,6 +116,24 @@ class SignalTranslator:
                 instructions.append(instr)
 
         return instructions
+
+    @staticmethod
+    def _net_by_symbol(target_weights: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        """Groups target_weights entries by symbol, summing target_weight
+        into one net value per symbol -- the netting step item #24
+        finding #2 found missing entirely. Preserves insertion order
+        (dict) and each symbol's individual contributions for the
+        opposite-direction warning above."""
+        netted: dict[str, dict[str, Any]] = {}
+        for tw in target_weights:
+            symbol = tw.get("symbol", "")
+            if not symbol:
+                continue
+            entry = netted.setdefault(symbol, {"net_weight": 0.0, "contributions": []})
+            weight = tw.get("target_weight", 0.0)
+            entry["net_weight"] += weight
+            entry["contributions"].append({"name": tw.get("name", ""), "target_weight": weight})
+        return netted
 
     @staticmethod
     def _build_instruction(

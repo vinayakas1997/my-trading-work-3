@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 
+from vinu_infra.point_in_time import clamp_to_as_of
 from vinu_news.server.schemas import (
     DataResponse,
     PollStatusResponse,
@@ -52,12 +53,25 @@ def latest(
 @router.get("/ticker/{symbol}", response_model=DataResponse)
 def ticker_news(
     symbol: str,
+    response: Response,
     days: int = Query(default=7, ge=1, le=3650),
     limit: int = Query(default=50, ge=1, le=500),
     from_: int | None = Query(None, alias="from", description="Unix timestamp start"),
     to: int | None = Query(None, alias="to", description="Unix timestamp end"),
+    as_of: int | None = Query(
+        default=None,
+        description=(
+            "Replay boundary (unix seconds). Hard-caps the effective end "
+            "of the requested range at this instant, independent of "
+            "caller discipline -- item #19/#21's server-side as-of gap, "
+            "the same fix vinu-stock-price's /candles route already has."
+        ),
+    ),
 ) -> DataResponse:
     service = get_service()
+    to, clamped_to_as_of = clamp_to_as_of(to, as_of)
+    if clamped_to_as_of:
+        response.headers["X-Clamped-To-As-Of"] = "true"
     if from_ is not None or to is not None:
         rows = service.get_ticker_news(symbol, from_ts=from_, to_ts=to, limit=limit)
     else:

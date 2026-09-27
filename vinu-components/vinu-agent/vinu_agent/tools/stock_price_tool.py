@@ -1,16 +1,8 @@
 import json
 import time
-from datetime import datetime, timezone
 from ..agent.tools import BaseTool
-
-
-def _date_to_epoch(date_str: str) -> int:
-    return int(time.mktime(time.strptime(date_str, "%Y-%m-%d")))
-
-
-def _iso_to_epoch(iso: str) -> int:
-    dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-    return int(dt.timestamp())
+from ._date_utils import date_to_epoch as _date_to_epoch
+from ._date_utils import iso_to_epoch as _iso_to_epoch
 
 
 class StockPriceTool(BaseTool):

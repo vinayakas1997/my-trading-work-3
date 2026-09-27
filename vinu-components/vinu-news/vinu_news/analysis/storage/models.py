@@ -34,6 +34,22 @@ class ArticleRecord:
     thread_id: str | None = None
     finbert_score: float | None = None
     finbert_label: str | None = None
+    # item #19 (vinu-news finding #1): `sort_ts` alone silently conflated
+    # publish time and ingestion time, with `parse_pub_date()`'s fallback
+    # to "now" leaving no record that a substitution happened -- a
+    # genuine, silent look-ahead-bias risk (an article fetched hours
+    # after real publication would look, to any point-in-time replay, as
+    # if it was published at fetch time). `published_at` is the real
+    # parsed pubDate (nullable -- absent exactly when estimation
+    # happened), `ingested_at` is always set to when this system actually
+    # processed the article, never estimated, and
+    # `publish_time_is_estimated` flags every case where `published_at`
+    # had to be estimated so downstream point-in-time replay can exclude
+    # them. `sort_ts` is kept as-is (not removed) so existing readers
+    # don't all need to migrate to the new fields at once.
+    published_at: int | None = None
+    ingested_at: int = 0
+    publish_time_is_estimated: bool = False
 
     def tickers_list(self) -> list[str]:
         return json.loads(self.tickers)

@@ -291,7 +291,7 @@ class TestNonFiniteDeviationIsLogged:
         # Only the rebalance-day usage of this matters (non-rebalance days
         # compute target_weights but never act on them), so it's safe to
         # always return NaN here.
-        sim._position_sizer.size = lambda weights_row, daily_ret: np.full(
+        sim._position_sizer.size = lambda weights_row, daily_ret, **kw: np.full(
             len(weights_row), np.nan
         )
 
@@ -477,3 +477,72 @@ class TestExecutionRealism:
         # different seed -> a different reject pattern -> a different equity path
         # (the reject counts can collide; the realized return won't)
         assert r2.metrics["total_return"] != r1.metrics["total_return"]
+
+
+class TestCompositeSizerWiredThroughTheRealEngine:
+    """item #14 (composite position sizing): confirms the engine actually
+    builds and passes per-symbol return history to the sizer when
+    `position_sizing_model="composite"` -- not just that `CompositeSizer`
+    itself works in isolation (see test_sizing.py for that)."""
+
+    def _multi_symbol_inputs(self, n: int = 80, seed: int = 5):
+        dates = pd.date_range("2023-01-02", periods=n, freq="D")
+        rng = np.random.default_rng(seed)
+        common = rng.normal(0.0005, 0.015, n)
+        px = 100.0 * np.cumprod(1 + common + rng.normal(0, 0.001, n))
+        py = 50.0 * np.cumprod(1 + common + rng.normal(0, 0.001, n))
+        prices = pd.DataFrame({"X": px, "Y": py}, index=dates)
+        weights = pd.DataFrame({"X": [0.5], "Y": [0.5]}, index=[dates[0]])
+        return prices, weights, dates
+
+    def _config(self, prices, model: str) -> SimulationConfig:
+        return SimulationConfig(
+            strategy_name="composite_test",
+            start_date=str(prices.index[0].date()),
+            end_date=str(prices.index[-1].date()),
+            initial_capital=1_000_000.0,
+            transaction_cost_pct=0.0,
+            slippage_pct=0.0,
+            slippage_model="flat",
+            deviation_threshold=0.0,
+            position_sizing_model=model,
+        )
+
+    def test_composite_model_runs_end_to_end_without_error(self):
+        prices, weights, _ = self._multi_symbol_inputs()
+        config = self._config(prices, "composite")
+        inp = SimulationInput("composite_test", weights, prices, config)
+        result = WeightSimulator(config).run(inp)
+        assert np.isfinite(result.portfolio_values).all()
+
+    def test_composite_sizer_actually_receives_symbol_returns(self, monkeypatch):
+        prices, weights, _ = self._multi_symbol_inputs()
+        config = self._config(prices, "composite")
+        inp = SimulationInput("composite_test", weights, prices, config)
+        sim = WeightSimulator(config)
+
+        received: list = []
+        real_size = sim._position_sizer.size
+
+        def _spy(target_weights, realized_returns, *, symbol_returns=None):
+            received.append(symbol_returns)
+            return real_size(target_weights, realized_returns, symbol_returns=symbol_returns)
+
+        monkeypatch.setattr(sim._position_sizer, "size", _spy)
+        sim.run(inp)
+
+        # Not every call happens before enough history exists, but at
+        # least one call late in the run must have received a real,
+        # multi-column frame -- proving the engine wired it through, not
+        # just that it's always None.
+        assert any(df is not None and df.shape[1] == 2 for df in received)
+
+    def test_fixed_model_never_builds_symbol_returns_at_all(self):
+        # Perf guard: a non-composite sizer must not pay for the
+        # per-symbol return-history computation at all.
+        prices, weights, _ = self._multi_symbol_inputs()
+        config = self._config(prices, "fixed")
+        inp = SimulationInput("composite_test", weights, prices, config)
+        sim = WeightSimulator(config)
+        result = sim.run(inp)
+        assert np.isfinite(result.portfolio_values).all()

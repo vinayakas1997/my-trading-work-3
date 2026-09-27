@@ -391,3 +391,29 @@ class TestRevalidate:
         proposal = strategy_store.get_proposed_decay_action(a.artifact_id)
         assert proposal is not None
         assert proposal["proposed_status"] == "MONITORING"
+
+
+class TestGenerationCandidateStoreWiring:
+    """item #16 finding #2: the one real production owner
+    (ResearchService) must inject a real store into every
+    StrategyResearchLoop it constructs, not leave it defaulted to None
+    (silently not persisting) the way a bare StrategyResearchLoop() does
+    in dozens of other tests."""
+
+    def test_service_constructs_a_real_store_at_its_own_data_root(self, tmp_path) -> None:
+        from vinu_research.config import ResearchConfig
+        from vinu_research.generation_candidate_store import GenerationCandidateStore
+        from vinu_research.service import ResearchService
+
+        svc = ResearchService(config=ResearchConfig(data_root=tmp_path))
+        assert isinstance(svc._generation_candidate_store, GenerationCandidateStore)
+        assert (tmp_path / "generation_candidates.db").parent.exists()
+
+    def test_an_injected_store_is_used_instead_of_the_default(self, tmp_path) -> None:
+        from vinu_research.config import ResearchConfig
+        from vinu_research.generation_candidate_store import GenerationCandidateStore
+        from vinu_research.service import ResearchService
+
+        injected = GenerationCandidateStore(":memory:")
+        svc = ResearchService(config=ResearchConfig(data_root=tmp_path), generation_candidate_store=injected)
+        assert svc._generation_candidate_store is injected

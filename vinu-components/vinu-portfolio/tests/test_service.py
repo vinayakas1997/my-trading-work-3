@@ -861,6 +861,7 @@ class TestComputeDailyAllocation:
         svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
         svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
         svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+        svc._fetch_positions = AsyncMock(return_value=[])
 
         result = asyncio.run(svc.compute_daily_allocation())
         assert result["weights"][0]["position_size"] == pytest.approx(100_000.0, rel=0.01)
@@ -880,6 +881,7 @@ class TestComputeDailyAllocation:
         svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
         svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
         svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+        svc._fetch_positions = AsyncMock(return_value=[])
 
         result = asyncio.run(svc.compute_daily_allocation())
         assert result["weights"][0]["position_size"] == pytest.approx(100_000.0, rel=0.01)
@@ -898,6 +900,7 @@ class TestComputeDailyAllocation:
         svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
         svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
         svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+        svc._fetch_positions = AsyncMock(return_value=[])
 
         result = asyncio.run(svc.compute_daily_allocation())
         # 30% held back -> only $70,000 sized against, not the full $100,000.
@@ -1062,6 +1065,7 @@ class TestComputeDailyAllocation:
         svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
         svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
         svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+        svc._fetch_positions = AsyncMock(return_value=[])
 
         asyncio.run(svc.compute_daily_allocation())
 
@@ -1082,12 +1086,462 @@ class TestComputeDailyAllocation:
         svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
         svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
         svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+        svc._fetch_positions = AsyncMock(return_value=[])
         svc._allocation_history.record_daily_allocation = MagicMock(side_effect=RuntimeError("disk full"))
 
         result = asyncio.run(svc.compute_daily_allocation())  # must not raise
 
         assert result["status"] == "ok"
         assert result["account_equity"] == 100_000.0
+
+
+class TestComputeDailyAllocationDrawdownAndRiskBudgetTilts:
+    """Item #23 findings #2/#3 fix: two more real, already-computed risk
+    signals (drawdown-monitor action, risk-budget per-symbol tier) folded
+    in as bounded multiplicative tilts, same shape as regime/outcome/
+    confidence-gradient above."""
+
+    def _svc_one_symbol(self, tmp_path, **overrides):
+        svc = _service(data_root=tmp_path, max_per_strategy_weight=1.0, **overrides)
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [{"name": "a", "kind": "yaml"}],
+            "weights": [{"name": "a", "kind": "yaml", "symbol": "AAPL", "target_weight": 1.0}],
+            "correlation_matrix": None,
+        })
+        svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
+        svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
+        return svc
+
+    def test_no_recorded_drawdown_status_is_neutral(self, tmp_path) -> None:
+        """A fresh store (the monitor worker hasn't written a cycle yet)
+        must never be silently treated as an active halt/flat."""
+        svc = self._svc_one_symbol(tmp_path)
+        svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+        svc._fetch_positions = AsyncMock(return_value=[])
+
+        result = asyncio.run(svc.compute_daily_allocation())
+
+        assert result["drawdown_status"]["action"] == "ok"
+        assert result["deployable_equity"] == pytest.approx(100_000.0)
+
+    def test_a_recorded_halve_action_halves_deployable_equity_not_the_relative_weight(self, tmp_path) -> None:
+        """target_weight is a relative allocation, always renormalized to
+        sum to 1.0 -- a uniform multiplier there would be cancelled out.
+        "Halve size" has to mean less capital deployed, so it applies to
+        deployable_equity instead (compute_daily_allocation's own comment
+        at the call site explains why)."""
+        from vinu_portfolio.storage.drawdown_status import DrawdownStatusStore
+
+        svc = self._svc_one_symbol(tmp_path)
+        svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+        svc._fetch_positions = AsyncMock(return_value=[])
+        DrawdownStatusStore(str(tmp_path / "drawdown_status.db")).record(
+            action="halve", current_drawdown=-0.12, threshold_breached=False,
+        )
+
+        result = asyncio.run(svc.compute_daily_allocation())
+
+        assert result["drawdown_status"]["action"] == "halve"
+        assert result["weights"][0]["target_weight"] == pytest.approx(1.0)  # unchanged, still 100%
+        assert result["deployable_equity"] == pytest.approx(50_000.0)
+        assert result["weights"][0]["position_size"] == pytest.approx(50_000.0, rel=0.05)
+
+    def test_a_recorded_flat_action_zeros_deployable_equity(self, tmp_path) -> None:
+        from vinu_portfolio.storage.drawdown_status import DrawdownStatusStore
+
+        svc = self._svc_one_symbol(tmp_path)
+        svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+        svc._fetch_positions = AsyncMock(return_value=[])
+        DrawdownStatusStore(str(tmp_path / "drawdown_status.db")).record(
+            action="flat", current_drawdown=-0.16, threshold_breached=False,
+        )
+
+        result = asyncio.run(svc.compute_daily_allocation())
+
+        assert result["deployable_equity"] == pytest.approx(0.0)
+
+    def test_drawdown_and_reserve_fraction_stack(self, tmp_path) -> None:
+        from vinu_portfolio.storage.drawdown_status import DrawdownStatusStore
+
+        svc = self._svc_one_symbol(tmp_path, reserve_fraction=0.2)
+        svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+        svc._fetch_positions = AsyncMock(return_value=[])
+        DrawdownStatusStore(str(tmp_path / "drawdown_status.db")).record(
+            action="halve", current_drawdown=-0.12, threshold_breached=False,
+        )
+
+        result = asyncio.run(svc.compute_daily_allocation())
+
+        # 100,000 * (1 - 0.2 reserve) * 0.5 halve = 40,000
+        assert result["deployable_equity"] == pytest.approx(40_000.0)
+
+    def test_risk_budget_multiplier_reduces_weight_for_a_reduce_tier_symbol(self, tmp_path) -> None:
+        svc = self._svc_one_symbol(tmp_path)
+        svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+        # -2.5% daily P&L on AAPL -> TIER_REDUCE (between -2% and -3%) ->
+        # suggested_size_multiplier 0.5 (risk_budget.py's own math).
+        svc._fetch_positions = AsyncMock(return_value=[
+            {"symbol": "AAPL", "unrealized_pl": -2_500.0},
+        ])
+
+        result = asyncio.run(svc.compute_daily_allocation())
+
+        weight = result["weights"][0]
+        assert weight["risk_budget_multiplier"] == pytest.approx(0.5)
+        assert result["risk_budget"]["symbols"][0]["symbol"] == "AAPL"
+
+    def test_no_position_for_the_symbol_is_neutral_not_penalized(self, tmp_path) -> None:
+        svc = self._svc_one_symbol(tmp_path)
+        svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+        svc._fetch_positions = AsyncMock(return_value=[])  # nothing held yet
+
+        result = asyncio.run(svc.compute_daily_allocation())
+
+        assert result["weights"][0]["risk_budget_multiplier"] == 1.0
+
+    def test_no_equity_skips_the_positions_fetch_entirely(self, tmp_path) -> None:
+        """No point fetching broker positions when there's no equity to
+        size against -- same reasoning already applied to sizing itself."""
+        svc = self._svc_one_symbol(tmp_path)
+        svc._fetch_account_equity = AsyncMock(return_value=None)
+        svc._fetch_positions = AsyncMock(return_value=[])
+
+        asyncio.run(svc.compute_daily_allocation())
+
+        svc._fetch_positions.assert_not_called()
+
+
+class TestMaturityCapitalMultiplier:
+    """item #4 (system-wide-audit-and-design, "gradual capital scaling"):
+    a system-wide MaturityAssessment now scales deployable_equity, the
+    same whole-portfolio mechanism the drawdown ladder already uses --
+    opt-in (disabled by default) and fails open to 1.0 on any error."""
+
+    def _svc_one_symbol(self, tmp_path, **overrides):
+        svc = _service(data_root=tmp_path, max_per_strategy_weight=1.0, **overrides)
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [{"name": "a", "kind": "yaml"}],
+            "weights": [{"name": "a", "kind": "yaml", "symbol": "AAPL", "target_weight": 1.0}],
+            "correlation_matrix": None,
+        })
+        svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
+        svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
+        svc._fetch_account_equity = AsyncMock(return_value=100_000.0)
+        svc._fetch_positions = AsyncMock(return_value=[])
+        return svc
+
+    def _fake_assessment(self, tier: str):
+        from vinu_research.maturity_assessor import MaturityAssessment
+        return MaturityAssessment(
+            tier=tier, n_real_trades=0, n_paper_trading_days=0,
+            directional_accuracy=0.0, regime_coverage=[],
+        )
+
+    def test_disabled_by_default_is_a_complete_no_op(self, tmp_path) -> None:
+        svc = self._svc_one_symbol(tmp_path)
+        with patch(
+            "vinu_portfolio.research_link.get_maturity_assessment",
+            return_value=self._fake_assessment("cold_start"),
+        ) as mock_assess:
+            result = asyncio.run(svc.compute_daily_allocation())
+        mock_assess.assert_not_called()
+        assert result["maturity_capital_multiplier"] == 1.0
+        assert result["deployable_equity"] == pytest.approx(100_000.0)
+
+    def test_enabled_cold_start_shrinks_deployable_equity(self, tmp_path) -> None:
+        svc = self._svc_one_symbol(
+            tmp_path, maturity_capital_gating_enabled=True,
+            maturity_capital_multiplier_cold_start=0.1,
+        )
+        with patch(
+            "vinu_portfolio.research_link.get_maturity_assessment",
+            return_value=self._fake_assessment("cold_start"),
+        ):
+            result = asyncio.run(svc.compute_daily_allocation())
+        assert result["maturity_capital_multiplier"] == pytest.approx(0.1)
+        assert result["deployable_equity"] == pytest.approx(10_000.0)
+
+    def test_enabled_mature_deploys_full_capital(self, tmp_path) -> None:
+        svc = self._svc_one_symbol(tmp_path, maturity_capital_gating_enabled=True)
+        with patch(
+            "vinu_portfolio.research_link.get_maturity_assessment",
+            return_value=self._fake_assessment("mature"),
+        ):
+            result = asyncio.run(svc.compute_daily_allocation())
+        assert result["maturity_capital_multiplier"] == 1.0
+        assert result["deployable_equity"] == pytest.approx(100_000.0)
+
+    def test_stacks_with_drawdown_and_reserve_fraction(self, tmp_path) -> None:
+        from vinu_portfolio.storage.drawdown_status import DrawdownStatusStore
+
+        svc = self._svc_one_symbol(
+            tmp_path, maturity_capital_gating_enabled=True,
+            maturity_capital_multiplier_early_live=0.5, reserve_fraction=0.2,
+        )
+        DrawdownStatusStore(str(tmp_path / "drawdown_status.db")).record(
+            action="halve", current_drawdown=-0.12, threshold_breached=False,
+        )
+        with patch(
+            "vinu_portfolio.research_link.get_maturity_assessment",
+            return_value=self._fake_assessment("early_live"),
+        ):
+            result = asyncio.run(svc.compute_daily_allocation())
+        # 100,000 * (1 - 0.2 reserve) * 0.5 halve * 0.5 early_live = 20,000
+        assert result["deployable_equity"] == pytest.approx(20_000.0)
+
+    def test_assessment_failure_fails_open_to_full_capital(self, tmp_path) -> None:
+        svc = self._svc_one_symbol(tmp_path, maturity_capital_gating_enabled=True)
+        with patch(
+            "vinu_portfolio.research_link.get_maturity_assessment",
+            side_effect=RuntimeError("vinu-research not importable"),
+        ):
+            result = asyncio.run(svc.compute_daily_allocation())
+        assert result["maturity_capital_multiplier"] == 1.0
+        assert result["deployable_equity"] == pytest.approx(100_000.0)
+
+    def test_unknown_tier_fails_open_to_full_capital(self, tmp_path) -> None:
+        svc = self._svc_one_symbol(tmp_path, maturity_capital_gating_enabled=True)
+        with patch(
+            "vinu_portfolio.research_link.get_maturity_assessment",
+            return_value=self._fake_assessment("some_future_tier"),
+        ):
+            result = asyncio.run(svc.compute_daily_allocation())
+        assert result["maturity_capital_multiplier"] == 1.0
+
+
+class TestDetectSymbolConflicts:
+    """Item #23 finding #1's "not even a flag" half -- real netting
+    enforcement already happens downstream at vinu-live's
+    SignalTranslator._net_by_symbol (item #24 finding #2); this is
+    visibility at the source, not a second netting mechanism."""
+
+    def test_a_single_strategy_per_symbol_is_not_a_conflict(self) -> None:
+        weights = [
+            {"name": "a", "symbol": "AAPL", "target_weight": 0.5},
+            {"name": "b", "symbol": "MSFT", "target_weight": 0.5},
+        ]
+        assert PortfolioService._detect_symbol_conflicts(weights) == []
+
+    def test_two_strategies_same_direction_is_a_conflict_but_not_opposite_direction(self) -> None:
+        weights = [
+            {"name": "a", "symbol": "AAPL", "target_weight": 0.3},
+            {"name": "b", "symbol": "AAPL", "target_weight": 0.2},
+        ]
+        conflicts = PortfolioService._detect_symbol_conflicts(weights)
+        assert len(conflicts) == 1
+        assert conflicts[0]["symbol"] == "AAPL"
+        assert conflicts[0]["net_weight"] == pytest.approx(0.5)
+        assert conflicts[0]["gross_weight"] == pytest.approx(0.5)
+        assert conflicts[0]["severity"] == pytest.approx(0.0)
+        assert conflicts[0]["opposite_direction"] is False
+        assert len(conflicts[0]["contributions"]) == 2
+
+    def test_opposite_direction_conflict_is_flagged(self) -> None:
+        weights = [
+            {"name": "a", "symbol": "AAPL", "target_weight": 0.3},
+            {"name": "b", "symbol": "AAPL", "target_weight": -0.2},
+        ]
+        conflicts = PortfolioService._detect_symbol_conflicts(weights)
+        assert conflicts[0]["opposite_direction"] is True
+        assert conflicts[0]["net_weight"] == pytest.approx(0.1)
+        assert conflicts[0]["gross_weight"] == pytest.approx(0.5)
+        assert conflicts[0]["severity"] == pytest.approx(0.8)
+
+    def test_fully_offsetting_conflict_has_severity_one(self) -> None:
+        weights = [
+            {"name": "a", "symbol": "AAPL", "target_weight": 0.3},
+            {"name": "b", "symbol": "AAPL", "target_weight": -0.3},
+        ]
+        conflicts = PortfolioService._detect_symbol_conflicts(weights)
+        assert conflicts[0]["net_weight"] == pytest.approx(0.0)
+        assert conflicts[0]["severity"] == pytest.approx(1.0)
+
+    def test_empty_symbol_is_never_flagged_as_a_conflict(self) -> None:
+        weights = [
+            {"name": "a", "symbol": "", "target_weight": 0.5},
+            {"name": "b", "symbol": "", "target_weight": 0.5},
+        ]
+        assert PortfolioService._detect_symbol_conflicts(weights) == []
+
+    def test_wired_into_compute_daily_allocations_real_response(self, tmp_path) -> None:
+        svc = _service(data_root=tmp_path, max_per_strategy_weight=1.0)
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [
+                {"name": "a", "kind": "yaml"},
+                {"name": "b", "kind": "yaml"},
+            ],
+            "weights": [
+                {"name": "a", "kind": "yaml", "symbol": "AAPL", "target_weight": 0.6},
+                {"name": "b", "kind": "yaml", "symbol": "AAPL", "target_weight": -0.4},
+            ],
+            "correlation_matrix": None,
+        })
+        svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
+        svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
+        svc._fetch_account_equity = AsyncMock(return_value=None)
+        svc._http.post = AsyncMock(return_value=_resp(200, {"status": "ok"}))
+
+        result = asyncio.run(svc.compute_daily_allocation())
+
+        assert len(result["symbol_conflicts"]) == 1
+        assert result["symbol_conflicts"][0]["symbol"] == "AAPL"
+        assert result["symbol_conflicts"][0]["opposite_direction"] is True
+        assert result["symbol_conflicts"][0]["severity"] == pytest.approx(0.8)
+        # 0.6 vs -0.4: gross 1.0, net 0.2, 80% canceled -- above both
+        # escalation thresholds, so the severe-conflict notify fires.
+        svc._http.post.assert_awaited_once()
+        assert svc._http.post.await_args.args[0].endswith("/notify/symbol-conflict")
+
+
+class TestDetectNotFunded:
+    """item #23 finding #5: a candidate whose tilted weight rounds to
+    zero is "not funded" -- the portfolio-layer instance of the recurring
+    "computed why, then discarded" pattern (items #3/#16.2/#18.3/#21.3)."""
+
+    def test_a_funded_strategy_is_not_reported(self) -> None:
+        tilted = [{"name": "a", "target_weight": 0.5, "regime_multiplier": 1.0,
+                   "outcome_multiplier": 1.0, "confidence_gradient_multiplier": 1.0,
+                   "risk_budget_multiplier": 1.0}]
+        assert PortfolioService._detect_not_funded(tilted) == []
+
+    def test_zero_weight_names_the_smallest_multiplier(self) -> None:
+        tilted = [{"name": "a", "target_weight": 0.0, "base_weight": 0.2,
+                   "regime_multiplier": 0.9, "outcome_multiplier": 0.1,
+                   "confidence_gradient_multiplier": 1.0, "risk_budget_multiplier": 1.0}]
+        records = PortfolioService._detect_not_funded(tilted)
+        assert len(records) == 1
+        rec = records[0]
+        assert rec["entity_type"] == "portfolio_strategy"
+        assert rec["entity_id"] == "a"
+        assert rec["stage"] == "daily_allocation"
+        assert rec["rejection_category"] == "outcome_confidence"
+        assert "0.1" in rec["rejection_detail"]
+
+    def test_zero_weight_with_all_neutral_tilts_is_concentration_or_dilution(self) -> None:
+        tilted = [{"name": "a", "target_weight": 0.0, "base_weight": 0.0001,
+                   "regime_multiplier": 1.0, "outcome_multiplier": 1.0,
+                   "confidence_gradient_multiplier": 1.0, "risk_budget_multiplier": 1.0}]
+        records = PortfolioService._detect_not_funded(tilted)
+        assert records[0]["rejection_category"] == "concentration_or_dilution"
+
+    def test_a_tiny_nonzero_weight_below_threshold_is_still_reported(self) -> None:
+        tilted = [{"name": "a", "target_weight": 0.00005, "regime_multiplier": 1.0,
+                   "outcome_multiplier": 1.0, "confidence_gradient_multiplier": 1.0,
+                   "risk_budget_multiplier": 1.0}]
+        assert len(PortfolioService._detect_not_funded(tilted)) == 1
+
+    def test_multiple_unfunded_candidates_each_get_their_own_record(self) -> None:
+        tilted = [
+            {"name": "a", "target_weight": 0.0, "outcome_multiplier": 0.2,
+             "regime_multiplier": 1.0, "confidence_gradient_multiplier": 1.0, "risk_budget_multiplier": 1.0},
+            {"name": "b", "target_weight": 0.0, "regime_multiplier": 0.3,
+             "outcome_multiplier": 1.0, "confidence_gradient_multiplier": 1.0, "risk_budget_multiplier": 1.0},
+        ]
+        records = PortfolioService._detect_not_funded(tilted)
+        assert {r["entity_id"] for r in records} == {"a", "b"}
+
+    def test_wired_into_compute_daily_allocations_real_response_and_history(self, tmp_path) -> None:
+        svc = _service(data_root=tmp_path, max_per_strategy_weight=1.0)
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [{"name": "a", "kind": "yaml"}, {"name": "b", "kind": "yaml"}],
+            "weights": [
+                {"name": "a", "kind": "yaml", "symbol": "AAPL", "target_weight": 1.0},
+                {"name": "b", "kind": "yaml", "symbol": "MSFT", "target_weight": 0.0},
+            ],
+            "correlation_matrix": None,
+        })
+        svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "unavailable", "regime": None})
+        svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
+        svc._fetch_account_equity = AsyncMock(return_value=None)
+        svc._http.post = AsyncMock(return_value=_resp(200, {"status": "ok"}))
+
+        result = asyncio.run(svc.compute_daily_allocation())
+
+        assert len(result["not_funded"]) == 1
+        assert result["not_funded"][0]["entity_id"] == "b"
+
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        stored = svc._allocation_history.get_allocation(today)
+        assert stored is not None
+        assert len(stored.not_funded) == 1
+        assert stored.not_funded[0]["entity_id"] == "b"
+
+
+class TestNotifySevereSymbolConflicts:
+    """item #23 finding #1's escalation half: severe, opposite-direction
+    conflicts get a real alert via vinu-agent's /notify/symbol-conflict,
+    not just a WARNING log line."""
+
+    def test_severe_opposite_direction_conflict_is_escalated(self) -> None:
+        svc = _service()
+        svc._http.post = AsyncMock(return_value=_resp(200, {"status": "ok"}))
+        conflicts = [{
+            "symbol": "AAPL", "contributions": [], "net_weight": 0.02,
+            "gross_weight": 0.4, "severity": 0.95, "opposite_direction": True,
+        }]
+        asyncio.run(svc._notify_severe_symbol_conflicts(conflicts))
+        svc._http.post.assert_awaited_once()
+        assert svc._http.post.await_args.args[0].endswith("/notify/symbol-conflict")
+        assert svc._http.post.await_args.kwargs["json"]["symbol"] == "AAPL"
+
+    def test_same_direction_conflict_is_never_escalated_regardless_of_size(self) -> None:
+        svc = _service()
+        svc._http.post = AsyncMock()
+        conflicts = [{
+            "symbol": "AAPL", "contributions": [], "net_weight": 0.5,
+            "gross_weight": 0.5, "severity": 0.0, "opposite_direction": False,
+        }]
+        asyncio.run(svc._notify_severe_symbol_conflicts(conflicts))
+        svc._http.post.assert_not_awaited()
+
+    def test_low_severity_opposite_direction_conflict_is_not_escalated(self) -> None:
+        svc = _service()
+        svc._http.post = AsyncMock()
+        conflicts = [{
+            "symbol": "AAPL", "contributions": [], "net_weight": 0.2,
+            "gross_weight": 0.3, "severity": 0.33, "opposite_direction": True,
+        }]
+        asyncio.run(svc._notify_severe_symbol_conflicts(conflicts))
+        svc._http.post.assert_not_awaited()
+
+    def test_severe_but_small_gross_weight_is_not_escalated(self) -> None:
+        """Two strategies each nudging 0.01/-0.009 on a symbol fully
+        cancel out (high severity) but the position is too small to be
+        worth a human's attention."""
+        svc = _service()
+        svc._http.post = AsyncMock()
+        conflicts = [{
+            "symbol": "AAPL", "contributions": [], "net_weight": 0.001,
+            "gross_weight": 0.019, "severity": 0.95, "opposite_direction": True,
+        }]
+        asyncio.run(svc._notify_severe_symbol_conflicts(conflicts))
+        svc._http.post.assert_not_awaited()
+
+    def test_a_failed_notification_does_not_raise(self) -> None:
+        svc = _service()
+        svc._http.post = AsyncMock(side_effect=RuntimeError("agent unreachable"))
+        conflicts = [{
+            "symbol": "AAPL", "contributions": [], "net_weight": 0.02,
+            "gross_weight": 0.4, "severity": 0.95, "opposite_direction": True,
+        }]
+        asyncio.run(svc._notify_severe_symbol_conflicts(conflicts))  # must not raise
+
+    def test_multiple_severe_conflicts_each_get_their_own_notification(self) -> None:
+        svc = _service()
+        svc._http.post = AsyncMock(return_value=_resp(200, {"status": "ok"}))
+        conflicts = [
+            {"symbol": "AAPL", "contributions": [], "net_weight": 0.02,
+             "gross_weight": 0.4, "severity": 0.95, "opposite_direction": True},
+            {"symbol": "MSFT", "contributions": [], "net_weight": 0.01,
+             "gross_weight": 0.3, "severity": 0.9, "opposite_direction": True},
+        ]
+        asyncio.run(svc._notify_severe_symbol_conflicts(conflicts))
+        assert svc._http.post.await_count == 2
 
 
 class TestFetchAccountEquity:

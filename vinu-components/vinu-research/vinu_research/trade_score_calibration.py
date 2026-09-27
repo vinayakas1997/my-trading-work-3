@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import statistics
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -212,8 +213,35 @@ def _read_state(path: Path) -> dict[str, Any]:
 
 
 def _write_state(path: Path, state: dict[str, Any]) -> None:
+    """item #12 finding #1: a plain, non-atomic `path.write_text()` used
+    to write this file directly -- a crash mid-write corrupts the live
+    trade-score-threshold state. Same tmp+`os.replace` trick
+    `hypothesis_registry.py`'s own `_write` already uses: the write lands
+    in a private temp file first (so a crash mid-write only leaves an
+    orphaned .tmp file, never a truncated/corrupt live state file), then
+    `os.replace` swaps it in atomically."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(
+            suffix=".tmp",
+            prefix=f"{path.stem}_",
+            dir=str(path.parent),
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, default=str)
+            f.flush()
+            os.fsync(fd)
+        os.replace(tmp, str(path))
+    except Exception:
+        logger.exception("Failed to write trade-score calibration state to %s", path)
+        raise
+    finally:
+        if tmp is not None and os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def load_active_thresholds(*, state_path: str | Path | None = None) -> TradeScoreThresholds:

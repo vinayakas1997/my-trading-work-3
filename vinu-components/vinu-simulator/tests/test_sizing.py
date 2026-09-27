@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from vinu_simulator.engine.sizing import (
+    CompositeSizer,
     FixedSizer,
     FractionalKellySizer,
     VolTargetSizer,
@@ -138,3 +140,109 @@ class TestBuildPositionSizer:
     def test_unknown_model_raises(self):
         with pytest.raises(ValueError, match="Unknown position_sizing_model"):
             build_position_sizer("not_a_real_model")
+
+    def test_composite_model(self):
+        sizer = build_position_sizer("composite", target_annual_vol=0.2, vol_lookback_days=10)
+        assert isinstance(sizer, CompositeSizer)
+        assert sizer.target_annual_vol == 0.2
+        assert sizer.vol_lookback_days == 10
+
+
+def _correlated_symbol_returns(n_rows: int, n_symbols: int = 2, seed: int = 1) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    common = rng.normal(0.0005, 0.02, n_rows)
+    data = {
+        f"S{i}": common + rng.normal(0, 0.0005, n_rows)
+        for i in range(n_symbols)
+    }
+    return pd.DataFrame(data)
+
+
+def _uncorrelated_symbol_returns(n_rows: int, n_symbols: int = 2, seed: int = 2) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    data = {f"S{i}": rng.normal(0.0, 0.01, n_rows) for i in range(n_symbols)}
+    return pd.DataFrame(data)
+
+
+class TestCompositeSizer:
+    def test_no_symbol_returns_falls_back_to_vol_target_only(self):
+        sizer = CompositeSizer(target_annual_vol=0.15, vol_lookback_days=20, max_leverage=2.0)
+        weights = np.array([1.0, 1.0])
+        rng = np.random.default_rng(0)
+        volatile_history = rng.normal(0, 0.05, 30)
+        result = sizer.size(weights, volatile_history, symbol_returns=None)
+        expected_vol_only = VolTargetSizer(
+            target_annual_vol=0.15, lookback_days=20, max_leverage=2.0,
+        ).size(weights, volatile_history)
+        np.testing.assert_allclose(result, expected_vol_only)
+
+    def test_single_symbol_returns_is_ignored_no_pairs_to_correlate(self):
+        sizer = CompositeSizer(correlation_lookback_days=30)
+        weights = np.array([1.0])
+        history = np.full(30, 0.0)
+        single_symbol = pd.DataFrame({"S0": np.full(60, 0.001)})
+        result = sizer.size(weights, history, symbol_returns=single_symbol)
+        # No vol scaling either (flat zero realized_returns -> max_leverage
+        # branch), the point here is just that a single-column frame
+        # never reaches the correlation math or crashes on it.
+        assert np.isfinite(result).all()
+
+    def test_insufficient_correlation_history_leaves_only_vol_scale_applied(self):
+        sizer = CompositeSizer(correlation_lookback_days=60)
+        weights = np.array([1.0, 1.0])
+        history = np.full(30, 0.001)
+        short_symbol_history = _correlated_symbol_returns(10)  # < 60 rows
+        result = sizer.size(weights, history, symbol_returns=short_symbol_history)
+        expected_vol_only = VolTargetSizer().size(weights, history)
+        np.testing.assert_allclose(result, expected_vol_only)
+
+    def test_highly_correlated_symbols_shrink_more_than_uncorrelated(self):
+        weights = np.array([1.0, 1.0])
+        history = np.full(30, 0.001)
+
+        correlated_sizer = CompositeSizer(correlation_lookback_days=60, correlation_recompute_every=1)
+        correlated = correlated_sizer.size(
+            weights, history, symbol_returns=_correlated_symbol_returns(200),
+        )
+
+        uncorrelated_sizer = CompositeSizer(correlation_lookback_days=60, correlation_recompute_every=1)
+        uncorrelated = uncorrelated_sizer.size(
+            weights, history, symbol_returns=_uncorrelated_symbol_returns(200),
+        )
+
+        assert correlated[0] <= uncorrelated[0]
+
+    def test_correlation_shrink_never_exceeds_max_correlation_shrink(self):
+        sizer = CompositeSizer(
+            correlation_lookback_days=60, correlation_recompute_every=1,
+            max_correlation_shrink=0.4,
+        )
+        weights = np.array([1.0, 1.0])
+        history = np.full(30, 0.001)
+        result = sizer.size(weights, history, symbol_returns=_correlated_symbol_returns(200))
+        vol_scale = VolTargetSizer().size(weights, history)[0]
+        min_allowed = vol_scale * (1.0 - 0.4)
+        assert result[0] >= min_allowed - 1e-9
+
+    def test_correlation_factor_is_cached_between_recompute_intervals(self):
+        sizer = CompositeSizer(correlation_lookback_days=60, correlation_recompute_every=100)
+        weights = np.array([1.0, 1.0])
+        history = np.full(30, 0.001)
+        big_frame = _correlated_symbol_returns(300)
+
+        first = sizer.size(weights, history, symbol_returns=big_frame.iloc[:200])
+        # A different (uncorrelated) history one row later -- since it's
+        # within the recompute interval, the cached scale must still be
+        # used rather than recomputed from this new data.
+        second = sizer.size(
+            weights, history, symbol_returns=_uncorrelated_symbol_returns(201),
+        )
+        np.testing.assert_allclose(first, second)
+
+    def test_never_flips_direction(self):
+        sizer = CompositeSizer(correlation_lookback_days=60, correlation_recompute_every=1)
+        weights = np.array([1.0, -1.0])
+        history = np.full(30, 0.001)
+        result = sizer.size(weights, history, symbol_returns=_correlated_symbol_returns(200))
+        assert result[0] > 0
+        assert result[1] < 0

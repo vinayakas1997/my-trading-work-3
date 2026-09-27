@@ -145,24 +145,33 @@ class TestComputeRiskBudget:
 
 
 class TestComputeRiskStatus:
-    def _service(**overrides) -> PortfolioService:
-        return PortfolioService(config=PortfolioConfig(**overrides))
+    """compute_risk_status's own call chain changed under item #23
+    findings #2/#3's fix (service.py): compute_daily_allocation() now
+    does the positions-fetch + compute_risk_budget() call itself (for its
+    own risk_budget_multiplier tilt), and compute_risk_status reuses that
+    result instead of recomputing it a second time -- see
+    compute_risk_status's own docstring. These tests mock build_portfolio/
+    regime/outcome/equity (same shape as test_service.py's own
+    compute_daily_allocation tests) so compute_daily_allocation runs for
+    real, letting `_fetch_positions` genuinely drive compute_risk_budget
+    and the shared `self._risk_tracker` exactly as it did before -- the
+    thing these tests are actually about."""
+
+    def _service(self, equity: float = 100_000.0, regime: str | None = "bull", **overrides) -> PortfolioService:
+        svc = PortfolioService(config=PortfolioConfig(**overrides))
+        svc.build_portfolio = AsyncMock(return_value={
+            "status": "ok",
+            "strategies": [{"name": "a", "kind": "yaml"}],
+            "weights": [{"name": "a", "kind": "yaml", "symbol": "AAPL", "target_weight": 1.0}],
+            "correlation_matrix": None,
+        })
+        svc._fetch_benchmark_regime = AsyncMock(return_value={"status": "ok", "regime": regime})
+        svc._fetch_outcome_confidence = AsyncMock(return_value={"source": "not_tracked", "accuracy": None, "n_entries": 0})
+        svc._fetch_account_equity = AsyncMock(return_value=equity)
+        return svc
 
     def test_calls_through_to_pipeline(self) -> None:
-        svc = TestComputeRiskStatus._service()
-        svc.compute_daily_game_plan = AsyncMock(
-            return_value={
-                "status": "ok",
-                "readiness_score": 0.5,
-                "account_equity": 100_000.0,
-                "regime": {"regime": "bull"},
-                "n_strategies": 1,
-                "strategies": [],
-                "weights": [],
-                "portfolio": {},
-                "date": "2026-07-31",
-            }
-        )
+        svc = self._service(equity=100_000.0, regime="bull")
         svc._fetch_positions = AsyncMock(
             return_value=[{"symbol": "AAPL", "unrealized_pl": 100.0}]
         )
@@ -170,7 +179,9 @@ class TestComputeRiskStatus:
         assert result["equity"] == 100_000.0
         assert result["regime"] == "bull"
         assert result["aggregate"]["n_positions"] == 1
-        assert result["game_plan_readiness"] == 0.5
+        # readiness: 1 strategy (no trade plan, yaml kind) + regime + equity
+        # both available = (0 + 1 + 1) / (1 + 2)
+        assert result["game_plan_readiness"] == pytest.approx(2 / 3, abs=0.001)
 
     def test_steady_unrealized_pnl_does_not_inflate_across_repeated_calls(self) -> None:
         """situation-test/31-risk-budget-accumulates-repeated-unrealized-pnl-snapshots.md:
@@ -184,15 +195,7 @@ class TestComputeRiskStatus:
         remembered across calls (that part of the original Stage 2 fix was
         right); repeated IDENTICAL snapshots must report the identical
         result."""
-        svc = TestComputeRiskStatus._service()
-        svc.compute_daily_game_plan = AsyncMock(
-            return_value={
-                "status": "ok",
-                "readiness_score": 1.0,
-                "account_equity": 100_000.0,
-                "regime": {"regime": "bull"},
-            }
-        )
+        svc = self._service(equity=100_000.0, regime="bull")
         svc._fetch_positions = AsyncMock(
             return_value=[{"symbol": "AAPL", "unrealized_pl": -500.0}]
         )
@@ -209,15 +212,7 @@ class TestComputeRiskStatus:
         recovered should stay flagged, matching how a real circuit breaker
         behaves (it doesn't silently clear the instant the price ticks
         back)."""
-        svc = TestComputeRiskStatus._service()
-        svc.compute_daily_game_plan = AsyncMock(
-            return_value={
-                "status": "ok",
-                "readiness_score": 1.0,
-                "account_equity": 100_000.0,
-                "regime": {"regime": "bull"},
-            }
-        )
+        svc = self._service(equity=100_000.0, regime="bull")
 
         def _fetch_with(pnl: float):
             return AsyncMock(return_value=[{"symbol": "AAPL", "unrealized_pl": pnl}])
@@ -232,3 +227,19 @@ class TestComputeRiskStatus:
         assert breach["symbols"][0]["halted"] is True
         assert recovered["symbols"][0]["halted"] is True
         assert recovered["symbols"][0]["daily_pnl"] == -3500.0
+
+    def test_reuses_compute_daily_allocations_risk_budget_not_a_second_call(self) -> None:
+        """The actual point of the fix: compute_risk_budget must run
+        exactly once per compute_risk_status() call, not twice."""
+        from unittest.mock import patch
+
+        svc = self._service(equity=100_000.0, regime="bull")
+        svc._fetch_positions = AsyncMock(
+            return_value=[{"symbol": "AAPL", "unrealized_pl": 100.0}]
+        )
+        with patch(
+            "vinu_portfolio.service.compute_risk_budget", wraps=compute_risk_budget,
+        ) as spy:
+            asyncio.run(svc.compute_risk_status())
+
+        assert spy.call_count == 1

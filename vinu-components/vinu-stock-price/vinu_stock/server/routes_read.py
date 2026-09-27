@@ -6,6 +6,8 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
+from vinu_infra.point_in_time import clamp_to_as_of
+from vinu_stock.catalog.gap_validation import count_session_gaps
 from vinu_stock.query.indicators import parse_indicator_names
 from vinu_stock.server.schemas import CandlesBatchRequest, CandlesBatchResponse, DataResponse
 from vinu_stock.service import StockService
@@ -86,12 +88,26 @@ def candles(
     limit: int = Query(default=5000, ge=1, le=50000),
     indicators: str | None = Query(default=None, description="Comma-separated indicator names"),
     adjusted: bool = Query(default=True),
+    as_of: int | None = Query(
+        default=None,
+        description=(
+            "Replay boundary (unix seconds). Hard-caps the effective end "
+            "of the requested range at this instant, independent of "
+            "caller discipline -- item #19/#21's server-side as-of gap: "
+            "point-in-time safety used to exist only because vinu-agent's "
+            "tool code remembered to clamp client-side."
+        ),
+    ),
 ) -> DataResponse:
     service = get_service()
     try:
         indicator_list = parse_indicator_names(indicators)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    to_ts, clamped_to_as_of = clamp_to_as_of(to_ts, as_of)
+    if clamped_to_as_of:
+        response.headers["X-Clamped-To-As-Of"] = "true"
+    cache_info: dict = {}
     rows = service.get_candles(
         symbol,
         interval=interval,
@@ -102,7 +118,14 @@ def candles(
         limit=limit,
         indicators=indicator_list or None,
         adjusted=adjusted,
+        cache_info=cache_info,
     )
+    if cache_info.get("hit"):
+        # item #19 finding #5: a "live" caller polling an open-ended
+        # window could get up to 5-minute-stale indicator data with no
+        # way to tell -- surface the real age, same header-based
+        # convention as X-Clamped-To-As-Of/X-Data-Empty above.
+        response.headers["X-Cache-Age-Seconds"] = str(round(cache_info["age_seconds"]))
     if not rows:
         # A 200 with an empty body is indistinguishable from success --
         # callers (and operators) mistook it for "working" with zero data.
@@ -112,6 +135,21 @@ def candles(
             "candles %s %s empty (from=%s to=%s days=%s) — watchlist/backfill gap, not success",
             symbol.upper(), interval, from_ts, to_ts, days,
         )
+    elif interval == "1m":
+        # item #19 finding #2: count_session_gaps() used to run only
+        # during backfill (backfill/year_job.py) -- a mid-range gap
+        # (vendor outage, missed fetch) on the live read path looked
+        # identical to "the market was closed that day." Only meaningful
+        # for 1m bars (count_session_gaps' own BAR_SEC=60 assumption) --
+        # not generalized to other intervals here, a bigger change than
+        # this finding asked for.
+        gap_count = count_session_gaps([row["bar_ts"] for row in rows])
+        if gap_count > 0:
+            response.headers["X-Session-Gap-Count"] = str(gap_count)
+            LOG.warning(
+                "candles %s %s served with %d session gap(s) (from=%s to=%s days=%s)",
+                symbol.upper(), interval, gap_count, from_ts, to_ts, days,
+            )
     return DataResponse(count=len(rows), data=rows)
 
 

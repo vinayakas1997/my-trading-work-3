@@ -281,6 +281,19 @@ Return JSON with this exact schema:
 }"""
 
 
+DUPLICATE_IDEA_SYSTEM_PROMPT = """You are a senior quantitative researcher checking whether a new strategy idea is a genuine duplicate of one or more already-researched ideas for the same stock, before scarce research budget is spent on it again.
+
+A duplicate means the same underlying trading concept (same indicators/signal logic, same entry/exit rationale), not just overlapping words — "SMA crossover trend-following" and "moving-average crossover trend-following" are duplicates; "RSI mean-reversion" and "RSI-filtered momentum" are not, despite sharing the word RSI. Only flag a duplicate you are genuinely confident about; when unsure, say it is not a duplicate — a missed duplicate wastes one research run, but a false duplicate silently merges two different ideas' evidence together, which is worse.
+
+Return JSON with this exact schema:
+{
+  "duplicate_index": null,
+  "reasoning": "why this is or is not a duplicate",
+  "confidence": 0.0
+}
+`duplicate_index` is the 0-based index (from the candidate list below) of the existing idea this duplicates, or null if none is a genuine duplicate."""
+
+
 RUN_SUMMARY_SYSTEM_PROMPT = """You are a senior quantitative analyst writing a short status update for a colleague who has not been following this research run.
 
 Write 2-4 plain-English sentences: what was tried, what the result was, and what happens next (promoted, rejected, or needs another look). No jargon-only numbers without context, no markdown, no bullet points — this replaces a metrics table, it does not repeat one.
@@ -502,6 +515,27 @@ Stock profile:
 
 Is this approach suitable?"""
         return await self._traced_chat("validate_idea", VALIDATION_SYSTEM_PROMPT, prompt)
+
+    async def check_duplicate_idea(
+        self,
+        new_idea: str,
+        symbol: str,
+        candidate_ideas: list[str],
+    ) -> dict[str, Any] | None:
+        """item #16 finding #4: called only for candidates that already
+        cleared a cheap lexical-overlap screen (see
+        `loop.py::_match_existing_hypothesis`) -- a real semantic
+        duplicate judgment for the ambiguous cases a bare similarity
+        score can't reliably separate, not a per-idea classifier run on
+        every submission regardless of overlap."""
+        listed = "\n".join(f"{i}. {idea}" for i, idea in enumerate(candidate_ideas))
+        prompt = f"""New strategy idea for {symbol}: {new_idea}
+
+Already-researched ideas for {symbol}:
+{listed}
+
+Is the new idea a genuine duplicate of any of these?"""
+        return await self._traced_chat("check_duplicate_idea", DUPLICATE_IDEA_SYSTEM_PROMPT, prompt)
 
     async def summarize_run(
         self,

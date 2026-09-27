@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from vinu_news.analysis.config.settings_loader import get_settings
@@ -105,7 +106,16 @@ def enrich_article(
     else:
         source_flag = 0
 
-    sort_ts = parse_pub_date(raw.get("pubDate", ""))
+    # `ingested_at` is stamped here, at the moment this system actually
+    # processes the article -- always real, never estimated. `published_at`
+    # is the real parsed pubDate when one exists; when it doesn't,
+    # `sort_ts` falls back to `ingested_at` (this system's own real "now"),
+    # not a second, slightly-later `now()` computed separately -- and
+    # `publish_time_is_estimated` records that the substitution happened
+    # instead of leaving it silent (item #19 finding #1).
+    ingested_at = int(datetime.now(timezone.utc).timestamp())
+    published_at, publish_time_is_estimated = parse_pub_date(raw.get("pubDate", ""))
+    sort_ts = published_at if published_at is not None else ingested_at
 
     article_id = article_id_from_link(link, headline=headline, ts=sort_ts) if link else hashlib.sha256(
         f"{headline}:{sort_ts}".encode()
@@ -134,6 +144,9 @@ def enrich_article(
         entities_json="{}",
         cluster_id=None,
         is_lead=1,
+        published_at=published_at,
+        ingested_at=ingested_at,
+        publish_time_is_estimated=publish_time_is_estimated,
     )
 
     if settings.ticker_dominance:

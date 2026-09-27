@@ -7,8 +7,14 @@ from typing import Any
 
 import httpx
 
+from vinu_infra.maturity_consultation import MaturityConsultationStore
+from vinu_live.book.positions import daily_realized_pnl, init_book
+from vinu_live.breaker.engine import BreakerVerdict, check_limits
+from vinu_live.breaker.limits import DEFAULT_LIMITS, BreakerLimits, BreakerState
 from vinu_live.config import LiveConfig, load_config
 from vinu_live.execution import compute_volume_profile, plan_twap, plan_vwap, schedule_slice_delays
+from vinu_live.live_decision.storage import LiveDecisionBackend, list_unapplied_executes, mark_decision_applied
+from vinu_live.maturity_link import fetch_maturity_status, scale_limits_for_tier
 from vinu_live.reconciliation import ReconciliationEngine
 from vinu_live.signal_translator import SignalTranslator
 from vinu_live.trade_plan.guards import (
@@ -34,6 +40,20 @@ from vinu_live.trade_plan.orchestrator import (
 
 LOG = logging.getLogger(__name__)
 
+# item #24 finding #3 fix (system-wide-audit-and-design/02-open-questions-
+# strategy-and-simulation.md): how many consecutive cycles a symbol's
+# expected-vs-actual drift must persist before it's alert-worthy. Unlike
+# orchestrator.py's book-vs-broker check (external drift between cycles --
+# a partial fill, a manual trade), THIS reconciliation compares a
+# just-changed target against positions fetched before this same cycle's
+# own orders were even submitted, so some drift every cycle is the
+# expected gap those orders are already closing, not an anomaly -- see
+# _handle_reconciliation_drift's own docstring. Guessed starting constant,
+# same posture (and same number) as item #23 finding #4's
+# consecutive_unavailable_count, meant to be revisited once real data
+# exists.
+RECON_DRIFT_ALERT_CYCLES = 3
+
 
 class LiveScheduler:
     """Continuous trading cycle: fetch portfolio → translate → execute → reconcile.
@@ -53,9 +73,50 @@ class LiveScheduler:
         self._translator = SignalTranslator(max_slippage_pct=self._config.max_slippage_pct)
         self._reconciler = ReconciliationEngine()
         self._cycle_count = 0
+        # item #24 finding #1 (system-wide-audit-and-design/
+        # 02-open-questions-strategy-and-simulation.md): this loop used to
+        # never call check_limits() at all -- the main portfolio-rebalance
+        # path could blindly execute weights past a real daily-loss/VaR/
+        # leverage/cluster-exposure/position-count breach. Same book path
+        # orchestrator.py/feedback_loop.py already use (SQLite-backed at a
+        # shared, on-disk path -- a second BookBackend instance pointed at
+        # the same file is safe, same reasoning server/app.py's rebalance-
+        # request route already documents for a different store). Own
+        # in-memory BreakerState, same pattern orchestrator.py uses (one
+        # per long-lived worker instance) -- a fresh HALT verdict is made
+        # cross-process-visible via _engage_real_halt(), not by sharing
+        # this Python object, which is impossible across processes anyway.
+        self._book = init_book(str(self._config.data_root / "trade_plan_book.db"))
+        self._breaker_state = BreakerState()
+        # Point 7 option 1 (reverse-engineering/06-execution-handoff-and-
+        # architecture.md): the same on-disk live_decision.db the poller
+        # (live_decision/poller.py) and vinu-live's own HTTP routes
+        # already read/write -- a second LiveDecisionBackend instance
+        # pointed at the same file is safe, same reasoning already
+        # applied to self._book above.
+        self._live_decision_backend = LiveDecisionBackend(str(self._config.data_root / "live_decision.db"))
+        # item #24 finding #3: per-symbol consecutive-drift streak +
+        # edge-triggered notified set, same in-memory-per-worker-instance
+        # shape as self._breaker_state above -- see
+        # _handle_reconciliation_drift's own docstring for why a streak,
+        # not "notify on any drift".
+        self._recon_drift_streak: dict[str, int] = {}
+        self._recon_drift_notified: set[str] = set()
+        # high-expectations follow-up, points #2/#3: one shared, queryable
+        # log of every maturity-tier consultation across every consumer in
+        # this codebase (not one log per consumer -- see
+        # maturity_consultation.py's own module docstring). Same on-disk-
+        # SQLite-instance-per-worker pattern as self._book/
+        # self._live_decision_backend above.
+        self._maturity_consultation_store = MaturityConsultationStore(
+            str(self._config.data_root / "maturity_consultations.db"),
+        )
 
     async def close(self) -> None:
         await self._http.aclose()
+        self._book.close()
+        self._live_decision_backend.close()
+        self._maturity_consultation_store.close()
 
     async def cycle(self) -> dict[str, Any]:
         """Execute one full trading cycle.
@@ -74,12 +135,19 @@ class LiveScheduler:
 
         try:
             portfolio = await self._fetch_portfolio()
-            if portfolio.get("status") == "empty":
-                LOG.info("[%s] No active strategies — skipping", cycle_id)
-                result["status"] = "skipped_no_strategies"
-                return result
+            target_weights = [] if portfolio.get("status") == "empty" else portfolio.get("weights", [])
 
-            target_weights = portfolio.get("weights", [])
+            # Point 7 option 1 (06-execution-handoff-and-architecture.md):
+            # fold any live_decision_agent EXECUTE verdicts not yet acted
+            # on into this cycle's target_weights, same list the normal
+            # portfolio-rebalance weights flow through -- so they gain
+            # this loop's existing risk-limit check (_check_breaker) and
+            # same-symbol netting (SignalTranslator._net_by_symbol) "for
+            # free" rather than needing a second gate stack, per that
+            # design doc's own recommended default.
+            live_decision_weights = await self._fetch_live_decision_weights(cycle_id)
+            target_weights = target_weights + live_decision_weights
+
             if not target_weights:
                 LOG.info("[%s] No target weights — skipping", cycle_id)
                 result["status"] = "skipped_no_weights"
@@ -95,11 +163,25 @@ class LiveScheduler:
             result["n_instructions"] = len(instructions)
 
             if instructions:
-                execution_plan = await self._plan_execution(instructions)
-                result["n_slices"] = execution_plan.total_orders
+                # item #24 finding #1: real risk-limit check (daily loss,
+                # VaR, leverage, cluster exposure, position count) before
+                # any order is planned/submitted -- this loop used to
+                # never call this at all, unlike the orchestrator's own
+                # entry/exit paths.
+                breaker_verdict, breaker_reason = await self._check_breaker(portfolio_value)
+                if breaker_verdict == BreakerVerdict.HALT:
+                    LOG.warning(
+                        "[%s] Breaker HALT -- skipping all order planning/execution this cycle: %s",
+                        cycle_id, breaker_reason,
+                    )
+                    result["status"] = "halted_by_breaker"
+                    result["breaker_reason"] = breaker_reason
+                else:
+                    execution_plan = await self._plan_execution(instructions)
+                    result["n_slices"] = execution_plan.total_orders
 
-                submitted = await self._execute_plan(execution_plan, prices)
-                result["submitted"] = submitted
+                    submitted = await self._execute_plan(execution_plan, prices)
+                    result["submitted"] = submitted
 
             expected_positions = self._compute_expected_positions(
                 target_weights, prices, portfolio_value,
@@ -112,6 +194,13 @@ class LiveScheduler:
                 "n_drifts": len(recon_report.symbol_drifts),
                 "total_drift_pct": recon_report.total_drift_pct,
             }
+            # item #24 finding #3: this report used to be built and put in
+            # `result` for whoever reads the cycle's return value, but
+            # `cli.py::worker_main` only ever logged the overall status,
+            # never inspected it -- a real drift was silently absorbed
+            # into a dict nobody read. Now wired through the same notify
+            # path orchestrator.py's own book-vs-broker drift already uses.
+            await self._handle_reconciliation_drift(recon_report)
 
         except Exception as e:
             LOG.error("[%s] Cycle failed: %s", cycle_id, e)
@@ -119,6 +208,235 @@ class LiveScheduler:
             result["error"] = str(e)
 
         return result
+
+    async def _maturity_scaled_limits(self) -> BreakerLimits | None:
+        """high-expectations follow-up, point #2 (risk_gatekeeper consults
+        the system maturity tier). Opt-in via
+        `risk_gatekeeper_maturity_scaling_enabled` -- off by default, same
+        cautious-rollout posture as every other maturity-tier consumer in
+        this codebase. Returns None when disabled or on any failure, which
+        `check_limits()` already treats as "use DEFAULT_LIMITS" -- fails
+        open to the unscaled limits, never fails closed by inventing a
+        stricter default of its own."""
+        if not self._config.risk_gatekeeper_maturity_scaling_enabled:
+            return None
+        status = await fetch_maturity_status(self._http, self._config.research_api_url)
+        if status is None:
+            self._maturity_consultation_store.record(
+                service="vinu-live", consumer="risk_gatekeeper", tier="unknown",
+                action_taken="no_change_status_unavailable",
+            )
+            return None
+        tier = status.get("tier", "mature")
+        scaled = scale_limits_for_tier(DEFAULT_LIMITS, tier)
+        action = "no_change_already_mature" if tier == "mature" else f"limits_scaled_{tier}"
+        self._maturity_consultation_store.record(
+            service="vinu-live", consumer="risk_gatekeeper", tier=tier,
+            action_taken=action, evidence=status,
+        )
+        return scaled
+
+    async def _check_breaker(self, portfolio_value: float) -> tuple[str, str | None]:
+        """Same shape as trade_plan/orchestrator.py's own _check_breaker --
+        deliberately not covariance-aware yet (passes covariance_matrix=
+        None, same as that method's own <2-symbol fallback): the real
+        _compute_covariance is a 90-day-candle-fetch-plus-shrinkage
+        calculation tightly coupled to the orchestrator's own caching, not
+        yet extracted into something both paths can share. check_limits()
+        already treats a None covariance matrix as "skip the aggregate-VaR
+        check" (breaker/engine.py::_check_aggregate_var), not a crash --
+        every other check (daily loss, position count, cluster exposure,
+        leverage) still runs in full. A real, scoped gap, not hidden."""
+        from vinu_live.book.positions import list_open_positions
+
+        positions = list_open_positions(self._book)
+        symbols = sorted({p.symbol for p in positions})
+        prices = await self._fetch_prices([{"symbol": s} for s in symbols]) if symbols else {}
+        daily_pnl = daily_realized_pnl(self._book)
+        was_halted = self._breaker_state.halted
+        limits = await self._maturity_scaled_limits()
+        verdict, reason = check_limits(
+            self._book,
+            prices=prices,
+            portfolio_value=portfolio_value,
+            daily_realized_pnl=daily_pnl,
+            covariance_matrix=None,
+            cluster_map=None,
+            limits=limits,
+            state=self._breaker_state,
+        )
+        if verdict == BreakerVerdict.HALT and not was_halted:
+            # Mirrors orchestrator.py's _engage_real_halt: this process's
+            # own in-memory BreakerState flip is invisible to every other
+            # process (this loop, the orchestrator, OrderGuard) -- the
+            # real, persistent, cross-process kill switch is what
+            # scheduler._execute_plan's own halt_reason() check already
+            # reads from.
+            await self._engage_real_halt(reason)
+        return verdict, reason
+
+    async def _engage_real_halt(self, reason: str | None) -> None:
+        try:
+            resp = await self._http.post(
+                f"{self._config.agent_api_url}/agent/broker/halt",
+                json={"reason": f"breaker: {reason}"},
+            )
+            if getattr(resp, "status_code", None) == 200:
+                LOG.warning("BREAKER HALT -- engaged the real kill switch via %s (%s)",
+                            self._config.agent_api_url, reason)
+            else:
+                LOG.error(
+                    "BREAKER HALT -- FAILED to engage the real kill switch via %s "
+                    "(http %s) -- other order paths are NOT halted: %s",
+                    self._config.agent_api_url, getattr(resp, "status_code", "?"), reason,
+                )
+        except Exception as e:  # noqa: BLE001
+            LOG.error(
+                "BREAKER HALT -- FAILED to engage the real kill switch via %s -- "
+                "other order paths are NOT halted: %s (%s)",
+                self._config.agent_api_url, reason, e,
+            )
+
+    async def _handle_reconciliation_drift(self, recon_report: Any) -> None:
+        """item #24 finding #3's fix. Deliberately NOT "notify on any
+        drift": this reconciliation compares this cycle's just-computed
+        `expected_positions` (from the target weights this same cycle
+        just decided on) against `current_positions` fetched before this
+        cycle's own orders were even submitted -- so on a normal cycle
+        where a target changed, some drift is the expected gap those
+        orders are already closing, not an anomaly. Alerting on that
+        would just be noise on every rebalance.
+
+        Instead, same fix shape as item #23 finding #4's
+        `consecutive_unavailable_count`: track how many consecutive
+        cycles each symbol has shown drift, and only alert once a streak
+        crosses `RECON_DRIFT_ALERT_CYCLES` -- meaning this cycle's own
+        orders aren't actually closing the gap either, a real problem
+        (stuck order, unpriceable symbol, a halt). Edge-triggered, same
+        as orchestrator.py's own `_recon_drift_notified`: only notifies
+        on the transition into that alert-worthy state, not every cycle
+        it remains there.
+        """
+        current_symbols = {d["symbol"] for d in recon_report.symbol_drifts}
+        by_symbol = {d["symbol"]: d for d in recon_report.symbol_drifts}
+
+        for symbol in current_symbols:
+            self._recon_drift_streak[symbol] = self._recon_drift_streak.get(symbol, 0) + 1
+
+        # A symbol that cleared this cycle resets -- a fresh future drift
+        # streak starts from zero, and it's no longer an alert-worthy state
+        # (so it can notify again if it recurs later).
+        for symbol in list(self._recon_drift_streak):
+            if symbol not in current_symbols:
+                del self._recon_drift_streak[symbol]
+                self._recon_drift_notified.discard(symbol)
+
+        for symbol in current_symbols:
+            if self._recon_drift_streak[symbol] < RECON_DRIFT_ALERT_CYCLES:
+                continue
+            if symbol in self._recon_drift_notified:
+                continue
+            self._recon_drift_notified.add(symbol)
+            await self._notify_target_weight_drift(by_symbol[symbol])
+
+    async def _notify_target_weight_drift(self, drift: dict[str, Any]) -> None:
+        """Best-effort push through vinu-agent's shared notify front door
+        (routes_notify.py's /notify/reconciliation-drift -- reused with
+        action="target_weight_drift" rather than a second route, same
+        "shared infra, not N one-offs" reasoning already applied
+        throughout this design series). A notification failure must
+        never affect reconciliation itself."""
+        try:
+            resp = await self._http.post(
+                f"{self._config.agent_api_url}/notify/reconciliation-drift",
+                json={
+                    "symbol": drift.get("symbol"),
+                    "action": "target_weight_drift",
+                    "expected_qty": drift.get("expected_qty"),
+                    "actual_qty": drift.get("actual_qty"),
+                    "drift_pct": drift.get("drift_pct"),
+                },
+            )
+            if getattr(resp, "status_code", None) != 200:
+                LOG.warning(
+                    "Target-weight-drift notification for %s returned http %s",
+                    drift.get("symbol"), getattr(resp, "status_code", "?"),
+                )
+        except Exception as e:  # noqa: BLE001
+            LOG.warning(
+                "Could not send target-weight-drift notification for %s: %s",
+                drift.get("symbol"), e,
+            )
+
+    async def _fetch_live_decision_weights(self, cycle_id: str) -> list[dict[str, Any]]:
+        """Point 7 option 1: turns unapplied live_decision EXECUTE
+        records into `target_weights` entries, sized by each strategy's
+        own `live_decision_position_size` (vinu-strategy config field --
+        see StrategyConfig's own docstring for why there is no invented
+        default here).
+
+        A decision is marked applied the moment it's folded into this
+        cycle's target_weights, whether or not it was actually sizeable
+        -- an unsized (`live_decision_position_size == 0.0`) EXECUTE is
+        real, final information (the strategy author hasn't wired sizing
+        yet), not a transient failure, so it should not keep being
+        re-logged every cycle forever. A strategy-config fetch failure
+        IS transient, so that record is left unapplied and retried next
+        cycle instead.
+        """
+        pending = list_unapplied_executes(self._live_decision_backend)
+        if not pending:
+            return []
+
+        weights: list[dict[str, Any]] = []
+        strategy_cache: dict[str, dict[str, Any] | None] = {}
+        for record in pending:
+            if record.strategy_id not in strategy_cache:
+                strategy_cache[record.strategy_id] = await self._fetch_strategy_config(record.strategy_id)
+            strategy_cfg = strategy_cache[record.strategy_id]
+
+            if strategy_cfg is None:
+                LOG.warning(
+                    "[%s] Could not fetch strategy %s to size live-decision EXECUTE "
+                    "on %s -- leaving unapplied, will retry next cycle",
+                    cycle_id, record.strategy_id, record.ticker,
+                )
+                continue
+
+            position_size = float(strategy_cfg.get("live_decision_position_size", 0.0) or 0.0)
+            if position_size == 0.0:
+                LOG.warning(
+                    "[%s] live-decision EXECUTE on %s/%s has no live_decision_position_size "
+                    "configured -- not sized, no order will be produced for it",
+                    cycle_id, record.ticker, record.strategy_id,
+                )
+            else:
+                weights.append({
+                    "name": f"live_decision:{record.strategy_id}",
+                    "symbol": record.ticker,
+                    "target_weight": position_size,
+                })
+                LOG.info(
+                    "[%s] Folding live-decision EXECUTE on %s/%s into this cycle's "
+                    "target_weights at weight %.4f",
+                    cycle_id, record.ticker, record.strategy_id, position_size,
+                )
+
+            mark_decision_applied(self._live_decision_backend, record.id)
+
+        return weights
+
+    async def _fetch_strategy_config(self, strategy_id: str) -> dict[str, Any] | None:
+        try:
+            resp = await self._http.get(
+                f"{self._config.strategy_api_url}/strategy/strategies/{strategy_id}",
+            )
+            if resp.status_code != 200:
+                return None
+            return resp.json()
+        except Exception as exc:
+            LOG.warning("Could not fetch strategy %s: %s", strategy_id, exc)
+            return None
 
     async def _fetch_portfolio(self) -> dict[str, Any]:
         resp = await self._http.get(f"{self._config.portfolio_api_url}/portfolio/state")

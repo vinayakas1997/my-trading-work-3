@@ -41,6 +41,17 @@ class StrategyService:
     def get_strategy(self, name: str) -> StrategyConfig | None:
         return self._registry.get(name)
 
+    def resolve_universe(self, name: str) -> list[str]:
+        """Public wrapper on `_resolve_universe` -- needed by API consumers
+        (e.g. vinu-live's live-decision poller, reverse-engineering/
+        03-poller-and-state-schema.md) that need a strategy's ticker list
+        without symbols already chosen, which `_resolve_universe` alone
+        can't answer since it's private to `evaluate()`'s call site."""
+        config = self._registry.get(name)
+        if config is None:
+            return []
+        return self._resolve_universe(config, None)
+
     def evaluate(
         self,
         strategy_name: str,
@@ -117,6 +128,10 @@ class StrategyService:
         )
 
         rule_trace = pipeline_meta.get("rule_trace", {})
+        sanity_issues = pipeline_meta.get("sanity_issues", {})
+        data_quality = self._compute_data_quality(
+            universe, config, feature_signals, correlation_signals, angle_signals,
+        )
 
         signal_values: dict[str, float] = {}
         for sym in universe:
@@ -129,6 +144,20 @@ class StrategyService:
         )
         self._meta_storage.log_run(strategy_name, actual_run_id, symbol=",".join(universe[:5]))
 
+        if data_quality:
+            LOG.warning(
+                "[%s] Degraded run for '%s': %d/%d symbols missing required upstream "
+                "data (real failure or a genuinely empty response -- either way, not "
+                "counted as a clean 0.0 signal): %s",
+                actual_run_id, strategy_name, len(data_quality), len(universe),
+                {sym: dq["missing_sources"] for sym, dq in data_quality.items()},
+            )
+        # Not re-logged here -- WeightPipeline.run() already logs
+        # sanity_issues with the same detail (engine/pipeline.py); the
+        # real gap this closes is that nothing read it back out of
+        # pipeline_meta into anything a caller could see, not that it
+        # went unlogged.
+
         result = StrategyResult(
             strategy_name=strategy_name,
             weights=self._weights_to_dataframe(weights, signal_values),
@@ -136,8 +165,37 @@ class StrategyService:
             timestamp=datetime.utcnow(),
             metadata={"symbol_count": len(universe), "weights": weights},
             rule_trace=rule_trace,
+            data_quality=data_quality,
+            sanity_issues=sanity_issues,
         )
         return result
+
+    @staticmethod
+    def _compute_data_quality(
+        universe: list[str],
+        config: StrategyConfig,
+        feature_signals: dict[str, dict[str, float]],
+        correlation_signals: dict[str, dict[str, Any]],
+        angle_signals: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        """item #22 finding #1's concrete field, built exactly as
+        specified: `{symbol: {missing_sources: [...], is_degraded: bool}}`.
+        A source only counts as "missing" for a symbol if the strategy
+        actually required it (`config.*_required`) -- a source that was
+        never asked for was never expected to be there. Sparse: a symbol
+        with everything it needed simply doesn't appear."""
+        data_quality: dict[str, dict[str, Any]] = {}
+        for sym in universe:
+            missing: list[str] = []
+            if config.features_required and not feature_signals.get(sym):
+                missing.append("features")
+            if config.correlation_required and not correlation_signals.get(sym):
+                missing.append("correlation")
+            if config.angles_required and not angle_signals.get(sym):
+                missing.append("angles")
+            if missing:
+                data_quality[sym] = {"missing_sources": missing, "is_degraded": True}
+        return data_quality
 
     def get_weights(
         self,

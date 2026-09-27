@@ -61,6 +61,7 @@ SMA(50), the running example from the design doc), and for each one:
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -68,6 +69,7 @@ import numpy as np
 import pandas as pd
 
 from vinu_infra.model_policy import policy_version
+from vinu_initial_analysis.angles.regime_analysis.compute import compute_regime_frame
 from vinu_initial_analysis.config import get_angle_setting
 from vinu_tools.compute.indicators.accumulation_distribution_line.accumulation_distribution_line import (
     compute as _ad_line_compute,
@@ -114,6 +116,13 @@ VOLUME_AVG_PERIOD = get_angle_setting(ANGLE_NAME, "volume_avg_period", 20)
 # granularity a candle is" are two different decisions.
 FORWARD_HORIZON_BARS = get_angle_setting(ANGLE_NAME, "forward_horizon_bars", 20)
 
+# item #9 (system-wide-audit-and-design/02-open-questions-strategy-and-
+# simulation.md): "what counts as a news event... and the N-minute window
+# are both undecided" -- a guessed starting constant, same posture as
+# FORWARD_HORIZON_BARS above, meant to be revisited once real data exists
+# to derive it from rather than guessed at.
+NEWS_CONFOUND_WINDOW_MINUTES = get_angle_setting(ANGLE_NAME, "news_confound_window_minutes", 60)
+
 RESEARCH_API_URL = os.getenv("VINU_RESEARCH_API_URL", "http://localhost:8087")
 _HTTP_TIMEOUT_SEC = 5.0
 
@@ -145,6 +154,76 @@ STOCH_PERIOD = 14
 STOCH_SMOOTH = 3
 BOLLINGER_PERIOD = 20
 AROON_PERIOD = 25
+
+
+@dataclass(frozen=True)
+class MustCondition:
+    """item #2 (system-wide-audit-and-design/02-open-questions-strategy-
+    and-simulation.md): "a universal strategy runnable directly inside the
+    29th angle" -- this angle was hardcoded to exactly one must-condition
+    (SMA(5) crosses above SMA(50)); this is the minimal executable shape
+    that lets a caller supply a *different* one and still get Track 1's
+    exact recording mechanism (52-indicator snapshot, outcome path,
+    idempotent storage) for free, unchanged.
+
+    Deliberately narrow, not the full field list
+    `03-strategy-definition-full-schema.md` describes (precondition/
+    postcondition, risk management, origin/versioning, ...) -- this
+    proves the one specific claim item #2 makes ("any must-condition
+    ... gets Track 1's exact recording mechanism automatically"), not
+    the larger strategy-definition schema, which is a separate,
+    much bigger integration this doesn't attempt.
+
+    `kind="cross_above"` (`fast_key`/`slow_key`): two already-computed
+    series cross, the shape the original hardcoded example already was.
+    `kind="threshold_cross_above"`/`"threshold_cross_below"`
+    (`indicator_key`/`threshold`): one already-computed series crosses a
+    fixed level -- e.g. "RSI(14) crosses above 30," a genuinely different
+    KIND of must-condition (mean-reversion, not trend-following) from the
+    original example, used as this feature's own proof that it
+    generalizes rather than just re-parameterizing the same shape.
+
+    `fast_key`/`slow_key`/`indicator_key` name an entry in `compute()`'s
+    own `series_by_key` lookup -- the same key strings already used for
+    this angle's `indicators` dict (e.g. `"rsi"`, `"sma_50"`,
+    `"macd_line"`), reused rather than inventing a second naming
+    convention. Checked `vinu-strategy/engine/rules.py`/`rules_engine.py`
+    (a real, existing condition evaluator, per this item's own "reduce,
+    don't rebuild" note) before writing this: that engine evaluates one
+    live snapshot dict against simple gt/lt/eq operators with no memory
+    of the previous bar at all, so it has no concept of a *crossing*
+    (which is inherently a two-bar, prior-vs-current comparison) and
+    can't scan a historical bar series the way this angle needs --
+    reuse wasn't viable for this kind, so `_find_crossings` (already
+    used for the hardcoded example) is reused instead, not a new
+    crossing algorithm."""
+
+    name: str
+    kind: str  # "cross_above" | "threshold_cross_above" | "threshold_cross_below"
+    fast_key: str = ""
+    slow_key: str = ""
+    indicator_key: str = ""
+    threshold: float = 0.0
+
+
+def _evaluate_must_condition(condition: MustCondition, series_by_key: dict[str, pd.Series]) -> list[int]:
+    """Every kind bottoms out in `_find_crossings` -- no new crossing math,
+    just different operands fed into the one already-tested detector."""
+    if condition.kind == "cross_above":
+        fast = series_by_key.get(condition.fast_key)
+        slow = series_by_key.get(condition.slow_key)
+        if fast is None or slow is None:
+            return []
+        return _find_crossings(fast, slow)
+    if condition.kind in ("threshold_cross_above", "threshold_cross_below"):
+        series = series_by_key.get(condition.indicator_key)
+        if series is None:
+            return []
+        level = pd.Series(condition.threshold, index=series.index)
+        if condition.kind == "threshold_cross_above":
+            return _find_crossings(series, level)
+        return _find_crossings(level, series)
+    raise ValueError(f"Unknown must-condition kind: {condition.kind!r}")
 
 
 def _sma(series: pd.Series, period: int) -> pd.Series:
@@ -399,6 +478,59 @@ def _find_crossings(fast: pd.Series, slow: pd.Series) -> list[int]:
     return list(np.flatnonzero(crossed.to_numpy()))
 
 
+def _build_news_index(news: list[dict] | None) -> list[tuple[int, str]]:
+    """item #9: one pass over the whole run's already-fetched news list
+    (runner.py's own `_fetch_news`, cached once per run, already handed to
+    every angle's `compute()` as the `news` kwarg -- this angle just never
+    read it before now) into a sorted `(effective_ts, article_id)` list,
+    so each trigger's own window lookup below is a cheap binary-search-
+    friendly scan, not a re-filter of the raw article dicts per trigger.
+
+    `effective_ts`: `published_at` when known, else `sort_ts` -- the same
+    fail-open-to-the-best-available-time convention `sort_ts` itself
+    already represents post item #19's fix (an ingestion-time fallback
+    when the real publish time isn't known), not a new convention
+    invented here."""
+    if not news:
+        return []
+    indexed: list[tuple[int, str]] = []
+    for article in news:
+        ts = article.get("published_at")
+        if ts is None:
+            ts = article.get("sort_ts")
+        if ts is None:
+            continue
+        indexed.append((int(ts), str(article.get("id", ""))))
+    indexed.sort(key=lambda pair: pair[0])
+    return indexed
+
+
+def _news_confound(
+    news_index: list[tuple[int, str]], trigger_ts: int, window_minutes: float,
+) -> dict[str, Any]:
+    """item #9: "was there a news event within N minutes of this trigger" --
+    only articles at or before the trigger count (a headline minutes AFTER
+    a trigger already fired isn't a confound for that trigger, it's a
+    separate future event); the closest one before the trigger is reported
+    as the confound, not just whether any exist, so `minutes_before` is a
+    real number a later analysis can bucket on."""
+    window_seconds = window_minutes * 60
+    best: tuple[int, str] | None = None
+    for ts, article_id in news_index:
+        if ts > trigger_ts:
+            break
+        if ts < trigger_ts - window_seconds:
+            continue
+        best = (ts, article_id)
+    if best is None:
+        return {"occurred": False, "minutes_before": None, "article_id": None}
+    return {
+        "occurred": True,
+        "minutes_before": round((trigger_ts - best[0]) / 60, 2),
+        "article_id": best[1] or None,
+    }
+
+
 def _post_json(client: Any, url: str, payload: dict[str, Any]) -> tuple[bool, str]:
     try:
         resp = client.post(url, json=payload, timeout=_HTTP_TIMEOUT_SEC)
@@ -418,7 +550,15 @@ def compute(
     from_ts: int | None = None,
     to_ts: int | None = None,
     time_format: str | None = None,
+    must_condition: MustCondition | None = None,
 ) -> pd.DataFrame:
+    """`must_condition`: item #2's proof-of-concept generalization --
+    `None` (every existing caller) preserves today's exact hardcoded
+    SMA(5)-crosses-SMA(50) behavior, byte-for-byte (the default built
+    below references the same `sma_fast`/`sma_slow` variables the old
+    code always used, not a re-derived equivalent). Pass a `MustCondition`
+    to run a *different* must-condition through this exact same
+    indicator-snapshot/outcome-path/idempotent-storage pipeline instead."""
     analysis_at = datetime.now(timezone.utc).isoformat()
 
     if bars is None or bars.empty:
@@ -483,7 +623,79 @@ def compute(
         vwap = _vwap_supporting(high, low, close, volume, session_date)
         vwap_dist = (close - vwap) / vwap
 
-    crossings = _find_crossings(sma_fast, sma_slow)
+    # item #6 (system-wide-audit-and-design/02-open-questions-strategy-
+    # and-simulation.md): the regime active AT the trigger bar, reusing
+    # regime_analysis's own point-in-time-safe classifier -- not a new
+    # formula, not one more hand-rolled vol-z-score. compute_regime_frame()
+    # drops rows before its own warmup and re-indexes from 0, so it's
+    # looked up by bar_ts below, never by raw positional index i (those
+    # two indices are NOT the same series once rows get dropped -- a real
+    # trap this lookup is written to avoid). Sparse by construction: a
+    # trigger whose bar predates regime_analysis's own warmup, or a
+    # symbol with no bar_ts column at all, simply has no "regime" key,
+    # same as every other indicator in this file that can come back NaN.
+    regime_by_bar_ts: dict[int, str] = {}
+    if "bar_ts" in bars.columns:
+        regime_frame = compute_regime_frame(bars, time_format)
+        if not regime_frame.empty:
+            regime_by_bar_ts = dict(zip(regime_frame["bar_ts"], regime_frame["regime"]))
+
+    # item #2: every already-computed series, keyed by the exact same
+    # string a MustCondition's fast_key/slow_key/indicator_key names --
+    # no new computation, just exposing what's already sitting in local
+    # variables so a caller-supplied condition can reference it. Keys
+    # match the `indicators` dict's own key names below one-for-one,
+    # so "what a condition can reference" and "what gets recorded as a
+    # supporting indicator" never silently diverge into two vocabularies.
+    series_by_key: dict[str, pd.Series] = {
+        "close": close, "sma_fast": sma_fast, "sma_slow": sma_slow,
+        "adx": adx, "rsi": rsi,
+        "atr_14": atr_14, "stoch_k_14": stoch_k, "stoch_d_14": stoch_d,
+        "bollinger_band_width": bollinger_band_width, "bollinger_percent_b": bollinger_percent_b,
+        "macd_line": macd_line, "macd_signal": macd_signal, "macd_histogram": macd_histogram,
+        "aroon_up": aroon_up, "aroon_down": aroon_down,
+        "cci_20": cci, "williams_r_14": williams_r, "supertrend": supertrend,
+        "high_low_spread": high_low_spread, "momentum_10": momentum,
+        "ichimoku_tenkan": ichimoku_tenkan, "ichimoku_kijun": ichimoku_kijun,
+        "ichimoku_senkou_a": ichimoku_senkou_a, "ichimoku_senkou_b": ichimoku_senkou_b,
+        "parabolic_sar": parabolic_sar,
+    }
+    if volume_ratio is not None:
+        series_by_key["volume_vs_avg20"] = volume_ratio
+    if open_close_return is not None:
+        series_by_key["open_close_return"] = open_close_return
+    if obv is not None:
+        series_by_key["obv"] = obv
+    if cmf is not None:
+        series_by_key["cmf_20"] = cmf
+    if mfi is not None:
+        series_by_key["mfi_14"] = mfi
+    if ad_line is not None:
+        series_by_key["accumulation_distribution_line"] = ad_line
+    if vwap_dist is not None:
+        series_by_key["vwap_dist"] = vwap_dist
+    for period, series in sma_supporting.items():
+        series_by_key[f"sma_{period}"] = series
+    for period, series in ema_supporting.items():
+        series_by_key[f"ema_{period}"] = series
+    for period, series in dist_from_sma.items():
+        series_by_key[f"dist_from_sma_{period}"] = series
+    for period, series in dist_from_ema.items():
+        series_by_key[f"dist_from_ema_{period}"] = series
+    for period, series in roc_supporting.items():
+        series_by_key[f"roc_{period}"] = series
+
+    condition = must_condition or MustCondition(
+        name=MUST_CONDITION_NAME, kind="cross_above", fast_key="sma_fast", slow_key="sma_slow",
+    )
+    crossings = _evaluate_must_condition(condition, series_by_key)
+
+    # item #9: `news` was already fetched (once per run, covering this
+    # exact symbol/date range) and handed to this angle by runner.py --
+    # it was simply never read before this. Indexed once here, not
+    # per-trigger, since a run can have many triggers over the same news
+    # list.
+    news_index = _build_news_index(news)
 
     recorded = 0
     already_recorded = 0
@@ -587,10 +799,17 @@ def compute(
                 trigger_ts_raw = int(bars["bar_ts"].iloc[i])
                 trigger_time = datetime.fromtimestamp(trigger_ts_raw, tz=timezone.utc).isoformat()
                 trigger_id_ts = trigger_ts_raw
+                regime_at_trigger = regime_by_bar_ts.get(trigger_ts_raw)
+                if regime_at_trigger is not None:
+                    indicators["regime"] = regime_at_trigger
+                if news_index:
+                    indicators["news_confound"] = _news_confound(
+                        news_index, trigger_ts_raw, NEWS_CONFOUND_WINDOW_MINUTES,
+                    )
             else:
                 trigger_time = analysis_at
                 trigger_id_ts = i
-            trigger_id = f"{symbol}-{MUST_CONDITION_NAME}-{trigger_id_ts}"
+            trigger_id = f"{symbol}-{condition.name}-{trigger_id_ts}"
 
             ok, _reason = _post_json(
                 client, "/research/signal-evidence/trigger",
@@ -598,7 +817,7 @@ def compute(
                     "trigger_id": trigger_id,
                     "symbol": symbol,
                     "trigger_time": trigger_time,
-                    "must_condition": MUST_CONDITION_NAME,
+                    "must_condition": condition.name,
                     "indicators": indicators,
                     "granularity": time_format or "15min",
                     "policy_version": policy_version(),
@@ -629,7 +848,7 @@ def compute(
         "analysis_at": analysis_at,
         "angle": ANGLE_NAME,
         "status": "ok",
-        "must_condition": MUST_CONDITION_NAME,
+        "must_condition": condition.name,
         "crossings_found": len(crossings),
         "triggers_recorded": recorded,
         "triggers_already_recorded": already_recorded,

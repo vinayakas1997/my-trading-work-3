@@ -154,7 +154,12 @@ def fetch_candles(
     indicators: list[str] | None = None,
     adjusted: bool = True,
     connection: duckdb.DuckDBPyConnection | None = None,
+    cache_info: dict | None = None,
 ) -> list[dict]:
+    """`cache_info`, if passed, is filled in place with `{"hit": True,
+    "age_seconds": float}` on an indicator-cache hit (item #19 finding #5)
+    -- an out-param rather than changing this function's own return shape,
+    since `list[dict]` is relied on by every other caller."""
     sym = symbol.strip().upper()
     df = _load_symbol_frame(data_root, sym)
     if df is None or df.empty:
@@ -202,7 +207,10 @@ def fetch_candles(
         cache = get_cache()
         cached = cache.get(sym, interval, from_ts, to_ts, indicator_set, adjusted)
         if cached is not None:
-            records = cached
+            records, age = cached
+            if cache_info is not None:
+                cache_info["hit"] = True
+                cache_info["age_seconds"] = age
         else:
             records = apply_indicators(records, indicators)
             cache.set(sym, interval, from_ts, to_ts, indicator_set, adjusted, records)

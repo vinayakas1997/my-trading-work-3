@@ -32,6 +32,19 @@ class StrategyAPI:
                 "timing": cfg.pipeline.timing.method,
                 "risk": cfg.pipeline.risk.method,
             },
+            # Resolved (not raw config) universe -- needed by external
+            # pollers (vinu-live's live-decision loop) that don't have
+            # their own watchlist-loading logic and shouldn't grow one,
+            # per the "reduce, don't rebuild" reasoning already applied
+            # elsewhere in this design series.
+            "universe": self._service.resolve_universe(name),
+            "must_conditions": cfg.must_conditions,
+            "confirmation_conditions": cfg.confirmation_conditions,
+            "grace_window_bars": cfg.grace_window_bars,
+            "live_decision_position_size": cfg.live_decision_position_size,
+            # "tested" is deliberately absent here -- no write-back path
+            # exists yet (see the field's own docstring in models/strategy.py).
+            "precondition": {**cfg.precondition, "tested": False},
         }
 
     def evaluate(self, strategy_name: str, symbols: list[str] | None = None) -> dict[str, Any]:
@@ -45,6 +58,10 @@ class StrategyAPI:
         }
         if result.rule_trace:
             resp["rule_trace"] = result.rule_trace
+        if result.data_quality:
+            resp["data_quality"] = result.data_quality
+        if result.sanity_issues:
+            resp["sanity_issues"] = result.sanity_issues
         return resp
 
     def get_weights(

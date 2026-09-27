@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timezone
 
 import pandas as pd
+from vinu_tools.compute.indicators._shared.rolling import true_range, wilder_smooth
 
 from vinu_initial_analysis.config import load_config
 from vinu_initial_analysis.storage.parquet import AngleStorage
@@ -86,10 +87,28 @@ def compute(
     close = bars["close"].astype(float)
     high = bars["high"].astype(float)
     low = bars["low"].astype(float)
-    tr = pd.concat(
-        [high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1
-    ).max(axis=1)
-    atr_series = tr.rolling(14).mean()
+    # item #21 pattern #2 (system-wide-audit-and-design/
+    # 02-open-questions-strategy-and-simulation.md): this used to
+    # hand-roll true range inline (`pd.concat([high-low, ...]).max(axis=1)`)
+    # -- a smaller, still-real 4th instance of the same duplication class
+    # already fixed once for the smoothing step below (item #20 finding
+    # #7's own note). Verified index-for-index identical to the inline
+    # formula (both compute the same max-of-three-terms per bar, tr[0]
+    # both special-cased to `high[0]-low[0]`) before switching, not
+    # assumed. `.tolist()`/`pd.Series(...)` round-trip matches every other
+    # bars-to-vinu_tools bridging call in this codebase (e.g.
+    # signal_evidence/compute.py's own wrapper functions).
+    tr = pd.Series(true_range(high.tolist(), low.tolist(), close.tolist()), index=high.index)
+    # This used to be `tr.rolling(14).mean()` -- a hand-rolled plain SMA of
+    # true range, independently reproducing the exact same wrong-smoothing
+    # bug finding #2 found (and fixed) in vinu-tools' own atr.py. Reuses
+    # that same fix's shared `wilder_smooth` helper directly rather than
+    # re-deriving it a second time -- same first-valid index (period-1)
+    # as the old `rolling(14).mean()`, so `dtype=float` converts its
+    # leading `None`s to `NaN` exactly where `rolling().mean()` already
+    # produced `NaN`, preserving every downstream NaN-comparison's
+    # existing behavior (`atr_val > 0` etc.) unchanged.
+    atr_series = pd.Series(wilder_smooth(tr.tolist(), 14), index=tr.index, dtype=float)
     atr_val = atr_series.iloc[-1]
     close_last = close.iloc[-1]
     atr_adj = 2.0 * atr_val / close_last * 100 if close_last > 0 and atr_val > 0 else 0

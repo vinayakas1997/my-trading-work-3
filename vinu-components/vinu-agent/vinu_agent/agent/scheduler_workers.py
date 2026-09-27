@@ -273,6 +273,43 @@ def discover_new_tickers(seed_tickers: list[str], ticker_summary_store: Any) -> 
     return new
 
 
+def sync_signal_evidence_for_tickers(tickers: list[str]) -> dict[str, list[str]] | None:
+    """item #1 (system-wide-audit-and-design/02-open-questions-strategy-
+    and-simulation.md): runs once per planner-worker cycle, over the same
+    ticker list that cycle already pulled from TickerSummaryStore -- not a
+    separate new schedule. Bridges Track 1's recorded signal-evidence
+    trigger/outcome data into HypothesisRegistry (evidence-trail only, no
+    auto-promotion -- see signal_evidence_bridge.py's own docstring for the
+    full design). Fails open, same "vinu-research not importable in this
+    deployment" posture research_link.py's own module docstring documents
+    for its no-HTTP-fallback call sites (order_guard.py/debrief.py): there
+    is nothing to fall back to here (this is background evidence-syncing,
+    not a user-facing request), so a missing dependency or any other
+    failure just means this cycle's sync is skipped, logged, and retried
+    next cycle -- it never stops the cycle's real work (summary refresh,
+    Planner triage) from running. Returns None when skipped, otherwise
+    signal_evidence_bridge.sync_signal_evidence_to_hypotheses()'s own
+    result dict."""
+    try:
+        from vinu_research.signal_evidence_bridge import sync_signal_evidence_to_hypotheses
+
+        from ..broker.research_link import get_hypothesis_registry, get_signal_evidence_store
+    except ImportError:
+        return None
+    try:
+        return sync_signal_evidence_to_hypotheses(
+            tickers,
+            evidence_store=get_signal_evidence_store(),
+            hypothesis_registry=get_hypothesis_registry(),
+        )
+    except Exception:
+        logging.getLogger("vinu.agent.planner_worker").exception(
+            "signal_evidence_bridge sync failed, continuing",
+            extra={"vinu_ctx": {"worker": "planner-worker"}},
+        )
+        return None
+
+
 def _map_parallel(fn: Callable[[Any], Any], items: list[Any], *, max_workers: int) -> list[Any]:
     """Apply fn to each item, concurrently when it pays to, returning
     results in INPUT order (ThreadPoolExecutor.map preserves order even

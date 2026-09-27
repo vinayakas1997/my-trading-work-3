@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vinu-initial-analysis"
 version = "0.2.0"
-description = "Foundational analysis pipeline — 31 deterministic angles for every stock"
+description = "Foundational analysis pipeline — 30 deterministic angles for every stock"
 requires-python = ">=3.10"
 dependencies = [
   "fastapi>=0.110",
@@ -26,6 +26,11 @@ dependencies = [
   "torch>=2.2",
   "chronos-forecasting>=1.4",
   "timesfm[torch]>=2.0",
+  # search_trends angle (system-wide-audit-and-design, high-expectations
+  # cross-check item #22): unofficial Google Trends API wrapper -- no
+  # paid tier/API key needed, unlike the order-book/on-chain alt-data
+  # candidates checked alongside this one and deferred.
+  "pytrends>=4.9",
 ]
 
 [project.optional-dependencies]

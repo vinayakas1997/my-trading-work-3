@@ -92,6 +92,11 @@ class TestLoopExhaustion:
         assert result.total_iterations == 0
         assert result.best_result is None
         assert "exhausted" in result.report_md.lower()
+        # item #17 finding #2: the real early-exit path, not a unit test
+        # of the classifier in isolation -- confirms the field a
+        # scheduler would actually read is populated on this exact
+        # ResearchResult, not left at its "" default.
+        assert result.outcome_status == "no_strategy_found"
 
     @pytest.mark.skip(reason="Needs a running simulator at http://127.0.0.1:8085")
     @pytest.mark.asyncio

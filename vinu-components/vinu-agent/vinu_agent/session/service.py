@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -326,6 +327,62 @@ class SessionService:
             return result
         finally:
             self._active_loops.pop(session_id, None)
+
+    def run_team_once(self, team_name: str, task: str, *, tag: str = "") -> Dict[str, Any]:
+        """Run one team to completion outside of any chat session --
+        the entry point missing-pieces-of-system/new-theory-of-trading/
+        system-wide-audit-and-design/reverse-engineering/
+        06-execution-handoff-and-architecture.md's point 5/8 flagged as
+        "not decided": how vinu-live's live-decision loop calls
+        live_decision_agent once a (ticker, strategy) pair reaches
+        ready_to_execute.
+
+        Deliberately reuses this SessionService's own already-open,
+        already-shared stores (self._llm, self._skills_loader, etc.) via
+        build_registry() -- the exact same construction
+        `_run_with_agent` already does per chat turn, cheap and
+        established (build_registry itself caches module discovery, see
+        tools/__init__.py's `_SUBCLASSES_CACHE`) -- rather than standing
+        up a second, competing set of stores. Skips everything in
+        `_run_with_agent` that's chat-session-specific and doesn't apply
+        here (WorkflowTracker, FreshnessChecker, GroundTruthInjector,
+        ResearchDigestReader, debrief detection) -- this is one team,
+        one task, no conversational history.
+        """
+        from ..agent.team import TeamManager
+        from ..tools import build_registry
+
+        run_id = f"headless-{tag or team_name}-{uuid.uuid4().hex[:8]}"
+        registry = build_registry(
+            session_id=run_id,
+            services_config=self._services_config,
+            persistent_memory=self._persistent_memory,
+            unified_memory=self._unified_memory,
+            skills_loader=self._skills_loader,
+            session_service=self,
+            llm=self._llm,
+            teams_dir=self._teams_dir,
+            run_store=self._run_store,
+            llm_call_store=self._llm_call_store,
+            strategy_store=self._strategy_store,
+            ticker_summary_store=self._ticker_summary_store,
+            ticker_ledger_store=self._ticker_ledger_store,
+        )
+        team_dir = Path(self._teams_dir) / team_name
+        manager = TeamManager(
+            team_dir,
+            full_registry=registry,
+            llm=self._llm,
+            skills_loader=self._skills_loader,
+            run_store=self._run_store,
+            llm_call_store=self._llm_call_store,
+            triggered_by_session_id=run_id,
+            strategy_store=self._strategy_store,
+            ticker_summary_store=self._ticker_summary_store,
+            ticker_ledger_store=self._ticker_ledger_store,
+            services_config=self._services_config,
+        )
+        return manager.run(task)
 
     def cancel_current(self, session_id: str) -> bool:
         loop = self._active_loops.get(session_id)

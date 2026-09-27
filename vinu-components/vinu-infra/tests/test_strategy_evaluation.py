@@ -11,6 +11,7 @@ from vinu_infra.strategy_evaluation import (
     VERDICT_FAIL,
     VERDICT_PASS,
     StrategyEvaluationStore,
+    resolve_strategy_evaluation_store,
     seed_step_registry,
 )
 
@@ -132,6 +133,39 @@ class TestStepRegistry:
         assert len(defs) == 10
         names = [d["step_name"] for d in defs]
         assert len(names) == len(set(names))
+
+
+class TestResolveStrategyEvaluationStore:
+    """item #2 (system-wide-audit-and-design): the read-side helper new
+    HTTP routes use, sharing the same env-var-with-fallback resolution
+    every existing write call site already re-derives independently."""
+
+    def test_env_var_unset_falls_back_to_given_data_root(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("VINU_STRATEGY_EVAL_DATA_ROOT", raising=False)
+        store = resolve_strategy_evaluation_store(tmp_path)
+        assert (tmp_path / "strategy_evaluation.db").exists()
+        store.write_step_result(
+            artifact_id="art1", ticker="AAPL", step_name="risk_critic",
+            step_order=1, verdict=VERDICT_PASS,
+        )
+        assert store.get_status("art1") is not None
+
+    def test_env_var_set_overrides_the_given_data_root(self, tmp_path, monkeypatch):
+        env_root = tmp_path / "env_root"
+        env_root.mkdir()
+        fallback_root = tmp_path / "fallback_root"
+        fallback_root.mkdir()
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(env_root))
+
+        resolve_strategy_evaluation_store(fallback_root)
+
+        assert (env_root / "strategy_evaluation.db").exists()
+        assert not (fallback_root / "strategy_evaluation.db").exists()
+
+    def test_seeds_the_step_registry(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("VINU_STRATEGY_EVAL_DATA_ROOT", raising=False)
+        store = resolve_strategy_evaluation_store(tmp_path)
+        assert len(store.list_step_definitions()) == 10
 
     def test_seed_covers_all_10_real_steps(self, tmp_path):
         store = StrategyEvaluationStore(tmp_path / "se.db")

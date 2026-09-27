@@ -20,7 +20,11 @@ class HypothesisStatus(Enum):
 
 @dataclass
 class Evidence:
-    run_id: int
+    # int for every existing research-run-derived evidence entry (the
+    # loop's own numeric run counter); str for evidence not tied to a
+    # single run at all (e.g. a signal-evidence summary aggregated across
+    # many historical triggers -- item #1's Track-1-to-hypothesis bridge).
+    run_id: int | str
     iteration: int
     metric: str
     value: float
@@ -40,6 +44,21 @@ class Evidence:
     # HypothesisRegistry's own world -- a Significance Triage flag_id, for
     # a human_override write. Empty for every non-override write.
     ref_id: str = ""
+    # item #1 (system-wide-audit-and-design/02-open-questions-strategy-
+    # and-simulation.md): distinguishes evidence whose value/conclusion
+    # mean a Sharpe ratio (the only shape HypothesisRegistry.add_evidence()'s
+    # auto-promotion math -- best_sharpe tracking, the 0.3/0.5 status
+    # thresholds -- was ever built to interpret) from other evidence kinds
+    # sharing this same dataclass but meaning something numerically
+    # different (e.g. "signal_evidence" entries, whose value is an average
+    # forward return, not a Sharpe ratio -- a 30% average return crossing
+    # the same literal "> 0.3" bar is not the same claim a 0.3 Sharpe
+    # ratio makes). add_evidence()/add_evidence_batch() only run their
+    # promotion logic when this is "sharpe" (the default, so every
+    # existing caller's behavior is unchanged) -- anything else is
+    # appended, visible and queryable, without silently corrupting
+    # best_sharpe or auto-changing status.
+    metric_kind: str = "sharpe"
 
 
 @dataclass
@@ -823,3 +842,14 @@ class ResearchResult:
     pbo: dict[str, float] | None = None
     paper_rehearsal: PaperRehearsalResult | None = None
     data_hash: str = ""
+    # item #17 finding #2: an automated scheduler with no LLM reading
+    # report_md's prose couldn't tell "the simulator was down, try again
+    # later" from "we tested this for real and it's genuinely not a good
+    # strategy" -- both looked identical (a run with no best_result).
+    # Named `outcome_status`, not `status`, deliberately: service.py's
+    # own response dict already has an unrelated `status` key (the run's
+    # lifecycle state -- pending/failed/completed), and reusing that name
+    # here would have silently collided with it. Default "" (not
+    # "passed") so a construction site that forgets to set it explicitly
+    # is visibly wrong, not silently claiming success.
+    outcome_status: str = ""

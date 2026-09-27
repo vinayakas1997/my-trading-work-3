@@ -108,6 +108,30 @@ result = compute_factor("gtja191_006", panel, params={"window": 10, "lag": 5})
 # Raises ValueError if param is out of range
 ```
 
+### Compute a TA indicator (the blessed entry point — do not deep-import a module)
+```python
+from vinu_tools.compute.registry import apply_indicators
+
+# Merges computed columns straight onto row dicts — works for one
+# indicator or several at once, and also understands alpha101/158/360
+# recipe names mixed in with plain indicator names.
+rows = apply_indicators(rows, ["rsi_14", "atr_14", "adx_14"])
+rows[30]["rsi_14"]  # -> float | None (None during warmup)
+```
+Use `apply_indicators()` for anything that just needs computed columns
+on rows. Only reach for `get_indicator_module(kind)`
+(`vinu_tools.compute.registry`) directly if you need the module itself
+(e.g. its `warmup_for()`/`matches()`), and never
+`from vinu_tools.compute.indicators.<kind>.<kind> import compute` —
+every existing caller that does this (`signal_evidence/compute.py`'s
+24 deep-path imports is the largest offender) independently reinvented
+the same lookup `apply_indicators()`/`get_indicator_module()` already
+do, which is exactly how the ADX/ATR/`trend_lifecycle` formula bugs
+(`system-wide-audit-and-design/02-open-questions-strategy-and-
+simulation.md`, item #20) went unnoticed for as long as they did —
+nothing forced a hand-rolled caller through the one place a formula
+fix or a correctness test would actually reach.
+
 ### Bench a factor (classify as ALIVE/REVERSED/DEAD)
 ```python
 from vinu_tools.compute.bench import bench_factor, bench_factors, bench_zoo

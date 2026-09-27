@@ -93,6 +93,55 @@ class TestHardFilterIntegration:
         assert [c.symbol for c in result.ranked] == ["BLUECHIP"]
 
 
+class TestMinHistoryGate:
+    """item #18 finding #1: neither HardFilterConfig nor CoarseFilter had
+    any minimum-history bound -- a thinly-traded/recently-listed symbol
+    could reach the ranker's top-N with far fewer bars than downstream
+    consumers (Track 1's signal_evidence needs min_observations=70)
+    actually need. Enforced in RankerRunner.run(), before factor
+    computation/scoring -- same "gate before the expensive work" point
+    the condition-tree path's own required_bars/insufficient_history
+    already makes."""
+
+    def test_symbol_below_min_history_bars_is_excluded(self) -> None:
+        ds = FakeDataSource()
+        ds.frames["THIN"] = _trend(100, 110, n=30)
+        ds.frames["ESTABLISHED"] = _trend(100, 110, n=200)
+        factors = (FactorSpec("momentum", "pct_change", weight=1.0),)
+        result = RankerRunner(ds).run(
+            _cfg(("THIN", "ESTABLISHED"), factors, hard_filter=HardFilterConfig(min_history_bars=70)),
+        )
+        assert [c.symbol for c in result.ranked] == ["ESTABLISHED"]
+
+    def test_symbol_exactly_at_the_bound_is_kept(self) -> None:
+        ds = FakeDataSource()
+        ds.frames["EXACT"] = _trend(100, 110, n=70)
+        factors = (FactorSpec("momentum", "pct_change", weight=1.0),)
+        result = RankerRunner(ds).run(
+            _cfg(("EXACT",), factors, hard_filter=HardFilterConfig(min_history_bars=70)),
+        )
+        assert [c.symbol for c in result.ranked] == ["EXACT"]
+
+    def test_unset_min_history_bars_is_a_no_op(self) -> None:
+        ds = FakeDataSource()
+        ds.frames["THIN"] = _trend(100, 110, n=5)
+        factors = (FactorSpec("momentum", "pct_change", weight=1.0),)
+        result = RankerRunner(ds).run(_cfg(("THIN",), factors))
+        assert [c.symbol for c in result.ranked] == ["THIN"]
+
+    def test_dropped_symbols_are_logged_not_silently_vanished(self, caplog) -> None:
+        import logging
+
+        ds = FakeDataSource()
+        ds.frames["THIN"] = _trend(100, 110, n=30)
+        factors = (FactorSpec("momentum", "pct_change", weight=1.0),)
+        with caplog.at_level(logging.INFO):
+            RankerRunner(ds).run(
+                _cfg(("THIN",), factors, hard_filter=HardFilterConfig(min_history_bars=70)),
+            )
+        assert any("THIN" in r.message and "insufficient history" in r.message for r in caplog.records)
+
+
 class TestBatchFetchPreferred:
     def test_uses_batch_when_available(self) -> None:
         ds = FakeBatchDataSource()

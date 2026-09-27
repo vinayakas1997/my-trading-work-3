@@ -1,6 +1,8 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from vinu_agent.tools.run_sweep_candidate_tool import ListSweepRecipesTool, RunSweepCandidateTool
 
 
@@ -11,9 +13,14 @@ def _tool(services_config: dict | None = None) -> RunSweepCandidateTool:
 
 
 def _force_in_process_unavailable():
+    """item #17 finding #3: research_link.py's own module docstring
+    documents ImportError specifically as the one legitimate reason the
+    in-process path falls back to HTTP (vinu-research not installed in
+    this deployment) -- so that's what these tests simulate, not a
+    generic RuntimeError standing in for "anything went wrong"."""
     return patch(
         "vinu_agent.broker.research_link.get_research_tools",
-        side_effect=RuntimeError("not available"),
+        side_effect=ImportError("vinu_research not installed"),
     )
 
 
@@ -61,6 +68,56 @@ class TestRunSweepCandidateToolInProcess:
         args, kwargs = mock_post.call_args
         assert args[0] == "http://research-api:8087/research/sweep/candidate"
         assert kwargs["json"]["recipe"] == "crossover"
+
+    def test_http_fallback_timeout_exceeds_the_simulator_clients_own_worst_case_retry_budget(self) -> None:
+        """item #17 finding #4: the old hardcoded 180s here was less than
+        vinu-research's own simulator client worst case (3 attempts *
+        120s timeout + backoff, ~365s) -- a legitimately slow-but-alive
+        call could exceed 180s and get read as a failure. Regression
+        guard on the actual number, not just that some timeout is passed."""
+        from vinu_agent.tools.run_sweep_candidate_tool import (
+            _SIMULATOR_WORST_CASE_SEC,
+            _SWEEP_CANDIDATE_TIMEOUT_SEC,
+        )
+
+        assert _SIMULATOR_WORST_CASE_SEC == pytest.approx(365.0)
+        assert _SWEEP_CANDIDATE_TIMEOUT_SEC > _SIMULATOR_WORST_CASE_SEC
+
+        tool = _tool({"vinu_research": "http://research-api:8087"})
+        mock_resp = MagicMock()
+        mock_resp.text = '{"run_id": "abc"}'
+        with _force_in_process_unavailable(), patch("httpx.post", return_value=mock_resp) as mock_post:
+            tool.execute(
+                symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31",
+                recipe="crossover", params='{"fast_period": 9, "slow_period": 40}',
+            )
+        _, kwargs = mock_post.call_args
+        assert kwargs["timeout"] == _SWEEP_CANDIDATE_TIMEOUT_SEC
+
+    def test_a_real_infrastructure_error_propagates_instead_of_retrying_over_http(self) -> None:
+        """item #17 finding #3 + the compound retry-storm risk (finding #4):
+        unlike run_research(), nothing in vinu_research.sweep.
+        run_sweep_candidate() catches InfrastructureError from
+        `tools.run_backtest()` -- it propagates straight through. The old
+        blanket `except Exception` here swallowed it and silently re-ran
+        the whole candidate over HTTP (hitting the same 180s wall again)
+        instead of surfacing the real "simulator down/rejecting" failure."""
+        from vinu_research.tools import InfrastructureError
+
+        fake_tools = MagicMock()
+        fake_tools.close = AsyncMock()
+        with patch("vinu_agent.broker.research_link.get_research_tools", return_value=fake_tools), \
+                patch(
+                    "vinu_research.sweep.run_sweep_candidate",
+                    new=AsyncMock(side_effect=InfrastructureError("simulator down, do not retry")),
+                ), \
+                patch("httpx.post") as mock_post:
+            with pytest.raises(InfrastructureError):
+                _tool().execute(
+                    symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31",
+                    recipe="crossover", params='{"fast_period": 9, "slow_period": 40}',
+                )
+        mock_post.assert_not_called()
 
 
 class TestRunSweepCandidateToolHttpFallback:

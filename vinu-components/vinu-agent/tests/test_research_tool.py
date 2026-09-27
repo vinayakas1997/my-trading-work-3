@@ -1,6 +1,8 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from vinu_agent.tools.research_tool import ResearchTool
 
 
@@ -11,9 +13,14 @@ def _tool(services_config: dict | None = None) -> ResearchTool:
 
 
 def _force_in_process_unavailable():
+    """item #17 finding #3: research_link.py's own module docstring
+    documents ImportError specifically as the one legitimate reason the
+    in-process path falls back to HTTP (vinu-research not installed in
+    this deployment) -- so that's what these tests simulate, not a
+    generic RuntimeError standing in for "anything went wrong"."""
     return patch(
         "vinu_agent.broker.research_link.get_research_service",
-        side_effect=RuntimeError("not available"),
+        side_effect=ImportError("vinu_research not installed"),
     )
 
 
@@ -65,6 +72,38 @@ class TestResearchToolInProcess:
             result = _tool().execute(idea="idea", symbol="AAPL", from_date="2024-01-01", to_date="2024-12-31")
         assert result == '{"status": "done"}'
         mock_post.assert_called_once()
+
+    def test_a_real_infrastructure_error_propagates_instead_of_retrying_over_http(self) -> None:
+        """item #17 finding #3, the actual fix: a real InfrastructureError
+        (or any other genuine failure) raised *inside* the research loop
+        must NOT be caught by the same except clause that triggers the
+        HTTP fallback -- that used to silently stack a second, duplicate,
+        expensive multi-iteration run over HTTP on top of the one that
+        already ran and genuinely failed. It must propagate instead, so
+        ToolRegistry.execute()'s own except Exception (tools.py) can turn
+        it into a real error response rather than this masking it."""
+        from vinu_research.tools import InfrastructureError
+
+        service = MagicMock()
+        service.run_research = AsyncMock(
+            side_effect=InfrastructureError("simulator down, do not retry")
+        )
+        service.close = AsyncMock()
+        with patch("vinu_agent.broker.research_link.get_research_service", return_value=service), \
+                patch("httpx.post") as mock_post:
+            with pytest.raises(InfrastructureError):
+                _tool().execute(idea="idea", symbol="AAPL", from_date="2024-01-01", to_date="2024-12-31")
+        mock_post.assert_not_called()
+
+    def test_a_generic_bug_in_the_loop_also_propagates_instead_of_retrying(self) -> None:
+        service = MagicMock()
+        service.run_research = AsyncMock(side_effect=ValueError("real bug"))
+        service.close = AsyncMock()
+        with patch("vinu_agent.broker.research_link.get_research_service", return_value=service), \
+                patch("httpx.post") as mock_post:
+            with pytest.raises(ValueError):
+                _tool().execute(idea="idea", symbol="AAPL", from_date="2024-01-01", to_date="2024-12-31")
+        mock_post.assert_not_called()
 
 
 class TestResearchToolHttpFallback:

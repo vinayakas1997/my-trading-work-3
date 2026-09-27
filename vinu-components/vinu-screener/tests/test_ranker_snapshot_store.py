@@ -124,3 +124,43 @@ class TestTraceRoundTrip:
 
         snap = store.get_latest("r1")
         assert snap.trace == []
+
+
+class TestRejectedSamplesRoundTrip:
+    """item #18 finding #3: PipelineResult.rejected_samples -- the
+    "why was ticker Y excluded" counterpart to TestTraceRoundTrip's
+    aggregate counts."""
+
+    def test_rejected_samples_round_trip(self, store) -> None:
+        rejected = [
+            {"entity_type": "screener_symbol", "entity_id": "AAPL", "stage": "hard_filter",
+             "rejection_category": "hard_filter", "rejection_detail": "price=3.0 < min_price=5.0",
+             "compared_against_id": None, "timestamp": "2026-01-01T00:00:00+00:00"},
+        ]
+        result = PipelineResult(ranked=[], trace=[], top=[], rejected_samples=rejected)
+        store.set_latest("r1", result, now=1.0)
+
+        snap = store.get_latest("r1")
+        assert snap.rejected_samples == rejected
+
+    def test_empty_rejected_samples_round_trips(self, store) -> None:
+        store.set_latest("r1", _result([("AAPL", 1.0)]), now=1.0)
+        assert store.get_latest("r1").rejected_samples == []
+
+    def test_to_dict_includes_rejected_samples(self, store) -> None:
+        rejected = [{"entity_type": "screener_symbol", "entity_id": "X", "stage": "risk_veto",
+                     "rejection_category": "risk_veto", "rejection_detail": "vetoed",
+                     "compared_against_id": None, "timestamp": "2026-01-01T00:00:00+00:00"}]
+        result = PipelineResult(ranked=[], trace=[], top=[], rejected_samples=rejected)
+        store.set_latest("r1", result, now=1.0)
+        snap = store.get_latest("r1")
+        assert snap.to_dict()["rejected_samples"] == rejected
+
+    def test_pre_migration_row_with_no_rejected_json_defaults_to_empty_list(self, store) -> None:
+        store.set_latest("r1", _result([("AAPL", 1.0)]), now=1.0)
+        conn = store._get_conn()
+        conn.execute("UPDATE ranker_snapshots SET rejected_json = '' WHERE ranker_id = ?", ("r1",))
+        conn.commit()
+
+        snap = store.get_latest("r1")
+        assert snap.rejected_samples == []

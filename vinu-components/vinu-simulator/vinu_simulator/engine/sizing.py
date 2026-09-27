@@ -3,8 +3,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 import numpy as np
+import pandas as pd
 
 from vinu_infra.risk_math import kelly_fraction as _kelly_fraction
+from vinu_tools.compute.risk.shock_correlation import dcc_shock_correlation
 
 
 class PositionSizer(ABC):
@@ -20,7 +22,19 @@ class PositionSizer(ABC):
     """
 
     @abstractmethod
-    def size(self, target_weights: np.ndarray, realized_returns: np.ndarray) -> np.ndarray:
+    def size(
+        self,
+        target_weights: np.ndarray,
+        realized_returns: np.ndarray,
+        *,
+        symbol_returns: pd.DataFrame | None = None,
+    ) -> np.ndarray:
+        """`symbol_returns`, when given, is the backtest's own per-symbol
+        daily-return history strictly before the current rebalance day
+        (same point-in-time-safe cutoff as `realized_returns`) -- only
+        `CompositeSizer` reads it today; every other sizer here accepts
+        and ignores it so the engine's one call site can pass it
+        unconditionally without an isinstance check."""
         ...
 
 
@@ -28,8 +42,39 @@ class FixedSizer(PositionSizer):
     """No adjustment — today's default behavior. The strategy's own weights are
     used exactly as given, with no risk-based scaling."""
 
-    def size(self, target_weights: np.ndarray, realized_returns: np.ndarray) -> np.ndarray:
+    def size(
+        self,
+        target_weights: np.ndarray,
+        realized_returns: np.ndarray,
+        *,
+        symbol_returns: pd.DataFrame | None = None,
+    ) -> np.ndarray:
         return target_weights
+
+
+def _vol_target_scale_factor(
+    realized_returns: np.ndarray,
+    target_annual_vol: float,
+    lookback_days: int,
+    max_leverage: float,
+    periods_per_year: int,
+) -> float:
+    """Extracted from `VolTargetSizer.size()` unchanged (byte-identical
+    formula) so `CompositeSizer` can reuse the exact same vol-target math
+    rather than a second, independently-derived copy."""
+    if len(realized_returns) < lookback_days:
+        # Not enough history yet to estimate vol — don't guess, leave sizing
+        # unadjusted rather than scaling on a noisy tiny sample.
+        return 1.0
+
+    window = realized_returns[-lookback_days:]
+    realized_vol = float(np.std(window, ddof=1)) * np.sqrt(periods_per_year)
+
+    if realized_vol <= 1e-9:
+        scale = max_leverage
+    else:
+        scale = min(target_annual_vol / realized_vol, max_leverage)
+    return max(scale, 0.0)
 
 
 class VolTargetSizer(PositionSizer):
@@ -63,21 +108,17 @@ class VolTargetSizer(PositionSizer):
         self.max_leverage = max_leverage
         self.periods_per_year = periods_per_year
 
-    def size(self, target_weights: np.ndarray, realized_returns: np.ndarray) -> np.ndarray:
-        if len(realized_returns) < self.lookback_days:
-            # Not enough history yet to estimate vol — don't guess, leave sizing
-            # unadjusted rather than scaling on a noisy tiny sample.
-            return target_weights
-
-        window = realized_returns[-self.lookback_days:]
-        realized_vol = float(np.std(window, ddof=1)) * np.sqrt(self.periods_per_year)
-
-        if realized_vol <= 1e-9:
-            scale = self.max_leverage
-        else:
-            scale = min(self.target_annual_vol / realized_vol, self.max_leverage)
-        scale = max(scale, 0.0)
-
+    def size(
+        self,
+        target_weights: np.ndarray,
+        realized_returns: np.ndarray,
+        *,
+        symbol_returns: pd.DataFrame | None = None,
+    ) -> np.ndarray:
+        scale = _vol_target_scale_factor(
+            realized_returns, self.target_annual_vol, self.lookback_days,
+            self.max_leverage, self.periods_per_year,
+        )
         return target_weights * scale
 
 
@@ -99,7 +140,13 @@ class FractionalKellySizer(PositionSizer):
         self.lookback_days = lookback_days
         self.max_leverage = max_leverage
 
-    def size(self, target_weights: np.ndarray, realized_returns: np.ndarray) -> np.ndarray:
+    def size(
+        self,
+        target_weights: np.ndarray,
+        realized_returns: np.ndarray,
+        *,
+        symbol_returns: pd.DataFrame | None = None,
+    ) -> np.ndarray:
         if len(realized_returns) < self.lookback_days:
             return target_weights
 
@@ -128,6 +175,101 @@ class FractionalKellySizer(PositionSizer):
         return target_weights * scale
 
 
+class CompositeSizer(PositionSizer):
+    """Multiplies vol-target sizing with correlation-aware shrinkage into
+    one scale factor -- the senior-quant "composite risk sizing"
+    follow-up (system-wide-audit-and-design item #14): two positions
+    that are secretly the same underlying bet no longer both get full
+    size just because each one's own vol-target factor looks fine in
+    isolation. Still only ever scales the strategy's own weight vector
+    by one scalar, same discipline as every sizer in this file --
+    direction/which-symbols always comes from the strategy.
+
+    Correlation-awareness reuses `vinu_tools.compute.risk.shock_correlation
+    .dcc_shock_correlation` unchanged (relocated from `vinu-portfolio` for
+    exactly this reuse) rather than a second, independently-derived
+    correlation model.
+    """
+
+    # Refitting a GARCH model per symbol on every single rebalance day
+    # would make backtests using this sizer prohibitively slow for no
+    # real benefit -- correlation structure does not meaningfully change
+    # day to day. Recomputed only every N new rows of return history,
+    # cached in between. A reasonable default, same posture as every
+    # other guessed-until-real-data-exists constant in this codebase.
+    _DEFAULT_CORRELATION_LOOKBACK_DAYS = 60
+    _DEFAULT_CORRELATION_RECOMPUTE_EVERY = 20
+    _DEFAULT_HIGH_CORRELATION_THRESHOLD = 0.7
+    _DEFAULT_MAX_CORRELATION_SHRINK = 0.5
+
+    def __init__(
+        self,
+        target_annual_vol: float = 0.15,
+        vol_lookback_days: int = 20,
+        max_leverage: float = 1.0,
+        periods_per_year: int = 252,
+        correlation_lookback_days: int = _DEFAULT_CORRELATION_LOOKBACK_DAYS,
+        correlation_recompute_every: int = _DEFAULT_CORRELATION_RECOMPUTE_EVERY,
+        max_correlation_shrink: float = _DEFAULT_MAX_CORRELATION_SHRINK,
+    ):
+        self.target_annual_vol = target_annual_vol
+        self.vol_lookback_days = vol_lookback_days
+        self.max_leverage = max_leverage
+        self.periods_per_year = periods_per_year
+        self.correlation_lookback_days = correlation_lookback_days
+        self.correlation_recompute_every = correlation_recompute_every
+        self.max_correlation_shrink = max_correlation_shrink
+        self._cached_corr_scale = 1.0
+        self._cached_at_n_rows = -1
+
+    def size(
+        self,
+        target_weights: np.ndarray,
+        realized_returns: np.ndarray,
+        *,
+        symbol_returns: pd.DataFrame | None = None,
+    ) -> np.ndarray:
+        vol_scale = _vol_target_scale_factor(
+            realized_returns, self.target_annual_vol, self.vol_lookback_days,
+            self.max_leverage, self.periods_per_year,
+        )
+        corr_scale = self._correlation_scale(symbol_returns)
+        return target_weights * vol_scale * corr_scale
+
+    def _correlation_scale(self, symbol_returns: pd.DataFrame | None) -> float:
+        if symbol_returns is None or symbol_returns.shape[1] < 2:
+            return 1.0
+        n_rows = len(symbol_returns)
+        if n_rows < self.correlation_lookback_days:
+            return 1.0
+        if (
+            self._cached_at_n_rows >= 0
+            and n_rows - self._cached_at_n_rows < self.correlation_recompute_every
+        ):
+            return self._cached_corr_scale
+
+        window = symbol_returns.iloc[-self.correlation_lookback_days:]
+        result = dcc_shock_correlation(window)
+        if result["status"] != "ok":
+            # Fails open to no shrinkage, same posture every other
+            # best-effort diagnostic in this codebase uses -- an
+            # unavailable correlation read is not evidence positions are
+            # safe, but silently blocking sizing on it would turn a
+            # diagnostic gap into a bigger outage.
+            scale = 1.0
+        else:
+            n_assets = result["n_assets"]
+            max_pairs = n_assets * (n_assets - 1) / 2
+            high_pair_fraction = (
+                result["n_high_correlation_pairs"] / max_pairs if max_pairs > 0 else 0.0
+            )
+            scale = 1.0 - min(self.max_correlation_shrink, high_pair_fraction * self.max_correlation_shrink)
+
+        self._cached_corr_scale = scale
+        self._cached_at_n_rows = n_rows
+        return scale
+
+
 def build_position_sizer(
     model: str,
     target_annual_vol: float = 0.15,
@@ -146,6 +288,12 @@ def build_position_sizer(
         return FractionalKellySizer(
             kelly_fraction=kelly_fraction,
             lookback_days=kelly_lookback_days,
+            max_leverage=max_leverage,
+        )
+    if model == "composite":
+        return CompositeSizer(
+            target_annual_vol=target_annual_vol,
+            vol_lookback_days=vol_lookback_days,
             max_leverage=max_leverage,
         )
     if model == "fixed":

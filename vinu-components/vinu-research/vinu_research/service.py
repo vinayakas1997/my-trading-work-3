@@ -9,6 +9,7 @@ import httpx
 
 from vinu_infra.debug import debug_log
 from vinu_research.config import ResearchConfig, load_config
+from vinu_research.generation_candidate_store import GenerationCandidateStore
 from vinu_research.hypothesis_registry import HypothesisRegistry
 from vinu_research.loop import StrategyResearchLoop
 from vinu_research.llm import ResearchLlmClient
@@ -41,6 +42,7 @@ class ResearchService:
         storage: ResearchStorage | None = None,
         strategy_store: SqliteStrategyStore | None = None,
         signal_evidence_store: SignalEvidenceStore | None = None,
+        generation_candidate_store: GenerationCandidateStore | None = None,
     ) -> None:
         self._config = config or load_config()
         self._storage = storage or ResearchStorage(
@@ -61,6 +63,15 @@ class ResearchService:
         self._signal_evidence_store = signal_evidence_store or SignalEvidenceStore(
             self._config.data_root / "signal_evidence.db"
         )
+        # item #16 finding #2: real production loop.run() calls always go
+        # through this one owning service, so the store is injected here
+        # (same convention as strategy_store/signal_evidence_store above),
+        # not defaulted inside StrategyResearchLoop itself -- see that
+        # class's own __init__ comment for why its default is None
+        # ("don't persist"), not a lazily-constructed default-path store.
+        self._generation_candidate_store = generation_candidate_store or GenerationCandidateStore(
+            self._config.data_root / "generation_candidates.db"
+        )
         try:
             from vinu_infra.auth import internal_auth_headers
             _headers = internal_auth_headers() or None
@@ -75,6 +86,10 @@ class ResearchService:
     @property
     def signal_evidence_store(self) -> SignalEvidenceStore:
         return self._signal_evidence_store
+
+    @property
+    def generation_candidate_store(self) -> GenerationCandidateStore:
+        return self._generation_candidate_store
 
     @property
     def config(self) -> ResearchConfig:
@@ -171,6 +186,7 @@ class ResearchService:
                 config=self._config,
                 hypothesis_registry=hypothesis_registry,
                 storage=self._storage,
+                generation_candidate_store=self._generation_candidate_store,
             )
             result = await loop.run(
                 user_idea=user_idea,
@@ -266,6 +282,11 @@ class ResearchService:
                 "from_date": from_date,
                 "to_date": to_date,
                 "status": record.status,
+                # item #17 finding #2: distinct from `status` above (the
+                # run's own lifecycle state) -- this is the 3-state
+                # infra_failure/no_strategy_found/passed classification
+                # an automated scheduler needs without parsing report_md.
+                "outcome_status": result.outcome_status,
                 "total_iterations": result.total_iterations,
                 "best_iteration": result.best_iteration,
                 "best_sharpe": record.best_sharpe,
@@ -680,6 +701,7 @@ class ResearchService:
                 config=self._config,
                 hypothesis_registry=hypothesis_registry,
                 storage=self._storage,
+                generation_candidate_store=self._generation_candidate_store,
             )
             result = await loop.run(
                 user_idea=f"Refine existing strategy for {artifact.name}",

@@ -25,7 +25,10 @@ CREATE TABLE IF NOT EXISTS articles (
     is_lead         INTEGER NOT NULL DEFAULT 1,
     thread_id       TEXT,
     finbert_score   REAL,
-    finbert_label   TEXT
+    finbert_label   TEXT,
+    published_at    INTEGER,
+    ingested_at     INTEGER NOT NULL DEFAULT 0,
+    publish_time_is_estimated INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_articles_sort_ts ON articles(sort_ts DESC);

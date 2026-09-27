@@ -215,6 +215,7 @@ class StockService:
         limit: int = 5000,
         indicators: list[str] | None = None,
         adjusted: bool = True,
+        cache_info: dict | None = None,
     ) -> list[dict[str, Any]]:
         end_ts = to_ts
         start_ts = from_ts
@@ -234,6 +235,7 @@ class StockService:
             indicators=indicators,
             adjusted=adjusted,
             connection=self._duckdb_conn,
+            cache_info=cache_info,
         )
 
     # A full-market scanner (vinu-screener) polling ~8000 symbols with no

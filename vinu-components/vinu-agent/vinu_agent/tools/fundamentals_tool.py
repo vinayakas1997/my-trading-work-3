@@ -1,5 +1,19 @@
 import json
+import logging
+import time
+
 from ..agent.tools import BaseTool
+
+LOG = logging.getLogger(__name__)
+
+# item #11 finding #3 / item #19 finding #4: yfinance is flaky (the same
+# vendor-flakiness pattern flagged in both audits, for two independent
+# callers). A retry-after-sleep loop, same convention
+# allocation_tool.py's own retry already uses -- not vinu_infra.retry's
+# HTTP helper, whose exceptions= tuple is requests-specific and wouldn't
+# reliably match yfinance's own transient failure modes.
+_FETCH_RETRIES = 3
+_RETRY_SLEEP_SEC = 1.0
 
 
 class FundamentalsTool(BaseTool):
@@ -25,11 +39,25 @@ class FundamentalsTool(BaseTool):
         symbol = kwargs["symbol"].upper()
         metric = kwargs.get("metric", "summary")
 
-        try:
-            ticker = yf.Ticker(symbol)
-            info = ticker.info or {}
-        except Exception as exc:
-            return json.dumps({"status": "error", "error": str(exc)})
+        ticker = None
+        info: dict = {}
+        last_exc: Exception | None = None
+        for attempt in range(1, _FETCH_RETRIES + 1):
+            try:
+                ticker = yf.Ticker(symbol)
+                info = ticker.info or {}
+                last_exc = None
+                break
+            except Exception as exc:
+                last_exc = exc
+                if attempt < _FETCH_RETRIES:
+                    LOG.warning(
+                        "get_fundamentals(%s) attempt %d/%d failed, retrying after %.1fs: %s",
+                        symbol, attempt, _FETCH_RETRIES, _RETRY_SLEEP_SEC, exc,
+                    )
+                    time.sleep(_RETRY_SLEEP_SEC)
+        if last_exc is not None:
+            return json.dumps({"status": "error", "error": str(last_exc)})
 
         if not info or not info.get("symbol"):
             return json.dumps({"status": "error", "error": f"Symbol {symbol} not found"})

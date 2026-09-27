@@ -27,6 +27,7 @@ class PortfolioDrawdownMonitor:
         halve_threshold: float | None = None,
         flat_threshold: float | None = None,
         abs_loss_threshold: float | None = None,
+        unavailable_halt_threshold: int = 3,
     ) -> None:
         self._threshold = drawdown_threshold
         # DD de-risk (19 step2): halve at -10%, flat at -15%, halt at -20%.
@@ -52,6 +53,46 @@ class PortfolioDrawdownMonitor:
         self._agent_api_url = agent_api_url or os.environ.get(
             "VINU_AGENT_API_URL", "http://localhost:8086"
         )
+        # item #23 finding #4 fix (system-wide-audit-and-design/
+        # 02-open-questions-strategy-and-simulation.md): drawdown_scheduler.
+        # run_once() used to catch any exception reaching agent-api,
+        # return {"status": "unavailable"}, and just... move on -- no
+        # retry/backoff, no escalation, nothing but an easily-missed log
+        # line. If agent-api stays down, real drawdown protection goes
+        # silently inert for as long as that lasts. Same "N consecutive
+        # cycles" shape already used for LiveScheduler's own
+        # RECON_DRIFT_ALERT_CYCLES (vinu-live/vinu_live/scheduler.py,
+        # item #24 finding #3's fix) -- "we don't know the drawdown, so
+        # trade as if it might already be breached" once unreachability
+        # itself persists, not "we don't know, so assume it's fine."
+        self._unavailable_halt_threshold = unavailable_halt_threshold
+        self._consecutive_unavailable = 0
+
+    def note_unavailable(self) -> dict[str, Any]:
+        """Called by drawdown_scheduler.run_once() every cycle agent-api's
+        /broker/account fetch itself raises -- NOT for "no_broker_account"/
+        "no_equity_data", which are valid states, not failures. Escalates
+        to a real halt once unreachability has persisted for
+        `unavailable_halt_threshold` consecutive cycles, same real
+        cross-process kill switch `_halt_trading` already uses -- an
+        unmanaged, unmonitorable book is exactly the situation that halt
+        exists for, not just a threshold breach."""
+        self._consecutive_unavailable += 1
+        escalated = self._consecutive_unavailable >= self._unavailable_halt_threshold
+        if escalated:
+            self._halt_trading(
+                0.0,
+                reason=(
+                    f"agent-api unreachable for {self._consecutive_unavailable} "
+                    f"consecutive drawdown-monitor cycles -- cannot verify "
+                    f"drawdown is within limits, halting as a precaution"
+                ),
+            )
+        return {
+            "consecutive_unavailable": self._consecutive_unavailable,
+            "escalated_halt": escalated,
+            "action": "halt" if escalated else "unknown",
+        }
 
     def update(self, portfolio_value: float) -> dict[str, Any]:
         """Process a new portfolio value and return status info.
@@ -61,6 +102,11 @@ class PortfolioDrawdownMonitor:
           - threshold_breached: bool
           - halted: bool (whether the kill switch was triggered)
         """
+        # A real, successful update means agent-api is reachable again --
+        # clear any unavailability streak so a single-cycle blip that
+        # already recovered doesn't sit halfway toward escalating later.
+        self._consecutive_unavailable = 0
+
         if self._start_value is None:
             self._start_value = portfolio_value
         if self._peak_value is None or portfolio_value > self._peak_value:

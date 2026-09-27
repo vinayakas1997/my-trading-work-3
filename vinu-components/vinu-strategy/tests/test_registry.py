@@ -1,8 +1,10 @@
 import logging
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from vinu_strategy.engine.registry import StrategyRegistry
+from vinu_strategy.models.strategy import StrategyConfig
 
 
 class TestStrategyRegistry:
@@ -60,6 +62,44 @@ class TestStrategyRegistry:
             assert len(warning_messages) > 0
             assert "unkown_field" in warning_messages[0]
             assert "extra_key" in warning_messages[0]
+
+    def test_reload_is_atomic_not_visible_partially_repopulated(self):
+        """item #22 finding #6: a reload used to clear `self._strategies`
+        immediately, then repopulate it entry-by-entry -- a `get()`/`list()`
+        call from another thread mid-reload could see a strategy that
+        exists in both the old and new config as temporarily gone. Proven
+        by spying on `StrategyConfig.from_dict` (called once per yaml file,
+        inside the loop) and asserting `self._strategies` is still exactly
+        the pre-reload snapshot every single time it's invoked -- i.e. the
+        real internal dict is never mutated mid-loop, only swapped in once
+        at the end."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            strategies_dir = Path(tmpdir)
+            (strategies_dir / "a.yaml").write_text("name: strat_a\n")
+            (strategies_dir / "b.yaml").write_text("name: strat_b\n")
+            registry = StrategyRegistry(strategies_dir)
+            registry.load_all()
+            pre_reload_snapshot = dict(registry._strategies)
+            assert set(pre_reload_snapshot) == {"strat_a", "strat_b"}
+
+            (strategies_dir / "c.yaml").write_text("name: strat_c\n")
+
+            real_from_dict = StrategyConfig.from_dict
+            seen_calls = []
+
+            def spy_from_dict(data, **kwargs):
+                seen_calls.append(data["name"])
+                assert registry._strategies == pre_reload_snapshot, (
+                    f"registry._strategies mutated mid-reload before "
+                    f"processing {data['name']!r}"
+                )
+                return real_from_dict(data, **kwargs)
+
+            with patch.object(StrategyConfig, "from_dict", side_effect=spy_from_dict):
+                registry.load_all()
+
+            assert set(seen_calls) == {"strat_a", "strat_b", "strat_c"}
+            assert set(registry.list()) == {"strat_a", "strat_b", "strat_c"}
 
     def test_yaml_validation_unknown_method(self, caplog):
         caplog.set_level(logging.WARNING)

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from unittest.mock import patch
 
 import pytest
 
 from vinu_research.config import TradeScoreThresholds
 from vinu_research.trade_score_calibration import (
+    _read_state,
+    _write_state,
     approve_proposal,
     apply_directly,
     compute_calibration_metrics,
@@ -26,6 +29,44 @@ class _FakeTradeScore:
     ev_score: float = 25.0
     risk_score: float = 20.0
     regime_fit_score: float = 15.0
+
+
+class TestWriteStateIsAtomic:
+    """item #12 finding #1: `_write_state` used to write the live
+    trade-score-threshold state directly via a plain `path.write_text()`
+    -- a crash mid-write corrupts it. Now the same tmp+os.replace trick
+    `hypothesis_registry.py`'s own `_write` already uses."""
+
+    def test_round_trips_through_read_state(self, tmp_path) -> None:
+        path = tmp_path / "state.json"
+        _write_state(path, {"a": 1, "b": [1, 2, 3]})
+        assert _read_state(path) == {"a": 1, "b": [1, 2, 3]}
+
+    def test_no_leftover_tmp_file_after_a_successful_write(self, tmp_path) -> None:
+        path = tmp_path / "state.json"
+        _write_state(path, {"a": 1})
+        leftover = list(tmp_path.glob("*.tmp"))
+        assert leftover == []
+
+    def test_a_failure_mid_write_leaves_the_original_file_untouched(self, tmp_path) -> None:
+        """The actual property this fix buys: json.dump erroring partway
+        through must not corrupt or truncate the real, already-committed
+        state file -- the write only ever touches a private temp file
+        until the final atomic os.replace."""
+        path = tmp_path / "state.json"
+        _write_state(path, {"version": 1})
+
+        with patch("json.dump", side_effect=RuntimeError("simulated crash mid-write")):
+            with pytest.raises(RuntimeError):
+                _write_state(path, {"version": 2})
+
+        assert _read_state(path) == {"version": 1}
+        assert list(tmp_path.glob("*.tmp")) == []
+
+    def test_creates_parent_directories(self, tmp_path) -> None:
+        path = tmp_path / "nested" / "dir" / "state.json"
+        _write_state(path, {"a": 1})
+        assert _read_state(path) == {"a": 1}
 
 
 class TestRecordTradeScoreOutcomeAndHistory:

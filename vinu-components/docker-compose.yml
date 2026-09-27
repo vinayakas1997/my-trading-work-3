@@ -456,6 +456,14 @@ services:
         condition: service_healthy
       stock-api:
         condition: service_healthy
+      # New for the live-decision loop's poller/scheduler (missing-pieces-
+      # of-system/new-theory-of-trading/system-wide-audit-and-design/
+      # reverse-engineering/ points 2+7) -- both now call quant-core-api's
+      # real /strategy/strategies routes (vinu-strategy's actual host)
+      # every cycle, not an optional/best-effort call this container could
+      # start without.
+      quant-core-api:
+        condition: service_healthy
 
   # =========================================================================
   # vinu-agent (Port: 8086)

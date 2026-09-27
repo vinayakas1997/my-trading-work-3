@@ -9,7 +9,13 @@ _OPERATORS = frozenset({"eq", "neq", "gt", "gte", "lt", "lte", "in", "between"})
 
 @dataclass
 class Condition:
-    source: Literal["features", "correlation"]
+    # "live_indicators" added for the live-decision-loop's must-condition/
+    # confirmation-condition checks (missing-pieces-of-system/new-theory-
+    # of-trading/system-wide-audit-and-design/reverse-engineering/
+    # 03-poller-and-state-schema.md) -- same {source, key, operator, value}
+    # shape as the existing weight-rule conditions, reused rather than a
+    # new condition DSL invented for the live-decision loop.
+    source: Literal["features", "correlation", "live_indicators"]
     key: str
     operator: str = "gt"
     value: Any = None

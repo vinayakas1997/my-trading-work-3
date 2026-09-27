@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from vinu_infra.server import create_app as _create_app
 from vinu_research.service import ResearchService
 from vinu_research.server import routes_config, routes_hypothesis, routes_introspect, routes_read, routes_signal_evidence, routes_sweep, routes_trade_plan
+from vinu_research.sweep_store import SweepGridStore
 from vinu_research.tools import ResearchTools
 
 
@@ -16,6 +17,10 @@ def create_app(service: ResearchService | None = None):
     routes_introspect.set_service(app_service)
     routes_signal_evidence.set_service(app_service)
     routes_sweep.set_tools(ResearchTools(app_service.config))
+    # item #3: the same store run_sweep_grid() itself would otherwise lazily
+    # construct on first use -- set explicitly here so GET /sweep/grid and
+    # POST /sweep/grid share one instance/connection pool, not two.
+    routes_sweep.set_sweep_store(SweepGridStore(app_service.config.data_root / "sweep_grid.db"))
 
     merged = APIRouter()
     merged.include_router(routes_read.router, tags=["read"])

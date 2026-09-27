@@ -15,7 +15,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from vinu_infra.strategy_evaluation import resolve_strategy_evaluation_store
 from vinu_research.hypothesis_registry import HypothesisRegistry
+from vinu_research.maturity_assessor import assess as assess_maturity
 from vinu_research.models import Hypothesis, HypothesisStatus
 from vinu_research.service import ResearchService
 
@@ -88,6 +90,16 @@ async def list_hypotheses(
     return {"count": len(hypotheses), "hypotheses": [_serialize_hypothesis(h) for h in hypotheses]}
 
 
+@router.get("/indicators/pool")
+async def pool_indicator_evidence() -> dict[str, Any]:
+    """item #8: whether a supporting indicator matters in general, across
+    every strategy/hypothesis that used it, not siloed per-strategy. Reads
+    HypothesisRegistry's existing evidence trail fresh on each call -- no
+    new storage, same idiom as every other route in this file."""
+    reg = HypothesisRegistry()
+    return {"indicators": reg.pool_evidence_by_indicator()}
+
+
 @router.get("/hypotheses/{hypothesis_id}")
 async def get_hypothesis(hypothesis_id: str) -> dict[str, Any]:
     reg = HypothesisRegistry()
@@ -133,3 +145,96 @@ async def get_run_checkpoints(
         return {"run_id": run_id, "checkpoint": checkpoint}
     checkpoints = storage.list_checkpoints(run_id)
     return {"run_id": run_id, "count": len(checkpoints), "checkpoints": checkpoints}
+
+
+@router.get("/generation-rounds")
+async def list_generation_rounds(symbol: str | None = None, limit: int = 50) -> dict[str, Any]:
+    """item #16 finding #2: generation-time candidate loss now has a real
+    persistence surface (generation_candidate_store.py) -- this is the
+    read side, same "give read access to state that was already being
+    written but had no HTTP surface" idiom as every other route in this
+    file. Header rows only; see GET /generation-rounds/{generation_id}
+    for one round's full point-by-point detail."""
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    return {"rounds": _service.generation_candidate_store.list_rounds(symbol=symbol, limit=limit)}
+
+
+@router.get("/generation-rounds/{generation_id}")
+async def get_generation_round(generation_id: str) -> dict[str, Any]:
+    """Every candidate drafted in one generation/refinement call, winner
+    included -- "why this round went the way it did," not just which
+    strategy code an iteration ended up using."""
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    round_ = _service.generation_candidate_store.get_round(generation_id)
+    if round_ is None:
+        raise HTTPException(status_code=404, detail="no generation round found for this generation_id")
+    return round_
+
+
+@router.get("/maturity/status")
+async def get_maturity_status() -> dict[str, Any]:
+    """The first real HTTP surface for `MaturityAssessor` -- previously
+    only reachable in-process (`trade_plan_authoring.py`'s own prompt-
+    context wiring). `00-maturity-agentic-system-explanation.md` itself
+    named this exact route ("a small HTTP endpoint, e.g. GET
+    /maturity/status, for cross-service callers") as the intended shape
+    for a service with no in-process bridge to vinu-research -- built
+    now for `vinu-live`'s risk_gatekeeper/live_decision consumers.
+    Always available (read-only, no side effects); each consumer
+    decides independently, via its own config knob, whether to actually
+    act on the tier -- this route itself is not gated by
+    `maturity_tier_enabled` (that flag only ever controlled whether
+    trade-plan authoring's own LLM prompt includes it)."""
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    config = _service.config
+    assessment = assess_maturity(
+        _service.strategy_store, config.agent_data_root,
+        mature_min_trades=config.trade_score_calibration_min_sample,
+    )
+    return assessment.as_prompt_dict()
+
+
+@router.get("/evaluation-status/{artifact_id}")
+async def get_evaluation_status(artifact_id: str) -> dict[str, Any]:
+    """item #2 (system-wide-audit-and-design): "why isn't this trading"
+    already has a real, correct answer -- `StrategyEvaluationStore`
+    already consolidates every gate a candidate strategy/trade plan
+    passes through (risk_critic, correlation_gate, trade_score_gate,
+    calibration_gate, capital_allocator, order_guard, ...) into one
+    current-state view (`status`, `rejected_at_step`, `rejected_reason`),
+    recomputed on every write. It just had no HTTP surface anywhere --
+    this is that surface, not a new gate or a new abstraction."""
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    store = resolve_strategy_evaluation_store(_service.config.data_root)
+    status = store.get_status(artifact_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail=f"no evaluation status for artifact {artifact_id}")
+    return status
+
+
+@router.get("/evaluation-status/by-ticker/{ticker}")
+async def list_evaluation_status_for_ticker(ticker: str) -> dict[str, Any]:
+    """Every artifact evaluated for this ticker, newest first -- "what's
+    currently blocking (or has already cleared) trading on this
+    symbol," across every candidate, not just one."""
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    store = resolve_strategy_evaluation_store(_service.config.data_root)
+    statuses = store.list_status_for_ticker(ticker)
+    return {"ticker": ticker.upper(), "count": len(statuses), "statuses": statuses}
+
+
+@router.get("/evaluation-history/{artifact_id}")
+async def get_evaluation_history(artifact_id: str) -> dict[str, Any]:
+    """The full step-by-step trail behind `get_evaluation_status`'s
+    current-state summary -- every gate this artifact was actually run
+    through, in order, with each one's own verdict and reasoning."""
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    store = resolve_strategy_evaluation_store(_service.config.data_root)
+    history = store.get_history(artifact_id)
+    return {"artifact_id": artifact_id, "count": len(history), "history": history}

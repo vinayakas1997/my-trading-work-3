@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -22,6 +23,35 @@ _INTERVAL_MAP: dict[str, str] = {
     "1wk": "1wk",
     "1mo": "1mo",
 }
+
+# item #19 finding #4: every other provider in this directory (yahoo.py,
+# polygon.py, alpaca.py, tushare.py, finnhub_provider.py) routes through
+# vinu_infra.retry's shared helper; this one had no retry/backoff at all.
+# Same convention item #11 finding #3 already established for
+# vinu-agent's fundamentals_tool.py -- a plain retry-after-sleep loop,
+# not vinu_infra.retry's HTTP helper, since its `exceptions=` tuple is
+# requests-specific and wouldn't reliably match yfinance's own transient
+# failure modes.
+_FETCH_RETRIES = 3
+_RETRY_SLEEP_SEC = 1.0
+
+
+def _retry(fn):
+    """Call `fn()` up to `_FETCH_RETRIES` times, sleeping between attempts
+    on any exception. Re-raises the last exception if every attempt fails."""
+    last_exc: Exception | None = None
+    for attempt in range(1, _FETCH_RETRIES + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            last_exc = exc
+            if attempt < _FETCH_RETRIES:
+                LOG.warning(
+                    "yfinance fetch attempt %d/%d failed, retrying after %.1fs: %s",
+                    attempt, _FETCH_RETRIES, _RETRY_SLEEP_SEC, exc,
+                )
+                time.sleep(_RETRY_SLEEP_SEC)
+    raise last_exc
 
 
 class YFinanceProvider:
@@ -49,8 +79,9 @@ class YFinanceProvider:
         end_dt = datetime.fromtimestamp(end_ts, tz=timezone.utc).strftime("%Y-%m-%d")
 
         try:
-            ticker = yf.Ticker(symbol.strip())
-            df = ticker.history(start=start_dt, end=end_dt, interval=yf_interval)
+            df = _retry(lambda: yf.Ticker(symbol.strip()).history(
+                start=start_dt, end=end_dt, interval=yf_interval,
+            ))
         except Exception as exc:
             return FetchBarsResult(False, [], str(exc))
 
@@ -83,8 +114,7 @@ class YFinanceProvider:
         import yfinance as yf
 
         try:
-            ticker = yf.Ticker(symbol.strip())
-            info = ticker.info or {}
+            info = _retry(lambda: yf.Ticker(symbol.strip()).info) or {}
             ts = info.get("firstTradeDateEpochUtc")
             if ts:
                 return EarliestResult(True, int(ts))

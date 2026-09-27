@@ -20,7 +20,7 @@ from vinu_simulator.engine.metrics import (
     compute_performance_metrics,
     periods_per_year_for_interval,
 )
-from vinu_simulator.engine.sizing import PositionSizer, build_position_sizer
+from vinu_simulator.engine.sizing import CompositeSizer, PositionSizer, build_position_sizer
 from vinu_simulator.models.metrics import MetricBundle
 from vinu_simulator.models.simulation import (
     SimulationConfig,
@@ -141,6 +141,17 @@ class WeightSimulator:
         volume_matrix = volume_data.values.astype(np.float64) if volume_data is not None else None
         weights_matrix = target_weights_aligned.values.astype(np.float64)
 
+        # Only `CompositeSizer` reads per-symbol return history (for its
+        # correlation-aware factor) -- built once here, not per step, and
+        # skipped entirely for every other sizer so this doesn't cost
+        # anything on the far more common single-factor-sizer path.
+        symbol_returns_full: pd.DataFrame | None = None
+        if isinstance(self._position_sizer, CompositeSizer):
+            with np.errstate(divide="ignore", invalid="ignore"):
+                symbol_returns_full = pd.DataFrame(
+                    price_data.pct_change().values, columns=common_tickers,
+                )
+
         for step_idx, date in enumerate(total_calendar):
             prices = price_matrix[step_idx]
             if np.any(~np.isfinite(prices)):
@@ -156,8 +167,14 @@ class WeightSimulator:
             # Scale by realized performance strictly before today (daily_ret holds
             # only returns already realized at this point in the loop) — direction
             # always comes from the strategy, sizing only ever adjusts magnitude.
+            # symbol_returns is sliced up to (not including) today too, same
+            # point-in-time-safe cutoff as daily_ret.
+            symbol_returns_so_far = (
+                symbol_returns_full.iloc[:step_idx] if symbol_returns_full is not None else None
+            )
             target_weights = self._position_sizer.size(
-                weights_matrix[step_idx], np.asarray(daily_ret, dtype=np.float64)
+                weights_matrix[step_idx], np.asarray(daily_ret, dtype=np.float64),
+                symbol_returns=symbol_returns_so_far,
             )
 
             is_rebalance = step_idx in rebalance_positions

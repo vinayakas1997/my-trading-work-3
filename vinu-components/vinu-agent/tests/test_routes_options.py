@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import vinu_agent.server.routes_options as routes_options
+from vinu_agent.tools.options_tool import RetryableOptionsError
 
 
 @pytest.fixture
@@ -41,6 +42,25 @@ class TestGetOptionsSnapshot:
         body = resp.json()
         assert body["status"] == "error"
         assert "no entitlement" in body["error"]
+
+    def test_permanent_failure_is_marked_not_retryable(self, client: TestClient) -> None:
+        """item #11 finding #5: a permanent failure (credentials/
+        entitlement, a bad symbol, ...) must tell the caller not to
+        retry -- this route is fetch_chain's other real consumer besides
+        OptionsGreeksTool.execute(), and must carry the same distinction."""
+        with patch("vinu_agent.server.routes_options.fetch_chain", side_effect=PermissionError("no entitlement")):
+            resp = client.get("/options/AAPL/snapshot")
+        assert resp.json()["retryable"] is False
+
+    def test_retryable_failure_is_marked_retryable(self, client: TestClient) -> None:
+        with patch(
+            "vinu_agent.server.routes_options.fetch_chain",
+            side_effect=RetryableOptionsError("HTTP 503 (retryable)"),
+        ):
+            resp = client.get("/options/AAPL/snapshot")
+        body = resp.json()
+        assert body["status"] == "error"
+        assert body["retryable"] is True
 
     def test_expiration_and_limit_query_params_forwarded(self, client: TestClient) -> None:
         with patch("vinu_agent.server.routes_options.fetch_chain", return_value=[]) as mock_fetch:

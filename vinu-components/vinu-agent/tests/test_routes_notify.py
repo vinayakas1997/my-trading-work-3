@@ -164,6 +164,28 @@ def test_reconciliation_drift_repeat_for_same_symbol_and_action_is_suppressed(cl
     dc_send.assert_awaited_once()
 
 
+def test_reconciliation_drift_describes_target_weight_drift(client) -> None:
+    """Item #24 finding #3 -- LiveScheduler's own target-vs-broker
+    reconciliation, a different comparison than the book-vs-broker
+    action types above (see routes_notify.py's field docstring)."""
+    config = AgentConfig(discord_token="dtok", discord_admin_channel_id="999")
+    with patch("vinu_agent.server.routes_notify.load_config", return_value=config):
+        with patch("vinu_agent.agent.notify_channels.HttpDiscordChannel.send_message", new_callable=AsyncMock) as dc_send:
+            resp = client.post(
+                "/notify/reconciliation-drift",
+                json={
+                    "symbol": "AAPL", "action": "target_weight_drift",
+                    "expected_qty": 100.0, "actual_qty": 40.0, "drift_pct": 60.0,
+                },
+            )
+
+    assert resp.json()["delivered"] == 1
+    sent_text = dc_send.await_args.args[1]
+    assert "AAPL" in sent_text
+    assert "not converged" in sent_text
+    assert "100.0" in sent_text and "40.0" in sent_text
+
+
 def test_reconciliation_drift_different_symbols_do_not_suppress_each_other(client) -> None:
     from vinu_agent.agent.notification_noise import NoiseConfig, NotificationNoiseGate, reset_noise_gate
 
@@ -192,3 +214,52 @@ def test_distinct_plans_do_not_suppress_each_other(client) -> None:
     assert a.json()["delivered"] == 1
     assert b.json()["delivered"] == 1
     assert tg_send.await_count == 2
+
+
+def _conflict_body(symbol="AAPL", net_weight=0.02, gross_weight=0.4, severity=0.95):
+    return {
+        "symbol": symbol,
+        "contributions": [
+            {"strategy_name": "momentum-a", "target_weight": 0.21},
+            {"strategy_name": "meanrev-b", "target_weight": -0.19},
+        ],
+        "net_weight": net_weight,
+        "gross_weight": gross_weight,
+        "severity": severity,
+    }
+
+
+def test_symbol_conflict_no_channels_configured(client) -> None:
+    with patch("vinu_agent.server.routes_notify.load_config", return_value=AgentConfig()):
+        resp = client.post("/notify/symbol-conflict", json=_conflict_body())
+
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "no_channels_configured", "delivered": 0}
+
+
+def test_symbol_conflict_delivers_and_describes_the_disagreement(client) -> None:
+    config = AgentConfig(discord_token="dtok", discord_admin_channel_id="999")
+    with patch("vinu_agent.server.routes_notify.load_config", return_value=config):
+        with patch("vinu_agent.agent.notify_channels.HttpDiscordChannel.send_message", new_callable=AsyncMock) as dc_send:
+            resp = client.post("/notify/symbol-conflict", json=_conflict_body())
+
+    assert resp.json()["delivered"] == 1
+    sent_text = dc_send.await_args.args[1]
+    assert "AAPL" in sent_text
+    assert "momentum-a" in sent_text
+    assert "Netted automatically" in sent_text
+    assert "95%" in sent_text
+
+
+def test_symbol_conflict_repeat_for_same_symbol_is_suppressed(client) -> None:
+    from vinu_agent.agent.notification_noise import NoiseConfig, NotificationNoiseGate, reset_noise_gate
+
+    reset_noise_gate(NotificationNoiseGate(NoiseConfig(dedup_window_sec=3600.0)))
+    config = AgentConfig(discord_token="dtok", discord_admin_channel_id="999")
+    with patch("vinu_agent.server.routes_notify.load_config", return_value=config):
+        with patch("vinu_agent.agent.notify_channels.HttpDiscordChannel.send_message", new_callable=AsyncMock):
+            first = client.post("/notify/symbol-conflict", json=_conflict_body())
+            second = client.post("/notify/symbol-conflict", json=_conflict_body())
+
+    assert first.json()["status"] == "ok"
+    assert second.json()["status"] == "suppressed"

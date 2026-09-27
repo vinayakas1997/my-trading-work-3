@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -29,6 +30,7 @@ from vinu_agent.agent.scheduler_workers import (
     run_llm_failure_check,
     run_significance_cycle,
     run_team_for_ticker,
+    sync_signal_evidence_for_tickers,
 )
 from vinu_agent.agent.significance_triage import (
     LLM_FAILURE_SENTINEL_TICKER,
@@ -97,6 +99,62 @@ class TestDiscoverNewTickers:
         store = _fake_summary_store([])
         new = discover_new_tickers(["AAPL", "", "  "], store)
         assert new == ["AAPL"]
+
+
+class TestSyncSignalEvidenceForTickers:
+    """item #1: bridges Track 1's recorded signal-evidence data into
+    HypothesisRegistry once per planner-worker cycle. Fails open --
+    nothing here may ever stop the cycle's real work."""
+
+    def test_calls_the_real_bridge_with_both_in_process_stores(self) -> None:
+        fake_registry = MagicMock()
+        fake_store = MagicMock()
+        expected = {"updated": ["AAPL:sma5_cross_sma50"], "no_matching_hypothesis": [], "no_resolved_triggers": []}
+        with patch(
+            "vinu_agent.broker.research_link.get_hypothesis_registry", return_value=fake_registry,
+        ), patch(
+            "vinu_agent.broker.research_link.get_signal_evidence_store", return_value=fake_store,
+        ), patch(
+            "vinu_research.signal_evidence_bridge.sync_signal_evidence_to_hypotheses",
+            return_value=expected,
+        ) as mock_sync:
+            result = sync_signal_evidence_for_tickers(["AAPL"])
+        assert result == expected
+        mock_sync.assert_called_once_with(
+            ["AAPL"], evidence_store=fake_store, hypothesis_registry=fake_registry,
+        )
+
+    def test_vinu_research_not_importable_fails_open_to_none(self, monkeypatch) -> None:
+        monkeypatch.setitem(sys.modules, "vinu_research.signal_evidence_bridge", None)
+        result = sync_signal_evidence_for_tickers(["AAPL"])
+        assert result is None
+
+    def test_a_real_failure_in_the_bridge_itself_is_caught_and_returns_none(self) -> None:
+        """The one thing this must never do: let a real bug propagate up
+        and abort the planner-worker cycle that's calling it."""
+        with patch(
+            "vinu_agent.broker.research_link.get_hypothesis_registry", return_value=MagicMock(),
+        ), patch(
+            "vinu_agent.broker.research_link.get_signal_evidence_store", return_value=MagicMock(),
+        ), patch(
+            "vinu_research.signal_evidence_bridge.sync_signal_evidence_to_hypotheses",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = sync_signal_evidence_for_tickers(["AAPL"])
+        assert result is None
+
+    def test_empty_ticker_list_still_calls_through_cleanly(self) -> None:
+        with patch(
+            "vinu_agent.broker.research_link.get_hypothesis_registry", return_value=MagicMock(),
+        ), patch(
+            "vinu_agent.broker.research_link.get_signal_evidence_store", return_value=MagicMock(),
+        ), patch(
+            "vinu_research.signal_evidence_bridge.sync_signal_evidence_to_hypotheses",
+            return_value={"updated": [], "no_matching_hypothesis": [], "no_resolved_triggers": []},
+        ) as mock_sync:
+            result = sync_signal_evidence_for_tickers([])
+        assert result == {"updated": [], "no_matching_hypothesis": [], "no_resolved_triggers": []}
+        mock_sync.assert_called_once()
 
 
 class TestBootstrapNewTickers:

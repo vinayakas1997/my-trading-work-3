@@ -24,6 +24,7 @@ from vinu_portfolio.risk_utils import (
 )
 from vinu_portfolio.shock_correlation import dcc_shock_correlation
 from vinu_portfolio.sizing import apply_position_sizing
+from vinu_portfolio.storage.drawdown_status import DrawdownStatusStore
 
 LOG = logging.getLogger(__name__)
 
@@ -91,10 +92,17 @@ class PortfolioService:
         # persistent storage of its own; see storage/allocation_history.py.
         from vinu_portfolio.storage.allocation_history import AllocationHistoryStore
         self._allocation_history = AllocationHistoryStore(self._config.data_root / "allocation_history.db")
+        # item #23 findings #2/#3 (system-wide-audit-and-design/
+        # 02-open-questions-strategy-and-simulation.md): cross-process
+        # read of the drawdown monitor's real halve/flat/halt state -- see
+        # drawdown_status.py's own docstring for why this can't just be an
+        # in-memory read.
+        self._drawdown_status_store = DrawdownStatusStore(self._config.data_root / "drawdown_status.db")
 
     async def close(self) -> None:
         await self._http.aclose()
         self._allocation_history.close()
+        self._drawdown_status_store.close()
 
     async def __aenter__(self) -> PortfolioService:
         return self
@@ -757,6 +765,230 @@ class PortfolioService:
         bound = self._config.confidence_tilt_bound
         return (1.0 - bound) + frac * (2.0 * bound)
 
+    @staticmethod
+    def _detect_symbol_conflicts(weights: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """item #23 finding #1: **decided policy is net**, not an open
+        question. A single brokerage account cannot literally hold two
+        opposing positions in the same symbol at once ("keep separate"
+        isn't realizable without sub-accounts, out of scope); "block"
+        would leave a stale/unmanaged position sitting whenever two
+        strategies disagree, which is worse than converging on their
+        actual net conviction. Netting is already enforced correctly,
+        exactly once, at the one correct point -- `vinu-live`'s
+        `SignalTranslator._net_by_symbol` (item #24 finding #2), right
+        before an order is built. It is deliberately NOT re-implemented
+        here: `compute_daily_allocation`'s entire pipeline (deflated-Sharpe
+        confidence-gradient tilt, outcome-confidence tracking by
+        artifact_id, sleeve/interval bucketing) is keyed by STRATEGY
+        identity throughout, so collapsing two strategies' rows into one
+        this early would silently orphan or corrupt all of that
+        bookkeeping -- a second, redundant enforcement point that could
+        only ever duplicate `vinu-live`'s math, never improve on it.
+
+        What this function is for is visibility at the conflict's
+        SOURCE, now including a severity measure so a conflict that's
+        mostly overlap (e.g. 0.05 vs 0.04, same direction) doesn't read
+        the same as strategies actively fighting (e.g. +0.21 vs -0.19):
+        `gross_weight` (sum of |contribution|), `net_weight` (what
+        actually survives netting), and `severity` = 1 - |net|/gross when
+        gross > 0 (0.0 = no cancellation at all, up to 1.0 = fully
+        canceled out). Severe, opposite-direction conflicts are escalated
+        to a real alert by `_notify_severe_symbol_conflicts` (called from
+        `compute_daily_allocation`, since that needs the async HTTP
+        client this staticmethod deliberately doesn't have) -- the same
+        "don't leave it as a WARNING log nobody's tailing" gap item #23
+        finding #4 already closed for agent-API-unreachable, applied here
+        to a second real risk-visibility gap.
+        """
+        by_symbol: dict[str, list[dict[str, Any]]] = {}
+        for w in weights:
+            symbol = (w.get("symbol") or "").upper()
+            if not symbol:
+                continue
+            by_symbol.setdefault(symbol, []).append(w)
+
+        conflicts: list[dict[str, Any]] = []
+        for symbol, entries in by_symbol.items():
+            if len(entries) < 2:
+                continue
+            contributions = [
+                {"strategy_name": e.get("name", ""), "target_weight": e.get("target_weight", 0.0)}
+                for e in entries
+            ]
+            net_weight = round(sum(c["target_weight"] for c in contributions), 4)
+            gross_weight = round(sum(abs(c["target_weight"]) for c in contributions), 4)
+            severity = round(1.0 - abs(net_weight) / gross_weight, 4) if gross_weight > 0 else 0.0
+            signs = {1 if c["target_weight"] >= 0 else -1 for c in contributions}
+            opposite_direction = len(signs) > 1
+            if opposite_direction:
+                LOG.warning(
+                    "Symbol conflict: %s targeted by %d strategies in opposite "
+                    "directions: %s (net %.4f of gross %.4f, %.0f%% canceled) -- "
+                    "netted automatically before execution (policy: net, decided "
+                    "-- see vinu-live's SignalTranslator._net_by_symbol)",
+                    symbol, len(entries), contributions, net_weight, gross_weight, severity * 100,
+                )
+            conflicts.append({
+                "symbol": symbol,
+                "contributions": contributions,
+                "net_weight": net_weight,
+                "gross_weight": gross_weight,
+                "severity": severity,
+                "opposite_direction": opposite_direction,
+            })
+        return conflicts
+
+    # item #23 finding #1: guessed starting constants for "severe enough to
+    # alert a human," same posture as FORWARD_HORIZON_BARS/floor_multiple
+    # elsewhere in this file -- meant to be revisited once real data exists
+    # on how often/how large these conflicts actually run.
+    _SEVERE_CONFLICT_SEVERITY = 0.5
+    _SEVERE_CONFLICT_GROSS_WEIGHT = 0.05
+
+    async def _notify_severe_symbol_conflicts(self, conflicts: list[dict[str, Any]]) -> None:
+        """Best-effort escalation for the conflicts worth a human's
+        attention -- opposite-direction, at least half canceled out, and
+        big enough in gross size to matter. Never raises: a notification
+        failure must never be treated as a failure of the allocation
+        computation it's reporting on, same posture `_halt_trading` and
+        every /notify/* route already establish."""
+        for c in conflicts:
+            if not c.get("opposite_direction"):
+                continue
+            if c.get("severity", 0.0) < self._SEVERE_CONFLICT_SEVERITY:
+                continue
+            if c.get("gross_weight", 0.0) < self._SEVERE_CONFLICT_GROSS_WEIGHT:
+                continue
+            try:
+                await self._http.post(
+                    f"{self._config.agent_api_url}/notify/symbol-conflict",
+                    json={
+                        "symbol": c["symbol"],
+                        "contributions": c["contributions"],
+                        "net_weight": c["net_weight"],
+                        "gross_weight": c["gross_weight"],
+                        "severity": c["severity"],
+                    },
+                )
+            except Exception as e:
+                LOG.warning(
+                    "Failed to escalate severe symbol conflict for %s via %s: %s",
+                    c.get("symbol"), self._config.agent_api_url, e,
+                )
+
+    @staticmethod
+    def _drawdown_action_multiplier(action: str) -> float:
+        """item #23 finding #2's own fix mechanism: the circuit breaker's
+        action ladder is ok -> halve -> flat -> halt. `halve` deploys half
+        the usual capital, `flat`/`halt` deploy none -- applied to
+        `deployable_equity` (the sizing step), not `target_weight` (a
+        relative allocation that always renormalizes to 1.0, where a
+        uniform multiplier would be a no-op -- see compute_daily_
+        allocation's own comment at the call site). `halt` already blocks
+        order submission entirely via the real kill switch _halt_trading
+        engages, so zeroing deployable_equity here too is belt-and-
+        suspenders, not the primary enforcement. Unknown/malformed action
+        strings fail open to 1.0, same posture as every other tilt input
+        in this pipeline (_load_tags's docstring)."""
+        return {"ok": 1.0, "halve": 0.5, "flat": 0.0, "halt": 0.0}.get(action, 1.0)
+
+    async def _maturity_capital_multiplier(self) -> float:
+        """item #4 (system-wide-audit-and-design, "gradual capital
+        scaling"): a system-wide MaturityAssessment (cold_start/
+        paper_only/early_live/mature) previously only ever reached an
+        LLM prompt (vinu-research's own trade_plan_authoring.py), never
+        capital sizing. Applied to `deployable_equity` -- the same
+        whole-portfolio scale-down mechanism `_drawdown_action_multiplier`
+        above already uses -- because this is one system-wide value
+        (computed across every strategy's own trade/paper history), not
+        a per-strategy signal the per-strategy tilt loop could vary.
+
+        No-op (1.0) when the feature is disabled (default) or the
+        in-process assessment call fails for any reason -- see this
+        service's own config field docstring for why this fails open
+        rather than conservatively restricting on a missing signal.
+        """
+        if not self._config.maturity_capital_gating_enabled:
+            return 1.0
+        try:
+            from vinu_portfolio.research_link import get_maturity_assessment
+            assessment = await asyncio.to_thread(get_maturity_assessment)
+        except Exception as e:
+            LOG.warning("Maturity assessment unavailable, deploying at full capital: %s", e)
+            return 1.0
+
+        from vinu_research.maturity_assessor import (
+            TIER_COLD_START, TIER_EARLY_LIVE, TIER_MATURE, TIER_PAPER_ONLY,
+        )
+        return {
+            TIER_COLD_START: self._config.maturity_capital_multiplier_cold_start,
+            TIER_PAPER_ONLY: self._config.maturity_capital_multiplier_paper_only,
+            TIER_EARLY_LIVE: self._config.maturity_capital_multiplier_early_live,
+            TIER_MATURE: 1.0,
+        }.get(assessment.tier, 1.0)
+
+    # item #23 finding #5: a candidate whose tilted weight rounds to
+    # (effectively) zero never gets any capital -- "not funded," the same
+    # concept as a screener symbol failing a hard filter, just continuous
+    # (multiplicative tilts) rather than binary (a threshold check).
+    _NOT_FUNDED_WEIGHT_THRESHOLD = 0.0001
+
+    @staticmethod
+    def _detect_not_funded(tilted: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """item #23 finding #5: `allocation_history.py` persisted what was
+        allocated, never why a candidate wasn't funded -- a smaller
+        instance of the same recurring pattern items #3/#16.2/#18.3/#21.3
+        already named, closed the same way with the shared `RejectionRecord`
+        shape (`vinu_infra.rejection_log`) rather than inventing a new
+        format for the fourth time.
+
+        Unlike a screener hard filter, nothing in this pipeline makes a
+        binary accept/reject call -- every strategy gets SOME weight, just
+        possibly one that rounds to zero after four independently-computed
+        multiplicative tilts (regime/outcome/confidence-gradient/risk-
+        budget) and renormalization. So "why" here is necessarily a
+        heuristic over already-computed, already-visible numbers (the
+        smallest of the four multipliers, or the concentration cap if none
+        of them explain it), not a definitive single cause the way a
+        `hard_filter_reasons()` bound violation is -- documented as such
+        in `rejection_category`/`rejection_detail`, not overclaimed."""
+        from vinu_infra.rejection_log import record_rejection
+
+        records: list[dict[str, Any]] = []
+        for t in tilted:
+            if t.get("target_weight", 0.0) > PortfolioService._NOT_FUNDED_WEIGHT_THRESHOLD:
+                continue
+            factors = {
+                "regime_alignment": t.get("regime_multiplier", 1.0),
+                "outcome_confidence": t.get("outcome_multiplier", 1.0),
+                "confidence_gradient": t.get("confidence_gradient_multiplier", 1.0),
+                "risk_budget": t.get("risk_budget_multiplier", 1.0),
+            }
+            smallest_name, smallest_value = min(factors.items(), key=lambda kv: kv[1])
+            if smallest_value < 1.0:
+                category = smallest_name
+                detail = (
+                    f"smallest tilt was {smallest_name}={smallest_value:.4f} "
+                    f"(base_weight={t.get('base_weight', 0.0):.4f}, all tilts: {factors})"
+                )
+            else:
+                # every tilt was neutral (>=1.0) -- the zero came from
+                # cap_concentration's redistribution or simply a large
+                # strategy count diluting an equal/inverse-vol starting
+                # weight below the rounding threshold, not any one tilt.
+                category = "concentration_or_dilution"
+                detail = (
+                    f"no tilt reduced this candidate (all >= 1.0: {factors}) -- "
+                    f"base_weight={t.get('base_weight', 0.0):.4f} before concentration capping/normalization"
+                )
+            records.append(
+                record_rejection(
+                    "portfolio_strategy", t.get("name", ""), "daily_allocation",
+                    category, detail,
+                ).to_dict()
+            )
+        return records
+
     async def compute_daily_allocation(
         self, extra_candidates: list[dict[str, Any]] | None = None
     ) -> dict[str, Any]:
@@ -791,6 +1023,40 @@ class PortfolioService:
             for _s in _syms[:10]:
                 per_symbol_regime[_s] = await self._fetch_symbol_regime(_s)
 
+        # item #23 finding #3: one more real, already-computed risk signal
+        # folded in as the same kind of bounded multiplicative tilt as
+        # regime/outcome/confidence-gradient above -- per-symbol, so
+        # unlike the drawdown ladder below it genuinely changes each
+        # symbol's weight *relative to the others* (redistributes away
+        # from a troubled position), which survives the renormalize-to-
+        # 1.0 step further down instead of being cancelled by it. Equity
+        # is fetched here (moved up from later in this method, a pure
+        # reordering -- nothing between here and its old call site reads
+        # it) since risk_budget's per-symbol tiers need current broker
+        # positions/equity, and there's no point fetching positions at
+        # all when there's no equity to size against.
+        equity = await self._fetch_account_equity()
+        positions = await self._fetch_positions() if equity is not None else []
+        risk_budget = compute_risk_budget(positions, equity, regime=regime, tracker=self._risk_tracker)
+        risk_mult_by_symbol = {
+            str(s.get("symbol", "")).upper(): s.get("suggested_size_multiplier", 1.0)
+            for s in risk_budget.symbols
+        }
+        # item #23 finding #2: the drawdown ladder's halve/flat/halt is
+        # deliberately NOT applied here alongside the tilt above --
+        # target_weight is a *relative* allocation (always renormalized to
+        # sum to 1.0), so a uniform multiplier applied to every weight
+        # before that renormalization is a mathematical no-op (scale
+        # everything by 0.5, renormalize back to 1.0, unchanged). "Halve
+        # size"/"exit to flat" means reduce *total deployed capital*, which
+        # is `deployable_equity` below, not the weight fractions -- same
+        # place `reserve_fraction` already applies its own scale-down for
+        # exactly this reason (visible in the response, never folded into
+        # target_weight/base_weight).
+        drawdown_status = self._drawdown_status_store.get()
+        drawdown_mult = self._drawdown_action_multiplier(drawdown_status.action)
+        maturity_mult = await self._maturity_capital_multiplier()
+
         by_name = {s["name"]: s for s in base["strategies"]}
         tilted: list[dict[str, Any]] = []
         for w in base["weights"]:
@@ -801,14 +1067,23 @@ class PortfolioService:
             regime_mult = self._regime_alignment_multiplier(w["name"], _local or regime)
             outcome_mult = self._outcome_confidence_multiplier(confidence)
             confidence_gradient_mult = self._confidence_gradient_multiplier(strategy)
+            # Not applied for a symbol risk_budget has no position for
+            # (nothing held yet -> no P&L-based signal to tilt on, stays
+            # neutral at 1.0) -- same "no signal is not evidence of harm"
+            # posture the rest of this pipeline already uses.
+            risk_mult = risk_mult_by_symbol.get(_sym, 1.0) if _sym else 1.0
             tilted.append({
                 **w,
                 "base_weight": w["target_weight"],
                 "regime_multiplier": round(regime_mult, 4),
                 "outcome_multiplier": round(outcome_mult, 4),
                 "confidence_gradient_multiplier": round(confidence_gradient_mult, 4),
+                "risk_budget_multiplier": round(risk_mult, 4),
                 "outcome_source": confidence.get("source"),
-                "target_weight": w["target_weight"] * regime_mult * outcome_mult * confidence_gradient_mult,
+                "target_weight": (
+                    w["target_weight"] * regime_mult * outcome_mult
+                    * confidence_gradient_mult * risk_mult
+                ),
             })
 
         total = sum(t["target_weight"] for t in tilted)
@@ -867,15 +1142,26 @@ class PortfolioService:
 
         self._last_weights = {t["name"]: t["target_weight"] for t in tilted}
 
-        equity = await self._fetch_account_equity()
         # Reserve fund (restart/safety capital ordinary sizing can't touch):
         # apply_position_sizing sizes against deployable_equity, never raw
         # equity, once reserve_fraction is configured. Default 0.0 makes
         # deployable_equity == equity, a no-op. account_equity in the
         # response below stays the real total either way -- the reserve is
         # visible, not silently subtracted.
+        #
+        # item #23 finding #2: the drawdown ladder's action multiplier
+        # applies here too, same reasoning -- "halve" deploys half the
+        # capital (drawdown_mult=0.5), "flat"/"halt" deploy none (0.0),
+        # "ok" is a no-op (1.0). Stacks with the reserve fraction above
+        # rather than replacing it -- both are real, independent reasons
+        # to hold capital back. item #4: the maturity capital multiplier
+        # stacks here too, same reasoning -- a still-unproven strategy
+        # population deploys a fraction of capital regardless of how
+        # good any individual signal looks today, exactly the "start
+        # small, scale up as track record grows" ask.
         deployable_equity = (
-            equity * (1.0 - self._config.reserve_fraction) if equity is not None else None
+            equity * (1.0 - self._config.reserve_fraction) * drawdown_mult * maturity_mult
+            if equity is not None else None
         )
         if deployable_equity is not None:
             tilted = apply_position_sizing(tilted, deployable_equity, target_vol=self._config.target_volatility)
@@ -901,6 +1187,17 @@ class PortfolioService:
         deployable_equity_rounded = (
             round(deployable_equity, 2) if deployable_equity is not None else None
         )
+        # item #23 finding #1: decided policy is net (see
+        # _detect_symbol_conflicts's own docstring) -- this is visibility
+        # at the source plus escalation for the severe cases, not a second
+        # enforcement point.
+        symbol_conflicts = self._detect_symbol_conflicts(tilted)
+        await self._notify_severe_symbol_conflicts(symbol_conflicts)
+        # item #23 finding #5: same "visible, not just silently folded"
+        # treatment as symbol_conflicts above -- a candidate that ends up
+        # unfunded is otherwise indistinguishable from one that was never
+        # evaluated at all.
+        not_funded = self._detect_not_funded(tilted)
         result = {
             **base,
             "weights": tilted,
@@ -908,10 +1205,27 @@ class PortfolioService:
             "per_symbol_regime": per_symbol_regime,
             "sleeves": sleeves,
             "interval_sleeves": interval_sleeves,
+            "symbol_conflicts": symbol_conflicts,
+            "not_funded": not_funded,
             "account_equity": equity,
             "reserve_fraction": self._config.reserve_fraction,
             "reserve_amount": reserve_amount,
             "deployable_equity": deployable_equity_rounded,
+            # item #23 findings #2/#3: visible, not just silently folded
+            # into target_weight -- a caller can see *why* sizing was cut,
+            # same transparency regime_multiplier/outcome_multiplier
+            # already give for the other two tilts.
+            "drawdown_status": {
+                "action": drawdown_status.action,
+                "current_drawdown": drawdown_status.current_drawdown,
+                "threshold_breached": drawdown_status.threshold_breached,
+            },
+            "risk_budget": risk_budget.to_dict(),
+            # item #4: same "visible, not silently folded" transparency
+            # as reserve_fraction/drawdown above -- always present (1.0
+            # when the feature is disabled, the same value drawdown's own
+            # "ok" no-op reports) rather than only appearing once enabled.
+            "maturity_capital_multiplier": round(maturity_mult, 4),
         }
 
         # Dated history (19 foundation-fixes follow-up): nothing calls this
@@ -924,6 +1238,7 @@ class PortfolioService:
                 weights=tilted, sleeves=sleeves, interval_sleeves=interval_sleeves,
                 account_equity=equity, reserve_fraction=self._config.reserve_fraction,
                 reserve_amount=reserve_amount, deployable_equity=deployable_equity_rounded,
+                not_funded=not_funded,
             )
         except Exception as exc:  # noqa: BLE001 -- best-effort, never blocks the response
             LOG.warning("Allocation history write failed: %s", exc)
@@ -945,8 +1260,17 @@ class PortfolioService:
 
         return result
 
-    async def compute_daily_game_plan(self) -> dict[str, Any]:
-        allocation = await self.compute_daily_allocation()
+    async def compute_daily_game_plan(
+        self, allocation: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """`allocation`: lets a caller that already has a fresh
+        `compute_daily_allocation()` result (e.g. `compute_risk_status`)
+        pass it straight through instead of this method fetching its own
+        -- see `compute_risk_status`'s own docstring for the redundant-
+        recompute this closes. `None` (every other/existing caller)
+        preserves the original behavior exactly: fetch it here."""
+        if allocation is None:
+            allocation = await self.compute_daily_allocation()
         if allocation.get("status") != "ok":
             return allocation
 
@@ -1098,20 +1422,32 @@ class PortfolioService:
             return []
 
     async def compute_risk_status(self) -> dict[str, Any]:
-        game_plan = await self.compute_daily_game_plan()
-        if game_plan.get("status") == "empty":
-            return game_plan
+        """Known redundancy this used to have, now closed: this method's
+        own call chain used to be compute_daily_game_plan() ->
+        compute_daily_allocation() (which, since item #23 findings #2/#3's
+        fix, ALSO fetches positions and computes a risk_budget internally
+        for its own risk_budget_multiplier tilt) -- then this method
+        fetched positions and computed risk_budget a SECOND time from
+        scratch. Not a correctness bug (DailyPositionTracker.record_
+        unrealized_pnl's own "worst reading, immune to repeated identical
+        reads" design made it idempotent), but a real duplicate fetch/
+        compute, same class of problem this file's own _portfolio_cache
+        was already built to solve for build_portfolio(). Fixed by
+        computing the allocation once here and threading it through
+        compute_daily_game_plan (which otherwise still fetches its own),
+        reusing its already-computed risk_budget/regime directly.
+        """
+        allocation = await self.compute_daily_allocation()
+        if allocation.get("status") != "ok":
+            return allocation
+
+        game_plan = await self.compute_daily_game_plan(allocation=allocation)
 
         regime = None
-        if game_plan.get("regime"):
-            regime = game_plan["regime"].get("regime")
+        if allocation.get("regime"):
+            regime = allocation["regime"].get("regime")
 
-        equity = game_plan.get("account_equity")
-        positions = await self._fetch_positions()
-
-        budget = compute_risk_budget(positions, equity, regime=regime, tracker=self._risk_tracker)
-
-        result = budget.to_dict()
+        result = dict(allocation.get("risk_budget") or {})
         result["regime"] = regime
         result["game_plan_readiness"] = game_plan.get("readiness_score")
         return result

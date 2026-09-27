@@ -21,6 +21,26 @@ class TestBasicRun:
         result = ScreenPipeline(_score_by_momentum, cfg).run(snapshots)
         assert [c.symbol for c in result.ranked] == ["B"]
 
+    def test_rejected_samples_records_why_a_symbol_was_dropped(self) -> None:
+        """item #18 finding #3: "why was ticker Y excluded" now has a
+        real, persisted answer -- traced all the way from the raw
+        hard_filter_reasons() computation to PipelineResult's own public
+        field, not just at the FilterChain level."""
+        snapshots = {
+            "A": {"price": 5.0, "momentum": 10.0},   # fails min_price
+            "B": {"price": 50.0, "momentum": 8.0},
+        }
+        cfg = PipelineConfig(top_n=5, hard_filter=HardFilterConfig(min_price=10.0))
+        result = ScreenPipeline(_score_by_momentum, cfg).run(snapshots)
+        by_symbol = {r["entity_id"]: r for r in result.rejected_samples}
+        assert "A" in by_symbol
+        assert "B" not in by_symbol
+        rec = by_symbol["A"]
+        assert rec["entity_type"] == "screener_symbol"
+        assert rec["stage"] == "hard_filter"
+        assert "min_price" in rec["rejection_detail"]
+        assert rec["timestamp"]
+
     def test_ranked_is_sorted_by_final_score_descending(self) -> None:
         snapshots = {"A": {"price": 10.0, "momentum": 5.0}, "B": {"price": 10.0, "momentum": 9.0}}
         result = ScreenPipeline(_score_by_momentum, PipelineConfig(top_n=5)).run(snapshots)

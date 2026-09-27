@@ -39,18 +39,23 @@ class IndicatorCache:
         to_ts: int | None,
         indicators: frozenset[str],
         adjusted: bool,
-    ) -> list[dict[str, Any]] | None:
+    ) -> tuple[list[dict[str, Any]], float] | None:
+        """Returns `(data, age_seconds)` on a hit, `None` on a miss -- the
+        age is item #19 finding #5's own ask: a "live" caller polling an
+        open-ended window can get up to `_CACHE_TTL_SEC`-stale data with no
+        way to tell, so the age has to reach the caller, not just the data."""
         key = _make_cache_key(symbol, interval, from_ts, to_ts, indicators, adjusted)
         with self._lock:
             entry = self._cache.get(key)
             if entry is None:
                 return None
             ts, data = entry
-            if time.monotonic() - ts > self._ttl:
+            age = time.monotonic() - ts
+            if age > self._ttl:
                 del self._cache[key]
                 return None
             self._cache.move_to_end(key)
-        return data
+        return data, age
 
     def set(
         self,

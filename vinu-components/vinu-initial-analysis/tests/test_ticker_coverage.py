@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from vinu_initial_analysis.storage.meta import RunLog
 from vinu_initial_analysis.storage.ticker_coverage import (
     NOT_REQUIRED,
     PENDING,
+    _days_stale,
     build_ticker_coverage,
 )
 
@@ -132,3 +134,41 @@ class TestBuildTickerCoverage:
         coverage = build_ticker_coverage(run_log, "MSFT", _ALL_ANGLES)
         assert coverage["angles_with_data"] == 0
         assert coverage["overall_status"] == PENDING
+
+
+class TestDaysStale:
+    """item #15 option (a): "a deliberately small, low-risk first step"
+    -- makes a coverage gap visible without deciding whether/how to
+    automate filling it. Computed fresh at read time from each angle's
+    own analysis_until, never stored."""
+
+    def test_a_run_from_today_reports_zero_days_stale(self, tmp_path):
+        run_log = _run_log(tmp_path)
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        run_log.record_run("AAPL", "shock_personality", "run-1", analysis_until=now_ts)
+        coverage = build_ticker_coverage(run_log, "AAPL", _ALL_ANGLES)
+        assert coverage["angles"]["shock_personality"]["days_stale"] == 0
+
+    def test_a_run_from_60_days_ago_reports_60_days_stale(self, tmp_path):
+        run_log = _run_log(tmp_path)
+        sixty_days_ago_ts = int((datetime.now(timezone.utc) - timedelta(days=60)).timestamp())
+        run_log.record_run("AAPL", "shock_personality", "run-1", analysis_until=sixty_days_ago_ts)
+        coverage = build_ticker_coverage(run_log, "AAPL", _ALL_ANGLES)
+        assert coverage["angles"]["shock_personality"]["days_stale"] == 60
+
+    def test_never_run_angle_is_a_plain_pending_string_not_a_dict(self, tmp_path):
+        """No analysis_until exists at all for an angle that's never run --
+        it stays the plain PENDING/NOT_REQUIRED string this module already
+        used, not a dict with a meaningless days_stale."""
+        run_log = _run_log(tmp_path)
+        coverage = build_ticker_coverage(run_log, "AAPL", _ALL_ANGLES)
+        assert coverage["angles"]["arima"] == PENDING
+
+    def test_helper_returns_none_for_missing_or_unparseable_input(self) -> None:
+        assert _days_stale(None) is None
+        assert _days_stale("") is None
+        assert _days_stale("not-a-real-date") is None
+
+    def test_helper_treats_a_naive_iso_string_as_utc(self) -> None:
+        naive = (datetime.now(timezone.utc) - timedelta(days=10)).replace(tzinfo=None).isoformat()
+        assert _days_stale(naive) == 10

@@ -28,4 +28,13 @@ vinu-live shadow-worker &
 # at CREATED forever and TradePlanOrchestrator.cycle() (which only acts on
 # ACTIVE trade_plan artifacts) had nothing to trade.
 vinu-live trade-plan-approval-worker &
+# Point 2's candle-close poller (missing-pieces-of-system/new-theory-of-
+# trading/system-wide-audit-and-design/reverse-engineering/
+# 03-poller-and-state-schema.md Part A) -- same "real, complete,
+# nothing ever invoked it" gap as every worker above until it's added
+# here. Drives the whole live-decision loop (candle close -> state
+# tracker -> live_decision_agent -> LiveScheduler's target_weights,
+# point 7 option 1) end to end; without this line the loop never runs
+# in a real deployment, only in tests.
+vinu-live live-decision-worker &
 exec vinu-live serve --host 0.0.0.0 --port 8091

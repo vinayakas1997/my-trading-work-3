@@ -6,6 +6,26 @@ from ..agent.tools import BaseTool
 
 LOG = logging.getLogger(__name__)
 
+# item #17 finding #4 (system-wide-audit-and-design/
+# 02-open-questions-strategy-and-simulation.md): the old hardcoded 180
+# here was less than vinu-research's own worst-case retry budget for the
+# single simulator call this HTTP fallback triggers server-side --
+# tools.py's `_simulator_client` (timeout=120.0, max_retries=3) can
+# legitimately take 3 * 120s of attempts plus exponential backoff between
+# them (vinu-infra/client.py's `ResilientClient`: `retry_backoff=1.0`,
+# `wait = retry_backoff * 2**attempt + random.uniform(0, 1.0)` after
+# attempts 0 and 1, capping at (1.0+1.0) + (2.0+1.0) = 5.0s) before
+# raising -- 3*120 + 5.0 = 365.0s worst case. A slow-but-alive simulator
+# validly exceeding the old 180s wall was read by this file's own except
+# Exception (pre-item-#17-finding-#3 fix) as "the whole call failed,"
+# silently duplicating an already-in-flight, expensive candidate run --
+# exactly the compound retry-storm risk this item names. Set above the
+# real worst case, not just bumped by feel, with a fixed margin for the
+# HTTP round-trip and server-side work either side of the simulator call
+# itself.
+_SIMULATOR_WORST_CASE_SEC = 3 * 120.0 + 5.0
+_SWEEP_CANDIDATE_TIMEOUT_SEC = _SIMULATOR_WORST_CASE_SEC + 35.0
+
 
 def _serialize_sweep_candidate(result) -> dict:
     """Exactly routes_sweep.py's own `_serialize` shape."""
@@ -86,8 +106,28 @@ class RunSweepCandidateTool(BaseTool):
                 indicators=indicators, initial_capital=kwargs.get("initial_capital"),
             ))
             return json.dumps(_serialize_sweep_candidate(result))
-        except Exception as exc:
-            LOG.debug("run_sweep_candidate: in-process run failed, falling back to HTTP: %s", exc)
+        except ImportError as exc:
+            # item #17 finding #3, the concrete manifestation of this
+            # file's own compound retry-storm risk (finding #4 below is
+            # this exact HTTP fallback timeout, sitting under a simulator
+            # client with its own timeout=120.0/max_retries=3 -- a
+            # legitimately slow-but-alive call can validly exceed the old
+            # 180s once retries are counted, see _SWEEP_CANDIDATE_
+            # TIMEOUT_SEC's own derivation below). Unlike run_research(), nothing
+            # in vinu_research.sweep.run_sweep_candidate() catches
+            # InfrastructureError from `tools.run_backtest()` -- it was
+            # propagating straight into this blanket `except Exception`,
+            # which silently re-ran the *entire* candidate over HTTP
+            # (hitting the same 180s wall again) instead of surfacing the
+            # real "simulator is down/rejecting" failure. Narrowed to
+            # ImportError (research_link.py's own documented reason for
+            # this fallback: vinu-research not installed in this
+            # deployment) so InfrastructureError and any other real
+            # failure propagate to ToolRegistry.execute()'s own
+            # except Exception, which already turns it into a proper
+            # `{"status": "error", ...}` response instead of a silent
+            # duplicate run.
+            LOG.debug("run_sweep_candidate: vinu-research not importable, falling back to HTTP: %s", exc)
 
         import httpx
         try:
@@ -117,7 +157,10 @@ class RunSweepCandidateTool(BaseTool):
         if kwargs.get("initial_capital") is not None:
             payload["initial_capital"] = kwargs["initial_capital"]
 
-        resp = httpx.post(f"{url}/research/sweep/candidate", json=payload, headers=_h, timeout=180)
+        resp = httpx.post(
+            f"{url}/research/sweep/candidate", json=payload, headers=_h,
+            timeout=_SWEEP_CANDIDATE_TIMEOUT_SEC,
+        )
         resp.raise_for_status()
         return resp.text
 

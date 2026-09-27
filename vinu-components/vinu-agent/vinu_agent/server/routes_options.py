@@ -22,7 +22,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from ..tools.options_tool import fetch_chain
+from ..tools.options_tool import RetryableOptionsError, fetch_chain
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +44,17 @@ async def get_options_snapshot(
         # run off the event loop so one slow/hanging Alpaca request doesn't
         # block every other request this process is serving.
         rows = await asyncio.to_thread(fetch_chain, symbol, limit, expiration)
+    except RetryableOptionsError as e:
+        # item #11 finding #5: same retryable/permanent distinction
+        # options_tool.py's own OptionsGreeksTool.execute() surfaces --
+        # this route is fetch_chain's other real consumer (vinu-research,
+        # over HTTP), and shouldn't silently lose the distinction just
+        # because it's the un-tooled front door.
+        logger.warning("Options snapshot fetch failed for %s (retryable): %s", symbol, e)
+        return {"status": "error", "symbol": symbol, "error": str(e), "retryable": True}
     except Exception as e:
         logger.warning("Options snapshot fetch failed for %s: %s", symbol, e)
-        return {"status": "error", "symbol": symbol, "error": str(e)}
+        return {"status": "error", "symbol": symbol, "error": str(e), "retryable": False}
     if not rows:
         return {"status": "empty", "symbol": symbol, "n_contracts": 0, "contracts": []}
     return {"status": "ok", "symbol": symbol, "n_contracts": len(rows), "contracts": rows}

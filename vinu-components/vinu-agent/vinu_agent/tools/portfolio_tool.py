@@ -42,10 +42,18 @@ class PortfolioTool(BaseTool):
                 "error": "Alpaca API credentials not configured. Set ALPACA_API_KEY and ALPACA_API_SECRET environment variables.",
             })
 
-        try:
-            result: dict[str, object] = {"status": "ok"}
+        # Each section is fetched independently: with section="all", a
+        # single broker call failing partway through (e.g. account OK,
+        # positions throws) used to discard everything already fetched --
+        # the whole response collapsed into a bare error, losing the
+        # account data that genuinely did come back. Now the sections that
+        # succeeded are still returned, with a per-section error recorded
+        # for the ones that didn't, rather than an all-or-nothing result.
+        result: dict[str, object] = {"status": "ok"}
+        errors: dict[str, str] = {}
 
-            if section in ("account", "all"):
+        if section in ("account", "all"):
+            try:
                 account = broker.get_account()
                 result["account"] = {
                     "status": account.status,
@@ -57,8 +65,12 @@ class PortfolioTool(BaseTool):
                     "daytrade_count": account.daytrade_count,
                     "pattern_day_trader": account.pattern_day_trader,
                 }
+            except Exception as exc:
+                logger.error("Portfolio account fetch failed: %s", exc)
+                errors["account"] = str(exc)
 
-            if section in ("positions", "all"):
+        if section in ("positions", "all"):
+            try:
                 positions = broker.get_positions()
                 result["positions"] = [
                     {
@@ -78,8 +90,12 @@ class PortfolioTool(BaseTool):
                     "total_market_value": sum(p.market_value for p in positions),
                     "total_unrealized_pl": sum(p.unrealized_pl for p in positions),
                 }
+            except Exception as exc:
+                logger.error("Portfolio positions fetch failed: %s", exc)
+                errors["positions"] = str(exc)
 
-            if section in ("orders", "all"):
+        if section in ("orders", "all"):
+            try:
                 orders = broker.get_orders()
                 result["orders"] = [
                     {
@@ -96,9 +112,17 @@ class PortfolioTool(BaseTool):
                     }
                     for o in orders
                 ]
+            except Exception as exc:
+                logger.error("Portfolio orders fetch failed: %s", exc)
+                errors["orders"] = str(exc)
 
-            return json.dumps(result, indent=2, default=str)
+        if errors:
+            result["errors"] = errors
+            # Only every requested section failing makes this a true
+            # error response -- one working section alongside a failed
+            # one is still real, useful data, not a total failure.
+            requested = [s for s in ("account", "positions", "orders") if section in (s, "all")]
+            if len(errors) == len(requested):
+                result["status"] = "error"
 
-        except Exception as exc:
-            logger.error("Portfolio fetch failed: %s", exc)
-            return json.dumps({"status": "error", "error": str(exc)})
+        return json.dumps(result, indent=2, default=str)

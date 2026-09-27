@@ -11,6 +11,7 @@ DEFAULT_AGENT_API_URL = "http://127.0.0.1:8086"
 DEFAULT_STOCK_PRICE_API_URL = "http://127.0.0.1:8081"
 DEFAULT_RESEARCH_API_URL = "http://127.0.0.1:8087"
 DEFAULT_INITIAL_ANALYSIS_API_URL = "http://127.0.0.1:8083"
+DEFAULT_STRATEGY_API_URL = "http://127.0.0.1:8084"
 DEFAULT_DATA_ROOT = Path.cwd() / "data"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8091
@@ -33,6 +34,7 @@ class LiveConfig:
     stock_price_api_url: str = DEFAULT_STOCK_PRICE_API_URL
     research_api_url: str = DEFAULT_RESEARCH_API_URL
     initial_analysis_api_url: str = DEFAULT_INITIAL_ANALYSIS_API_URL
+    strategy_api_url: str = DEFAULT_STRATEGY_API_URL
     data_root: Path = DEFAULT_DATA_ROOT
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
@@ -60,6 +62,26 @@ class LiveConfig:
     # inventing a separate number -- a freshly authored plan is worth
     # approving on roughly the same cadence it gets evaluated on.
     trade_plan_approval_worker_interval_sec: int = 300
+    # Point 2's candle-close poller (reverse-engineering/
+    # 03-poller-and-state-schema.md Part A) -- needs to be meaningfully
+    # shorter than the shortest strategy timeframe in use so a candle
+    # close is detected promptly. A guessed starting constant, same
+    # posture as the other worker intervals in this file.
+    live_decision_poll_interval_sec: int = 60
+    # high-expectations follow-up, point #2 of 00-maturity-agentic-system-
+    # explanation.md's own step-3 phasing ("risk_gatekeeper/
+    # capital_allocator wiring... still not started"). Opt-in, off by
+    # default, same cautious-rollout posture every other maturity-tier
+    # consumer in this codebase already uses (`maturity_tier_enabled` in
+    # vinu-research). Point #3's own knob (live_decision) does NOT belong
+    # here -- reverse-engineering/06-execution-handoff-and-architecture.md
+    # point 8 confirms the real deciding agent lives in vinu-agent, not
+    # vinu-live (this service only has the poller/detector/tracker), so
+    # that knob is `AgentConfig.live_decision_maturity_scaling_enabled` in
+    # vinu-agent/vinu_agent/config.py instead. An earlier version of this
+    # file had a same-named, unused field here -- removed once this got
+    # verified rather than left as dead config.
+    risk_gatekeeper_maturity_scaling_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> LiveConfig:
@@ -72,6 +94,7 @@ class LiveConfig:
             initial_analysis_api_url=os.getenv(
                 "VINU_INITIAL_ANALYSIS_API_URL", DEFAULT_INITIAL_ANALYSIS_API_URL,
             ),
+            strategy_api_url=os.getenv("VINU_STRATEGY_API_URL", DEFAULT_STRATEGY_API_URL),
             data_root=Path(os.getenv("VINU_LIVE_DATA_ROOT", str(DEFAULT_DATA_ROOT))),
             host=os.getenv("VINU_LIVE_HOST", DEFAULT_HOST),
             port=int(os.getenv("VINU_LIVE_PORT", str(DEFAULT_PORT))),
@@ -90,6 +113,12 @@ class LiveConfig:
             trade_plan_approval_worker_interval_sec=int(
                 os.getenv("VINU_LIVE_TRADE_PLAN_APPROVAL_INTERVAL", "300"),
             ),
+            live_decision_poll_interval_sec=int(
+                os.getenv("VINU_LIVE_DECISION_POLL_INTERVAL", "60"),
+            ),
+            risk_gatekeeper_maturity_scaling_enabled=os.getenv(
+                "VINU_LIVE_RISK_GATEKEEPER_MATURITY_SCALING_ENABLED", "false",
+            ).lower() in ("1", "true", "yes"),
         )
 
 

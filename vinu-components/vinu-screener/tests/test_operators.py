@@ -84,6 +84,29 @@ class TestRSI:
         out = op.rsi(s, 14)
         assert not np.isinf(out.iloc[-1])
 
+    def test_matches_vinu_tools_wilder_rsi_exactly(self) -> None:
+        """item #18 finding #4 regression guard: this must stay
+        index-for-index identical to vinu_tools's own Wilder RSI, not just
+        close -- a subtly different seed is exactly the bug that was
+        fixed."""
+        from vinu_tools.compute.indicators.rsi.rsi import _rsi as tools_rsi
+
+        rng = np.random.default_rng(0)
+        closes = list(100 + np.cumsum(rng.standard_normal(60)))
+        expected = tools_rsi(closes, 14)
+        got = op.rsi(_s(closes), 14).tolist()
+        for e, g in zip(expected, got):
+            if e is None:
+                assert g is None or np.isnan(g)
+            else:
+                assert g == pytest.approx(e, abs=1e-9)
+
+    def test_warmup_is_nan_before_period_plus_one_bars(self) -> None:
+        s = _s(np.arange(1, 20, dtype=float))
+        out = op.rsi(s, 14)
+        assert out.iloc[:14].isna().all()
+        assert not np.isnan(out.iloc[14])
+
 
 class TestMACD:
     def test_returns_three_named_columns(self) -> None:

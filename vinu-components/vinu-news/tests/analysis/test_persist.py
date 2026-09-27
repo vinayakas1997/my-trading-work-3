@@ -58,6 +58,28 @@ def test_persist_skips_duplicate_url():
             repo.close()
 
 
+def test_persist_round_trips_point_in_time_metadata_columns():
+    """item #19 finding #1: `published_at`/`ingested_at`/
+    `publish_time_is_estimated` must survive a real SQLite round-trip
+    through the repository's own `ARTICLE_COLUMNS`, not just exist on
+    the in-memory dataclass."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "test.db"
+        repo = NewsRepository(db_path)
+        try:
+            lead = _prepare(enrich_article(_lead("Apple beats earnings", "https://ex.com/aapl-pit")))
+            persist_leads(repo, [lead])
+            rows = repo.get_thread_articles(lead.article.thread_id)
+            assert len(rows) == 1
+            row = rows[0]
+            assert row["published_at"] == lead.article.published_at
+            assert row["ingested_at"] == lead.article.ingested_at
+            assert bool(row["publish_time_is_estimated"]) == lead.article.publish_time_is_estimated
+            assert row["publish_time_is_estimated"] == 0  # real pubDate above, not estimated
+        finally:
+            repo.close()
+
+
 def test_persist_thread_match_skips_second_insert():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = Path(tmp) / "test.db"
