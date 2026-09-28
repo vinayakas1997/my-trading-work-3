@@ -100,3 +100,36 @@ class TestAsOfClamping:
             _tool().execute(symbol="aapl", start_date="2025-05-01", end_date="2025-05-15")
         args, _ = mock_get.call_args
         assert args[0].endswith("/stock/candles/AAPL")
+
+
+class TestPerInstanceCaching:
+    """item #11 finding #4: repeated identical fetches within one agent
+    loop must not re-hit the network every time."""
+
+    def test_identical_call_twice_only_fetches_once(self) -> None:
+        tool = _tool(as_of="2025-06-01T00:00:00Z")
+        with patch("httpx.get", return_value=_mock_response({"data": []})) as mock_get:
+            first = tool.execute(symbol="AAPL", start_date="2025-05-01", end_date="2025-05-15")
+            second = tool.execute(symbol="AAPL", start_date="2025-05-01", end_date="2025-05-15")
+        assert mock_get.call_count == 1
+        assert first == second
+
+    def test_different_symbol_is_not_cached_together(self) -> None:
+        tool = _tool(as_of="2025-06-01T00:00:00Z")
+        with patch("httpx.get", return_value=_mock_response({"data": []})) as mock_get:
+            tool.execute(symbol="AAPL", start_date="2025-05-01", end_date="2025-05-15")
+            tool.execute(symbol="MSFT", start_date="2025-05-01", end_date="2025-05-15")
+        assert mock_get.call_count == 2
+
+    def test_a_new_tool_instance_does_not_share_the_cache(self) -> None:
+        """The cache is scoped per-instance -- a fresh instance (a new
+        run/session, per tools/__init__.py::build_registry) must not see
+        another instance's cached responses."""
+        with patch("httpx.get", return_value=_mock_response({"data": []})) as mock_get:
+            _tool(as_of="2025-06-01T00:00:00Z").execute(
+                symbol="AAPL", start_date="2025-05-01", end_date="2025-05-15",
+            )
+            _tool(as_of="2025-06-01T00:00:00Z").execute(
+                symbol="AAPL", start_date="2025-05-01", end_date="2025-05-15",
+            )
+        assert mock_get.call_count == 2

@@ -3,6 +3,7 @@ import logging
 import time
 
 from ..agent.tools import BaseTool
+from ._call_cache import CallCache
 
 LOG = logging.getLogger(__name__)
 
@@ -33,11 +34,19 @@ class FundamentalsTool(BaseTool):
     }
     is_readonly = True
 
+    def __init__(self):
+        self._cache = CallCache()
+
     def execute(self, **kwargs) -> str:
         import yfinance as yf
 
         symbol = kwargs["symbol"].upper()
         metric = kwargs.get("metric", "summary")
+
+        cache_key = (symbol, metric)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
 
         ticker = None
         info: dict = {}
@@ -124,4 +133,6 @@ class FundamentalsTool(BaseTool):
                 "book_value": info.get("bookValue"),
             }
 
-        return json.dumps({k: v for k, v in result.items() if v is not None}, indent=2, default=str)
+        out = json.dumps({k: v for k, v in result.items() if v is not None}, indent=2, default=str)
+        self._cache.set(cache_key, out)
+        return out

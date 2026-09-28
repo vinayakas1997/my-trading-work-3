@@ -15,7 +15,12 @@ import pytest
 from vinu_live.breaker.engine import BreakerVerdict
 from vinu_live.config import LiveConfig
 from vinu_live.live_decision.schema import LiveDecisionRecord
-from vinu_live.live_decision.storage import LiveDecisionBackend, list_unapplied_executes, record_live_decision
+from vinu_live.live_decision.storage import (
+    LiveDecisionBackend,
+    list_open_positions,
+    list_unapplied_executes,
+    record_live_decision,
+)
 from vinu_live.scheduler import LiveScheduler
 
 
@@ -76,6 +81,12 @@ class TestLiveDecisionWeightsMerge:
 
         # The decision must be consumed -- not re-applied every cycle.
         assert list_unapplied_executes(scheduler._live_decision_backend) == []
+        # But it must now have become a real, still-open position -- the
+        # exit-mechanism fix's whole point.
+        open_positions = list_open_positions(scheduler._live_decision_backend)
+        assert len(open_positions) == 1
+        assert open_positions[0].ticker == "AAPL"
+        assert open_positions[0].position_size == 0.05
 
     def test_unsized_execute_produces_no_order_but_is_still_marked_applied(self, tmp_path) -> None:
         """No live_decision_position_size configured is real, final
@@ -161,3 +172,70 @@ class TestLiveDecisionWeightsMerge:
         assert mock_check.called
         assert result["status"] == "halted_by_breaker"
         assert "submitted" not in result
+
+
+class TestOpenPositionReEmittedEveryCycle:
+    """The exit-mechanism fix itself (missing-pieces-of-system/new-theory-
+    of-trading/system-wide-audit-and-design/
+    04-synthesis-built-vs-missing-2026-09-28.md): previously an EXECUTE
+    was folded into target_weights for exactly one cycle, then never
+    again -- since SignalTranslator treats a held-but-untargeted symbol as
+    target 0.0, that force-closed the position the very next cycle. This
+    proves the fix: a position already open (no new unapplied EXECUTE
+    this cycle) still gets a real target_weights entry."""
+
+    def test_second_cycle_still_emits_the_open_positions_weight(self, tmp_path) -> None:
+        _record_execute(tmp_path, ticker="AAPL", strategy_id="sma_cross")
+        scheduler = _make_scheduler(tmp_path)
+
+        # Real configured equity, held fixed across both cycles -- avoids
+        # entangling this test with the unconfigured-account fallback's
+        # own circular "value the portfolio from what it currently holds"
+        # behavior, which is unrelated to what this test is proving.
+        async def _get(url, **kwargs):
+            if "/portfolio/state" in url:
+                return _resp(json_body={"status": "empty", "weights": []})
+            if "/strategy/strategies/sma_cross" in url:
+                return _resp(json_body={"name": "sma_cross", "live_decision_position_size": 0.05})
+            if "/agent/broker/positions" in url:
+                return _resp(json_body=[])
+            if "/agent/broker/account" in url:
+                return _resp(json_body={"configured": True, "equity": 1_000_000.0})
+            if "/candles/" in url:
+                return _resp(json_body={"data": [{"close": 150.0}]})
+            raise AssertionError(f"unexpected GET: {url}")
+
+        scheduler._http.get = AsyncMock(side_effect=_get)
+        scheduler._http.post = AsyncMock(return_value=_resp(status_code=200))
+
+        with patch("vinu_live.scheduler.check_limits", return_value=(BreakerVerdict.ALLOW, None)):
+            first = asyncio.run(scheduler.cycle())
+        assert first["submitted"][0]["symbol"] == "AAPL"
+        opened_qty = first["submitted"][0]["qty"]
+
+        # No new EXECUTE this cycle -- list_unapplied_executes() is now
+        # empty -- but the position from cycle 1 is still open and must
+        # still produce a target_weights entry, or the broker's real
+        # AAPL holding (now present, unlike cycle 1's empty positions)
+        # would get force-closed by SignalTranslator's own "not targeted
+        # -> close" rule.
+        async def _get_cycle_2(url, **kwargs):
+            if "/portfolio/state" in url:
+                return _resp(json_body={"status": "empty", "weights": []})
+            if "/agent/broker/positions" in url:
+                return _resp(json_body=[{"symbol": "AAPL", "qty": opened_qty}])
+            if "/agent/broker/account" in url:
+                return _resp(json_body={"configured": True, "equity": 1_000_000.0})
+            if "/candles/" in url:
+                return _resp(json_body={"data": [{"close": 150.0}]})
+            raise AssertionError(f"unexpected GET: {url}")
+
+        scheduler._http.get = AsyncMock(side_effect=_get_cycle_2)
+
+        with patch("vinu_live.scheduler.check_limits", return_value=(BreakerVerdict.ALLOW, None)):
+            second = asyncio.run(scheduler.cycle())
+
+        # No close instruction for AAPL -- the position's weight was
+        # re-emitted, so the diff against the still-held qty is ~zero.
+        assert second.get("n_instructions", 0) == 0
+        assert "submitted" not in second or second["submitted"] == []

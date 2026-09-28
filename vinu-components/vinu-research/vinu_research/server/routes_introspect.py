@@ -173,6 +173,39 @@ async def get_generation_round(generation_id: str) -> dict[str, Any]:
     return round_
 
 
+@router.get("/candidate-graveyard/{symbol}")
+async def get_candidate_graveyard(symbol: str, limit: int = 50) -> dict[str, Any]:
+    """item #16 finding #3 (missing-pieces-of-system/new-theory-of-
+    trading/system-wide-audit-and-design/
+    02-open-questions-strategy-and-simulation.md): "has something like
+    this already failed, and why" across all three of this codebase's
+    real death points for a research idea -- generation-time (heuristic
+    ranking discard), sweep-time (a failed backtest point), and
+    hypothesis-level rejection. A read-time query
+    (candidate_graveyard.py), not a fourth store: none of the three
+    underlying stores change, this just lets them be asked about
+    together. The sweep store is read via routes_sweep's own
+    already-wired instance (get_sweep_store()) rather than constructing
+    a second connection against the same on-disk file."""
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    from vinu_research.candidate_graveyard import query_candidate_graveyard
+    from vinu_research.server.routes_sweep import get_sweep_store
+
+    sweep_store = get_sweep_store()
+    if sweep_store is None:
+        raise HTTPException(status_code=503, detail="sweep store not configured")
+
+    entries = query_candidate_graveyard(
+        symbol.upper(),
+        generation_store=_service.generation_candidate_store,
+        sweep_store=sweep_store,
+        hypothesis_registry=HypothesisRegistry(),
+        limit=limit,
+    )
+    return {"symbol": symbol.upper(), "count": len(entries), "entries": entries}
+
+
 @router.get("/maturity/status")
 async def get_maturity_status() -> dict[str, Any]:
     """The first real HTTP surface for `MaturityAssessor` -- previously

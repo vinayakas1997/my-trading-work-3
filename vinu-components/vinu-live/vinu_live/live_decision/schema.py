@@ -20,6 +20,10 @@ LIVE_POLL_CURSOR_TABLE = "live_poll_cursor"
 STRATEGY_STAGE_STATE_TABLE = "strategy_stage_state"
 STRATEGY_STAGE_TRANSITIONS_TABLE = "strategy_stage_transitions"
 LIVE_DECISIONS_TABLE = "live_decisions"
+LIVE_DECISION_OPEN_POSITIONS_TABLE = "live_decision_open_positions"
+LIVE_SNAPSHOTS_TABLE = "live_snapshots"
+
+PositionStatus = Literal["open", "closed"]
 
 Stage = Literal[
     "idle",
@@ -126,3 +130,57 @@ class LiveDecisionRecord:
     # single WHERE clause, not a join against some other table.
     applied: bool = False
     applied_at: str | None = None
+
+
+@dataclass
+class LiveDecisionOpenPosition:
+    """The exit-mechanism gap this closes (missing-pieces-of-system/
+    new-theory-of-trading/system-wide-audit-and-design/
+    04-synthesis-built-vs-missing-2026-09-28.md): a live_decision EXECUTE
+    used to be folded into `target_weights` for exactly one cycle, then
+    marked `applied` and never referenced again -- since
+    SignalTranslator.translate() treats any symbol held but absent from
+    `target_weights` as target 0.0, the position would be force-closed
+    the very next cycle rather than actually held. This table is the new
+    source of truth `LiveScheduler` reads every cycle (not just the
+    opening one) to keep re-emitting the position's weight, and the
+    record `CandleClosePoller`'s periodic review writes to when
+    live_decision_agent actually decides EXIT."""
+    ticker: str
+    strategy_id: str
+    position_size: float
+    opened_bar_ts: int
+    trigger_id: str | None = None
+    status: PositionStatus = "open"
+    opened_at: str = ""
+    last_reviewed_bar_ts: int | None = None
+    closed_at: str | None = None
+    closed_bar_ts: int | None = None
+    closed_reason: str = ""
+    id: int | None = None
+
+
+@dataclass
+class LiveSnapshotRecord:
+    """The "present-data" recording layer (missing-pieces-of-system/
+    new-theory-of-trading/system-wide-audit-and-design/
+    02-open-questions-strategy-and-simulation.md item #5): mirrors how
+    `vinu-initial-analysis`'s `RunLog` records historical/backfill angle
+    output, but for live/present-moment computation -- keyed on real
+    wall-clock recency (`computed_at`) rather than an
+    `analysis_from`/`analysis_until` historical range, since present-
+    moment data has different freshness properties than a backfilled
+    row. Append-only, one row per (symbol, angle_name, computed_at) --
+    a history of every real computation, not a single upserted "current"
+    row, the same way `RunLog` itself is a log, not a cache.
+    `staleness_seconds` is deliberately NOT a field here: it's computed
+    fresh at read time from `computed_at` (storage.py's
+    `staleness_seconds()`), same "coverage view computed fresh, never
+    cached" rule `ticker_coverage.py` already established for a
+    different table."""
+    symbol: str
+    angle_name: str
+    granularity: str
+    computed_at: str
+    snapshot_data: dict[str, Any] = field(default_factory=dict)
+    id: int | None = None

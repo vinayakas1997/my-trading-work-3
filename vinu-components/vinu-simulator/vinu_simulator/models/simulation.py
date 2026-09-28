@@ -38,6 +38,39 @@ class SimulationConfig:
     kelly_lookback_days: int = 60
     max_leverage: float = 1.0
 
+    # "evidence_confidence" (item #4/#10, system-wide-audit-and-design/
+    # 02-open-questions-strategy-and-simulation.md): scales each symbol's
+    # weight by Track 2's evidence-confidence for `evidence_must_condition`
+    # at that point in the backtest, via SimulationInput.evidence_triggers
+    # (pre-fetched by the caller -- this engine makes no network calls of
+    # its own). `evidence_must_condition` is recorded here for provenance
+    # only; the sizer itself trusts whatever's already in
+    # `evidence_triggers`, since the caller is the one that knows how to
+    # fetch and filter it (a SQL query in vinu-research, today; over HTTP
+    # for any other caller later).
+    evidence_must_condition: str | None = None
+    evidence_min_confidence_scale: float = 0.5
+    evidence_min_sample_size: int = 5
+
+    # "regime_aware" (item #14A factor #2): scales the whole portfolio by
+    # a single factor looked up from the current bar's regime
+    # (`engine.regime.classify_regime`, already point-in-time safe).
+    # `None` uses `sizing.DEFAULT_REGIME_SCALE_MAP`.
+    regime_scale_map: dict[str, float] | None = None
+    regime_default_scale: float = 1.0
+
+    # "drawdown_aware" (item #14A factor #3): reuses the exact ok/halve/
+    # flat/halt threshold ladder `vinu_portfolio.circuit_breakers
+    # .PortfolioDrawdownMonitor` uses live (via `compute_drawdown_action`,
+    # its pure, HTTP-free core), so backtest sizing and live risk
+    # management can never silently drift into two different drawdown
+    # policies. Defaults mirror that monitor's own defaults exactly.
+    drawdown_threshold: float = -0.20
+    drawdown_halve_threshold: float = -0.10
+    drawdown_flat_threshold: float = -0.15
+    drawdown_abs_loss_threshold: float = 0.0
+    drawdown_action_scale_map: dict[str, float] | None = None
+
     # Caps a single day's order for one symbol at this fraction of that day's
     # traded volume — independent of the Almgren-Chriss cost model, which
     # prices market impact but never refuses to fill an order regardless of
@@ -89,6 +122,13 @@ class SimulationInput:
     price_data: pd.DataFrame
     config: SimulationConfig
     volume_data: pd.DataFrame | None = None
+    # item #4/#10: symbol -> that symbol's already-resolved Track 2
+    # triggers for config.evidence_must_condition (each a dict with at
+    # least trigger_time/outcome_recorded_at/return_at_horizon), only read
+    # when config.position_sizing_model == "evidence_confidence". Pre-
+    # fetched by the caller, not by this engine -- see
+    # EvidenceConfidenceSizer's own docstring for why.
+    evidence_triggers: dict[str, list[dict[str, Any]]] | None = None
 
 
 @dataclass

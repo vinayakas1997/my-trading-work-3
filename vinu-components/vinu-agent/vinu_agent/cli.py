@@ -432,21 +432,28 @@ def skill_audit_worker_main(args: argparse.Namespace) -> None:
 
 
 def planner_worker_main(args: argparse.Namespace) -> None:
-    """Watchlist = TickerSummaryStore.list_summaries() -- tickers that
-    already have a Summary Agent read on file, per the decided watchlist
-    source (Phase 9's implementation record). Before each cycle's own
-    tickers are read, bootstrap_new_tickers() cold-starts a screener run
-    for any configured seed ticker not yet in the store -- the watchlist
-    bootstrap gap this worker used to have no answer for. Two additive
-    seed sources, merged: the static operator-provided list
-    (VINU_AGENT_WATCHLIST_SEED_TICKERS) and, when configured
-    (VINU_AGENT_SCREENER_RANKER_ID), vinu-screener's current top-ranked
-    symbols for that ranker -- ships inert when unset, same as the static
-    list being empty. Per ticker, per cycle: RunLogTrigger refreshes
-    the Summary Agent if vinu-initial-analysis has a new run_id, then
-    ChangeGate (Phase 0, unmodified) decides whether anything actually
-    changed since the last Planner pass; only a "yes" reaches
-    PlannerTriage + the real research-team hand-off."""
+    """Watchlist source (missing-pieces-of-system/new-theory-of-trading/
+    system-wide-audit-and-design/02-open-questions-strategy-and-simulation.md
+    item #16.5, live ticker discovery): when VINU_AGENT_SCREENER_RANKER_ID
+    is configured, vinu-screener's own CURRENT top-ranked output for that
+    ranker is this cycle's real ticker source (intersected with
+    TickerSummaryStore so a ticker still mid-bootstrap this cycle is
+    excluded, not half-processed) -- the static, operator-provided
+    VINU_AGENT_WATCHLIST_SEED_TICKERS list is additive on top of that, a
+    human's explicit override that's never dropped just because the
+    screener stops ranking it. Unset (or a transient fetch failure, which
+    fails open to an empty list), the watchlist falls back to
+    TickerSummaryStore.list_summaries() -- every ticker that has ever
+    gained a Summary Agent read on file, an ever-growing accumulation,
+    same behavior as before this item was addressed. Before each cycle's
+    ticker list is computed, bootstrap_new_tickers() cold-starts a
+    screener run for any configured seed ticker not yet in the store --
+    the watchlist bootstrap gap this worker used to have no answer for.
+    Per ticker, per cycle: RunLogTrigger refreshes the Summary Agent if
+    vinu-initial-analysis has a new run_id, then ChangeGate (Phase 0,
+    unmodified) decides whether anything actually changed since the last
+    Planner pass; only a "yes" reaches PlannerTriage + the real
+    research-team hand-off."""
     config = load_config()
     interval = resolve_worker_interval(args, config, "planner_worker_interval_sec")
     print(f"[planner-worker] Starting (interval={interval}s)")
@@ -480,6 +487,7 @@ def planner_worker_main(args: argparse.Namespace) -> None:
             while True:
                 try:
                     seed_tickers = list(config.watchlist_seed_tickers)
+                    screener_tickers: list[str] = []
                     if config.screener_ranker_id:
                         from .tools.screener_client import fetch_screener_top_tickers
 
@@ -495,7 +503,37 @@ def planner_worker_main(args: argparse.Namespace) -> None:
                                 "bootstrapped new tickers",
                                 extra={"vinu_ctx": {"worker": "planner-worker", "tickers": bootstrapped}},
                             )
-                    tickers = [s.ticker for s in service.ticker_summary_store.list_summaries()]
+
+                    # Live ticker discovery (missing-pieces-of-system/
+                    # new-theory-of-trading/system-wide-audit-and-design/
+                    # 02-open-questions-strategy-and-simulation.md item
+                    # #16.5): when a ranker is configured, vinu-screener's
+                    # own CURRENT top-ranked output is this cycle's real
+                    # ticker source, not TickerSummaryStore.list_summaries()'s
+                    # ever-growing accumulation of every ticker ever
+                    # bootstrapped -- previously the screener only ever
+                    # ADDED tickers (via bootstrap_new_tickers above), never
+                    # caused one to stop being processed once it fell out of
+                    # the ranking. watchlist_seed_tickers (the static,
+                    # operator-provided list) is additive on top, same as
+                    # before -- a human's explicit override/fallback, never
+                    # dropped just because the screener stopped ranking it.
+                    # Intersected with list_summaries() (not used raw) so a
+                    # ticker whose bootstrap failed/is still in flight this
+                    # cycle is simply excluded until its first summary
+                    # actually lands -- same "still new until a summary
+                    # lands" contract bootstrap_new_tickers's own docstring
+                    # already establishes, not a new failure mode.
+                    # screener_tickers empty (ranker unset, or a transient
+                    # fetch failure -- fetch_screener_top_tickers fails open
+                    # to []) falls back to the full accumulation, unchanged
+                    # from previous behavior.
+                    if screener_tickers:
+                        live_source = {t.upper() for t in seed_tickers}
+                        known = {s.ticker.upper() for s in service.ticker_summary_store.list_summaries()}
+                        tickers = sorted(live_source & known)
+                    else:
+                        tickers = [s.ticker for s in service.ticker_summary_store.list_summaries()]
 
                     # item #1: bridges Track 1's recorded signal-evidence
                     # trigger/outcome data into HypothesisRegistry, once

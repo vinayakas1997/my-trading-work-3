@@ -20,7 +20,14 @@ from vinu_simulator.engine.metrics import (
     compute_performance_metrics,
     periods_per_year_for_interval,
 )
-from vinu_simulator.engine.sizing import CompositeSizer, PositionSizer, build_position_sizer
+from vinu_simulator.engine.regime import classify_regime
+from vinu_simulator.engine.sizing import (
+    CompositeSizer,
+    EvidenceConfidenceSizer,
+    PositionSizer,
+    RegimeAwareSizer,
+    build_position_sizer,
+)
 from vinu_simulator.models.metrics import MetricBundle
 from vinu_simulator.models.simulation import (
     SimulationConfig,
@@ -59,6 +66,15 @@ class WeightSimulator:
             kelly_fraction=self.config.kelly_fraction,
             kelly_lookback_days=self.config.kelly_lookback_days,
             max_leverage=self.config.max_leverage,
+            evidence_min_confidence_scale=self.config.evidence_min_confidence_scale,
+            evidence_min_sample_size=self.config.evidence_min_sample_size,
+            regime_scale_map=self.config.regime_scale_map,
+            regime_default_scale=self.config.regime_default_scale,
+            drawdown_threshold=self.config.drawdown_threshold,
+            drawdown_halve_threshold=self.config.drawdown_halve_threshold,
+            drawdown_flat_threshold=self.config.drawdown_flat_threshold,
+            drawdown_abs_loss_threshold=self.config.drawdown_abs_loss_threshold,
+            drawdown_action_scale_map=self.config.drawdown_action_scale_map,
         )
 
     def run(self, inp: SimulationInput) -> SimulationResult:
@@ -93,6 +109,18 @@ class WeightSimulator:
                 f"Prices contain NaN after forward-fill on dates {nan_dates}"
                 f" for tickers {nan_cols}. Data does not cover full calendar range."
             )
+        # Regime-aware sizing (item #14A factor #2) needs a benchmark
+        # price series to classify off of -- captured here, before
+        # price_data narrows to common_tickers only, since a benchmark
+        # ticker (e.g. SPY) is deliberately not part of the strategy's
+        # own tradable universe and would otherwise be dropped on the
+        # very next line.
+        benchmark_prices_full: pd.Series | None = None
+        for bm_ticker in inp.config.benchmark_tickers:
+            if bm_ticker in price_data.columns:
+                benchmark_prices_full = price_data[bm_ticker]
+                break
+
         price_data = price_data[common_tickers]
         if volume_data is not None:
             volume_data = volume_data.reindex(total_calendar).ffill().fillna(0.0)
@@ -141,16 +169,37 @@ class WeightSimulator:
         volume_matrix = volume_data.values.astype(np.float64) if volume_data is not None else None
         weights_matrix = target_weights_aligned.values.astype(np.float64)
 
-        # Only `CompositeSizer` reads per-symbol return history (for its
-        # correlation-aware factor) -- built once here, not per step, and
-        # skipped entirely for every other sizer so this doesn't cost
-        # anything on the far more common single-factor-sizer path.
+        # `CompositeSizer` reads per-symbol return history for its
+        # correlation-aware factor; `EvidenceConfidenceSizer` reads it
+        # purely for the column order (per-symbol identity) -- built once
+        # here, not per step, and skipped entirely for every other sizer
+        # so this doesn't cost anything on the far more common
+        # single-factor-sizer path.
         symbol_returns_full: pd.DataFrame | None = None
-        if isinstance(self._position_sizer, CompositeSizer):
+        if isinstance(self._position_sizer, (CompositeSizer, EvidenceConfidenceSizer)):
             with np.errstate(divide="ignore", invalid="ignore"):
                 symbol_returns_full = pd.DataFrame(
                     price_data.pct_change().values, columns=common_tickers,
                 )
+
+        evidence_triggers = inp.evidence_triggers
+
+        # `classify_regime` is already point-in-time safe internally (each
+        # bar's label depends only on bars up to and including itself --
+        # see its own docstring), so it's safe to precompute the whole
+        # series once here rather than re-running it from scratch every
+        # step. Only built for RegimeAwareSizer, and only when a
+        # benchmark ticker was actually found above -- no benchmark, no
+        # regime, same "not enough context, fail open" posture every
+        # other sizer here already uses.
+        regimes_full: pd.Series | None = None
+        if isinstance(self._position_sizer, RegimeAwareSizer) and benchmark_prices_full is not None:
+            # Already reindexed to total_calendar and forward-filled --
+            # benchmark_prices_full was captured after that same step ran
+            # on the full (not-yet-narrowed) price_data above.
+            with np.errstate(divide="ignore", invalid="ignore"):
+                benchmark_returns_full = benchmark_prices_full.pct_change()
+            regimes_full = classify_regime(benchmark_returns_full)
 
         for step_idx, date in enumerate(total_calendar):
             prices = price_matrix[step_idx]
@@ -172,9 +221,20 @@ class WeightSimulator:
             symbol_returns_so_far = (
                 symbol_returns_full.iloc[:step_idx] if symbol_returns_full is not None else None
             )
+            # regimes_full.iloc[step_idx] (today's own label), not shifted
+            # -- classify_regime() is already point-in-time safe on its
+            # own (each bar's label depends only on bars up to and
+            # including itself, per its own docstring), unlike daily_ret/
+            # symbol_returns which are raw realized returns that must be
+            # sliced strictly-before to avoid leaking today's outcome.
+            regime = regimes_full.iloc[step_idx] if regimes_full is not None else None
             target_weights = self._position_sizer.size(
                 weights_matrix[step_idx], np.asarray(daily_ret, dtype=np.float64),
                 symbol_returns=symbol_returns_so_far,
+                current_date=date,
+                evidence_triggers=evidence_triggers,
+                regime=regime,
+                portfolio_value=nav_before,
             )
 
             is_rebalance = step_idx in rebalance_positions

@@ -13,10 +13,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from vinu_research.service import ResearchService
+from vinu_research.track2_aggregate import compute_track2_aggregate
+from vinu_research.track2_reconciliation import list_unconfirmed_moves
 
 router = APIRouter()
 
@@ -97,3 +99,82 @@ async def list_signal_evidence_route(symbol: str | None = None, limit: int = 50)
     svc = _require_service()
     rows = svc.signal_evidence_store.list_triggers(symbol, limit)
     return {"triggers": rows, "count": len(rows)}
+
+
+class RecordMoveEventRequest(BaseModel):
+    bar_ts: int
+    window_seconds: int
+    granularity: str
+    atr: float
+    price_move: float
+    move_threshold: float
+    direction: str
+
+
+@router.post("/move-evidence/{symbol}")
+async def record_move_event_route(symbol: str, body: RecordMoveEventRequest) -> dict[str, Any]:
+    """Track 2's own writer (item #10) -- called by vinu-live's poller on
+    every candle close where `detect_move()` found a real move, whether
+    or not any strategy's must-condition also fired for the same window.
+    Unlike `.../signal-evidence/trigger`, no duplicate-id rejection: a
+    move event isn't keyed by a caller-supplied id, each call is its own
+    real detection."""
+    svc = _require_service()
+    event_id = svc.move_evidence_store.record_move_event(
+        symbol,
+        bar_ts=body.bar_ts, window_seconds=body.window_seconds, granularity=body.granularity,
+        atr=body.atr, price_move=body.price_move, move_threshold=body.move_threshold,
+        direction=body.direction,
+    )
+    return {"id": event_id, "symbol": symbol, "status": "recorded"}
+
+
+@router.get("/move-evidence")
+async def list_move_events_route(symbol: str | None = None, limit: int = 50) -> dict[str, Any]:
+    svc = _require_service()
+    events = svc.move_evidence_store.list_move_events(symbol, limit)
+    return {"events": events, "count": len(events)}
+
+
+@router.get("/unconfirmed-moves")
+async def list_unconfirmed_moves_route(symbol: str | None = None, limit: int = 50) -> dict[str, Any]:
+    """item #10: real Track 2 moves with no matching Track 1 trigger on
+    file -- the `track2_only` case. See track2_reconciliation.py's own
+    docstring for the honest caveat about what this looks like today
+    (nothing yet writes Track 1 triggers in production, so most/all real
+    moves currently show up here)."""
+    svc = _require_service()
+    events = list_unconfirmed_moves(
+        move_evidence_store=svc.move_evidence_store,
+        signal_evidence_store=svc.signal_evidence_store,
+        symbol=symbol, limit=limit,
+    )
+    return {"events": events, "count": len(events)}
+
+
+@router.get("/track2-aggregate/{symbol}")
+async def track2_aggregate_route(
+    symbol: str,
+    must_condition: str,
+    as_of: int | None = Query(
+        default=None,
+        description=(
+            "Pin the effective 'now' this aggregate reflects (unix seconds) "
+            "-- only evidence whose outcome was known by this instant is "
+            "included, so a simulator can call this without lookahead. "
+            "Omitted means everything resolved so far."
+        ),
+    ),
+    min_sample_size: int = 5,
+) -> dict[str, Any]:
+    """items #4 and #10 of 02-open-questions-strategy-and-simulation.md:
+    the one computed evidence-confidence number both the simulator's
+    sizing and live_decision's cross-track disagreement check need --
+    built once here, read by both rather than reimplemented twice."""
+    svc = _require_service()
+    return compute_track2_aggregate(
+        symbol, must_condition,
+        evidence_store=svc.signal_evidence_store,
+        as_of=as_of,
+        min_sample_size=min_sample_size,
+    )

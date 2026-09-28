@@ -1,6 +1,7 @@
 import json
 import time
 from ..agent.tools import BaseTool
+from ._call_cache import CallCache
 from ._date_utils import date_to_epoch as _date_to_epoch
 from ._date_utils import iso_to_epoch as _iso_to_epoch
 
@@ -23,6 +24,7 @@ class NewsTool(BaseTool):
 
     def __init__(self):
         self._services_config = {}
+        self._cache = CallCache()
 
     def execute(self, **kwargs) -> str:
         import httpx
@@ -44,14 +46,22 @@ class NewsTool(BaseTool):
         from_epoch = _date_to_epoch(kwargs.get("start_date", "")) if kwargs.get("start_date") else None
         if from_epoch is None and self._as_of:
             from_epoch = to_epoch - 30 * 86400
+
+        symbol = kwargs["symbol"].upper()
+        limit = kwargs.get("limit", 20)
+        cache_key = (symbol, from_epoch, to_epoch, limit, clamped)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         params = {
-            "limit": kwargs.get("limit", 20),
+            "limit": limit,
         }
         if from_epoch is not None:
             params["from"] = from_epoch
         params["to"] = to_epoch
         resp = httpx.get(
-            f"{url}/news/ticker/{kwargs['symbol'].upper()}",
+            f"{url}/news/ticker/{symbol}",
             params=params,
             headers=_h,
             timeout=30,
@@ -60,4 +70,6 @@ class NewsTool(BaseTool):
         out = resp.json()
         if clamped and isinstance(out, dict):
             out["clamped_end_to_as_of"] = True
-        return json.dumps(out)
+        result = json.dumps(out)
+        self._cache.set(cache_key, result)
+        return result

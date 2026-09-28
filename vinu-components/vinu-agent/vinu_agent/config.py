@@ -191,6 +191,10 @@ class AgentConfig:
         # list from here and push a picked ticker onto vinu_news +
         # vinu_stock_price's watchlists -- see that module's docstring.
         "vinu_screener": os.environ.get("VINU_SCREENER_API_URL", "http://localhost:8095"),
+        # Step 9 (system-wide-audit-and-design/00-overview.md):
+        # get_reflection_synthesis's target -- vinu-reflection's new
+        # read-only HTTP surface (`serve`, vinu_reflection/cli.py).
+        "vinu_reflection": os.environ.get("VINU_REFLECTION_API_URL", "http://localhost:8092"),
     })
 
 

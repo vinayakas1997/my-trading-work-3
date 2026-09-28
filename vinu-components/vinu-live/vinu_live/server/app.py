@@ -10,7 +10,14 @@ from vinu_infra.runtime_settings import build_admin_settings_router
 from vinu_infra.trade_audit_log import slippage_stats
 from vinu_live.config import load_config
 from vinu_live.feedback_loop import FeedbackLoopWorker
-from vinu_live.live_decision.storage import LiveDecisionBackend, get_stage_state
+from vinu_live.live_decision.storage import (
+    LiveDecisionBackend,
+    get_latest_snapshot,
+    get_stage_state,
+    list_snapshot_angle_names,
+    list_snapshots,
+    staleness_seconds,
+)
 from vinu_live.scheduler import LiveScheduler
 from vinu_live.shadow_evaluator import ShadowEvaluator
 from vinu_live.trade_plan.orchestrator import SETTINGS as TRADE_PLAN_SETTINGS
@@ -197,6 +204,63 @@ def create_app() -> FastAPI:
                     "precondition_held": r.precondition_held,
                     "reasoning": r.reasoning,
                     "recorded_at": r.recorded_at,
+                }
+                for r in records
+            ],
+        }
+
+    @router.get("/snapshots/{symbol}")
+    async def snapshots(symbol: str) -> dict[str, Any]:
+        """The read side of the present-data recording layer
+        (missing-pieces-of-system/new-theory-of-trading/
+        system-wide-audit-and-design/
+        02-open-questions-strategy-and-simulation.md item #5): the latest
+        recorded live snapshot for every angle_name this symbol has ever
+        had one written for, mirroring `ticker_coverage.py`'s own "one
+        column's worth of status per angle" pivot for historical data --
+        `staleness_seconds` is computed fresh here, at read time, never
+        stored (same rule that module already established)."""
+        config = load_config()
+        backend = LiveDecisionBackend(str(config.data_root / "live_decision.db"))
+        try:
+            angle_names = list_snapshot_angle_names(backend, symbol.upper())
+            angles: dict[str, Any] = {}
+            for name in angle_names:
+                record = get_latest_snapshot(backend, symbol.upper(), name)
+                if record is None:
+                    continue
+                angles[name] = {
+                    "granularity": record.granularity,
+                    "computed_at": record.computed_at,
+                    "staleness_seconds": staleness_seconds(record.computed_at),
+                    "snapshot_data": record.snapshot_data,
+                }
+        finally:
+            backend.close()
+        return {"status": "ok", "symbol": symbol.upper(), "angles": angles}
+
+    @router.get("/snapshots/{symbol}/{angle_name}/history")
+    async def snapshot_history(symbol: str, angle_name: str, limit: int = 50) -> dict[str, Any]:
+        """History for one (symbol, angle_name) -- the present-data
+        analogue of a historical run log, honest raw rows, no computed
+        statistic beyond each row's own read-time staleness."""
+        config = load_config()
+        backend = LiveDecisionBackend(str(config.data_root / "live_decision.db"))
+        try:
+            records = list_snapshots(backend, symbol.upper(), angle_name, limit=limit)
+        finally:
+            backend.close()
+        return {
+            "status": "ok",
+            "symbol": symbol.upper(),
+            "angle_name": angle_name,
+            "count": len(records),
+            "snapshots": [
+                {
+                    "granularity": r.granularity,
+                    "computed_at": r.computed_at,
+                    "staleness_seconds": staleness_seconds(r.computed_at),
+                    "snapshot_data": r.snapshot_data,
                 }
                 for r in records
             ],

@@ -381,6 +381,74 @@ first before ever reaching `vinu-portfolio`'s live sizing.
 2's aggregate mode actually existing first — right now there's no
 expectancy number to feed this sizer at all.
 
+**UPDATE (2026-09-28)**: **the blocker is closed; `EvidenceConfidenceSizer`
+is built**, not just sketched (the earlier "already sketched in item #4"
+references at item #14A/#14's finding turned out, on a fresh grep, to be
+wrong — there was no code at all before this). What actually existed on
+Track 1's side (`SignalEvidenceStore`) already recorded every
+must-condition trigger's real outcome (`return_at_horizon`,
+`max_favorable_excursion`/`max_adverse_excursion`), it just never got
+turned into a number ("no bucketing, no thresholds, no derived columns
+... that's the analysis layer's job, not yet built" — the store's own
+docstring). Built the missing analysis layer:
+
+- `vinu_infra/evidence_confidence.py` — new shared module,
+  `summarize_resolved_triggers()` (point-in-time-safe: an `as_of` cutoff
+  excludes any trigger whose outcome was recorded after that instant, so
+  a backtest replaying history can't see its own future) and
+  `laplace_smoothed_win_rate()` ((wins + 1) / (n + 2) — a raw win rate
+  from 1-2 historical triggers is noise, not edge, so it's pulled toward
+  a coin flip until real sample exists). One formula, shared by every
+  caller — the same reason `vol_target_scale`/`kelly_fraction` already
+  live in this module's sibling `risk_math.py`.
+- `vinu_research/track2_aggregate.py` — `compute_track2_aggregate()`,
+  reads `SignalEvidenceStore` and delegates the actual math to the
+  shared function above. New `GET /research/track2-aggregate/{symbol}
+  ?must_condition=...&as_of=...` route. 18 new tests (10 unit, 8 route),
+  full vinu-research suite 1149 passed (up from 1137, 0 regressions).
+- `vinu_simulator/engine/sizing.py` — new `EvidenceConfidenceSizer`, the
+  first sizer in this file to scale *per-symbol* rather than by one
+  portfolio-wide scalar (evidence-confidence is inherently a per-symbol
+  question). Deliberately makes **no network calls of its own** —
+  `SimulationInput.evidence_triggers` (symbol -> pre-fetched, already-
+  resolved trigger list, filtered to the strategy's
+  `evidence_must_condition` by the caller) is threaded through `.size()`
+  exactly the way `symbol_returns` already is for `CompositeSizer`, so
+  this engine's existing "act only on data already handed to it"
+  discipline holds — a live HTTP client inside the per-day loop would
+  have been the first sizer here to break it. Reuses
+  `vinu_infra.risk_math.forecast_confidence_scale` unchanged for the
+  actual scale factor, which means this only ever **dampens** (ceiling
+  1.0, floor `min_confidence_scale`, default 0.5) — strong evidence keeps
+  a symbol at its full strategy-assigned weight, it never grants
+  leverage beyond that weight. A symbol with no evidence on file, or
+  fewer resolved triggers than `min_sample_size` (default 5), is left
+  unscaled at 1.0 — "no evidence yet" is explicitly not treated as
+  evidence the edge is bad.
+- New tests across `test_sizing.py` (including the new
+  `build_position_sizer("evidence_confidence")` branch) and
+  `test_simulator.py` (3 engine-wiring tests, including one proving the
+  exact same weight/price input produces a *different* equity curve
+  depending on whether evidence is on file — the real PnL-affecting
+  behavior this item asked for). Full vinu-simulator suite: verified via
+  `git stash`, 262 passed before this change, 274 passed after (+12
+  net new), 0 regressions.
+- 7 new tests in `vinu-infra/tests/test_evidence_confidence.py`. Full
+  vinu-infra suite 334 passed, 0 regressions.
+
+**Deliberately left open, honestly scoped**: nothing in this codebase yet
+*calls* the simulator with `evidence_triggers` populated for a real
+strategy backtest — this build makes the engine able to consume Track 2
+confidence correctly and safely (point-in-time, per-symbol, fail-open),
+but the actual wiring of "which job fetches `SignalEvidenceStore` rows
+and passes them into `SimulationInput` for a live sweep/backtest run" is
+a separate, smaller integration task in whatever caller currently
+constructs `SimulationInput` (traced to be in `vinu-research`'s sweep/
+backtest orchestration, not touched here to avoid guessing at a calling
+convention this pass didn't fully trace). Item #14A's factors #2
+(regime-aware) and #3 (drawdown-aware, confirmed not a drop-in) remain
+unbuilt.
+
 ## 5. A "present-data" recording layer, mirroring pre-analysis, for live/current data
 
 `vinu-initial-analysis` computes and stores angle outputs for
@@ -412,6 +480,53 @@ not stored — the same "coverage view computed fresh, never cached" rule
 that the same query patterns work, while keying on real-time recency
 instead of a historical range — which is the actual, specific difference
 between "pre-analysis" and "present-data" recording.
+
+**UPDATE (2026-09-28)**: **built**, to exactly the concrete schema this
+item's own text already specified — resolved the "not decided" question
+in favor of `vinu-live`, since that's where the only real live
+computation this codebase does today (point 3's live-indicator detector,
+`vinu_live/live_decision/detector.py::compute_live_snapshot`) already
+runs, inside the poller that already touches this exact moment.
+
+- New `live_snapshots` table added to `LiveDecisionBackend`
+  (SCHEMA_VERSION 4) — `LiveSnapshotRecord`
+  (`symbol`/`angle_name`/`granularity`/`computed_at`/`snapshot_data`),
+  append-only (one row per real computation, mirroring `RunLog`'s own
+  shape, not an upserted "current" row): `record_live_snapshot`/
+  `get_latest_snapshot`/`list_snapshot_angle_names`/`list_snapshots`.
+  `staleness_seconds()` computes fresh from `computed_at` at call time,
+  never stored — the same rule `ticker_coverage.py`'s own `_days_stale()`
+  already established for the historical-data table this mirrors.
+- `vinu_live/live_decision/poller.py::cycle()`: records a snapshot right
+  after `compute_live_snapshot(warmup)` runs for a (ticker, timeframe)
+  group that just saw a fresh candle close — once per group, shared
+  across every strategy watching that pair, not once per strategy.
+  `angle_name="live_indicators"` names this one real computation; the
+  schema itself is general enough for a future writer recording a
+  different live computation to reuse the same table under a different
+  angle_name, but no such writer exists today — honestly scoped to what
+  actually runs, not a claim that all 30 of `vinu-initial-analysis`'s
+  historical angles now have live equivalents (they don't; that would be
+  separate, much larger work per angle).
+- New `GET /live/snapshots/{symbol}` (`vinu-live/vinu_live/server/app.py`)
+  — the latest recorded snapshot per angle_name for a symbol, mirroring
+  `ticker_coverage.py`'s own "one column's worth of status per angle"
+  pivot for historical data, with `staleness_seconds` computed at request
+  time. New `GET /live/snapshots/{symbol}/{angle_name}/history` for the
+  full append-only history, honest raw rows, same posture as
+  `get_signal_evidence`.
+- 15 new tests: 7 in `test_live_decision_storage.py`'s new
+  `TestLiveSnapshots`, 2 in `test_live_decision_poller.py`'s new
+  `TestPresentDataRecording` (a fresh candle close records a real
+  snapshot; no fresh close records nothing), 6 in new
+  `test_snapshots_route.py`. Confirmed zero regressions: full `vinu-live`
+  suite, 555 passed (up from 540, exactly +15), 0 failed.
+- **Deliberately not built**: any writer beyond the one that already
+  existed (point 3's detector) — the audit's own framing left "whether
+  this lives in vinu-live or is a new dedicated store" as the only real
+  open question, and this closes it with the smallest real, honestly-
+  scoped slice, not a speculative multi-angle live-computation
+  subsystem.
 
 ## 6. Regime tagging at trigger/move time, reusing what already exists
 
@@ -706,6 +821,101 @@ the same rolling window. Kept as its own small table rather than a column
 bolted onto either store, since it's derived from *both* and belongs to
 neither on its own.
 
+**UPDATE (2026-09-28, first pass)**: item #4's `compute_track2_aggregate()`/
+`vinu_infra.evidence_confidence` got built in this same session (a real,
+tested evidence-confidence number, point-in-time safe) as a building
+block toward this item, but at that point `MoveEvidenceStore` and the
+actual reconciliation still didn't exist.
+
+**UPDATE (2026-09-28, second pass)**: **built, deliberately scoped smaller
+than the 4-state sketch above.** Discussed directly: the full
+`cross_track_check` (`confirmed`/`track1_only`/`track2_only`/`neither`,
+stored, periodic) was more than actually needed right now — what mattered
+was catching `track2_only` specifically (a real move nothing was watching
+for), and doing it without inventing a second continuous scanning system.
+
+- **The trigger problem this item's own text raised ("depends on both
+  tracks being live") is resolved by piggybacking on infrastructure that
+  is already live**, not by standing up a new one: `vinu-live`'s poller
+  already runs on every candle close for every (ticker, timeframe) pair
+  it watches, and already computes ATR(14) as part of item #5's live
+  snapshot. A move check now runs there too, unconditionally, once per
+  group — same place, same cadence, whether or not any strategy's
+  must-condition fires that bar. If it only ran inside the per-strategy
+  loop, a real move on a ticker with no firing condition would never be
+  checked at all, which is exactly the blind spot this item exists to
+  close.
+- `vinu_live/live_decision/detector.py::detect_move()` — Track 2's own
+  already-documented floor (`vinu-tools/compute/indicators/atr/atr.py`'s
+  "2xATR(14) move-detection floor" comment): the latest closed bar's
+  price change vs. 2xATR(14). Returns `None` (not `False`) when there
+  isn't enough history to judge yet — "can't tell" must never look like
+  "no move happened."
+- `vinu-research`'s new `MoveEvidenceStore` (sibling of
+  `SignalEvidenceStore`, its own db file, same "record real events only"
+  discipline — no row for every idle bar) plus
+  `POST /research/move-evidence/{symbol}` (vinu-live's writer) and
+  `GET /research/move-evidence` (raw list).
+- `vinu_research/track2_reconciliation.py::list_unconfirmed_moves()` —
+  a **read-time query** (matching this codebase's own established
+  convention for exactly this kind of cross-store question —
+  `ticker_coverage.py`, `candidate_graveyard.py` — over a stored,
+  periodically-recomputed table), joining `MoveEvidenceStore` against
+  `SignalEvidenceStore` on symbol + a window-tolerance match. New
+  `GET /research/unconfirmed-moves`.
+- **Honest caveat, surfaced directly, not hidden**: nothing in this
+  codebase currently calls `POST /research/signal-evidence/trigger` in
+  production — `SignalEvidenceStore` has always had its store and route
+  but no live writer was ever wired to it (confirmed by grep: only
+  `GetSignalEvidenceTool`, read-only, references it from vinu-agent).
+  That is a real, pre-existing, separate gap, not touched here. Until it
+  exists, essentially every real move this reconciliation surfaces will
+  show as `track2_only` by default — an accurate reflection of the
+  system's current state, not a bug in the matching logic.
+
+  **UPDATE (2026-09-28)**: **built.** The real blocker turned out to be
+  naming, not plumbing: `record_trigger()` needs a string per
+  must-condition, but the actual, implemented condition vocabulary
+  (`vinu-live/live_decision/conditions.py`) is a structured `{source,
+  key, operator, value}` dict with no name field -- the still-design-only
+  schema doc's `condition: "sma5_cross_sma50"` idea (`03-strategy-
+  definition-full-schema.md`) was never actually built. Confirmed
+  directly (2026-09-28): auto-derive a name from the condition's own
+  fields rather than require every strategy's YAML to be hand-edited
+  with a new `name:` field -- new `conditions.condition_name()`, e.g.
+  `{"source": "live_indicators", "key": "adx_14", "operator": "gt",
+  "value": 999}` -> `"live_indicators.adx_14_gt_999"`.
+
+  `vinu-live`'s poller now calls the writer exactly once per real
+  must-condition firing -- guarded on `new_state.trigger_id != previous
+  _state.trigger_id` (not `previous_stage == "idle"` alone, since
+  state_tracker's own "Step 5" reset-then-refire can jump straight from
+  a terminal stage to a fresh firing within one `evaluate_candle_close`
+  call, which a simpler idle-only guard would have missed). Best-effort,
+  same posture as `_detect_and_record_move`/`_record_precondition_check`
+  -- a failure here never breaks the candle-close loop.
+
+  9 new tests (4 `condition_name()` unit tests, 5 poller-wiring tests
+  including one confirming a pair that stays `ready_to_execute` across
+  multiple cycles only posts once). Full vinu-live suite: 571 passed
+  before, 580 after (exact +9), 0 regressions. This closes the loop
+  item #10's reconciliation was built against but couldn't fully
+  exercise -- real Track 1 triggers now actually reach
+  `SignalEvidenceStore`, so `list_unconfirmed_moves()` can surface a
+  genuine `track1_only`-vs-`track2_only` picture instead of everything
+  defaulting to unconfirmed.
+- **Deliberately not built**: the `track1_only`/`confirmed`/`neither`
+  states, a stored `cross_track_check` table, and any judgment/reasoning
+  layer on top of a flag (a "referee agent" was discussed and explicitly
+  deferred — get the flag flowing first, look at real cases, decide
+  later if raw detection is enough or if disagreement needs
+  interpretation).
+- 17 new tests in `vinu-live` (`detect_move()` unit tests +
+  `TestMoveEventRecording` poller-wiring tests) — full suite 571 passed
+  (up from 555 pre-#5/pre-#10, 0 regressions). 14 new tests in
+  `vinu-research` (`MoveEvidenceStore`, `track2_reconciliation`, 5 new
+  route tests) — full suite 1163 passed (up from 1149, 0 regressions).
+
 ## 11. vinu-agent inefficiency audit (2026-09-25) — verified, not yet acted on
 
 A thorough real-code audit of `vinu-agent`'s tool-calling layer (kept
@@ -743,6 +953,51 @@ things checked and found fine are noted at the end):
    within one agent loop that might call the same symbol/range twice.
    `ToolRegistry.get_definitions()` (`agent/tools.py:42-56`) already
    demonstrates the caching pattern to reuse.
+
+   **UPDATE (2026-09-28)**: **built**, plus a status check on findings
+   #1/#2/#3/#5 before starting -- all four turned out to already be
+   fixed (confirmed by reading the actual files, not assumed): #1's
+   shared `tools/_date_utils.py` already exists and is used by all four
+   callers; #2's zero-coverage list is down to 8 of the original 17
+   (including both priority files, `stock_price_tool.py`/`news_tool.py`,
+   which already have dedicated as-of-clamp test classes); #3's retry
+   loop and #5's 429/401 distinction are both already in the code with
+   their own "item #11 finding #N" comments. Only finding #4 was still
+   open.
+
+   New `vinu_agent/tools/_call_cache.py` — a tiny `CallCache` (plain
+   dict, no LRU/eviction needed) added to each of the four tools'
+   `__init__`, scoped to the **tool instance's own lifetime**, not
+   process-global: `tools/__init__.py::build_registry()` already
+   constructs a fresh instance per run with its own fixed `_as_of`, so an
+   instance-scoped cache can never leak a stale response across two
+   different replay instants or two different sessions. Cache key is the
+   final, post-clamp/post-default params (e.g. `stock_price_tool`'s
+   `(symbol, start_epoch, end_epoch, interval, clamped)`), not the raw
+   kwargs, so two calls that phrase the same window differently still
+   hit the same entry. Deliberately **not** cached: any error path, and
+   `options_tool`'s "empty" result -- a transient failure or a
+   momentarily-empty answer must still be retryable later in the same
+   run, only a real successful result is locked in.
+   11 new tests (3 stock_price, 2 news, 3 options — including one
+   confirming errors/empty results are never cached — 3 fundamentals).
+   Full vinu-agent suite: 1462 passed before, 1473 after (exact +11), 0
+   regressions.
+   **Follow-up (2026-09-28)**: went back and closed 7 of finding #2's 8
+   remaining zero-coverage files: `session_search_tool.py`,
+   `load_skill_tool.py`, `plan_workflow_tool.py`, `compact_tool.py`,
+   `complete_step_tool.py`, `angle_clusters.py` (data-consistency tests --
+   no duplicate angle across clusters, reverse-lookup matches the forward
+   mapping -- since `cluster_digest_validator.py` trusts this data as
+   ground truth), and `position_sizing_tool.py` (the tool wrapper's own
+   config-fallback/optional-field-parsing logic; the underlying sizing
+   math already had its own tests in `test_position_sizing.py`, not
+   duplicated here). 27 new tests, vinu-agent suite 1473 -> 1500 passed
+   (exact +27), 0 regressions. **Deliberately left open**:
+   `trade_plan_tool.py` (1330 lines, ~24 methods spanning rendering,
+   prospective fact-checking, and journal scheduling) is real, substantial
+   work on its own and doesn't fit a mechanical tack-on pass the way the
+   other seven did -- left for a dedicated session.
 5. **`options_tool.py`'s `fetch_chain` doesn't distinguish 429/5xx
    (retryable) from 401/403 (permanent)** (`tools/options_tool.py:71-81`,
    `execute()`'s except at 159-161) — both come back as the same generic
@@ -1481,6 +1736,34 @@ elsewhere in this codebase that nothing currently wires into sizing:
    it. A strategy that only works in low-vol regimes should shrink
    automatically as the regime shifts, not rely on the strategy author
    hard-coding that themselves.
+
+   **UPDATE (2026-09-28)**: **built.** New `RegimeAwareSizer`
+   (`vinu-simulator/engine/sizing.py`) — a portfolio-wide scalar lookup
+   (`regime_scale_map.get(regime, default_scale)`, defaults
+   `{"high_vol": 0.5, "bear": 0.7, "bull": 1.0, "sideways": 1.0}`), not a
+   second classifier: `classify_regime()` itself is untouched and still
+   the only place regime labels are computed. `WeightSimulator.run()`
+   captures a benchmark ticker's price column (from `config
+   .benchmark_tickers`, e.g. SPY) before `price_data` narrows to the
+   strategy's own tradable universe -- that column was already being
+   fetched for post-hoc regime-attribution reporting
+   (`service.py`'s existing `classify_regime`/`per_regime_performance`
+   call after a run finishes), just never threaded into the run itself.
+   Precomputes the whole regime-label series once up front (safe:
+   `classify_regime` is already point-in-time safe internally, per its
+   own docstring, so precomputing doesn't introduce lookahead) and passes
+   the current bar's own label into `.size()` via a new `regime` kwarg,
+   following the exact same "every sizer accepts and ignores it" pattern
+   `current_date`/`evidence_triggers` established for item #4. No
+   benchmark ticker present in the price data -> `regime=None` for the
+   whole run -> unscaled, same fail-open posture as every other "not
+   enough context" branch in this file. 13 new tests (`test_sizing.py`:
+   `RegimeAwareSizer` unit tests + `build_position_sizer` branch;
+   `test_simulator.py`: 4 engine-wiring tests, including one proving a
+   real bear/high-vol stretch in benchmark data produces a different
+   equity curve than `fixed` sizing for the identical weight/price
+   input). Full vinu-simulator suite: 274 passed before, 287 after (exact
+   +13, verified via `git stash`), 0 regressions.
 3. **Drawdown-aware** — `vinu-portfolio/circuit_breakers.py`'s
    `PortfolioDrawdownMonitor` and `drawdown_scheduler.run_once()` exist,
    but **checked directly (2026-09-25): this is not a drop-in.**
@@ -1494,6 +1777,46 @@ elsewhere in this codebase that nothing currently wires into sizing:
    systematically more optimistic than live trading would actually
    produce, since live drawdown throttling would have cut exposure at
    points the backtest currently never does.
+
+   **UPDATE (2026-09-28)**: **built** -- exactly the extraction this
+   finding's own text called for. New
+   `vinu_portfolio.circuit_breakers.compute_drawdown_action()`: the pure
+   ok/halve/flat/halt threshold-ladder math (peak tracking, absolute-loss-
+   from-start check, action determination), taking and returning
+   peak/start explicitly instead of reading/writing `self` and with the
+   real `_halt_trading()` HTTP call removed entirely.
+   `PortfolioDrawdownMonitor.update()` now delegates to it (own state kept
+   on `self` as before, then still calls `_halt_trading()` itself on
+   breach) -- its own public behavior and return shape are byte-identical
+   to before, confirmed by all 17 pre-existing tests passing unchanged.
+   New `vinu-simulator` `DrawdownAwareSizer` (`engine/sizing.py`) calls
+   the same pure function once per backtest day, tracking its own
+   peak/start on the sizer instance (fresh per run, no cross-run
+   leakage -- same guarantee `reset()` gives the live monitor between
+   sessions). Action-to-scale mapping confirmed directly (2026-09-28):
+   `ok=1.0, halve=0.5, flat=0.0, halt=0.0`, matching the live system's
+   stated intent literally. Confirmed *not* sticky -- a recovery above
+   the halt threshold on a later day returns to whatever rung the ladder
+   currently sits at, same bar-by-bar posture every other sizer here
+   already has (a real design question, resolved by explicit choice, not
+   assumed).
+   `WeightSimulator`'s loop now threads `portfolio_value=nav_before`
+   (each day's NAV before that day's rebalance) into every sizer's
+   `.size()` call -- a new kwarg every existing sizer accepts and ignores,
+   same pattern `current_date`/`evidence_triggers`/`regime` already
+   established.
+   10 new tests in `vinu-portfolio` (`test_circuit_breakers.py`'s new
+   `TestComputeDrawdownAction`, including one confirming the pure
+   function makes no HTTP calls) -- full suite 259 -> 269 passed (exact
+   +10, verified via `git stash`), 0 regressions. 15 new tests in
+   `vinu-simulator` (`TestDrawdownAwareSizer` unit tests +
+   `build_position_sizer` branch + 3 engine-wiring tests, including one
+   proving a real -30% drawdown mid-run produces a different equity curve
+   than unscaled `fixed` sizing for the identical input) -- full suite
+   287 -> 302 passed, 0 regressions.
+   Item #14A's four sizing factors are now all built or confirmed
+   already-drop-in: #1/#2/#3 built this session, #4 (correlation-aware,
+   `CompositeSizer`) already existed.
 4. **Correlation-aware** — `vinu-portfolio/shock_correlation.py` **checked
    directly: this one genuinely is a drop-in** — fully computational
    (Gerber correlation, GARCH conditional variance, DCC shock
@@ -2014,6 +2337,93 @@ closed the portfolio-layer instance.
   checked directly, not assumed, after the same near-miss item #3's fix
   had with `sweep_grid.db`.
 
+**UPDATE (2026-09-28)**: **finding #5 fixed** (missing-pieces-of-system/
+new-theory-of-trading/system-wide-audit-and-design/
+04-synthesis-built-vs-missing-2026-09-28.md picked this as the next item
+to build after the exit-mechanism fix). `vinu-agent/vinu_agent/cli.py`'s
+`planner_worker_main` previously only ever used vinu-screener as a
+one-time bootstrap trigger (`VINU_AGENT_SCREENER_RANKER_ID`, added
+separately from this finding) that ADDS tickers into
+`TickerSummaryStore` but never removes any — so the per-cycle watchlist
+(`list_summaries()`) was still an ever-growing accumulation of every
+ticker ever bootstrapped, exactly this finding's own "seed-and-forget"
+description, not a real live loop.
+
+- When `screener_ranker_id` is configured, this cycle's real ticker
+  source is now `fetch_screener_top_tickers()`'s current output,
+  intersected with `TickerSummaryStore.list_summaries()` (so a ticker
+  whose bootstrap is still mid-flight or failed this cycle is simply
+  excluded until its first summary lands, not half-processed with no
+  summary to act on) — `watchlist_seed_tickers` (the static,
+  operator-provided list) stays additive on top, a human's explicit
+  override never dropped just because the screener stops ranking it,
+  exactly this finding's own "current static watchlist becoming the
+  fallback/override rather than the primary path" framing.
+- Unset, or a transient `fetch_screener_top_tickers()` failure (already
+  fails open to `[]`), falls back to the full `list_summaries()`
+  accumulation — unchanged from previous behavior, so this ships as a
+  strict improvement gated behind the pre-existing opt-in knob, not a
+  forced behavior change on anyone not using it.
+- **Named consequence, not hidden**: a ticker that has ever been
+  bootstrapped but later falls out of the screener's current ranking
+  (and isn't in the static seed list) now stops being refreshed/
+  triaged by this worker each cycle — this is the actual point of "live"
+  discovery, not a side effect to paper over. It does not affect
+  positions already live via a different path (this worker only
+  generates new research ideas, per-ticker Planner triage, not managing
+  already-open positions).
+- 3 new tests in `test_cli.py`'s `TestPlannerWorkerMain`: the live
+  intersection replacing the accumulation, the fail-open fallback on an
+  empty screener response, and a not-yet-bootstrapped screener ticker
+  correctly excluded rather than half-processed. Confirmed zero
+  regressions: full `vinu-agent` suite, 1462 passed (up from 1459,
+  exactly +3), 4 skipped, 0 failed.
+- **What this leaves open**: finding #3 (unified candidate graveyard)
+  is untouched by this pass — a separate, real decision, not a wiring
+  gap this fix happened to also close.
+
+**UPDATE (2026-09-28)**: **finding #3 built** — a unified, read-only
+query across all three real death points a research idea can hit:
+generation-time discard (`GenerationCandidateStore`, finding #2),
+sweep-time backtest failure (`SweepGridStore`, item #3), and
+hypothesis-level rejection (`HypothesisRegistry.reject_with_reason()`,
+items #1/#7). Deliberately a read-time query, not a fourth table: none
+of the three existing stores change what they record.
+
+- New `vinu-research/vinu_research/candidate_graveyard.py`:
+  `query_candidate_graveyard(symbol, ...)` reads all three stores for a
+  symbol, tags each entry with its own `source` (never re-attributes a
+  generation-discard to look like a sweep-failure or vice versa), and
+  returns one combined list sorted most-recent-first. `created_at` is
+  normalized to ISO 8601 UTC across all three (the generation/sweep
+  stores natively record epoch floats, `HypothesisRegistry` natively
+  records ISO strings) purely for a working combined sort — the
+  underlying stores are untouched. `hypothesis_registry` is an optional
+  param, not constructed internally, so a caller reuses whatever
+  instance it already holds rather than risking a second, possibly-
+  diverging one.
+- New `GET /research/candidate-graveyard/{symbol}` (`routes_introspect.py`
+  — already this codebase's "give read access to state that was already
+  being written but had no HTTP surface" file, per its own module
+  docstring). Reuses `routes_sweep.py`'s already-wired `SweepGridStore`
+  instance via a new `get_sweep_store()` getter, rather than opening a
+  second connection against the same `sweep_grid.db` file.
+- **Deliberately not built**: linking a generation-time `code_hash` to a
+  later sweep-time failure of "the same" candidate — `sweep_grid_points`
+  records params, not the code_hash of whatever candidate produced them,
+  so that join is a real, separate design decision, not a query detail
+  this pass could resolve on its own. Also not built: wiring this query
+  into generation-time dedup as a blocking gate (the audit's own framing
+  keeps this a read surface — "has this failed before" — not a new
+  policy decision about what to do with the answer).
+- 12 new tests: 8 in new `test_candidate_graveyard.py` (empty case, each
+  source individually, the winner excluded from generation entries,
+  succeeded points excluded from sweep entries, the registry-omitted
+  path, combined cross-source ordering, symbol isolation, `limit`
+  capping), 4 in new `test_routes_introspect_candidate_graveyard.py`.
+  Confirmed zero regressions: full `vinu-research` suite, 1137 passed
+  (up from 1125, exactly +12), 1 skipped, 0 failed.
+
 ## 17. Cross-service seam audit (2026-09-25) — agent↔research↔simulator, includes a real compound retry-storm risk
 
 Previous audits (items 11-13) covered each service in isolation. This
@@ -2283,6 +2693,55 @@ one.
   `policy_version`/schema-version field threading through the whole
   chain) remains untouched — a real, separate design decision about how
   such a field would even be versioned/enforced, not a test-writing task.
+
+  **UPDATE (2026-09-28)**: **built**, after resolving a real naming trap
+  first: `vinu_infra.model_policy.policy_version()` already exists in
+  this codebase, but stamps a completely different thing (which ML
+  model checkpoint/config is active) -- reusing it here would have
+  conflated two unrelated concerns that happen to share a word. Built a
+  separate, purpose-built mechanism instead.
+
+  Confirmed the versioning approach directly (2026-09-28): a
+  deterministic hash of the pydantic model's own JSON schema, not a
+  manually-bumped integer, so the version updates automatically the
+  instant a field's shape changes -- nobody can forget to bump it, the
+  exact human-discipline gap this finding is about. New
+  `vinu_infra.contract_version.contract_version(model_cls)`.
+
+  Scoped to the research<->simulator hop (`CustomSimulateRequest`/
+  `CustomSimulateResponse`) as the concrete, complete slice -- the
+  agent<->research hop (`RunResearchRequest`/`SweepCandidateRequest`) is
+  the identical pattern, buildable as a fast follow with the same shared
+  helper, not done here to keep this pass honestly scoped rather than
+  doing both with less rigor.
+
+  Real architectural constraint discovered while building this (not
+  assumed going in): neither side of this hop imports the other's
+  pydantic request/response models at runtime in production code --
+  every cross-service call in this codebase builds a plain dict over
+  HTTP (only test files cross-import, to validate). That ruled out a
+  "sender computes and sends its own version" design -- the sender
+  genuinely doesn't have the class to hash from at runtime. Resolved
+  instead the way that respects the existing architecture: the
+  **receiving** service (vinu-simulator, which always has its own model
+  in-process) computes and echoes its own live schema version on every
+  real response (`CustomSimulateResponse.request_schema_version`/
+  `response_schema_version`, populated by the one real construction
+  site, `routes_read.py`) -- a real field, present on every live
+  response, not just a test artifact. The existing import-based contract
+  test (`vinu-research/tests/test_simulator_contract.py`) gained a new
+  `TestPinnedContractVersion` class asserting those hashes against
+  literal pinned constants -- this is the actual enforcement mechanism:
+  if either schema's shape changes, this test fails loudly and
+  explicitly, forcing a human to look at the diff and re-confirm
+  compatibility before updating the pin, rather than the version
+  silently drifting unnoticed in a test that only checks shape-
+  equivalence.
+  6 new tests (`vinu-infra`), 1 (`vinu-simulator`, confirms the real
+  route handler actually stamps both fields, not just that the schema
+  can carry them), 2 (`vinu-research`, the pinned-version assertions).
+  Full suites: `vinu-infra` 334 -> 340 passed, `vinu-simulator` 302 -> 303
+  passed, `vinu-research` 1163 -> 1165 passed, 0 regressions anywhere.
 
 ## 18. vinu-screener audit (2026-09-25) — Layer 1, process/logic and code-level, not yet acted on
 
@@ -3125,6 +3584,49 @@ visible by comparing multiple, unrelated audits against each other.
    `AGENTS.md`) remains unbuilt -- this update fixed instances of the
    *symptom* (wrong formula), not the *cause* (no discoverable shared
    entry point) this finding says is the real root.
+
+   **UPDATE (2026-09-28)**: all four originally-named instances are now
+   either fixed or a confirmed, deliberate non-fix -- traced each one's
+   real current code before assuming the 2026-09-26 update above still
+   held, correcting its "entirely untouched" claim where it no longer
+   matched reality:
+   - Track 1's original hand-rolled ADX/RSI (`signal_evidence/
+     compute.py`) -- already fixed (delegates to `vinu-tools` directly).
+   - `vinu-screener`'s `operators.py` -- already investigated and fixed
+     (the one real formula divergence, RSI seeding, corrected to match
+     exactly); staying duplicated by deliberate, documented choice --
+     its rolling-operator DSL is architecturally incompatible with
+     `vinu-tools`' row-based function shape, a real mismatch, not
+     laziness.
+   - `trend_lifecycle`'s true-range -- also already fixed, contrary to
+     the "entirely untouched" claim two paragraphs up: it now imports
+     `vinu_tools`' `true_range()` directly, verified index-for-index
+     identical before landing (its own inline comment confirms this).
+   - `vinu-stock-price`'s `query/indicators.py` -- the one genuine
+     remaining instance, **now built**. Unlike the other three, this one
+     carried no historical-migration risk at all: these indicator values
+     are computed fresh on every API call and never persisted (confirmed
+     -- the only DB touched is an in-memory, per-request DuckDB
+     connection used to join raw prices, not to store computed
+     indicators), so there was no old-formula-vs-new-formula seam to
+     manage. `apply_indicators()` now delegates directly to
+     `vinu-tools`' `compute(rows, name=...)` for SMA/RSI/MACD/
+     macd_signal/daily_return/volatility_20d/ADX -- the hand-rolled
+     `_sma`/`_rsi`/`_ema`/`_macd`/`_daily_return`/`_rolling_std`/`_adx`/
+     `_wilders_ema` helpers are gone entirely, not just patched. The
+     close-fallback for missing high/low (needed by ADX) was preserved
+     from the original code. 4 new tests, including two that assert the
+     output is numerically identical to calling `vinu-tools` directly
+     (confirms genuine delegation, not a second implementation that
+     happens to agree). Full vinu-stock-price suite: 139 passed before,
+     143 after (exact +4), 0 regressions.
+
+   Pattern #2 is now fully closed across all four of its originally-named
+   instances. Item #20.6's root-cause fix (enforcing
+   `get_indicator_module()` as the one documented, blessed path) is still
+   the one piece not built -- every instance above was fixed individually,
+   not by making the shared entry point discoverable enough that this
+   class of mistake stops recurring.
 3. **"Compute why something failed, then discard it before persisting" —
    a recurring habit across at least three unrelated components.** Sweep
    candidates' ranking verdict (item #3), the research loop's
@@ -3461,6 +3963,56 @@ degraded data, finding #1 is a strong candidate to prioritize.
   anything), and the code-level findings (#6 non-atomic registry reload,
   #7 one-client-per-thread-pool concurrency question, #8 no test coverage
   for `engine/timing.py`) are all untouched.
+
+**UPDATE (2026-09-28)**: **finding #3 fixed** — scoped precisely, after
+tracing exactly which call in this layer is genuinely live-fetched with
+no point-in-time pin, versus which is already pinned by construction.
+
+- **Traced before building, not assumed**: `_fetch_correlation_for_symbol`/
+  `_fetch_angles_for_symbol` (`CorrelationClient`) are backed by
+  `vinu-initial-analysis` (port 8083), whose rows are already pinned to
+  their own `analysis_until` at write time — a real but *different*
+  point-in-time question (which stored run to read), not the live
+  look-ahead risk this finding names. `FeaturesClient.get_features()` is
+  the one call in this layer that's genuinely different: backed by
+  `vinu-tools` (port 8082), which computes indicators fresh from live
+  candle data on every call with **zero** point-in-time pin — always
+  "last 60 days from wall-clock now, whenever this HTTP call happens to
+  execute." Fixed that one, left the other correctly alone.
+- `vinu-tools/vinu_tools/server/routes_features.py`'s `GET /{symbol_or_kind}`
+  gained an `as_of: int | None` query param, forwarded to
+  `/stock/candles/{symbol}` — reusing that route's own already-built
+  `clamp_to_as_of()` enforcement (item #21 pattern #1's fix) rather than
+  inventing a second, independent point-in-time mechanism here.
+- `vinu-strategy/vinu_strategy/clients/features_client.py`'s
+  `get_features()` gained the matching `as_of` param.
+  `StrategyService.evaluate()` now captures one `effective_as_of` at the
+  very top of the call (an explicit param if the caller pins one, real
+  wall-clock now otherwise) and threads that SAME value into every
+  symbol's `get_features()` call for the run — the actual fix: previously
+  each symbol's HTTP call would have landed at whatever "now" happened to
+  be at that exact moment, not one consistent instant for the whole run.
+  Surfaced on `StrategyResult.metadata["as_of"]` and threaded through
+  `StrategyAPI.evaluate()`/`POST /strategies/{name}/evaluate`'s own new
+  optional `as_of` query param, defaulting to `None` (wall-clock now,
+  identical to every existing caller's behavior before this field
+  existed).
+- 12 new tests: 2 in `vinu-tools/tests/test_api.py` (as_of forwarded
+  when given, omitted entirely when not — confirming the default changes
+  nothing for existing callers), 5 in new
+  `vinu-strategy/tests/test_point_in_time.py` (explicit as_of passed
+  through, no-as_of defaults to real wall-clock now within a tight
+  window, every symbol in one run shares the same value, it reaches
+  `StrategyResult.metadata`, no features required never calls the client
+  at all). Confirmed zero regressions: full `vinu-tools` suite (177
+  passed) and full `vinu-strategy` suite (141 passed, up from 136,
+  exactly +5 — the vinu-tools-side tests are counted in that suite's own
+  run).
+- **What this leaves open, honestly**: the correlation/angle path's own
+  "which stored run" point-in-time question is real but untouched — a
+  materially different question this fix doesn't attempt to answer.
+  Finding #4 (pipeline-dispatcher wiring for must_conditions/
+  risk_management) remains open, as do the code-level findings #6/#7/#8.
 
 **UPDATE (2026-09-26, later same day)**: **finding #2 is now also
 built and tested** — a single, method-agnostic final gate, built exactly
@@ -4370,6 +4922,52 @@ hidden:
   (`regime_drift.py`, `angle_trust.py`) fail on the exact same import.
   This session's own new/touched files (`test_brain.py`, `test_config.py`)
   run cleanly in isolation: 18 passed.
+
+**UPDATE (2026-09-28)**: **Step 9 built, scoped to one consumer on
+purpose** -- confirmed directly which of the three named consumers to
+wire first: Planner/vinu-agent (lowest-risk starting point, since it
+doesn't place orders itself and already reasons over other advisory-only
+signals each cycle), not risk_gatekeeper or capital_allocator.
+
+- `vinu-reflection` gets its first-ever HTTP surface: new `host`/`port`
+  config fields (port 8092, confirmed unused against every other
+  service's own default), new `server/app.py`/`server/routes_synthesis.py`,
+  and a new `serve` subcommand in `cli.py` (same shape every other
+  service's worker+server `cli.py` already uses, e.g. `vinu-live`'s).
+  Read-only by construction: `GET /reflection/synthesis/latest` (`{"status":
+  "none"}`, never a 404, when the brain hasn't written anything yet --
+  an expected, common state, not an error) and `GET
+  /reflection/synthesis/pending`. The worker loop's `brain.run_synthesis()`
+  remains the only writer; this route accepts no writes at all.
+- `vinu-agent`'s new `get_reflection_synthesis` tool
+  (`tools/reflection_synthesis_tool.py`) calls that endpoint over HTTP
+  only -- no in-process fallback the way `signal_evidence_tool.py` has
+  one, since `vinu-reflection` already depends on `vinu-agent` (it
+  mounts and imports it for its own analysts' LLM calls), so the reverse
+  import this whole finding exists to avoid would just move, not
+  disappear, if this tool tried to import `vinu-reflection` in-process
+  instead.
+- **Honest note on where exactly it's wired**: "Planner" in this design's
+  own language is `vinu-agent/cli.py`'s `planner_worker_main` --
+  triage/gating logic (`ChangeGate`, `PlannerTriage`), not itself an
+  LLM tool-calling agent -- which hands off to the **research** team
+  (`run_team_for_ticker(service, "research", ...)`) once triage says
+  "yes." There is no single AGENT.md file that *is* "Planner." The tool
+  is wired into that research team's `idea_generator` agent (the one
+  agent in that hand-off chain that reasons broadly about market
+  conditions before producing an idea) -- a reasonable, defensible
+  attachment point given the real structure, not a perfect one-to-one
+  match to the design doc's "Planner" label. Documented as such in the
+  agent's own AGENT.md, not silently presented as the obvious slot.
+- 13 new tests in `vinu-reflection` (5 config, 8 route) -- full suite now
+  runs cleanly in this environment (192 passed, up from having been
+  unable to run its full suite at all in the 2026-09-27 update above).
+  4 new tests in `vinu-agent` -- full suite 1500 passed before, 1504
+  after (exact +4), 0 regressions.
+- **Deliberately not built**: `risk_gatekeeper`/`capital_allocator`
+  wiring (the other two named consumers) -- same read-only endpoints
+  would serve them too, but per the confirmed scope this pass only wires
+  the one.
 
 ## 26. Honest answer: are the components properly connected for the planned goals? No — here is exactly where the seams are broken
 

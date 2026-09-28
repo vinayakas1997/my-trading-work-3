@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from vinu_portfolio.circuit_breakers import PortfolioDrawdownMonitor
+from vinu_portfolio.circuit_breakers import PortfolioDrawdownMonitor, compute_drawdown_action
 
 
 class TestPortfolioDrawdownMonitor:
@@ -185,3 +185,71 @@ class TestAbsoluteLossBreaker:
         with patch.dict("os.environ", {"VINU_PORTFOLIO_ABS_LOSS_HALT": "-0.12"}):
             monitor = PortfolioDrawdownMonitor(drawdown_threshold=-0.20)
         assert monitor._abs_loss_threshold == -0.12
+
+
+class TestComputeDrawdownAction:
+    """item #14A factor #3: the pure math extracted out of
+    PortfolioDrawdownMonitor.update() so vinu-simulator's
+    DrawdownAwareSizer can reuse it without also reusing update()'s real
+    HTTP halt call."""
+
+    _COMMON = dict(
+        threshold=-0.20, halve_threshold=-0.10, flat_threshold=-0.15, abs_loss_threshold=0.0,
+    )
+
+    def test_first_call_establishes_peak_and_start_with_no_drawdown(self) -> None:
+        result = compute_drawdown_action(100_000.0, peak_value=None, start_value=None, **self._COMMON)
+        assert result["current_drawdown"] == 0.0
+        assert result["action"] == "ok"
+        assert result["new_peak_value"] == 100_000.0
+        assert result["new_start_value"] == 100_000.0
+
+    def test_small_drawdown_is_ok(self) -> None:
+        result = compute_drawdown_action(97_000.0, peak_value=100_000.0, start_value=100_000.0, **self._COMMON)
+        assert result["action"] == "ok"
+        assert result["threshold_breached"] is False
+
+    def test_halve_threshold_crossed(self) -> None:
+        result = compute_drawdown_action(89_000.0, peak_value=100_000.0, start_value=100_000.0, **self._COMMON)
+        assert result["action"] == "halve"
+        assert result["threshold_breached"] is False
+
+    def test_flat_threshold_crossed(self) -> None:
+        result = compute_drawdown_action(84_000.0, peak_value=100_000.0, start_value=100_000.0, **self._COMMON)
+        assert result["action"] == "flat"
+        assert result["threshold_breached"] is False
+
+    def test_halt_threshold_crossed(self) -> None:
+        result = compute_drawdown_action(79_000.0, peak_value=100_000.0, start_value=100_000.0, **self._COMMON)
+        assert result["action"] == "halt"
+        assert result["threshold_breached"] is True
+
+    def test_new_high_advances_the_peak(self) -> None:
+        result = compute_drawdown_action(110_000.0, peak_value=100_000.0, start_value=100_000.0, **self._COMMON)
+        assert result["new_peak_value"] == 110_000.0
+        assert result["action"] == "ok"
+
+    def test_zero_peak_value_is_ok_not_a_divide_by_zero(self) -> None:
+        result = compute_drawdown_action(0.0, peak_value=0.0, start_value=0.0, **self._COMMON)
+        assert result["action"] == "ok"
+        assert result["current_drawdown"] == 0.0
+
+    def test_abs_loss_threshold_armed_trips_independently_of_peak_drawdown(self) -> None:
+        common = dict(self._COMMON, abs_loss_threshold=-0.05)
+        # peak re-referenced high, then a slow bleed back to -5% from start,
+        # never far enough from the (now higher) peak to trip drawdown alone.
+        result = compute_drawdown_action(95_000.0, peak_value=100_000.0, start_value=100_000.0, **common)
+        assert result["abs_loss_breached"] is True
+        assert result["action"] == "halt"
+
+    def test_abs_loss_threshold_unarmed_by_default(self) -> None:
+        result = compute_drawdown_action(50_000.0, peak_value=100_000.0, start_value=100_000.0, **self._COMMON)
+        assert result["abs_loss_breached"] is False
+        # still halts via the ordinary drawdown-from-peak breaker at -50%.
+        assert result["action"] == "halt"
+        assert result["threshold_breached"] is True
+
+    def test_no_side_effects_pure_function_makes_no_http_calls(self) -> None:
+        with patch("vinu_portfolio.circuit_breakers.httpx.post") as mock_post:
+            compute_drawdown_action(50_000.0, peak_value=100_000.0, start_value=100_000.0, **self._COMMON)
+        mock_post.assert_not_called()

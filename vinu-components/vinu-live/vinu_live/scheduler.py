@@ -13,7 +13,13 @@ from vinu_live.breaker.engine import BreakerVerdict, check_limits
 from vinu_live.breaker.limits import DEFAULT_LIMITS, BreakerLimits, BreakerState
 from vinu_live.config import LiveConfig, load_config
 from vinu_live.execution import compute_volume_profile, plan_twap, plan_vwap, schedule_slice_delays
-from vinu_live.live_decision.storage import LiveDecisionBackend, list_unapplied_executes, mark_decision_applied
+from vinu_live.live_decision.storage import (
+    LiveDecisionBackend,
+    list_open_positions,
+    list_unapplied_executes,
+    mark_decision_applied,
+    open_position,
+)
 from vinu_live.maturity_link import fetch_maturity_status, scale_limits_for_tier
 from vinu_live.reconciliation import ReconciliationEngine
 from vinu_live.signal_translator import SignalTranslator
@@ -369,61 +375,79 @@ class LiveScheduler:
             )
 
     async def _fetch_live_decision_weights(self, cycle_id: str) -> list[dict[str, Any]]:
-        """Point 7 option 1: turns unapplied live_decision EXECUTE
-        records into `target_weights` entries, sized by each strategy's
-        own `live_decision_position_size` (vinu-strategy config field --
-        see StrategyConfig's own docstring for why there is no invented
-        default here).
+        """Point 7 option 1, plus the exit-mechanism fix (missing-pieces-
+        of-system/new-theory-of-trading/system-wide-audit-and-design/
+        04-synthesis-built-vs-missing-2026-09-28.md): converts unapplied
+        live_decision EXECUTE records into a real, tracked open position
+        (sized by each strategy's own `live_decision_position_size`
+        config field -- see StrategyConfig's own docstring for why there
+        is no invented default here), then re-emits a `target_weights`
+        entry for EVERY currently open position, not just the one this
+        cycle happened to newly apply.
 
-        A decision is marked applied the moment it's folded into this
-        cycle's target_weights, whether or not it was actually sizeable
-        -- an unsized (`live_decision_position_size == 0.0`) EXECUTE is
-        real, final information (the strategy author hasn't wired sizing
-        yet), not a transient failure, so it should not keep being
-        re-logged every cycle forever. A strategy-config fetch failure
-        IS transient, so that record is left unapplied and retried next
-        cycle instead.
+        This second part is the actual bug fix: previously a decision was
+        only ever folded into `target_weights` for the single cycle it
+        was applied, then never again -- since SignalTranslator.translate()
+        treats a symbol held but absent from `target_weights` as target
+        0.0, the position was force-closed the very next cycle rather
+        than genuinely held. Re-emitting the position's own stored size
+        (not a fresh strategy-config fetch) is deliberate: it reflects
+        what was actually opened, unaffected by a later config edit to
+        `live_decision_position_size`.
+
+        A decision is marked applied the moment it's converted into an
+        open position (or confirmed unsized), whether or not it was
+        actually sizeable -- an unsized (`live_decision_position_size ==
+        0.0`) EXECUTE is real, final information (the strategy author
+        hasn't wired sizing yet), not a transient failure, so it should
+        not keep being re-logged every cycle forever, and has no position
+        to open. A strategy-config fetch failure IS transient, so that
+        record is left unapplied and retried next cycle instead.
         """
         pending = list_unapplied_executes(self._live_decision_backend)
-        if not pending:
-            return []
+        if pending:
+            strategy_cache: dict[str, dict[str, Any] | None] = {}
+            for record in pending:
+                if record.strategy_id not in strategy_cache:
+                    strategy_cache[record.strategy_id] = await self._fetch_strategy_config(record.strategy_id)
+                strategy_cfg = strategy_cache[record.strategy_id]
+
+                if strategy_cfg is None:
+                    LOG.warning(
+                        "[%s] Could not fetch strategy %s to size live-decision EXECUTE "
+                        "on %s -- leaving unapplied, will retry next cycle",
+                        cycle_id, record.strategy_id, record.ticker,
+                    )
+                    continue
+
+                position_size = float(strategy_cfg.get("live_decision_position_size", 0.0) or 0.0)
+                if position_size == 0.0:
+                    LOG.warning(
+                        "[%s] live-decision EXECUTE on %s/%s has no live_decision_position_size "
+                        "configured -- not sized, no position opened for it",
+                        cycle_id, record.ticker, record.strategy_id,
+                    )
+                else:
+                    open_position(
+                        self._live_decision_backend,
+                        ticker=record.ticker, strategy_id=record.strategy_id,
+                        position_size=position_size, opened_bar_ts=record.bar_ts,
+                        trigger_id=record.trigger_id,
+                    )
+                    LOG.info(
+                        "[%s] Opened live-decision position %s/%s at weight %.4f",
+                        cycle_id, record.ticker, record.strategy_id, position_size,
+                    )
+
+                mark_decision_applied(self._live_decision_backend, record.id)
 
         weights: list[dict[str, Any]] = []
-        strategy_cache: dict[str, dict[str, Any] | None] = {}
-        for record in pending:
-            if record.strategy_id not in strategy_cache:
-                strategy_cache[record.strategy_id] = await self._fetch_strategy_config(record.strategy_id)
-            strategy_cfg = strategy_cache[record.strategy_id]
-
-            if strategy_cfg is None:
-                LOG.warning(
-                    "[%s] Could not fetch strategy %s to size live-decision EXECUTE "
-                    "on %s -- leaving unapplied, will retry next cycle",
-                    cycle_id, record.strategy_id, record.ticker,
-                )
-                continue
-
-            position_size = float(strategy_cfg.get("live_decision_position_size", 0.0) or 0.0)
-            if position_size == 0.0:
-                LOG.warning(
-                    "[%s] live-decision EXECUTE on %s/%s has no live_decision_position_size "
-                    "configured -- not sized, no order will be produced for it",
-                    cycle_id, record.ticker, record.strategy_id,
-                )
-            else:
-                weights.append({
-                    "name": f"live_decision:{record.strategy_id}",
-                    "symbol": record.ticker,
-                    "target_weight": position_size,
-                })
-                LOG.info(
-                    "[%s] Folding live-decision EXECUTE on %s/%s into this cycle's "
-                    "target_weights at weight %.4f",
-                    cycle_id, record.ticker, record.strategy_id, position_size,
-                )
-
-            mark_decision_applied(self._live_decision_backend, record.id)
-
+        for pos in list_open_positions(self._live_decision_backend):
+            weights.append({
+                "name": f"live_decision:{pos.strategy_id}",
+                "symbol": pos.ticker,
+                "target_weight": pos.position_size,
+            })
         return weights
 
     async def _fetch_strategy_config(self, strategy_id: str) -> dict[str, Any] | None:

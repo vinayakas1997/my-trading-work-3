@@ -169,3 +169,43 @@ class TestOptionsGreeksToolRetryableField:
             result = json.loads(OptionsGreeksTool().execute(symbol="AAPL"))
         assert result["status"] == "ok"
         assert result["n_contracts"] == 1
+
+
+class TestPerInstanceCaching:
+    """item #11 finding #4: repeated identical fetches within one agent
+    loop must not re-hit the network every time."""
+
+    def test_identical_call_twice_only_fetches_once(self) -> None:
+        tool = OptionsGreeksTool()
+        rows = [{"contract_symbol": "AAPL240119C00190000"}]
+        with patch("vinu_agent.tools.options_tool.fetch_chain", return_value=rows) as mock_fetch:
+            first = tool.execute(symbol="AAPL")
+            second = tool.execute(symbol="AAPL")
+        assert mock_fetch.call_count == 1
+        assert first == second
+
+    def test_error_result_is_not_cached(self) -> None:
+        """A transient failure must not lock a bad answer in for the rest
+        of the run -- a later identical call should retry, not replay the
+        cached error."""
+        tool = OptionsGreeksTool()
+        with patch(
+            "vinu_agent.tools.options_tool.fetch_chain",
+            side_effect=RetryableOptionsError("boom"),
+        ) as mock_fetch:
+            tool.execute(symbol="AAPL")
+        rows = [{"contract_symbol": "AAPL240119C00190000"}]
+        with patch("vinu_agent.tools.options_tool.fetch_chain", return_value=rows) as mock_fetch2:
+            result = json.loads(tool.execute(symbol="AAPL"))
+        assert mock_fetch2.call_count == 1
+        assert result["status"] == "ok"
+
+    def test_empty_result_is_not_cached(self) -> None:
+        tool = OptionsGreeksTool()
+        with patch("vinu_agent.tools.options_tool.fetch_chain", return_value=[]):
+            tool.execute(symbol="ZZZZ")
+        rows = [{"contract_symbol": "AAPL240119C00190000"}]
+        with patch("vinu_agent.tools.options_tool.fetch_chain", return_value=rows) as mock_fetch:
+            result = json.loads(tool.execute(symbol="ZZZZ"))
+        assert mock_fetch.call_count == 1
+        assert result["status"] == "ok"

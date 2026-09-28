@@ -42,13 +42,35 @@ class StrategyAPI:
             "confirmation_conditions": cfg.confirmation_conditions,
             "grace_window_bars": cfg.grace_window_bars,
             "live_decision_position_size": cfg.live_decision_position_size,
-            # "tested" is deliberately absent here -- no write-back path
-            # exists yet (see the field's own docstring in models/strategy.py).
-            "precondition": {**cfg.precondition, "tested": False},
+            # Point 6's write-back (reverse-engineering/
+            # 05-deciding-agent-and-precondition-tracking.md Part C):
+            # `tested`/`precondition_held`/`last_checked_at` are overlaid
+            # from PreconditionStateStore, a separate store from this
+            # strategy's own YAML file -- see that store's own module
+            # docstring for why. No real check recorded yet still means
+            # `tested: False`, same default the YAML-only version always
+            # returned.
+            "precondition": self._precondition_dict(name, cfg.precondition),
         }
 
-    def evaluate(self, strategy_name: str, symbols: list[str] | None = None) -> dict[str, Any]:
-        result = self._service.evaluate(strategy_name, symbols)
+    def _precondition_dict(self, name: str, base: dict[str, Any]) -> dict[str, Any]:
+        precondition = {**base, "tested": False, "precondition_held": None, "last_checked_at": None}
+        state = self._service.get_precondition_state(name)
+        if state is not None:
+            precondition.update(state)
+        return precondition
+
+    def record_precondition_check(self, name: str, *, precondition_held: bool | None) -> dict[str, Any]:
+        cfg = self._service.get_strategy(name)
+        if cfg is None:
+            raise HTTPException(status_code=404, detail=f"Strategy '{name}' not found")
+        self._service.record_precondition_check(name, precondition_held=precondition_held)
+        return {"status": "ok", "name": name, "precondition": self._precondition_dict(name, cfg.precondition)}
+
+    def evaluate(
+        self, strategy_name: str, symbols: list[str] | None = None, as_of: int | None = None,
+    ) -> dict[str, Any]:
+        result = self._service.evaluate(strategy_name, symbols, as_of=as_of)
         resp: dict[str, Any] = {
             "strategy_name": result.strategy_name,
             "run_id": result.run_id,

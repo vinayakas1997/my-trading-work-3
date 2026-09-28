@@ -21,3 +21,11 @@ subject to its own risk-limit checks, see item #24 in
 ../../missing-pieces-of-system/new-theory-of-trading/system-wide-audit-
 and-design/02-open-questions-strategy-and-simulation.md) is what
 actually places anything.
+
+Also runs in a second mode, review, on a periodic cadence for a position
+this team's own earlier EXECUTE opened -- the exit-mechanism fix
+(missing-pieces-of-system/new-theory-of-trading/system-wide-audit-and-
+design/04-synthesis-built-vs-missing-2026-09-28.md). Same team, same
+"writes no orders" posture; only the decision vocabulary (HOLD/EXIT
+instead of EXECUTE/SKIP/EXTEND_GRACE_WINDOW) and the question being
+asked change, selected by `Mode: POSITION_REVIEW` in the task text.

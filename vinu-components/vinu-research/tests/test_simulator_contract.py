@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from vinu_infra.contract_version import contract_version
 from vinu_research.tools import ResearchTools
 from vinu_simulator.server.schemas import CustomSimulateRequest, CustomSimulateResponse
 
@@ -91,3 +92,29 @@ class TestRunBacktestRequiredResponseFieldsAreARealSubset:
         response_fields = set(CustomSimulateResponse.model_fields.keys())
         missing = [f for f in required if f not in response_fields]
         assert missing == []
+
+
+class TestPinnedContractVersion:
+    """item #17's remaining "confirmed gap": the tests above catch drift
+    at TEST time, when both sides' code is checked out together -- they
+    can't catch DEPLOY-time drift between independently-versioned
+    running services. `CustomSimulateResponse.request_schema_version`/
+    `response_schema_version` (a deterministic hash, echoed on every real
+    /simulate/custom response) exists for exactly that. Pinning the
+    values here means this test fails LOUDLY and explicitly the moment
+    either schema's shape actually changes, forcing a human to look at
+    the diff and re-confirm compatibility, rather than the version
+    silently drifting unnoticed in a test that only checks shape-
+    equivalence and never surfaces the version number itself."""
+
+    # Confirmed 2026-09-28 -- update these two values (and re-verify
+    # vinu-research's own request/response handling still matches)
+    # whenever this test fails, don't just paste in the new hash.
+    _EXPECTED_REQUEST_VERSION = "1a9ff283ff1a"
+    _EXPECTED_RESPONSE_VERSION = "002ce5e717d7"
+
+    def test_request_schema_version_is_pinned(self) -> None:
+        assert contract_version(CustomSimulateRequest) == self._EXPECTED_REQUEST_VERSION
+
+    def test_response_schema_version_is_pinned(self) -> None:
+        assert contract_version(CustomSimulateResponse) == self._EXPECTED_RESPONSE_VERSION

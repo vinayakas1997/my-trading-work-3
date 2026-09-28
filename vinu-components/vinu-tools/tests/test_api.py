@@ -73,6 +73,69 @@ def test_feature_for_symbol(config, backend):
     service.close()
 
 
+def test_feature_for_symbol_forwards_as_of_to_stock_price(config, backend):
+    """item #22 finding #3 (missing-pieces-of-system/new-theory-of-
+    trading/system-wide-audit-and-design/
+    02-open-questions-strategy-and-simulation.md): this route used to
+    always fetch the last 60 days from wall-clock now, with no way to pin
+    the effective 'now' -- `as_of` must reach vinu-stock-price's own
+    `/stock/candles/{symbol}` call as a real query param, not be
+    silently dropped."""
+    service = FeatureService(config=config, storage=backend, candle_client=MockCandleClient())
+    app = create_app(service)
+    client = TestClient(app)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "data": [
+            {"ts": 1_700_000_000, "open": 100, "high": 101, "low": 99,
+             "close": 100.5, "volume": 1000, "signal": 0.5},
+        ]
+    }
+    mock_response.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.get.return_value = mock_response
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        resp = client.get("/features/AAPL?indicators=signal&as_of=1700000000")
+
+    assert resp.status_code == 200
+    call_args = mock_client.get.call_args
+    assert call_args.kwargs["params"]["as_of"] == 1_700_000_000
+
+    service.close()
+
+
+def test_feature_for_symbol_omits_as_of_when_not_given(config, backend):
+    """The default (as_of absent) must not change any existing caller's
+    behavior -- no as_of param sent at all, same as before this field
+    existed."""
+    service = FeatureService(config=config, storage=backend, candle_client=MockCandleClient())
+    app = create_app(service)
+    client = TestClient(app)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"data": []}
+    mock_response.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.get.return_value = mock_response
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        resp = client.get("/features/AAPL?indicators=signal")
+
+    assert resp.status_code == 200
+    call_args = mock_client.get.call_args
+    assert "as_of" not in call_args.kwargs["params"]
+
+    service.close()
+
+
 def test_feature_for_symbol_upstream_error(config, backend):
     service = FeatureService(config=config, storage=backend, candle_client=MockCandleClient())
     app = create_app(service)

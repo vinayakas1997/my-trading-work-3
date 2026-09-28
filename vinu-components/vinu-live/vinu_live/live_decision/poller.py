@@ -15,19 +15,25 @@ in vinu-live (scheduler.py, feedback_loop.py, shadow_evaluator.py).
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 
 from vinu_live.config import LiveConfig
-from vinu_live.live_decision import state_tracker
+from vinu_live.live_decision import conditions, state_tracker
 from vinu_live.live_decision.bars_client import fetch_recent_bars
-from vinu_live.live_decision.detector import compute_live_snapshot, min_warmup_bars
+from vinu_live.live_decision.detector import compute_live_snapshot, detect_move, min_warmup_bars
+from vinu_live.live_decision.schema import LiveDecisionOpenPosition
 from vinu_live.live_decision.storage import (
     LiveDecisionBackend,
     advance_cursor,
+    close_position,
     get_cursor,
     get_stage_state,
+    list_open_positions,
+    mark_position_reviewed,
+    record_live_snapshot,
 )
 
 LOG = logging.getLogger(__name__)
@@ -92,6 +98,7 @@ class CandleClosePoller:
 
     async def cycle(self) -> dict[str, Any]:
         strategies = await self._fetch_active_strategies()
+        strategy_by_id = {s["name"]: s for s in strategies}
 
         # Group by (ticker, timeframe) so every strategy sharing a pair
         # gets exactly one bar fetch this cycle, not one per strategy.
@@ -121,9 +128,39 @@ class CandleClosePoller:
                 continue
             snapshot = compute_live_snapshot(warmup)
 
+            # Present-data recording (missing-pieces-of-system/new-theory-
+            # of-trading/system-wide-audit-and-design/
+            # 02-open-questions-strategy-and-simulation.md item #5):
+            # mirrors vinu-initial-analysis's RunLog, but for live/
+            # present-moment computation -- one real, durable row every
+            # time this pair's snapshot is freshly (re)computed, keyed on
+            # wall-clock recency rather than a historical range. Recorded
+            # once per (ticker, timeframe) group here, shared across every
+            # strategy watching that pair, not once per strategy --
+            # `angle_name="live_indicators"` names this specific
+            # computation (point 3's detector output); a future writer
+            # recording a different kind of live computation would use a
+            # different angle_name against this same table.
+            record_live_snapshot(
+                self._backend, symbol=ticker, angle_name="live_indicators",
+                granularity=timeframe, snapshot_data=snapshot,
+            )
+
+            # item #10 (system-wide-audit-and-design/
+            # 02-open-questions-strategy-and-simulation.md): Track 2's move
+            # check runs here, unconditionally, once per (ticker, timeframe)
+            # group -- same reasoning as the snapshot recording just above.
+            # If this only ran inside the per-strategy loop below, a real
+            # move on a ticker with no must-condition currently firing
+            # would never be checked at all, which is exactly the
+            # "track2_only" blind spot this item exists to close.
+            await self._detect_and_record_move(ticker, timeframe, latest_bar_ts, warmup, snapshot)
+
             for strat in watching_strategies:
                 strategy_id = strat["name"]
-                previous_stage = get_stage_state(self._backend, ticker, strategy_id).stage
+                previous_state = get_stage_state(self._backend, ticker, strategy_id)
+                previous_stage = previous_state.stage
+                must_conditions = strat.get("must_conditions", [])
                 new_state = state_tracker.evaluate_candle_close(
                     self._backend,
                     ticker=ticker,
@@ -131,11 +168,24 @@ class CandleClosePoller:
                     bar_ts=latest_bar_ts,
                     timeframe_seconds=timeframe_to_seconds(timeframe),
                     live_snapshot=snapshot,
-                    must_conditions=strat.get("must_conditions", []),
+                    must_conditions=must_conditions,
                     confirmation_conditions=strat.get("confirmation_conditions", []),
                     grace_window_bars=strat.get("grace_window_bars", 10),
                 )
                 events_fired += 1
+
+                # The SignalEvidenceStore writer gap (found while building
+                # item #10, system-wide-audit-and-design/
+                # 02-open-questions-strategy-and-simulation.md): a fresh
+                # trigger_id means a must-condition genuinely fired THIS
+                # cycle -- not `previous_stage == "idle"` alone, since a
+                # terminal-stage reset-then-refire can happen within one
+                # call to evaluate_candle_close (state_tracker's own "Step
+                # 5" comment), which would otherwise skip this guard.
+                if new_state.trigger_id is not None and new_state.trigger_id != previous_state.trigger_id:
+                    await self._record_signal_evidence_trigger(
+                        ticker, must_conditions, new_state.trigger_id, latest_bar_ts, snapshot,
+                    )
 
                 # Point 5's trigger: only on the exact cycle a pair
                 # FRESHLY reaches ready_to_execute -- not every cycle it
@@ -150,11 +200,128 @@ class CandleClosePoller:
 
             advance_cursor(self._backend, ticker, timeframe, latest_bar_ts)
 
+        positions_reviewed = await self._review_open_positions(strategy_by_id)
+
         return {
             "strategies_checked": len(strategies),
             "ticker_timeframe_pairs": len(groups),
             "candle_close_events": events_fired,
+            "positions_reviewed": positions_reviewed,
         }
+
+    async def _review_open_positions(self, strategy_by_id: dict[str, Any]) -> int:
+        """The exit-mechanism fix (missing-pieces-of-system/new-theory-
+        of-trading/system-wide-audit-and-design/
+        04-synthesis-built-vs-missing-2026-09-28.md): a live_decision-
+        opened position previously had no way to ever close except the
+        (now-fixed) accidental auto-close bug. This re-invokes
+        live_decision_agent on a bar-count cadence for every currently
+        open position, asking HOLD or EXIT -- reusing the same team/tool
+        the entry decision already uses (05-deciding-agent-and-
+        precondition-tracking.md's "reduce, don't rebuild" precedent),
+        not a second agent stood up for this.
+
+        Cadence is measured in real market bars via each position's own
+        strategy timeframe (same bar_ts-based reasoning state_tracker's
+        grace window already uses), not wall-clock time -- a strategy
+        no longer enabled/found is left open and un-reviewed rather than
+        guessed at; that is a real, separate design gap (a strategy
+        removed out from under an open position), not silently handled
+        here.
+        """
+        reviewed = 0
+        for pos in list_open_positions(self._backend):
+            strat = strategy_by_id.get(pos.strategy_id)
+            if strat is None:
+                continue
+            timeframe = strat.get("schedule", "1d")
+            cursor = get_cursor(self._backend, pos.ticker, timeframe)
+            if cursor is None:
+                continue
+            last_reviewed = (
+                pos.last_reviewed_bar_ts if pos.last_reviewed_bar_ts is not None
+                else pos.opened_bar_ts
+            )
+            cadence_seconds = (
+                self._config.live_decision_position_review_cadence_bars
+                * timeframe_to_seconds(timeframe)
+            )
+            if cursor.last_processed_bar_ts - last_reviewed < cadence_seconds:
+                continue
+            await self._trigger_position_review(pos, cursor.last_processed_bar_ts)
+            reviewed += 1
+        return reviewed
+
+    async def _trigger_position_review(
+        self, pos: LiveDecisionOpenPosition, bar_ts: int,
+    ) -> None:
+        """Calls the same `/agent/live-decision/run` route the entry
+        trigger uses, with mode="review" so live_decision_agent's prompt
+        asks HOLD/EXIT instead of EXECUTE/SKIP/EXTEND_GRACE_WINDOW.
+        Every real outcome is durably recorded (same "record everything,
+        even failures" rule `_trigger_live_decision` already established)
+        under a synthetic `pos_<id>` trigger_id, since a review isn't
+        tied to a fresh must-condition trigger the way an entry decision
+        is.
+
+        Only HOLD/EXIT actually advance `last_reviewed_bar_ts` -- an HTTP
+        failure or an unrecognized answer leaves it unchanged so the next
+        cycle retries immediately rather than silently waiting a full
+        cadence again on a real infrastructure problem.
+        """
+        from vinu_live.live_decision.schema import LiveDecisionRecord
+        from vinu_live.live_decision.storage import record_live_decision
+
+        trigger_id = f"pos_{pos.id}"
+        try:
+            resp = await self._http.post(
+                f"{self._config.agent_api_url}/agent/live-decision/run",
+                json={
+                    "ticker": pos.ticker, "strategy_id": pos.strategy_id,
+                    "mode": "review",
+                    "position_context": {
+                        "opened_at": pos.opened_at,
+                        "opened_bar_ts": pos.opened_bar_ts,
+                        "position_size": pos.position_size,
+                    },
+                },
+            )
+            resp.raise_for_status()
+            result = resp.json()
+        except Exception as exc:
+            LOG.error(
+                "position-review trigger failed for %s/%s (position %s) -- "
+                "will retry next cycle: %s", pos.ticker, pos.strategy_id, pos.id, exc,
+            )
+            record_live_decision(self._backend, LiveDecisionRecord(
+                ticker=pos.ticker, strategy_id=pos.strategy_id, trigger_id=trigger_id, bar_ts=bar_ts,
+                decision="error", precondition_held=None,
+                reasoning=f"HTTP call to /agent/live-decision/run (review) failed: {exc}",
+                raw_content="",
+            ))
+            return
+
+        decision = result.get("decision", "")
+        reasoning = result.get("reasoning", "")
+
+        record_live_decision(self._backend, LiveDecisionRecord(
+            ticker=pos.ticker, strategy_id=pos.strategy_id, trigger_id=trigger_id, bar_ts=bar_ts,
+            decision=decision or "unrecognized", precondition_held=result.get("precondition_held"),
+            reasoning=reasoning, raw_content=result.get("content", ""),
+        ))
+
+        if decision == "EXIT":
+            close_position(self._backend, pos.id, reason=reasoning, bar_ts=bar_ts)
+            mark_position_reviewed(self._backend, pos.id, bar_ts)
+            LOG.info("position-review EXIT for %s/%s (position %s): %s", pos.ticker, pos.strategy_id, pos.id, reasoning)
+        elif decision == "HOLD":
+            mark_position_reviewed(self._backend, pos.id, bar_ts)
+            LOG.info("position-review HOLD for %s/%s (position %s): %s", pos.ticker, pos.strategy_id, pos.id, reasoning)
+        else:
+            LOG.error(
+                "position-review for %s/%s (position %s) returned an unrecognized decision %r -- "
+                "will retry next cycle", pos.ticker, pos.strategy_id, pos.id, decision,
+            )
 
     async def _trigger_live_decision(
         self, ticker: str, strategy_id: str, bar_ts: int, trigger_id: str | None,
@@ -218,6 +385,13 @@ class CandleClosePoller:
             reason = "agent_executed" if decision == "EXECUTE" else "agent_skipped"
             state_tracker.mark_executed(self._backend, ticker, strategy_id, bar_ts, reason=reason)
             LOG.info("live-decision %s for %s/%s: %s", decision, ticker, strategy_id, reasoning)
+            # Point 6's write-back (reverse-engineering/
+            # 05-deciding-agent-and-precondition-tracking.md Part C):
+            # EXECUTE and SKIP are both a real check against real
+            # evidence -- being checked and failing (SKIP) still counts
+            # as tested. EXTEND_GRACE_WINDOW/error/unrecognized do not
+            # (no real verdict was reached).
+            await self._record_precondition_check(strategy_id, precondition_held)
         elif decision == "EXTEND_GRACE_WINDOW":
             # Rare per live_decision_agent's own prompt (only applies to
             # fired_awaiting_confirmation, and this trigger only ever
@@ -233,3 +407,93 @@ class CandleClosePoller:
                 "live-decision for %s/%s returned an unrecognized decision %r -- "
                 "pair stays ready_to_execute, will retry next cycle", ticker, strategy_id, decision,
             )
+
+    async def _record_precondition_check(self, strategy_id: str, precondition_held: bool | None) -> None:
+        """Point 6's write-back call (reverse-engineering/
+        05-deciding-agent-and-precondition-tracking.md Part C) --
+        best-effort, same posture as every other side-write in this
+        codebase (e.g. MaturityConsultationStore's own recording calls):
+        a failure here must never break the live-decision loop itself,
+        since this only updates a strategy's own `precondition.tested`
+        visibility, not anything the trading loop depends on reading
+        back."""
+        try:
+            resp = await self._http.post(
+                f"{self._config.strategy_api_url}/strategy/strategies/{strategy_id}/precondition-check",
+                json={"precondition_held": precondition_held},
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            LOG.warning(
+                "could not record precondition check for strategy %s: %s", strategy_id, exc,
+            )
+
+    async def _detect_and_record_move(
+        self, ticker: str, timeframe: str, bar_ts: int, bars: Any, snapshot: dict[str, Any],
+    ) -> None:
+        """item #10's Track 2 writer -- best-effort, same posture as
+        `_record_precondition_check`: a failure here must never break the
+        candle-close loop itself, since nothing the trading loop depends
+        on reads this back. Only posts when `detect_move()` actually
+        found a real move (`move_detected=True`) -- `None` (not enough
+        history yet) and `move_detected=False` both mean "nothing to
+        record," matching `MoveEvidenceStore`'s own "real events only"
+        discipline."""
+        move = detect_move(bars, snapshot)
+        if move is None or not move["move_detected"]:
+            return
+        try:
+            resp = await self._http.post(
+                f"{self._config.research_api_url}/research/move-evidence/{ticker}",
+                json={
+                    "bar_ts": bar_ts,
+                    "window_seconds": timeframe_to_seconds(timeframe),
+                    "granularity": timeframe,
+                    "atr": move["atr"],
+                    "price_move": move["price_move"],
+                    "move_threshold": move["threshold"],
+                    "direction": move["direction"],
+                },
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            LOG.warning("could not record move event for %s/%s: %s", ticker, timeframe, exc)
+
+    async def _record_signal_evidence_trigger(
+        self,
+        ticker: str,
+        must_conditions: list[dict[str, Any]],
+        trigger_id: str,
+        bar_ts: int,
+        snapshot: dict[str, Any],
+    ) -> None:
+        """The SignalEvidenceStore writer gap: `SignalEvidenceStore` (Phase
+        2, vinu-research) has always had its store and route, but nothing
+        in this codebase ever called `POST /research/signal-evidence/
+        trigger` in production -- only a read-only agent tool referenced
+        it (confirmed by grep while building item #10). This is that
+        writer, called exactly once per real must-condition firing (see
+        this method's own call site's trigger_id-changed guard).
+
+        Best-effort, same posture as `_detect_and_record_move`/
+        `_record_precondition_check`: a failure here must never break the
+        candle-close loop, since nothing the trading loop depends on
+        reads this back."""
+        if not must_conditions:
+            return
+        condition_names = [conditions.condition_name(c) for c in must_conditions]
+        trigger_time = datetime.fromtimestamp(bar_ts, tz=timezone.utc).isoformat()
+        try:
+            resp = await self._http.post(
+                f"{self._config.research_api_url}/research/signal-evidence/trigger",
+                json={
+                    "trigger_id": trigger_id,
+                    "symbol": ticker,
+                    "trigger_time": trigger_time,
+                    "must_condition": condition_names,
+                    "indicators": snapshot,
+                },
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            LOG.warning("could not record signal-evidence trigger for %s: %s", ticker, exc)

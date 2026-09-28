@@ -230,6 +230,11 @@ discipline each time:
   trusting hand-copied assumptions on either side. The other confirmed
   gap (no `policy_version` field threading through the chain) remains a
   separate, real design decision.
+  **UPDATE (2026-09-28)**: built for the research↔simulator hop (see
+  `02-open-questions-strategy-and-simulation.md`'s own item #17 UPDATE)
+  -- a deterministic schema-hash, not the same thing as
+  `vinu_infra.model_policy.policy_version()` despite the name overlap.
+  The agent↔research hop is the identical pattern, not yet done.
 - **Item #18** (`vinu-screener`): finding #1 fixed — a
   `min_history_bars` field on `HardFilterConfig`, enforced in
   `RankerRunner.run()` before factor computation/scoring, so a

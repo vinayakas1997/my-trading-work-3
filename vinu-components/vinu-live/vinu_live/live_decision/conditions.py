@@ -99,3 +99,23 @@ def evaluate_all(
             "expected": expected, "actual": actual, "met": met,
         })
     return all(r["met"] for r in results), results
+
+
+def condition_name(condition: dict[str, Any]) -> str:
+    """Deterministic string identity for a must-condition -- item #16's
+    SignalEvidenceStore (vinu-research, Phase 2) needs a string name per
+    condition (`record_trigger`'s `must_condition: str | list[str]`), but
+    the real, implemented condition vocabulary here is the structured
+    {source, key, operator, value} dict above, with no name field.
+    Confirmed directly (2026-09-28): auto-derive rather than require an
+    authored `name:` in every strategy's YAML -- every existing
+    strategy gets a real, usable name for free, no file needs editing.
+    Not the same as `03-strategy-definition-full-schema.md`'s still-
+    design-only `condition: "sma5_cross_sma50"` field -- that would be a
+    human-authored label on a not-yet-built schema; this is a mechanical
+    derivation from what's actually implemented today."""
+    source = condition.get("source", "live_indicators")
+    key = condition.get("key", "?")
+    operator = condition.get("operator", "gt")
+    value = condition.get("value")
+    return f"{source}.{key}_{operator}_{value}"

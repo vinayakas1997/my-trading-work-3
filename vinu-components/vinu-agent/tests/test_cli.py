@@ -268,6 +268,115 @@ class TestPlannerWorkerMain:
         mock_fetch.assert_called_once_with(config.services["vinu_screener"], "core_starter")
         mock_bootstrap.assert_called_once_with(fake_service, ["NVDA", "AAPL", "TSLA"])
 
+    def test_screener_ranker_configured_uses_its_current_output_as_the_cycle_watchlist(self) -> None:
+        """Live ticker discovery (missing-pieces-of-system/new-theory-of-
+        trading/system-wide-audit-and-design/
+        02-open-questions-strategy-and-simulation.md item #16.5): when a
+        ranker is configured, this cycle's real ticker list must be the
+        screener's current output (intersected with what's actually in
+        TickerSummaryStore) -- not TickerSummaryStore.list_summaries()'s
+        full historical accumulation, which would silently keep
+        processing a ticker the screener stopped ranking long ago."""
+        config = AgentConfig(
+            planner_worker_interval_sec=1,
+            watchlist_seed_tickers=["NVDA"],
+            screener_ranker_id="core_starter",
+        )
+        fake_service = MagicMock()
+        # The store accumulated GOOG long ago (no longer screener-ranked,
+        # not in the seed list either) alongside AAPL/NVDA, which the
+        # screener/seed DO currently want.
+        fake_service.ticker_summary_store.list_summaries.return_value = [
+            MagicMock(ticker="GOOG"), MagicMock(ticker="AAPL"), MagicMock(ticker="NVDA"),
+        ]
+        fake_service.__enter__.return_value = fake_service
+        fake_service.__exit__.return_value = False
+
+        with patch("vinu_agent.cli.load_config", return_value=config), \
+             patch("vinu_agent.cli.AgentService", return_value=fake_service), \
+             patch("vinu_agent.cli.HttpRunLogReader"), \
+             patch("vinu_agent.cli.RunLogTrigger"), \
+             patch("vinu_agent.cli.ChangeGate"), \
+             patch("vinu_agent.cli.PlannerTriage"), \
+             patch("vinu_agent.cli.hypothesis_reader_for"), \
+             patch("vinu_agent.cli.make_summary_agent_fn"), \
+             patch("vinu_agent.cli.make_planner_on_yes"), \
+             patch("vinu_agent.cli.run_gate_cycle") as mock_run_gate_cycle, \
+             patch("vinu_agent.cli.bootstrap_new_tickers", return_value=[]), \
+             patch(
+                 "vinu_agent.tools.screener_client.fetch_screener_top_tickers",
+                 return_value=["AAPL"],
+             ), \
+             patch("vinu_agent.cli.time.sleep", side_effect=KeyboardInterrupt):
+            planner_worker_main(argparse.Namespace(interval_sec=None))
+
+        mock_run_gate_cycle.assert_called_once()
+        assert mock_run_gate_cycle.call_args[0][0] == ["AAPL", "NVDA"]  # sorted, no GOOG
+
+    def test_screener_fetch_failure_falls_back_to_the_full_accumulation(self) -> None:
+        """fetch_screener_top_tickers fails open to [] on a transient
+        error -- this must fall back to the pre-existing behavior
+        (the full TickerSummaryStore accumulation) for that cycle, not
+        silently produce an empty watchlist."""
+        config = AgentConfig(planner_worker_interval_sec=1, screener_ranker_id="core_starter")
+        fake_service = MagicMock()
+        fake_service.ticker_summary_store.list_summaries.return_value = [
+            MagicMock(ticker="GOOG"), MagicMock(ticker="AAPL"),
+        ]
+        fake_service.__enter__.return_value = fake_service
+        fake_service.__exit__.return_value = False
+
+        with patch("vinu_agent.cli.load_config", return_value=config), \
+             patch("vinu_agent.cli.AgentService", return_value=fake_service), \
+             patch("vinu_agent.cli.HttpRunLogReader"), \
+             patch("vinu_agent.cli.RunLogTrigger"), \
+             patch("vinu_agent.cli.ChangeGate"), \
+             patch("vinu_agent.cli.PlannerTriage"), \
+             patch("vinu_agent.cli.hypothesis_reader_for"), \
+             patch("vinu_agent.cli.make_summary_agent_fn"), \
+             patch("vinu_agent.cli.make_planner_on_yes"), \
+             patch("vinu_agent.cli.run_gate_cycle") as mock_run_gate_cycle, \
+             patch("vinu_agent.cli.bootstrap_new_tickers", return_value=[]), \
+             patch("vinu_agent.tools.screener_client.fetch_screener_top_tickers", return_value=[]), \
+             patch("vinu_agent.cli.time.sleep", side_effect=KeyboardInterrupt):
+            planner_worker_main(argparse.Namespace(interval_sec=None))
+
+        mock_run_gate_cycle.assert_called_once()
+        assert sorted(mock_run_gate_cycle.call_args[0][0]) == ["AAPL", "GOOG"]
+
+    def test_ticker_not_yet_bootstrapped_this_cycle_is_excluded_not_half_processed(self) -> None:
+        """A screener-ranked ticker whose bootstrap_new_tickers call
+        failed (or is still mid-flight) this cycle has no row in
+        TickerSummaryStore yet -- must be excluded from this cycle's
+        watchlist, not passed through to RunLogTrigger/ChangeGate/
+        PlannerTriage with no summary to act on."""
+        config = AgentConfig(planner_worker_interval_sec=1, screener_ranker_id="core_starter")
+        fake_service = MagicMock()
+        fake_service.ticker_summary_store.list_summaries.return_value = [MagicMock(ticker="AAPL")]
+        fake_service.__enter__.return_value = fake_service
+        fake_service.__exit__.return_value = False
+
+        with patch("vinu_agent.cli.load_config", return_value=config), \
+             patch("vinu_agent.cli.AgentService", return_value=fake_service), \
+             patch("vinu_agent.cli.HttpRunLogReader"), \
+             patch("vinu_agent.cli.RunLogTrigger"), \
+             patch("vinu_agent.cli.ChangeGate"), \
+             patch("vinu_agent.cli.PlannerTriage"), \
+             patch("vinu_agent.cli.hypothesis_reader_for"), \
+             patch("vinu_agent.cli.make_summary_agent_fn"), \
+             patch("vinu_agent.cli.make_planner_on_yes"), \
+             patch("vinu_agent.cli.run_gate_cycle") as mock_run_gate_cycle, \
+             patch("vinu_agent.cli.bootstrap_new_tickers", return_value=[]), \
+             patch(
+                 "vinu_agent.tools.screener_client.fetch_screener_top_tickers",
+                 return_value=["AAPL", "TSLA"],  # TSLA's bootstrap never landed
+             ), \
+             patch("vinu_agent.cli.time.sleep", side_effect=KeyboardInterrupt):
+            planner_worker_main(argparse.Namespace(interval_sec=None))
+
+        mock_run_gate_cycle.assert_called_once()
+        assert mock_run_gate_cycle.call_args[0][0] == ["AAPL"]
+
 
 class TestSignificanceWorkerMain:
     def test_wires_watchlist_through_significance_cycle(self, tmp_path: Path) -> None:

@@ -7,15 +7,24 @@ from vinu_live.live_decision.schema import LiveDecisionRecord, StageState, Stage
 from vinu_live.live_decision.storage import (
     LiveDecisionBackend,
     advance_cursor,
+    close_position,
     get_cursor,
+    get_latest_snapshot,
     get_stage_state,
     list_live_decisions,
+    list_open_positions,
+    list_snapshot_angle_names,
+    list_snapshots,
     list_transitions,
     list_unapplied_executes,
     mark_decision_applied,
+    mark_position_reviewed,
+    open_position,
     record_live_decision,
+    record_live_snapshot,
     record_transition,
     save_stage_state,
+    staleness_seconds,
 )
 
 
@@ -187,3 +196,143 @@ class TestUnappliedExecutes:
         pending = list_unapplied_executes(backend, ticker="AAPL")
         assert len(pending) == 1
         assert pending[0].ticker == "AAPL"
+
+
+class TestLiveDecisionOpenPositions:
+    """The exit-mechanism fix (missing-pieces-of-system/new-theory-of-
+    trading/system-wide-audit-and-design/
+    04-synthesis-built-vs-missing-2026-09-28.md): this table is what
+    LiveScheduler now reads every cycle (not just the opening one) so a
+    live_decision position doesn't get force-closed the very next cycle
+    by SignalTranslator's own "held but not targeted -> close" rule."""
+
+    def test_opening_a_position_returns_it_open(self, backend) -> None:
+        pos = open_position(
+            backend, ticker="AAPL", strategy_id="sma_cross",
+            position_size=0.05, opened_bar_ts=1000, trigger_id="trig_1",
+        )
+        assert pos.id is not None
+        assert pos.status == "open"
+        assert pos.opened_at
+
+    def test_open_positions_are_listed_by_default_status_open(self, backend) -> None:
+        open_position(backend, ticker="AAPL", strategy_id="sma_cross", position_size=0.05, opened_bar_ts=1000)
+        open_position(backend, ticker="MSFT", strategy_id="rsi_reversal", position_size=0.03, opened_bar_ts=2000)
+        positions = list_open_positions(backend)
+        assert {p.ticker for p in positions} == {"AAPL", "MSFT"}
+        assert all(p.status == "open" for p in positions)
+
+    def test_closing_a_position_removes_it_from_the_open_list(self, backend) -> None:
+        pos = open_position(backend, ticker="AAPL", strategy_id="sma_cross", position_size=0.05, opened_bar_ts=1000)
+        assert len(list_open_positions(backend)) == 1
+
+        close_position(backend, pos.id, reason="precondition no longer holds", bar_ts=5000)
+
+        assert list_open_positions(backend) == []
+        closed = list_open_positions(backend, status="closed")
+        assert len(closed) == 1
+        assert closed[0].closed_reason == "precondition no longer holds"
+        assert closed[0].closed_bar_ts == 5000
+        assert closed[0].closed_at
+
+    def test_mark_position_reviewed_advances_last_reviewed_bar_ts(self, backend) -> None:
+        pos = open_position(backend, ticker="AAPL", strategy_id="sma_cross", position_size=0.05, opened_bar_ts=1000)
+        assert list_open_positions(backend)[0].last_reviewed_bar_ts is None
+
+        mark_position_reviewed(backend, pos.id, 2000)
+
+        assert list_open_positions(backend)[0].last_reviewed_bar_ts == 2000
+
+    def test_multiple_open_positions_are_independent(self, backend) -> None:
+        pos1 = open_position(backend, ticker="AAPL", strategy_id="sma_cross", position_size=0.05, opened_bar_ts=1000)
+        open_position(backend, ticker="MSFT", strategy_id="sma_cross", position_size=0.03, opened_bar_ts=1000)
+
+        close_position(backend, pos1.id, reason="exit", bar_ts=3000)
+
+        remaining = list_open_positions(backend)
+        assert len(remaining) == 1
+        assert remaining[0].ticker == "MSFT"
+
+
+class TestLiveSnapshots:
+    """The "present-data" recording layer (missing-pieces-of-system/
+    new-theory-of-trading/system-wide-audit-and-design/
+    02-open-questions-strategy-and-simulation.md item #5): mirrors
+    RunLog's own shape but for live/present-moment computation, keyed on
+    real wall-clock recency rather than a historical range."""
+
+    def test_recording_returns_the_stored_row(self, backend) -> None:
+        rec = record_live_snapshot(
+            backend, symbol="AAPL", angle_name="live_indicators",
+            granularity="15m", snapshot_data={"adx_14": 17.8}, computed_at="2026-09-28T12:00:00+00:00",
+        )
+        assert rec.id is not None
+        assert rec.snapshot_data == {"adx_14": 17.8}
+
+    def test_get_latest_snapshot_returns_the_most_recent_row(self, backend) -> None:
+        record_live_snapshot(
+            backend, symbol="AAPL", angle_name="live_indicators", granularity="15m",
+            snapshot_data={"adx_14": 10.0}, computed_at="2026-09-28T12:00:00+00:00",
+        )
+        record_live_snapshot(
+            backend, symbol="AAPL", angle_name="live_indicators", granularity="15m",
+            snapshot_data={"adx_14": 20.0}, computed_at="2026-09-28T12:15:00+00:00",
+        )
+        latest = get_latest_snapshot(backend, "AAPL", "live_indicators")
+        assert latest.snapshot_data == {"adx_14": 20.0}
+        assert latest.computed_at == "2026-09-28T12:15:00+00:00"
+
+    def test_unknown_symbol_or_angle_returns_none(self, backend) -> None:
+        assert get_latest_snapshot(backend, "AAPL", "live_indicators") is None
+        record_live_snapshot(
+            backend, symbol="AAPL", angle_name="live_indicators", granularity="15m",
+            snapshot_data={}, computed_at="2026-09-28T12:00:00+00:00",
+        )
+        assert get_latest_snapshot(backend, "AAPL", "some_other_angle") is None
+        assert get_latest_snapshot(backend, "MSFT", "live_indicators") is None
+
+    def test_recording_is_append_only_not_upserted(self, backend) -> None:
+        record_live_snapshot(
+            backend, symbol="AAPL", angle_name="live_indicators", granularity="15m",
+            snapshot_data={"adx_14": 10.0}, computed_at="2026-09-28T12:00:00+00:00",
+        )
+        record_live_snapshot(
+            backend, symbol="AAPL", angle_name="live_indicators", granularity="15m",
+            snapshot_data={"adx_14": 20.0}, computed_at="2026-09-28T12:15:00+00:00",
+        )
+        history = list_snapshots(backend, "AAPL", "live_indicators")
+        assert len(history) == 2
+        # Most recent first.
+        assert history[0].snapshot_data == {"adx_14": 20.0}
+        assert history[1].snapshot_data == {"adx_14": 10.0}
+
+    def test_list_snapshot_angle_names_is_distinct_per_symbol(self, backend) -> None:
+        record_live_snapshot(
+            backend, symbol="AAPL", angle_name="live_indicators", granularity="15m",
+            snapshot_data={}, computed_at="2026-09-28T12:00:00+00:00",
+        )
+        record_live_snapshot(
+            backend, symbol="AAPL", angle_name="live_indicators", granularity="15m",
+            snapshot_data={}, computed_at="2026-09-28T12:15:00+00:00",
+        )
+        record_live_snapshot(
+            backend, symbol="AAPL", angle_name="regime_analysis", granularity="1h",
+            snapshot_data={}, computed_at="2026-09-28T12:00:00+00:00",
+        )
+        record_live_snapshot(
+            backend, symbol="MSFT", angle_name="live_indicators", granularity="15m",
+            snapshot_data={}, computed_at="2026-09-28T12:00:00+00:00",
+        )
+        names = list_snapshot_angle_names(backend, "AAPL")
+        assert set(names) == {"live_indicators", "regime_analysis"}
+
+    def test_staleness_seconds_computed_from_a_fixed_past_timestamp(self, backend) -> None:
+        from datetime import datetime, timedelta, timezone
+        past = datetime.now(timezone.utc) - timedelta(seconds=120)
+        result = staleness_seconds(past.isoformat())
+        assert result is not None
+        assert 115 <= result <= 130  # allow test execution slack
+
+    def test_staleness_seconds_none_for_unparseable_timestamp(self, backend) -> None:
+        assert staleness_seconds("not a timestamp") is None
+        assert staleness_seconds("") is None

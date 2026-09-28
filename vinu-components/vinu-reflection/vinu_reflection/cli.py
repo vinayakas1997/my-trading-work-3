@@ -45,6 +45,20 @@ from vinu_reflection.reflection import (
 
 LOG = logging.getLogger("vinu.reflection.worker")
 
+
+def serve_main(args: argparse.Namespace) -> None:
+    """Step 9's HTTP surface -- see `server/app.py`'s own docstring for
+    why this exists at all. Same `serve` shape every other service's
+    `cli.py` already uses (e.g. `vinu-live/vinu_live/cli.py`)."""
+    import uvicorn
+
+    from vinu_reflection.server.app import create_app
+
+    config = load_config()
+    host = args.host or config.host
+    port = args.port or config.port
+    uvicorn.run(create_app(config), host=host, port=port)
+
 # Adding a 7th analyst later is a one-line addition to this list and to
 # _SEED_FNS below -- not a framework change (02-analyst-interface.md).
 # D, L, M are the implementable "Decision-Process / Cognition" cluster
@@ -272,6 +286,11 @@ def main() -> None:
     worker = sub.add_parser("worker", help="Run the reflection worker loop")
     worker.add_argument("--interval-sec", type=int, default=None)
     worker.set_defaults(func=reflection_worker_main)
+
+    serve = sub.add_parser("serve", help="Start the read-only HTTP API (Step 9)")
+    serve.add_argument("--host", default=None)
+    serve.add_argument("--port", type=int, default=None)
+    serve.set_defaults(func=serve_main)
 
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)

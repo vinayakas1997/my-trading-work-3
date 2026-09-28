@@ -93,3 +93,57 @@ class TestRunLiveDecisionRoute:
         body = resp.json()
         assert body["status"] == "ok"
         assert body["decision"] == ""
+
+
+class TestReviewMode:
+    """The exit-mechanism fix (missing-pieces-of-system/new-theory-of-
+    trading/system-wide-audit-and-design/
+    04-synthesis-built-vs-missing-2026-09-28.md): the same route also
+    drives periodic HOLD/EXIT review of an already-open live_decision
+    position, selected by mode="review"."""
+
+    def test_review_mode_puts_position_context_in_the_task(self, client) -> None:
+        test_client, _app = client
+        fake_svc, session_service = _fake_service({
+            "status": "completed",
+            "content": (
+                "```json\n"
+                '{"decision": "HOLD", "ticker": "AAPL", "strategy_id": "sma_cross", '
+                '"reasoning": "thesis intact"}\n'
+                "```"
+            ),
+        })
+        routes_live_decision._get_service = lambda: fake_svc
+
+        resp = test_client.post(
+            "/agent/live-decision/run",
+            json={
+                "ticker": "aapl", "strategy_id": "sma_cross", "mode": "review",
+                "position_context": {
+                    "opened_at": "2026-09-01T00:00:00+00:00",
+                    "opened_bar_ts": 1000,
+                    "position_size": 0.05,
+                },
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["decision"] == "HOLD"
+
+        args, _kwargs = session_service.run_team_once.call_args
+        task = args[1]
+        assert "Mode: POSITION_REVIEW" in task
+        assert "0.05" in task
+        assert "2026-09-01T00:00:00+00:00" in task
+
+    def test_entry_mode_default_has_no_review_context(self, client) -> None:
+        test_client, _app = client
+        fake_svc, _session_service = _fake_service(
+            {"status": "completed", "content": '```json\n{"decision": "EXECUTE"}\n```'},
+        )
+        routes_live_decision._get_service = lambda: fake_svc
+
+        test_client.post("/agent/live-decision/run", json={"ticker": "AAPL", "strategy_id": "sma_cross"})
+
+        args, _kwargs = fake_svc.session_service.run_team_once.call_args
+        assert "Mode: POSITION_REVIEW" not in args[1]

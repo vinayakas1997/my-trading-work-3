@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 
 from vinu_strategy.api import StrategyAPI
 
@@ -32,12 +33,35 @@ async def get_strategy(name: str) -> dict[str, Any]:
     return result
 
 
+class PreconditionCheckRequest(BaseModel):
+    precondition_held: bool | None = None
+
+
+@router.post("/strategies/{name}/precondition-check")
+async def record_precondition_check(name: str, body: PreconditionCheckRequest) -> dict[str, Any]:
+    """Point 6's write-back path (reverse-engineering/
+    05-deciding-agent-and-precondition-tracking.md Part C): called by
+    vinu-live's poller every time live_decision_agent returns a real
+    EXECUTE/SKIP verdict for this strategy -- that's a real check against
+    real evidence, regardless of which way it went."""
+    return _get_api().record_precondition_check(name, precondition_held=body.precondition_held)
+
+
 @router.post("/strategies/{name}/evaluate")
 async def evaluate_strategy(
     name: str,
     symbols: list[str] | None = Query(default=None),
+    as_of: int | None = Query(
+        default=None,
+        description=(
+            "Pin the effective 'now' this run's feature snapshot reflects "
+            "(unix seconds) -- item #22 finding #3. Omitted means real "
+            "wall-clock now, same as every existing caller's behavior "
+            "before this field existed."
+        ),
+    ),
 ) -> dict[str, Any]:
-    return _get_api().evaluate(name, symbols)
+    return _get_api().evaluate(name, symbols, as_of=as_of)
 
 
 @router.get("/weights")

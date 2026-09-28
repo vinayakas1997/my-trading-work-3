@@ -82,6 +82,14 @@ class LiveConfig:
     # file had a same-named, unused field here -- removed once this got
     # verified rather than left as dead config.
     risk_gatekeeper_maturity_scaling_enabled: bool = False
+    # Exit mechanism for live_decision-opened positions (missing-pieces-of-
+    # system/new-theory-of-trading/system-wide-audit-and-design/
+    # 04-synthesis-built-vs-missing-2026-09-28.md): how many bars must pass
+    # between position-review calls to live_decision_agent for an already-
+    # open position. A guessed starting constant, same posture as
+    # grace_window_bars' own default (10) and RECON_DRIFT_ALERT_CYCLES (3)
+    # -- not independently tuned.
+    live_decision_position_review_cadence_bars: int = 5
 
     @classmethod
     def from_env(cls) -> LiveConfig:
@@ -119,6 +127,9 @@ class LiveConfig:
             risk_gatekeeper_maturity_scaling_enabled=os.getenv(
                 "VINU_LIVE_RISK_GATEKEEPER_MATURITY_SCALING_ENABLED", "false",
             ).lower() in ("1", "true", "yes"),
+            live_decision_position_review_cadence_bars=int(
+                os.getenv("VINU_LIVE_DECISION_POSITION_REVIEW_CADENCE_BARS", "5"),
+            ),
         )
 
 

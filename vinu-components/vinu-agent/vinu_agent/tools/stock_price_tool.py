@@ -1,6 +1,7 @@
 import json
 import time
 from ..agent.tools import BaseTool
+from ._call_cache import CallCache
 from ._date_utils import date_to_epoch as _date_to_epoch
 from ._date_utils import iso_to_epoch as _iso_to_epoch
 
@@ -27,6 +28,7 @@ class StockPriceTool(BaseTool):
 
     def __init__(self):
         self._services_config = {}
+        self._cache = CallCache()
 
     def execute(self, **kwargs) -> str:
         import httpx
@@ -52,13 +54,25 @@ class StockPriceTool(BaseTool):
         if start_epoch >= end_epoch:
             start_epoch = end_epoch - 30 * 86400
             clamped = True
+
+        symbol = kwargs["symbol"].upper()
+        interval = kwargs.get("interval", "1d")
+        # item #11 finding #4: keyed on the FINAL, post-clamp params, not
+        # the raw kwargs -- two calls that phrase their date range
+        # differently but clamp down to the identical window must still
+        # hit the same cache entry.
+        cache_key = (symbol, start_epoch, end_epoch, interval, clamped)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         resp = httpx.get(
-            f"{url}/stock/candles/{kwargs['symbol'].upper()}",
+            f"{url}/stock/candles/{symbol}",
             headers=_h,
             params={
                 "from": start_epoch,
                 "to": end_epoch,
-                "interval": kwargs.get("interval", "1d"),
+                "interval": interval,
             },
             timeout=30,
         )
@@ -66,4 +80,6 @@ class StockPriceTool(BaseTool):
         out = resp.json()
         if clamped and isinstance(out, dict):
             out["clamped_end_to_as_of"] = True
-        return json.dumps(out)
+        result = json.dumps(out)
+        self._cache.set(cache_key, result)
+        return result

@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from vinu_live.live_decision.detector import compute_live_snapshot, min_warmup_bars
+from vinu_live.live_decision.detector import compute_live_snapshot, detect_move, min_warmup_bars
 
 
 @pytest.fixture
@@ -87,3 +87,75 @@ def test_missing_required_column_raises():
     bad = pd.DataFrame({"close": [1.0, 2.0]})
     with pytest.raises(ValueError):
         compute_live_snapshot(bad)
+
+
+class TestDetectMove:
+    def test_move_bigger_than_threshold_is_detected(self):
+        bars = pd.DataFrame({"close": [100.0, 106.0]})
+        snapshot = {"atr_14": 2.0}  # threshold = 2 * 2.0 = 4.0; actual move = 6.0
+
+        result = detect_move(bars, snapshot)
+
+        assert result is not None
+        assert result["move_detected"] is True
+        assert result["direction"] == "up"
+        assert result["price_move"] == pytest.approx(6.0)
+        assert result["threshold"] == pytest.approx(4.0)
+
+    def test_move_smaller_than_threshold_is_not_detected(self):
+        bars = pd.DataFrame({"close": [100.0, 101.0]})
+        snapshot = {"atr_14": 2.0}  # threshold = 4.0; actual move = 1.0
+
+        result = detect_move(bars, snapshot)
+
+        assert result is not None
+        assert result["move_detected"] is False
+
+    def test_downward_move_direction_and_absolute_comparison(self):
+        bars = pd.DataFrame({"close": [100.0, 94.0]})
+        snapshot = {"atr_14": 2.0}  # threshold = 4.0; actual move = -6.0
+
+        result = detect_move(bars, snapshot)
+
+        assert result["move_detected"] is True
+        assert result["direction"] == "down"
+        assert result["price_move"] == pytest.approx(-6.0)
+
+    def test_flat_close_is_not_a_move(self):
+        bars = pd.DataFrame({"close": [100.0, 100.0]})
+        snapshot = {"atr_14": 2.0}
+
+        result = detect_move(bars, snapshot)
+
+        assert result["move_detected"] is False
+        assert result["direction"] == "flat"
+
+    def test_missing_atr_returns_none_not_a_false_result(self):
+        """Can't tell yet (still warming up) must not be silently coerced
+        into "no move happened"."""
+        bars = pd.DataFrame({"close": [100.0, 106.0]})
+        snapshot: dict = {"atr_14": None}
+
+        assert detect_move(bars, snapshot) is None
+
+    def test_zero_or_negative_atr_returns_none(self):
+        bars = pd.DataFrame({"close": [100.0, 106.0]})
+        assert detect_move(bars, {"atr_14": 0.0}) is None
+        assert detect_move(bars, {"atr_14": -1.0}) is None
+
+    def test_fewer_than_two_bars_returns_none(self):
+        bars = pd.DataFrame({"close": [100.0]})
+        assert detect_move(bars, {"atr_14": 2.0}) is None
+
+    def test_custom_multiplier_changes_the_threshold(self):
+        bars = pd.DataFrame({"close": [100.0, 103.0]})
+        snapshot = {"atr_14": 2.0}  # move = 3.0
+
+        assert detect_move(bars, snapshot, multiplier=2.0)["move_detected"] is False  # threshold 4.0
+        assert detect_move(bars, snapshot, multiplier=1.0)["move_detected"] is True  # threshold 2.0
+
+    def test_real_snapshot_from_the_shared_bars_fixture_produces_a_result(self, bars):
+        snapshot = compute_live_snapshot(bars)
+        result = detect_move(bars, snapshot)
+        assert result is not None
+        assert isinstance(result["move_detected"], bool)

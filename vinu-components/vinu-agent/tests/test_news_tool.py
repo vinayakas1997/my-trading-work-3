@@ -78,3 +78,23 @@ class TestAsOfClamping:
         args, kwargs = mock_get.call_args
         assert args[0].endswith("/news/ticker/AAPL")
         assert kwargs["params"]["limit"] == 20
+
+
+class TestPerInstanceCaching:
+    """item #11 finding #4: repeated identical fetches within one agent
+    loop must not re-hit the network every time."""
+
+    def test_identical_call_twice_only_fetches_once(self) -> None:
+        tool = _tool(as_of="2025-06-01T00:00:00Z")
+        with patch("httpx.get", return_value=_mock_response({"articles": []})) as mock_get:
+            first = tool.execute(symbol="AAPL", start_date="2025-05-01", end_date="2025-05-15")
+            second = tool.execute(symbol="AAPL", start_date="2025-05-01", end_date="2025-05-15")
+        assert mock_get.call_count == 1
+        assert first == second
+
+    def test_different_limit_is_not_cached_together(self) -> None:
+        tool = _tool(as_of="2025-06-01T00:00:00Z")
+        with patch("httpx.get", return_value=_mock_response({"articles": []})) as mock_get:
+            tool.execute(symbol="AAPL", limit=5)
+            tool.execute(symbol="AAPL", limit=20)
+        assert mock_get.call_count == 2

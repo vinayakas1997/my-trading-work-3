@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from vinu_strategy.clients.features_client import FeaturesClient
@@ -12,6 +12,7 @@ from vinu_strategy.engine.pipeline import WeightPipeline
 from vinu_strategy.engine.registry import StrategyRegistry
 from vinu_strategy.models.strategy import StrategyConfig, StrategyResult
 from vinu_strategy.storage.meta import MetaStorage
+from vinu_strategy.storage.precondition_state import PreconditionStateStore
 from vinu_strategy.storage.weights import WeightStorage
 
 LOG = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ class StrategyService:
         self._correlation_client = CorrelationClient(config.correlation_api_url)
         self._meta_storage = MetaStorage(config.data_root / "meta.db")
         self._weight_storage = WeightStorage(config.data_root)
+        self._precondition_state = PreconditionStateStore(config.data_root / "precondition_state.db")
         self._registry.load_all()
         self._sync_registry()
 
@@ -40,6 +42,20 @@ class StrategyService:
 
     def get_strategy(self, name: str) -> StrategyConfig | None:
         return self._registry.get(name)
+
+    def record_precondition_check(self, name: str, *, precondition_held: bool | None) -> None:
+        """Point 6's write-back (see precondition_state.py's own module
+        docstring for why this is a separate store, not the strategy's
+        YAML file). Called for every real EXECUTE/SKIP `live_decision_agent`
+        verdict -- callers decide which decisions count as a real check,
+        this just records one."""
+        self._precondition_state.record_check(
+            name, precondition_held=precondition_held,
+            checked_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+    def get_precondition_state(self, name: str) -> dict[str, Any] | None:
+        return self._precondition_state.get(name)
 
     def resolve_universe(self, name: str) -> list[str]:
         """Public wrapper on `_resolve_universe` -- needed by API consumers
@@ -58,10 +74,31 @@ class StrategyService:
         symbols: list[str] | None = None,
         run_id: str | None = None,
         dry_run: bool = False,
+        as_of: int | None = None,
     ) -> StrategyResult:
+        """`as_of` (item #22 finding #3, system-wide-audit-and-design/
+        02-open-questions-strategy-and-simulation.md): "point-in-time
+        safety is fully delegated upstream, with no verification at this
+        layer" -- `FeaturesClient.get_features()` used to be called with
+        no as_of at all, so its response always reflected whatever
+        vinu-tools' feature route considered "now" at the exact moment
+        each symbol's HTTP call happened to execute, not one consistent
+        instant for the whole run. Captured ONCE here (defaulting to real
+        wall-clock now when the caller doesn't pin one, e.g. for a
+        backtest/replay run) and threaded through every `get_features`
+        call below, so every symbol in one `evaluate()` call sees the
+        same decision-time snapshot. Deliberately NOT threaded into
+        `correlation_signals`/`angle_signals`: those are backed by
+        `vinu-initial-analysis`'s `RunLog`-stored historical rows, each
+        already pinned to its own `analysis_until` at write time -- a
+        materially different point-in-time question (which stored run to
+        read, not "is this live-fetched data corrupted by look-ahead")
+        that this fix does not attempt to answer.
+        """
         config = self._registry.get(strategy_name)
         if config is None:
             raise ValueError(f"Unknown strategy: {strategy_name}")
+        effective_as_of = as_of if as_of is not None else int(datetime.now(timezone.utc).timestamp())
 
         if dry_run:
             import pandas as pd
@@ -84,7 +121,10 @@ class StrategyService:
         if config.features_required:
             with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
                 fut_to_sym = {
-                    pool.submit(self._features_client.get_features, sym, indicators=config.features_required): sym
+                    pool.submit(
+                        self._features_client.get_features, sym,
+                        indicators=config.features_required, as_of=effective_as_of,
+                    ): sym
                     for sym in universe
                 }
                 for fut in as_completed(fut_to_sym):
@@ -163,7 +203,7 @@ class StrategyService:
             weights=self._weights_to_dataframe(weights, signal_values),
             run_id=actual_run_id,
             timestamp=datetime.utcnow(),
-            metadata={"symbol_count": len(universe), "weights": weights},
+            metadata={"symbol_count": len(universe), "weights": weights, "as_of": effective_as_of},
             rule_trace=rule_trace,
             data_quality=data_quality,
             sanity_issues=sanity_issues,

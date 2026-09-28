@@ -142,3 +142,44 @@ def compute_live_snapshot(bars: pd.DataFrame) -> dict[str, Any]:
     snapshot["vwap_dist"] = _vwap_dist(bars)
 
     return snapshot
+
+
+# item #10 (system-wide-audit-and-design/
+# 02-open-questions-strategy-and-simulation.md): "cross-track disagreement
+# as its own signal" needs Track 2's move-detection to run unconditionally,
+# not only when a strategy's must-condition happens to fire -- otherwise a
+# real move with no strategy watching for it is invisible forever, which is
+# exactly the case this item cares about ("track2_only").
+DEFAULT_MOVE_ATR_MULTIPLIER = 2.0
+
+
+def detect_move(
+    bars: pd.DataFrame,
+    snapshot: dict[str, Any],
+    multiplier: float = DEFAULT_MOVE_ATR_MULTIPLIER,
+) -> dict[str, Any] | None:
+    """Track 2's own already-documented move-detection floor (the "2xATR(14)
+    move-detection floor" comment on `vinu_tools/compute/indicators/atr/
+    atr.py`'s Decision 14 reference) -- a move is "real" when the latest
+    closed bar's price change exceeds `multiplier` times ATR(14).
+
+    Returns None (not a `move_detected: False` result) when there isn't
+    enough history yet to judge -- fewer than 2 closes, or ATR not yet
+    computable during warmup -- since "can't tell yet" must never be
+    silently coerced into "no move happened," which would make an early,
+    still-warming-up ticker look confirmed-quiet instead of unknown.
+    """
+    atr = snapshot.get("atr_14")
+    if atr is None or atr <= 0 or len(bars) < 2:
+        return None
+    closes = bars["close"].astype(float)
+    price_move = float(closes.iloc[-1] - closes.iloc[-2])
+    threshold = multiplier * float(atr)
+    direction = "up" if price_move > 0 else ("down" if price_move < 0 else "flat")
+    return {
+        "atr": float(atr),
+        "price_move": price_move,
+        "threshold": threshold,
+        "move_detected": abs(price_move) > threshold,
+        "direction": direction,
+    }

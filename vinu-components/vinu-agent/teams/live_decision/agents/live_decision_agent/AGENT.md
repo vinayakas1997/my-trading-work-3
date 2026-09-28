@@ -22,3 +22,11 @@ EXECUTE/SKIP/EXTEND_GRACE_WINDOW. Structurally cannot place an order or
 write to any store: no execution or write tool is in this list (same
 "enforced by omission, not a prompt instruction" pattern
 thesis_intake/theory_reviewer already uses for backtests).
+
+Also handles the exit-mechanism fix's review mode (missing-pieces-of-
+system/new-theory-of-trading/system-wide-audit-and-design/
+04-synthesis-built-vs-missing-2026-09-28.md): on a periodic cadence for
+an already-open live_decision position, recommends HOLD/EXIT using the
+same evidence sources -- prompt.md's own "Review mode" section, selected
+by the task text carrying `Mode: POSITION_REVIEW`. Same tool list, same
+"cannot place an order, only recommend" posture either way.

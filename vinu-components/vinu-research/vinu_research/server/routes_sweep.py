@@ -40,6 +40,14 @@ def set_sweep_store(store: SweepGridStore) -> None:
     _sweep_store = store
 
 
+def get_sweep_store() -> SweepGridStore | None:
+    """Lets another route module (routes_introspect.py's candidate-
+    graveyard route) reuse the same instance/connection pool app.py
+    already wires here, instead of constructing a second SweepGridStore
+    against the same on-disk file."""
+    return _sweep_store
+
+
 class SweepCandidateRequest(BaseModel):
     symbol: str = Field(..., min_length=1)
     from_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")

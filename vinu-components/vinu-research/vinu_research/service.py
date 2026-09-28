@@ -17,6 +17,7 @@ from vinu_research.llm_generator import LlmStrategyGenerator, _build_memory_cont
 from vinu_research.models import Artifact, ArtifactStatus, BenchEntry, Goal
 from vinu_research.storage import ResearchStorage
 from vinu_research.storage.models import ResearchRunRecord, STATUS_DONE, STATUS_FAILED, STATUS_PENDING, STATUS_RUNNING
+from vinu_research.storage.move_evidence_store import MoveEvidenceStore
 from vinu_research.storage.signal_evidence_store import SignalEvidenceStore
 from vinu_research.storage.strategy_store import SqliteStrategyStore
 from vinu_research.gates.correlation_gate import CorrelationVerdict, check_correlation_gate
@@ -43,6 +44,7 @@ class ResearchService:
         strategy_store: SqliteStrategyStore | None = None,
         signal_evidence_store: SignalEvidenceStore | None = None,
         generation_candidate_store: GenerationCandidateStore | None = None,
+        move_evidence_store: MoveEvidenceStore | None = None,
     ) -> None:
         self._config = config or load_config()
         self._storage = storage or ResearchStorage(
@@ -72,6 +74,13 @@ class ResearchService:
         self._generation_candidate_store = generation_candidate_store or GenerationCandidateStore(
             self._config.data_root / "generation_candidates.db"
         )
+        self._owns_move_evidence_store = move_evidence_store is None
+        # item #10: Track 2's own side, deliberately its own db file for
+        # the same reason signal_evidence_store is (a fast-growing
+        # per-window-detection table, not a strategy artifact).
+        self._move_evidence_store = move_evidence_store or MoveEvidenceStore(
+            self._config.data_root / "move_evidence.db"
+        )
         try:
             from vinu_infra.auth import internal_auth_headers
             _headers = internal_auth_headers() or None
@@ -90,6 +99,10 @@ class ResearchService:
     @property
     def generation_candidate_store(self) -> GenerationCandidateStore:
         return self._generation_candidate_store
+
+    @property
+    def move_evidence_store(self) -> MoveEvidenceStore:
+        return self._move_evidence_store
 
     @property
     def config(self) -> ResearchConfig:
@@ -754,6 +767,8 @@ class ResearchService:
             await self._run_in_thread(self._strategy_store.close)
         if self._owns_signal_evidence_store:
             await self._run_in_thread(self._signal_evidence_store.close)
+        if self._owns_move_evidence_store:
+            await self._run_in_thread(self._move_evidence_store.close)
         await self._http.aclose()
 
     async def __aenter__(self) -> ResearchService:

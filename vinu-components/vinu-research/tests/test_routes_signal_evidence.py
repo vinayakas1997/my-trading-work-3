@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from vinu_research.server.app import create_app
 from vinu_research.service import ResearchService
+from vinu_research.storage.move_evidence_store import MoveEvidenceStore
 from vinu_research.storage.signal_evidence_store import SignalEvidenceStore
 
 
@@ -16,12 +17,20 @@ def signal_evidence_store(tmp_path):
 
 
 @pytest.fixture
-def service(storage, strategy_store, signal_evidence_store):
+def move_evidence_store(tmp_path):
+    s = MoveEvidenceStore(tmp_path / "test_move_evidence.db")
+    yield s
+    s.close()
+
+
+@pytest.fixture
+def service(storage, strategy_store, signal_evidence_store, move_evidence_store):
     from vinu_research.config import ResearchConfig
     cfg = ResearchConfig()
     return ResearchService(
         config=cfg, storage=storage, strategy_store=strategy_store,
         signal_evidence_store=signal_evidence_store,
+        move_evidence_store=move_evidence_store,
     )
 
 
@@ -106,3 +115,94 @@ class TestListSignalEvidenceRoute:
         body = resp.json()
         assert body["count"] == 1
         assert body["triggers"][0]["trigger_id"] == "t-001"
+
+
+class TestTrack2AggregateRoute:
+    def test_no_evidence_on_file_returns_insufficient(self, client):
+        resp = client.get(
+            "/research/track2-aggregate/AAPL",
+            params={"must_condition": "sma5_cross_sma50"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["sample_size"] == 0
+        assert body["insufficient_evidence"] is True
+
+    def test_resolved_evidence_produces_a_confidence_number(self, client):
+        client.post("/research/signal-evidence/trigger", json=_PAYLOAD)
+        client.post(
+            "/research/signal-evidence/t-001/outcome",
+            json={"max_favorable_excursion": 0.03, "max_adverse_excursion": -0.01, "return_at_horizon": 0.02},
+        )
+
+        resp = client.get(
+            "/research/track2-aggregate/AAPL",
+            params={"must_condition": "sma5_cross_sma50"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["sample_size"] == 1
+        assert body["win_rate"] == 1.0
+        assert body["evidence_confidence"] == pytest.approx((1 + 1) / (1 + 2))
+
+    def test_as_of_query_param_is_forwarded(self, client):
+        client.post("/research/signal-evidence/trigger", json=_PAYLOAD)
+        client.post(
+            "/research/signal-evidence/t-001/outcome",
+            json={"max_favorable_excursion": 0.03, "max_adverse_excursion": -0.01, "return_at_horizon": 0.02},
+        )
+
+        resp = client.get(
+            "/research/track2-aggregate/AAPL",
+            params={"must_condition": "sma5_cross_sma50", "as_of": 1_600_000_000},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["sample_size"] == 0  # outcome recorded well after this as_of
+
+
+_MOVE_PAYLOAD = {
+    "bar_ts": 1_700_000_000,
+    "window_seconds": 900,
+    "granularity": "15min",
+    "atr": 2.0,
+    "price_move": 6.0,
+    "move_threshold": 4.0,
+    "direction": "up",
+}
+
+
+class TestRecordMoveEventRoute:
+    def test_records_and_lists_back(self, client):
+        resp = client.post("/research/move-evidence/AAPL", json=_MOVE_PAYLOAD)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "recorded"
+
+        listed = client.get("/research/move-evidence", params={"symbol": "AAPL"})
+        assert listed.status_code == 200
+        body = listed.json()
+        assert body["count"] == 1
+        assert body["events"][0]["symbol"] == "AAPL"
+        assert body["events"][0]["direction"] == "up"
+
+
+class TestUnconfirmedMovesRoute:
+    def test_move_with_no_trigger_is_unconfirmed(self, client):
+        client.post("/research/move-evidence/AAPL", json=_MOVE_PAYLOAD)
+
+        resp = client.get("/research/unconfirmed-moves", params={"symbol": "AAPL"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 1
+        assert body["events"][0]["confirmed_by_track1"] is False
+
+    def test_move_with_a_matching_trigger_is_confirmed_and_excluded(self, client):
+        client.post("/research/move-evidence/AAPL", json=_MOVE_PAYLOAD)
+        client.post(
+            "/research/signal-evidence/trigger",
+            json={**_PAYLOAD, "trigger_time": "2023-11-14T22:13:25+00:00"},
+        )
+
+        resp = client.get("/research/unconfirmed-moves", params={"symbol": "AAPL"})
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 0

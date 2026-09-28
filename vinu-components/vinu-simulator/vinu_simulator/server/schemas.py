@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from vinu_infra.contract_version import contract_version
+
 
 class SimulateRequest(BaseModel):
     strategy_name: str
@@ -138,6 +140,25 @@ class CustomSimulateResponse(BaseModel):
     # all-zero weight series, so a trade_count==0 result caused by a strategy
     # crash is distinguishable from one caused by a legitimate no-trade decision.
     diagnostics: dict[str, Any] = Field(default_factory=dict)
+    # item #17's "confirmed gap, not a new item" (system-wide-audit-and-
+    # design/02-open-questions-strategy-and-simulation.md): a deterministic
+    # hash of THIS SERVICE's own live CustomSimulateRequest/Response
+    # schemas, echoed on every real response -- lets a caller (or its
+    # logs) notice deploy-time drift between what it was written against
+    # and what the running simulator actually serves, something the
+    # existing import-based contract tests can only catch when both
+    # sides' code is checked out together in one test run. Populated by
+    # the one real construction site (routes_read.py), not a pydantic
+    # default -- see this module's own CUSTOM_SIMULATE_REQUEST_VERSION/
+    # CUSTOM_SIMULATE_RESPONSE_VERSION constants below.
+    request_schema_version: str = ""
+    response_schema_version: str = ""
+
+
+# Computed once at import (both classes are fully defined by this point),
+# not per-request -- the schema itself doesn't change at runtime.
+CUSTOM_SIMULATE_REQUEST_VERSION = contract_version(CustomSimulateRequest)
+CUSTOM_SIMULATE_RESPONSE_VERSION = contract_version(CustomSimulateResponse)
 
 
 class HealthResponse(BaseModel):

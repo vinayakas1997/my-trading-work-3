@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from vinu_infra.evidence_confidence import summarize_resolved_triggers
+from vinu_infra.risk_math import forecast_confidence_scale
 from vinu_infra.risk_math import kelly_fraction as _kelly_fraction
+from vinu_portfolio.circuit_breakers import compute_drawdown_action
 from vinu_tools.compute.risk.shock_correlation import dcc_shock_correlation
 
 
@@ -28,13 +32,26 @@ class PositionSizer(ABC):
         realized_returns: np.ndarray,
         *,
         symbol_returns: pd.DataFrame | None = None,
+        current_date: pd.Timestamp | None = None,
+        evidence_triggers: dict[str, list[dict[str, Any]]] | None = None,
+        regime: str | None = None,
+        portfolio_value: float | None = None,
     ) -> np.ndarray:
         """`symbol_returns`, when given, is the backtest's own per-symbol
         daily-return history strictly before the current rebalance day
         (same point-in-time-safe cutoff as `realized_returns`) -- only
-        `CompositeSizer` reads it today; every other sizer here accepts
-        and ignores it so the engine's one call site can pass it
-        unconditionally without an isinstance check."""
+        `CompositeSizer` reads it today, for its correlation factor, and
+        `EvidenceConfidenceSizer`, for per-symbol identity (its column
+        order). `current_date`/`evidence_triggers` exist only for
+        `EvidenceConfidenceSizer`. `regime` exists only for
+        `RegimeAwareSizer` -- the current bar's regime label
+        (`engine.regime.classify_regime`'s own point-in-time-safe
+        output), precomputed once outside the loop. `portfolio_value`
+        exists only for `DrawdownAwareSizer` -- this step's NAV before
+        today's rebalance, so it can track its own running peak/start the
+        same way `PortfolioDrawdownMonitor` does live. Every other sizer
+        here accepts and ignores all five so the engine's one call site
+        can pass them unconditionally without an isinstance check."""
         ...
 
 
@@ -48,6 +65,10 @@ class FixedSizer(PositionSizer):
         realized_returns: np.ndarray,
         *,
         symbol_returns: pd.DataFrame | None = None,
+        current_date: pd.Timestamp | None = None,
+        evidence_triggers: dict[str, list[dict[str, Any]]] | None = None,
+        regime: str | None = None,
+        portfolio_value: float | None = None,
     ) -> np.ndarray:
         return target_weights
 
@@ -114,6 +135,10 @@ class VolTargetSizer(PositionSizer):
         realized_returns: np.ndarray,
         *,
         symbol_returns: pd.DataFrame | None = None,
+        current_date: pd.Timestamp | None = None,
+        evidence_triggers: dict[str, list[dict[str, Any]]] | None = None,
+        regime: str | None = None,
+        portfolio_value: float | None = None,
     ) -> np.ndarray:
         scale = _vol_target_scale_factor(
             realized_returns, self.target_annual_vol, self.lookback_days,
@@ -146,6 +171,10 @@ class FractionalKellySizer(PositionSizer):
         realized_returns: np.ndarray,
         *,
         symbol_returns: pd.DataFrame | None = None,
+        current_date: pd.Timestamp | None = None,
+        evidence_triggers: dict[str, list[dict[str, Any]]] | None = None,
+        regime: str | None = None,
+        portfolio_value: float | None = None,
     ) -> np.ndarray:
         if len(realized_returns) < self.lookback_days:
             return target_weights
@@ -228,6 +257,10 @@ class CompositeSizer(PositionSizer):
         realized_returns: np.ndarray,
         *,
         symbol_returns: pd.DataFrame | None = None,
+        current_date: pd.Timestamp | None = None,
+        evidence_triggers: dict[str, list[dict[str, Any]]] | None = None,
+        regime: str | None = None,
+        portfolio_value: float | None = None,
     ) -> np.ndarray:
         vol_scale = _vol_target_scale_factor(
             realized_returns, self.target_annual_vol, self.vol_lookback_days,
@@ -270,6 +303,214 @@ class CompositeSizer(PositionSizer):
         return scale
 
 
+def _as_of_iso(current_date: pd.Timestamp) -> str:
+    ts = pd.Timestamp(current_date)
+    ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+    return ts.isoformat()
+
+
+class EvidenceConfidenceSizer(PositionSizer):
+    """Scales each symbol's weight by Track 2's evidence-confidence for
+    that symbol (system-wide-audit-and-design item #4/#10) -- unlike
+    every other sizer in this file, this one scales per-symbol, not by a
+    single portfolio-wide scalar, since evidence-confidence is inherently
+    a per-symbol question (a strategy can have strong historical evidence
+    on one name and none at all on another).
+
+    Deliberately makes no network calls of its own: `evidence_triggers`
+    (symbol -> pre-fetched, already-resolved trigger list, filtered to
+    the strategy's `evidence_must_condition` by the caller) comes in
+    through `size()` exactly the way `symbol_returns` already does for
+    `CompositeSizer` -- this engine's whole discipline is "act only on
+    data already handed to it," and threading in a live HTTP client here
+    would be the first sizer in this file to break that.
+
+    A symbol with no evidence on file, or fewer resolved triggers than
+    `min_sample_size`, is left unscaled (factor 1.0) -- "no evidence yet"
+    is not evidence the edge is bad, so it must never look like a
+    conviction-driven size-down.
+
+    Reuses `vinu_infra.risk_math.forecast_confidence_scale` unchanged for
+    the actual scale factor, which only ever dampens (its ceiling is
+    1.0) -- a high evidence-confidence keeps a symbol at its full
+    strategy-assigned weight, it never grants leverage beyond that weight
+    just because the evidence looks good. Only weak evidence
+    (`evidence_confidence` well below 1.0) pulls a symbol's size down,
+    toward `min_confidence_scale` as a floor, never to zero.
+    """
+
+    def __init__(self, min_confidence_scale: float = 0.5, min_sample_size: int = 5):
+        self.min_confidence_scale = min_confidence_scale
+        self.min_sample_size = min_sample_size
+
+    def size(
+        self,
+        target_weights: np.ndarray,
+        realized_returns: np.ndarray,
+        *,
+        symbol_returns: pd.DataFrame | None = None,
+        current_date: pd.Timestamp | None = None,
+        evidence_triggers: dict[str, list[dict[str, Any]]] | None = None,
+        regime: str | None = None,
+        portfolio_value: float | None = None,
+    ) -> np.ndarray:
+        if symbol_returns is None or current_date is None or not evidence_triggers:
+            # No symbol identity, no point-in-time cutoff, or nothing to
+            # look up -- fail open to unscaled, same posture as every
+            # other sizer's "not enough context yet" branch.
+            return target_weights
+
+        as_of_iso = _as_of_iso(current_date)
+        scale = np.ones(len(target_weights), dtype=np.float64)
+        for i, ticker in enumerate(symbol_returns.columns):
+            triggers = evidence_triggers.get(ticker)
+            if not triggers:
+                continue
+            summary = summarize_resolved_triggers(triggers, as_of_iso=as_of_iso)
+            if summary["sample_size"] < self.min_sample_size:
+                continue
+            scale[i] = forecast_confidence_scale(
+                summary["evidence_confidence"], floor=self.min_confidence_scale,
+            )
+        return target_weights * scale
+
+
+# item #14A factor #2 (system-wide-audit-and-design/
+# 02-open-questions-strategy-and-simulation.md): "a strategy that only
+# works in low-vol regimes should shrink automatically as the regime
+# shifts, not rely on the strategy author hard-coding that themselves."
+# `engine.regime.classify_regime`'s labels, not reinvented here.
+DEFAULT_REGIME_SCALE_MAP: dict[str, float] = {
+    "high_vol": 0.5,
+    "bear": 0.7,
+    "bull": 1.0,
+    "sideways": 1.0,
+}
+
+
+class RegimeAwareSizer(PositionSizer):
+    """Scales the whole portfolio's weight by a single factor looked up
+    from the current bar's regime label -- a portfolio-wide scalar, like
+    `VolTargetSizer`/`CompositeSizer`, not per-symbol like
+    `EvidenceConfidenceSizer`, since regime (bull/bear/high_vol/sideways)
+    is a benchmark-level classification, not a per-symbol one.
+
+    Makes no classification decisions of its own: `regime` is
+    `engine.regime.classify_regime()`'s own point-in-time-safe label,
+    computed once by the engine before the loop starts and passed in per
+    step -- this sizer is a pure lookup table
+    (`regime_scale_map.get(regime, default_scale)`), not a second,
+    independently-derived regime rule.
+
+    A bar with no regime available (no benchmark ticker in the price
+    data, or the classifier hasn't warmed up yet) is left unscaled
+    (factor 1.0) -- "unknown regime" must never be silently treated as
+    the worst-case regime.
+    """
+
+    def __init__(
+        self,
+        regime_scale_map: dict[str, float] | None = None,
+        default_scale: float = 1.0,
+    ):
+        self.regime_scale_map = regime_scale_map or dict(DEFAULT_REGIME_SCALE_MAP)
+        self.default_scale = default_scale
+
+    def size(
+        self,
+        target_weights: np.ndarray,
+        realized_returns: np.ndarray,
+        *,
+        symbol_returns: pd.DataFrame | None = None,
+        current_date: pd.Timestamp | None = None,
+        evidence_triggers: dict[str, list[dict[str, Any]]] | None = None,
+        regime: str | None = None,
+        portfolio_value: float | None = None,
+    ) -> np.ndarray:
+        if regime is None:
+            return target_weights
+        scale = self.regime_scale_map.get(regime, self.default_scale)
+        return target_weights * scale
+
+
+# item #14A factor #3: ok -> 1.0 (full size), halve -> 0.5, flat/halt ->
+# 0.0 (no new exposure) -- the exact mapping discussed and confirmed
+# directly (2026-09-28), matching the live system's own stated intent
+# literally rather than inventing a softer gradient.
+DEFAULT_DRAWDOWN_ACTION_SCALE: dict[str, float] = {
+    "ok": 1.0,
+    "halve": 0.5,
+    "flat": 0.0,
+    "halt": 0.0,
+}
+
+
+class DrawdownAwareSizer(PositionSizer):
+    """Scales the whole portfolio by a factor looked up from
+    `vinu_portfolio.circuit_breakers.compute_drawdown_action` -- the same
+    pure ok/halve/flat/halt threshold ladder `PortfolioDrawdownMonitor`
+    uses live, extracted specifically so this sizer can reuse it without
+    also reusing `update()`'s real HTTP halt call (which would risk
+    halting real live trading from a backtest replaying synthetic data --
+    the actual reason this wasn't already a drop-in, per item #14A's own
+    finding).
+
+    Tracks its own peak/start portfolio value across the backtest
+    calendar, on this instance -- a fresh sizer is built per run (same as
+    every other stateful sizer here), so there is no cross-run leakage,
+    the same guarantee `PortfolioDrawdownMonitor.reset()` gives a live
+    monitor between sessions.
+
+    Once `halt` fires, per the confirmed design, it is NOT sticky --
+    `compute_drawdown_action` is re-evaluated fresh every step from the
+    tracked peak/start, so a recovery above the halt threshold on a later
+    day returns to `ok` (or whichever rung the ladder currently sits at),
+    exactly like every other bar-by-bar sizer in this file.
+    """
+
+    def __init__(
+        self,
+        drawdown_threshold: float = -0.20,
+        halve_threshold: float = -0.10,
+        flat_threshold: float = -0.15,
+        abs_loss_threshold: float = 0.0,
+        action_scale_map: dict[str, float] | None = None,
+    ):
+        self.drawdown_threshold = drawdown_threshold
+        self.halve_threshold = halve_threshold
+        self.flat_threshold = flat_threshold
+        self.abs_loss_threshold = abs_loss_threshold
+        self.action_scale_map = action_scale_map or dict(DEFAULT_DRAWDOWN_ACTION_SCALE)
+        self._peak_value: float | None = None
+        self._start_value: float | None = None
+
+    def size(
+        self,
+        target_weights: np.ndarray,
+        realized_returns: np.ndarray,
+        *,
+        symbol_returns: pd.DataFrame | None = None,
+        current_date: pd.Timestamp | None = None,
+        evidence_triggers: dict[str, list[dict[str, Any]]] | None = None,
+        regime: str | None = None,
+        portfolio_value: float | None = None,
+    ) -> np.ndarray:
+        if portfolio_value is None:
+            # No NAV to track yet -- fail open, same posture as every
+            # other "not enough context" branch in this file.
+            return target_weights
+        result = compute_drawdown_action(
+            portfolio_value,
+            peak_value=self._peak_value, start_value=self._start_value,
+            threshold=self.drawdown_threshold, halve_threshold=self.halve_threshold,
+            flat_threshold=self.flat_threshold, abs_loss_threshold=self.abs_loss_threshold,
+        )
+        self._peak_value = result["new_peak_value"]
+        self._start_value = result["new_start_value"]
+        scale = self.action_scale_map.get(result["action"], 1.0)
+        return target_weights * scale
+
+
 def build_position_sizer(
     model: str,
     target_annual_vol: float = 0.15,
@@ -277,6 +518,15 @@ def build_position_sizer(
     kelly_fraction: float = 0.25,
     kelly_lookback_days: int = 60,
     max_leverage: float = 1.0,
+    evidence_min_confidence_scale: float = 0.5,
+    evidence_min_sample_size: int = 5,
+    regime_scale_map: dict[str, float] | None = None,
+    regime_default_scale: float = 1.0,
+    drawdown_threshold: float = -0.20,
+    drawdown_halve_threshold: float = -0.10,
+    drawdown_flat_threshold: float = -0.15,
+    drawdown_abs_loss_threshold: float = 0.0,
+    drawdown_action_scale_map: dict[str, float] | None = None,
 ) -> PositionSizer:
     if model == "vol_target":
         return VolTargetSizer(
@@ -295,6 +545,24 @@ def build_position_sizer(
             target_annual_vol=target_annual_vol,
             vol_lookback_days=vol_lookback_days,
             max_leverage=max_leverage,
+        )
+    if model == "evidence_confidence":
+        return EvidenceConfidenceSizer(
+            min_confidence_scale=evidence_min_confidence_scale,
+            min_sample_size=evidence_min_sample_size,
+        )
+    if model == "regime_aware":
+        return RegimeAwareSizer(
+            regime_scale_map=regime_scale_map,
+            default_scale=regime_default_scale,
+        )
+    if model == "drawdown_aware":
+        return DrawdownAwareSizer(
+            drawdown_threshold=drawdown_threshold,
+            halve_threshold=drawdown_halve_threshold,
+            flat_threshold=drawdown_flat_threshold,
+            abs_loss_threshold=drawdown_abs_loss_threshold,
+            action_scale_map=drawdown_action_scale_map,
         )
     if model == "fixed":
         return FixedSizer()

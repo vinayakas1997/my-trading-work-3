@@ -9,6 +9,73 @@ import httpx
 LOG = logging.getLogger(__name__)
 
 
+def compute_drawdown_action(
+    portfolio_value: float,
+    *,
+    peak_value: float | None,
+    start_value: float | None,
+    threshold: float,
+    halve_threshold: float,
+    flat_threshold: float,
+    abs_loss_threshold: float,
+) -> dict[str, Any]:
+    """The pure threshold/action-ladder math `PortfolioDrawdownMonitor
+    .update()` wraps -- item #14A factor #3 (system-wide-audit-and-
+    design/02-open-questions-strategy-and-simulation.md): extracted so a
+    backtest (`vinu-simulator`'s `DrawdownAwareSizer`) can reuse the exact
+    same ok/halve/flat/halt logic without also reusing `update()`'s real
+    HTTP halt call -- firing that inside a backtest replaying synthetic
+    data would risk halting real live trading as a side effect, which is
+    exactly why this wasn't already a drop-in.
+
+    Takes and returns peak/start value explicitly (no `self`) so a caller
+    owns its own state -- the live monitor keeps it on `self` across real
+    time; a backtest sizer keeps it on its own instance across the
+    replayed calendar. Same output shape `update()` already returns, plus
+    `new_peak_value`/`new_start_value` for the caller to persist.
+    """
+    if start_value is None:
+        start_value = portfolio_value
+    if peak_value is None or portfolio_value > peak_value:
+        peak_value = portfolio_value
+
+    if peak_value == 0:
+        return {
+            "current_drawdown": 0.0, "abs_loss_from_start": 0.0,
+            "threshold_breached": False, "abs_loss_breached": False,
+            "action": "ok", "new_peak_value": peak_value, "new_start_value": start_value,
+        }
+
+    current_drawdown = (portfolio_value - peak_value) / peak_value
+    drawdown_breached = current_drawdown <= threshold
+
+    abs_loss = 0.0
+    if start_value:
+        abs_loss = (portfolio_value - start_value) / start_value
+    abs_loss_breached = abs_loss_threshold < 0.0 and abs_loss <= abs_loss_threshold
+
+    threshold_breached = drawdown_breached or abs_loss_breached
+
+    if threshold_breached:
+        action = "halt"
+    elif current_drawdown <= flat_threshold:
+        action = "flat"
+    elif current_drawdown <= halve_threshold:
+        action = "halve"
+    else:
+        action = "ok"
+
+    return {
+        "current_drawdown": round(current_drawdown, 4),
+        "abs_loss_from_start": round(abs_loss, 4),
+        "threshold_breached": threshold_breached,
+        "abs_loss_breached": abs_loss_breached,
+        "action": action,
+        "new_peak_value": peak_value,
+        "new_start_value": start_value,
+    }
+
+
 class PortfolioDrawdownMonitor:
     """Monitors portfolio-level drawdown and triggers the kill switch when
     the drawdown exceeds a configurable threshold.
@@ -107,30 +174,23 @@ class PortfolioDrawdownMonitor:
         # already recovered doesn't sit halfway toward escalating later.
         self._consecutive_unavailable = 0
 
-        if self._start_value is None:
-            self._start_value = portfolio_value
-        if self._peak_value is None or portfolio_value > self._peak_value:
-            self._peak_value = portfolio_value
+        result = compute_drawdown_action(
+            portfolio_value,
+            peak_value=self._peak_value, start_value=self._start_value,
+            threshold=self._threshold, halve_threshold=self._halve,
+            flat_threshold=self._flat, abs_loss_threshold=self._abs_loss_threshold,
+        )
+        self._peak_value = result["new_peak_value"]
+        self._start_value = result["new_start_value"]
 
-        if self._peak_value is None or self._peak_value == 0:
-            return {"current_drawdown": 0.0, "threshold_breached": False, "halted": False}
-
-        current_drawdown = (portfolio_value - self._peak_value) / self._peak_value
-        drawdown_breached = current_drawdown <= self._threshold
-
-        # A16: absolute loss from the session's starting equity, checked
-        # independently of the peak. Only armed when the operator set a
-        # non-zero threshold.
-        abs_loss = 0.0
-        if self._start_value:
-            abs_loss = (portfolio_value - self._start_value) / self._start_value
-        abs_loss_breached = self._abs_loss_threshold < 0.0 and abs_loss <= self._abs_loss_threshold
-
-        threshold_breached = drawdown_breached or abs_loss_breached
+        threshold_breached = result["threshold_breached"]
+        abs_loss_breached = result["abs_loss_breached"]
+        current_drawdown = result["current_drawdown"]
+        abs_loss = result["abs_loss_from_start"]
 
         halted = False
         if threshold_breached:
-            if abs_loss_breached and not drawdown_breached:
+            if abs_loss_breached and not (current_drawdown <= self._threshold):
                 self._halt_trading(
                     abs_loss,
                     reason=(
@@ -142,24 +202,13 @@ class PortfolioDrawdownMonitor:
                 self._halt_trading(current_drawdown)
             halted = True
 
-        # Action ladder: ok -> halve -> flat -> halt. Orchestrator halves size
-        # at halve, exits to flat at flat, HALT entries-only at halt.
-        if threshold_breached:
-            action = "halt"
-        elif current_drawdown <= self._flat:
-            action = "flat"
-        elif current_drawdown <= self._halve:
-            action = "halve"
-        else:
-            action = "ok"
-
         return {
-            "current_drawdown": round(current_drawdown, 4),
-            "abs_loss_from_start": round(abs_loss, 4),
+            "current_drawdown": current_drawdown,
+            "abs_loss_from_start": abs_loss,
             "threshold_breached": threshold_breached,
             "abs_loss_breached": abs_loss_breached,
             "halted": halted,
-            "action": action,
+            "action": result["action"],
         }
 
     def _halt_trading(self, drawdown: float, reason: str | None = None) -> None:

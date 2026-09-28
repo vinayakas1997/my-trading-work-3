@@ -22,7 +22,7 @@ implemented" stated plainly until it is).
 | 3 | Live indicator computation ("live detector") | Designed — see `04-live-detector-schema.md` | **Built** — `vinu-live/vinu_live/live_decision/detector.py` (`compute_live_snapshot`), `bars_client.py` |
 | 4 | Stage/state tracker per (ticker, strategy) | Designed — see `03-poller-and-state-schema.md` (Part B) | **Built** — `vinu-live/vinu_live/live_decision/state_tracker.py`, `storage.py`, `schema.py` |
 | 5 | The querying/deciding agent (Layer 5) | Designed — see `05-deciding-agent-and-precondition-tracking.md` | **Built** — tool (`get_live_decision_context`), agent (`live_decision_agent`, team `live_decision`), the trigger route (`POST /agent/live-decision/run`, `session/service.py::run_team_once`), and the poller wiring that calls it exactly once per fresh `ready_to_execute` and resolves the trigger's lifecycle on a real decision. Full chain built, tested, and passing |
-| 6 | Precondition `defined`/`tested` tracking | Designed — see `05-deciding-agent-and-precondition-tracking.md` | Schema fields added (`must_conditions`/`confirmation_conditions`/`grace_window_bars`/`precondition` on `StrategyConfig`, exposed via `GET /strategy/strategies/{name}`); the `precondition.tested`-flipping write-back itself still has no store/API decided (unchanged from design) |
+| 6 | Precondition `defined`/`tested` tracking | Designed — see `05-deciding-agent-and-precondition-tracking.md` | **Fully built** — schema fields on `StrategyConfig` (unchanged from before), plus the write-back path: `vinu-strategy/vinu_strategy/storage/precondition_state.py` (`PreconditionStateStore`, a separate SQLite table, deliberately not the strategy's own YAML file), `POST /strategy/strategies/{name}/precondition-check` (called by `vinu-live/vinu_live/live_decision/poller.py::_record_precondition_check` on every real EXECUTE/SKIP verdict), overlaid onto `GET /strategy/strategies/{name}`'s `precondition` dict at read time |
 | 7 | Decision → execution handoff (item #24 fixes) | Designed — see `06-execution-handoff-and-architecture.md` | **Fully built, all 3 item #24 findings closed** — `vinu-live/vinu_live/scheduler.py` (`_check_breaker`/`_engage_real_halt`, finding #1; `_handle_reconciliation_drift`/`_notify_target_weight_drift`, finding #3; `_fetch_live_decision_weights`, option 1's handoff) and `vinu_live/signal_translator.py` (`_net_by_symbol`, finding #2). A live EXECUTE decision now folds into `LiveScheduler`'s own `target_weights` flow, sized by `StrategyConfig.live_decision_position_size` (vinu-strategy), and goes through the same risk-limit check, netting, and drift-alerting as every other weight |
 | 8 | Architectural home for poller/agent | Designed and **built as designed** — poller/detector/tracker live in `vinu-live/vinu_live/live_decision/`, the agent lives in `vinu-agent/teams/live_decision/`, connected by `POST /agent/live-decision/run` | Built — see point 5 |
 | 9 | Layer 4 probabilistic/bucket table | Deliberately deferred — see `07-bucket-table-deferred.md` | Not built |
@@ -367,6 +367,144 @@ fixed.
   `vinu-agent` suite (1342 passed, up from 1341, exactly +1 -- the new
   `test_reconciliation_drift_describes_target_weight_drift`; same 16
   failures + 2 errors as every prior run, all pre-existing).
+
+**2026-09-28** — The exit-mechanism gap this file's point 7 log left open
+("no exit mechanism exists for a position a live EXECUTE opened") closed,
+after `04-synthesis-built-vs-missing-2026-09-28.md` (in the parent
+folder) traced the code and found the gap was actually worse than
+"missing": `LiveScheduler._fetch_live_decision_weights` only ever folded
+an EXECUTE into `target_weights` for the single cycle it was applied,
+and `SignalTranslator.translate()`'s own documented rule ("held but
+absent from `target_weights` -> target 0.0") meant the position was
+liable to be force-closed the very next cycle, not held indefinitely as
+this file previously stated. No test had ever exercised a second cycle,
+so this had never actually fired in practice, but was live risk.
+
+- `vinu-live/vinu_live/live_decision/schema.py` + `storage.py`: new
+  `LiveDecisionOpenPosition` dataclass and `live_decision_open_positions`
+  table (SCHEMA_VERSION 3) -- `open_position`/`list_open_positions`/
+  `mark_position_reviewed`/`close_position`. This table, not the
+  one-time `applied` flag, is now the source of truth `LiveScheduler`
+  reads every cycle.
+- `vinu-live/vinu_live/scheduler.py`: `_fetch_live_decision_weights` now
+  does two things instead of one -- converts a fresh unapplied EXECUTE
+  into a real open-position row (unchanged sizing/unsized semantics),
+  then re-emits a `target_weights` entry for **every** currently open
+  position on **every** cycle, using the position's own stored size
+  (not a fresh strategy-config fetch, so a later config edit doesn't
+  retroactively resize an already-open position). This is the actual bug
+  fix.
+- `vinu-live/vinu_live/live_decision/poller.py`: new
+  `_review_open_positions`/`_trigger_position_review`, called at the end
+  of every `cycle()`. On a bar-count cadence
+  (`LiveConfig.live_decision_position_review_cadence_bars`, default 5,
+  a guessed starting constant same posture as `grace_window_bars`),
+  re-invokes the same `/agent/live-decision/run` route with `mode:
+  "review"` for each open position. HOLD keeps it open; EXIT calls
+  `close_position`, after which the *next* scheduler cycle naturally
+  omits its weight and the existing "not targeted -> close" rule sells
+  it -- no new sell logic was written, reusing that mechanism was the
+  point. Every real outcome (HOLD, EXIT, a failed call, an unrecognized
+  answer) is durably recorded via the same `LiveDecisionRecord`/
+  `record_live_decision` this file's point 5 already established, under
+  a synthetic `pos_<id>` trigger_id. Only HOLD/EXIT advance
+  `last_reviewed_bar_ts`; a failed call retries next cycle immediately
+  rather than waiting a full cadence again.
+- `vinu-agent`: `routes_live_decision.py`'s `LiveDecisionRequest` gained
+  `mode`/`position_context`, folded into the task text as `Mode:
+  POSITION_REVIEW` plus the position's opened_at/opened_bar_ts/
+  position_size. `live_decision_agent`'s `prompt.md` and the team's
+  `manager_prompt.md` gained a full "review mode" section -- same team,
+  same tools (`get_live_decision_context`/`get_signal_evidence`), same
+  "cannot place an order" posture, only the decision vocabulary
+  (HOLD/EXIT) and the question being asked differ. Deliberately **not**
+  a new team/tool: reuses the existing entry-mode machinery per this
+  series' own "reduce, don't rebuild" precedent (point 5's own citation
+  of `05-deciding-agent-and-precondition-tracking.md`).
+- Deliberately **not** built: REDUCE/ADD (partial-close/add-to-position
+  sizing has no mechanism anywhere in this codebase yet -- would be
+  fabricating new position-sizing logic, not reusing an existing one);
+  a real unrealized-P&L or confidence number to hand the reviewing agent
+  (the same Phase 3/Layer 4 bucket-table gap point 5 already documents,
+  unchanged by this fix).
+- **43 new tests**, all passing: 5 in `test_live_decision_storage.py`
+  (`TestLiveDecisionOpenPositions`), 2 in
+  `test_scheduler_live_decision_weights.py` (one inline assertion added
+  to the existing sized-EXECUTE test, one new
+  `TestOpenPositionReEmittedEveryCycle` proving the cross-cycle fix
+  directly), 7 in `test_live_decision_poller.py`'s new
+  `TestPositionReview`, 2 in `test_routes_live_decision.py`'s new
+  `TestReviewMode`. Confirmed zero regressions: full `vinu-live` suite
+  (540 passed, 0 errors -- previously-noted pre-existing environment
+  errors from a missing `vinu_agent` install no longer reproduce in this
+  environment, confirmed not caused by this change since none of this
+  session's files touch that import path) and full `vinu-agent` suite
+  (1459 passed, 4 skipped, 0 failed).
+
+**2026-09-28** — Point 6's last open piece built: the `precondition.
+tested`/`precondition_held` write-back path, previously left "no store/
+API decided."
+
+- **The one real design decision this needed, made explicitly**: NOT
+  written back into the strategy's own YAML file
+  (`StrategyRegistry.load_all()`) -- that file is a human-authored,
+  declarative source of truth reloaded on its own schedule; a live
+  process writing into it would blur config (human-owned) with derived
+  runtime state (system-owned), the same split `MetaStorage`/
+  `WeightStorage` already draw for every other kind of per-strategy
+  state in `vinu-strategy`. Instead: a new, separate
+  `vinu_strategy/storage/precondition_state.py`
+  (`PreconditionStateStore`, one row per strategy_name, upserted not
+  appended -- the append-only audit trail of every individual check
+  already lives in vinu-live's own `live_decisions` table), overlaid
+  onto the YAML-sourced `precondition` dict at read time
+  (`StrategyAPI.get_strategy()`/`_precondition_dict()`), never mutating
+  the file itself.
+- New `POST /strategy/strategies/{name}/precondition-check`
+  (`routes_read.py`) — 404s for an unknown strategy name (typo
+  protection), otherwise records the check and returns the updated
+  overlay.
+- `vinu-live/vinu_live/live_decision/poller.py::_trigger_live_decision`:
+  new `_record_precondition_check()`, called for both EXECUTE and SKIP
+  (being checked and failing is still being tested, per the design
+  doc's own wording) with the real `precondition_held` value the agent
+  returned -- NOT called for EXTEND_GRACE_WINDOW/error/unrecognized,
+  since no real verdict was reached. Best-effort: a failure here is
+  logged and swallowed, same posture as every other side-write in this
+  codebase (e.g. `MaturityConsultationStore`'s own recording calls) --
+  this only affects a strategy's own visibility field, nothing the
+  trading loop depends on reading back.
+- Found and fixed a real, pre-existing test-isolation gap while adding
+  route-level test coverage: `vinu-strategy/vinu_strategy/server/
+  routes_read.py`'s `_get_api()` is a lazy, never-reset module-level
+  singleton -- the first test in the whole pytest session to construct
+  it (via `create_merged_app()`) wins for every test after, in any file,
+  regardless of that later test's own env vars. Confirmed concretely: a
+  first version of this build's own new route test file, if run before
+  `test_merged_app.py`, broke that file's "empty registry" assumption.
+  Fixed by resetting the singleton before AND after this build's own new
+  test file's fixture (scoped to this file's own tests, not a fix to the
+  broader gap, which is real and pre-existing, not introduced here).
+- 18 new tests: 10 in new `test_precondition_state.py`
+  (`PreconditionStateStore` round-trip, `None` survives the
+  INTEGER<->bool conversion, upsert-not-append, `StrategyAPI` overlay
+  behavior, a SKIP counting as tested, unknown-strategy 404, confirming
+  the YAML file itself is never modified), 4 in new
+  `test_routes_precondition_check.py`, 4 in
+  `test_live_decision_poller.py`'s new `TestPreconditionWriteBack`
+  (EXECUTE and SKIP both call it with the real value, EXTEND_GRACE_WINDOW
+  does not, a call failure doesn't crash the cycle). Two existing
+  `TestLiveDecisionTrigger` tests' own `_post` mocks were also updated to
+  handle the new `/precondition-check` call explicitly rather than
+  silently relying on `_record_precondition_check`'s own broad
+  exception-swallowing to mask an otherwise-unhandled-URL
+  `AssertionError`. Confirmed zero regressions: full `vinu-strategy`
+  suite (136 passed, up from 122, +14 exactly, checked stable in both
+  file-collection orders after the isolation fix) and full `vinu-live`
+  suite (559 passed, up from 555, +4 exactly -- the poller-side tests
+  only).
+- **Point 6 is now fully closed** — every piece the design doc named is
+  built.
 
 ## How this file gets updated going forward
 

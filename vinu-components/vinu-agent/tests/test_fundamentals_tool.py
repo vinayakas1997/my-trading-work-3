@@ -93,3 +93,46 @@ class TestFundamentalsToolMetrics:
         assert "income_statement" in result
         assert "balance_sheet" in result
         assert "cash_flow" in result
+
+
+class TestPerInstanceCaching:
+    """item #11 finding #4: repeated identical fetches within one agent
+    loop must not re-hit yfinance every time."""
+
+    def test_identical_call_twice_only_fetches_once(self) -> None:
+        ticker_factory = MagicMock(
+            return_value=_ticker_with_info({"symbol": "AAPL", "longName": "Apple Inc."})
+        )
+        fake_module = _fake_yfinance_module(ticker_factory)
+        tool = FundamentalsTool()
+        with patch.dict(sys.modules, {"yfinance": fake_module}):
+            first = tool.execute(symbol="AAPL", metric="summary")
+            second = tool.execute(symbol="AAPL", metric="summary")
+        assert ticker_factory.call_count == 1
+        assert first == second
+
+    def test_different_metric_is_not_cached_together(self) -> None:
+        ticker_factory = MagicMock(
+            return_value=_ticker_with_info({"symbol": "AAPL", "longName": "Apple Inc."})
+        )
+        fake_module = _fake_yfinance_module(ticker_factory)
+        tool = FundamentalsTool()
+        with patch.dict(sys.modules, {"yfinance": fake_module}):
+            tool.execute(symbol="AAPL", metric="summary")
+            tool.execute(symbol="AAPL", metric="ratios")
+        assert ticker_factory.call_count == 2
+
+    def test_error_result_is_not_cached(self) -> None:
+        failing_factory = MagicMock(side_effect=Exception("network blip"))
+        fake_module = _fake_yfinance_module(failing_factory)
+        tool = FundamentalsTool()
+        with patch.dict(sys.modules, {"yfinance": fake_module}), patch("time.sleep"):
+            tool.execute(symbol="AAPL", metric="summary")
+
+        ticker_factory = MagicMock(
+            return_value=_ticker_with_info({"symbol": "AAPL", "longName": "Apple Inc."})
+        )
+        fake_module2 = _fake_yfinance_module(ticker_factory)
+        with patch.dict(sys.modules, {"yfinance": fake_module2}):
+            result = json.loads(tool.execute(symbol="AAPL", metric="summary"))
+        assert result["symbol"] == "AAPL"

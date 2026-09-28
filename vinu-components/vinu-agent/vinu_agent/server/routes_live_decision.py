@@ -44,6 +44,15 @@ class LiveDecisionRequest(BaseModel):
     ticker: str
     strategy_id: str
     trigger_id: str | None = None
+    # Exit-mechanism fix (missing-pieces-of-system/new-theory-of-trading/
+    # system-wide-audit-and-design/04-synthesis-built-vs-missing-2026-09-28.md):
+    # "entry" is the original ready_to_execute call (EXECUTE/SKIP/
+    # EXTEND_GRACE_WINDOW); "review" is vinu-live's periodic check on an
+    # already-open live_decision position (HOLD/EXIT). Same team/agent,
+    # same route -- the mode only changes which section of the agent's
+    # own prompt.md applies and what task context is given.
+    mode: str = "entry"
+    position_context: dict[str, Any] | None = None
 
 
 @router.post("/live-decision/run")
@@ -56,6 +65,15 @@ async def run_live_decision(body: LiveDecisionRequest) -> dict[str, Any]:
     task = f"Ticker: {ticker}\nStrategy: {body.strategy_id}"
     if body.trigger_id:
         task += f"\nTrigger id: {body.trigger_id}"
+
+    if body.mode == "review":
+        task += "\nMode: POSITION_REVIEW"
+        ctx = body.position_context or {}
+        task += (
+            f"\nOpen position: opened_at={ctx.get('opened_at', 'unknown')}, "
+            f"opened_bar_ts={ctx.get('opened_bar_ts', 'unknown')}, "
+            f"position_size={ctx.get('position_size', 'unknown')}"
+        )
 
     result = svc.session_service.run_team_once(
         "live_decision", task, tag=f"{ticker}-{body.strategy_id}",

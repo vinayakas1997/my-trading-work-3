@@ -7,16 +7,23 @@ Design reference: .../reverse-engineering/03-poller-and-state-schema.md
 
 from __future__ import annotations
 
+import json
 import logging
+from datetime import datetime, timezone
+from typing import Any
 
 from vinu_infra.sqlite import SQLiteBackend
 
 from vinu_live.live_decision.schema import (
+    LIVE_DECISION_OPEN_POSITIONS_TABLE,
     LIVE_DECISIONS_TABLE,
     LIVE_POLL_CURSOR_TABLE,
+    LIVE_SNAPSHOTS_TABLE,
     STRATEGY_STAGE_STATE_TABLE,
     STRATEGY_STAGE_TRANSITIONS_TABLE,
+    LiveDecisionOpenPosition,
     LiveDecisionRecord,
+    LiveSnapshotRecord,
     PollCursor,
     Stage,
     StageState,
@@ -81,8 +88,34 @@ class LiveDecisionBackend(SQLiteBackend):
             ON {LIVE_DECISIONS_TABLE} (ticker, strategy_id, recorded_at);
         CREATE INDEX IF NOT EXISTS idx_live_decisions_unapplied
             ON {LIVE_DECISIONS_TABLE} (decision, applied);
+        CREATE TABLE IF NOT EXISTS {LIVE_DECISION_OPEN_POSITIONS_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            strategy_id TEXT NOT NULL,
+            position_size REAL NOT NULL,
+            opened_bar_ts INTEGER NOT NULL,
+            trigger_id TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            opened_at TEXT NOT NULL,
+            last_reviewed_bar_ts INTEGER,
+            closed_at TEXT,
+            closed_bar_ts INTEGER,
+            closed_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_live_decision_open_positions_status
+            ON {LIVE_DECISION_OPEN_POSITIONS_TABLE} (status, ticker, strategy_id);
+        CREATE TABLE IF NOT EXISTS {LIVE_SNAPSHOTS_TABLE} (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol         TEXT NOT NULL,
+            angle_name     TEXT NOT NULL,
+            granularity    TEXT NOT NULL,
+            computed_at    TEXT NOT NULL,
+            snapshot_data  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_live_snapshots_lookup
+            ON {LIVE_SNAPSHOTS_TABLE} (symbol, angle_name, computed_at);
     """
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 4
     # Point 7 option 1 (06-execution-handoff-and-architecture.md): lets
     # LiveScheduler find EXECUTE decisions it hasn't yet folded into a
     # real cycle's target_weights, on a database that may already exist
@@ -92,6 +125,34 @@ class LiveDecisionBackend(SQLiteBackend):
          "add applied flag to live_decisions"),
         (f"ALTER TABLE {LIVE_DECISIONS_TABLE} ADD COLUMN applied_at TEXT",
          "add applied_at to live_decisions"),
+        (f"""CREATE TABLE IF NOT EXISTS {LIVE_DECISION_OPEN_POSITIONS_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            strategy_id TEXT NOT NULL,
+            position_size REAL NOT NULL,
+            opened_bar_ts INTEGER NOT NULL,
+            trigger_id TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            opened_at TEXT NOT NULL,
+            last_reviewed_bar_ts INTEGER,
+            closed_at TEXT,
+            closed_bar_ts INTEGER,
+            closed_reason TEXT
+        )""", "add live_decision_open_positions table (exit-mechanism fix)"),
+        (f"""CREATE INDEX IF NOT EXISTS idx_live_decision_open_positions_status
+            ON {LIVE_DECISION_OPEN_POSITIONS_TABLE} (status, ticker, strategy_id)""",
+         "add status index to live_decision_open_positions"),
+        (f"""CREATE TABLE IF NOT EXISTS {LIVE_SNAPSHOTS_TABLE} (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol         TEXT NOT NULL,
+            angle_name     TEXT NOT NULL,
+            granularity    TEXT NOT NULL,
+            computed_at    TEXT NOT NULL,
+            snapshot_data  TEXT NOT NULL
+        )""", "add live_snapshots table (present-data recording, item #5)"),
+        (f"""CREATE INDEX IF NOT EXISTS idx_live_snapshots_lookup
+            ON {LIVE_SNAPSHOTS_TABLE} (symbol, angle_name, computed_at)""",
+         "add lookup index to live_snapshots"),
     ]
 
 
@@ -338,3 +399,198 @@ def mark_decision_applied(backend: LiveDecisionBackend, decision_id: int) -> Non
         (now_iso(), decision_id),
     )
     conn.commit()
+
+
+# --- live_decision_open_positions ---------------------------------------
+#
+# The exit-mechanism fix (missing-pieces-of-system/new-theory-of-trading/
+# system-wide-audit-and-design/04-synthesis-built-vs-missing-2026-09-28.md):
+# this table is now the single source of truth LiveScheduler reads every
+# cycle for a live_decision position's weight -- not the one-time
+# `applied` flag above, which only marks that an EXECUTE has been
+# converted into a row here.
+
+def _row_to_open_position(row: Any) -> LiveDecisionOpenPosition:
+    return LiveDecisionOpenPosition(
+        id=row["id"],
+        ticker=row["ticker"],
+        strategy_id=row["strategy_id"],
+        position_size=row["position_size"],
+        opened_bar_ts=row["opened_bar_ts"],
+        trigger_id=row["trigger_id"],
+        status=row["status"],
+        opened_at=row["opened_at"],
+        last_reviewed_bar_ts=row["last_reviewed_bar_ts"],
+        closed_at=row["closed_at"],
+        closed_bar_ts=row["closed_bar_ts"],
+        closed_reason=row["closed_reason"] or "",
+    )
+
+
+def open_position(
+    backend: LiveDecisionBackend,
+    *,
+    ticker: str,
+    strategy_id: str,
+    position_size: float,
+    opened_bar_ts: int,
+    trigger_id: str | None = None,
+) -> LiveDecisionOpenPosition:
+    """Called exactly once per EXECUTE decision that was actually sized
+    (LiveScheduler._fetch_live_decision_weights) -- an unsized EXECUTE
+    still marks the decision applied but never reaches here, since there
+    is no real position to track without a real size."""
+    conn = backend._get_conn()
+    opened_at = now_iso()
+    cur = conn.execute(
+        f"""INSERT INTO {LIVE_DECISION_OPEN_POSITIONS_TABLE}
+            (ticker, strategy_id, position_size, opened_bar_ts, trigger_id, status, opened_at)
+            VALUES (?, ?, ?, ?, ?, 'open', ?)""",
+        (ticker, strategy_id, position_size, opened_bar_ts, trigger_id, opened_at),
+    )
+    conn.commit()
+    return LiveDecisionOpenPosition(
+        id=cur.lastrowid, ticker=ticker, strategy_id=strategy_id,
+        position_size=position_size, opened_bar_ts=opened_bar_ts,
+        trigger_id=trigger_id, status="open", opened_at=opened_at,
+    )
+
+
+def list_open_positions(
+    backend: LiveDecisionBackend, status: str = "open",
+) -> list[LiveDecisionOpenPosition]:
+    """Every position LiveScheduler must keep re-emitting a target_weight
+    for (status="open") -- called every cycle, not just the cycle a
+    position was opened, which is the actual bug fix here."""
+    conn = backend._get_conn()
+    rows = conn.execute(
+        f"SELECT * FROM {LIVE_DECISION_OPEN_POSITIONS_TABLE} WHERE status=? ORDER BY id ASC",
+        (status,),
+    ).fetchall()
+    return [_row_to_open_position(row) for row in rows]
+
+
+def mark_position_reviewed(backend: LiveDecisionBackend, position_id: int, bar_ts: int) -> None:
+    conn = backend._get_conn()
+    conn.execute(
+        f"UPDATE {LIVE_DECISION_OPEN_POSITIONS_TABLE} SET last_reviewed_bar_ts=? WHERE id=?",
+        (bar_ts, position_id),
+    )
+    conn.commit()
+
+
+def close_position(
+    backend: LiveDecisionBackend, position_id: int, *, reason: str, bar_ts: int,
+) -> None:
+    """The actual exit: flips status to 'closed'. The *next* scheduler
+    cycle then simply omits this position from `target_weights` -- and
+    SignalTranslator's own existing "held but not in target_weights ->
+    close to 0" rule (signal_translator.py's docstring) sells it, the
+    same mechanism every other strategy exit already uses. No new sell
+    logic is written for this -- reusing that rule is the point."""
+    conn = backend._get_conn()
+    conn.execute(
+        f"""UPDATE {LIVE_DECISION_OPEN_POSITIONS_TABLE}
+            SET status='closed', closed_at=?, closed_bar_ts=?, closed_reason=?,
+                last_reviewed_bar_ts=?
+            WHERE id=?""",
+        (now_iso(), bar_ts, reason, bar_ts, position_id),
+    )
+    conn.commit()
+
+
+# --- live_snapshots (append-only, "present-data" recording, item #5) ---
+
+def _row_to_snapshot(row: Any) -> LiveSnapshotRecord:
+    return LiveSnapshotRecord(
+        id=row["id"],
+        symbol=row["symbol"],
+        angle_name=row["angle_name"],
+        granularity=row["granularity"],
+        computed_at=row["computed_at"],
+        snapshot_data=snapshot_from_json(row["snapshot_data"]),
+    )
+
+
+def record_live_snapshot(
+    backend: LiveDecisionBackend,
+    *,
+    symbol: str,
+    angle_name: str,
+    granularity: str,
+    snapshot_data: dict[str, Any],
+    computed_at: str | None = None,
+) -> LiveSnapshotRecord:
+    """One new row per real computation -- an append-only log mirroring
+    `RunLog`'s own shape, not an upserted "current" row, so a history of
+    what the live snapshot looked like at each past computation stays
+    queryable, the same way `RunLog` itself is a log, not a cache.
+    `computed_at` defaults to real wall-clock now -- callers pass an
+    explicit value only in tests that need a fixed timestamp."""
+    computed_at = computed_at or now_iso()
+    conn = backend._get_conn()
+    cur = conn.execute(
+        f"""INSERT INTO {LIVE_SNAPSHOTS_TABLE}
+            (symbol, angle_name, granularity, computed_at, snapshot_data)
+            VALUES (?, ?, ?, ?, ?)""",
+        (symbol, angle_name, granularity, computed_at, snapshot_to_json(snapshot_data)),
+    )
+    conn.commit()
+    return LiveSnapshotRecord(
+        id=cur.lastrowid, symbol=symbol, angle_name=angle_name, granularity=granularity,
+        computed_at=computed_at, snapshot_data=snapshot_data,
+    )
+
+
+def get_latest_snapshot(
+    backend: LiveDecisionBackend, symbol: str, angle_name: str,
+) -> LiveSnapshotRecord | None:
+    conn = backend._get_conn()
+    row = conn.execute(
+        f"""SELECT * FROM {LIVE_SNAPSHOTS_TABLE} WHERE symbol=? AND angle_name=?
+            ORDER BY id DESC LIMIT 1""",
+        (symbol, angle_name),
+    ).fetchone()
+    if row is None:
+        return None
+    return _row_to_snapshot(row)
+
+
+def list_snapshot_angle_names(backend: LiveDecisionBackend, symbol: str) -> list[str]:
+    """Every angle_name ever recorded for this symbol -- lets a reader
+    enumerate what's actually available rather than guessing names."""
+    conn = backend._get_conn()
+    rows = conn.execute(
+        f"SELECT DISTINCT angle_name FROM {LIVE_SNAPSHOTS_TABLE} WHERE symbol=?",
+        (symbol,),
+    ).fetchall()
+    return [r["angle_name"] for r in rows]
+
+
+def list_snapshots(
+    backend: LiveDecisionBackend, symbol: str, angle_name: str, limit: int = 50,
+) -> list[LiveSnapshotRecord]:
+    """History for one (symbol, angle_name), most recent first -- the
+    "present-data" analogue of `RunLog.get_runs()`."""
+    conn = backend._get_conn()
+    rows = conn.execute(
+        f"""SELECT * FROM {LIVE_SNAPSHOTS_TABLE} WHERE symbol=? AND angle_name=?
+            ORDER BY id DESC LIMIT ?""",
+        (symbol, angle_name, limit),
+    ).fetchall()
+    return [_row_to_snapshot(row) for row in rows]
+
+
+def staleness_seconds(computed_at: str) -> float | None:
+    """Computed fresh at read time from `computed_at` -- never stored,
+    same "coverage view computed fresh, never cached" rule
+    `ticker_coverage.py`'s own `_days_stale()` already established for a
+    different table. `None` for an unparseable timestamp (absence of
+    evidence, not zero staleness), matching that function's own contract."""
+    try:
+        dt = datetime.fromisoformat(computed_at)
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - dt).total_seconds()

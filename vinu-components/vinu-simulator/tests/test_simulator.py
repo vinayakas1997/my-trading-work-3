@@ -524,9 +524,9 @@ class TestCompositeSizerWiredThroughTheRealEngine:
         received: list = []
         real_size = sim._position_sizer.size
 
-        def _spy(target_weights, realized_returns, *, symbol_returns=None):
+        def _spy(target_weights, realized_returns, *, symbol_returns=None, **kwargs):
             received.append(symbol_returns)
-            return real_size(target_weights, realized_returns, symbol_returns=symbol_returns)
+            return real_size(target_weights, realized_returns, symbol_returns=symbol_returns, **kwargs)
 
         monkeypatch.setattr(sim._position_sizer, "size", _spy)
         sim.run(inp)
@@ -546,3 +546,301 @@ class TestCompositeSizerWiredThroughTheRealEngine:
         sim = WeightSimulator(config)
         result = sim.run(inp)
         assert np.isfinite(result.portfolio_values).all()
+
+
+class TestEvidenceConfidenceSizerWiredThroughTheRealEngine:
+    """item #4/#10: confirms the engine actually reads
+    SimulationInput.evidence_triggers and passes it, plus the current
+    backtest date, to the sizer when
+    position_sizing_model="evidence_confidence" -- not just that
+    EvidenceConfidenceSizer itself works in isolation (see test_sizing.py
+    for that)."""
+
+    def _multi_symbol_inputs(self, n: int = 80, seed: int = 5):
+        dates = pd.date_range("2023-01-02", periods=n, freq="D")
+        rng = np.random.default_rng(seed)
+        common = rng.normal(0.0005, 0.015, n)
+        px = 100.0 * np.cumprod(1 + common + rng.normal(0, 0.001, n))
+        py = 50.0 * np.cumprod(1 + common + rng.normal(0, 0.001, n))
+        prices = pd.DataFrame({"X": px, "Y": py}, index=dates)
+        weights = pd.DataFrame({"X": [0.5], "Y": [0.5]}, index=[dates[0]])
+        return prices, weights, dates
+
+    def _config(self, prices, **overrides) -> SimulationConfig:
+        return SimulationConfig(
+            strategy_name="evidence_test",
+            start_date=str(prices.index[0].date()),
+            end_date=str(prices.index[-1].date()),
+            initial_capital=1_000_000.0,
+            transaction_cost_pct=0.0,
+            slippage_pct=0.0,
+            slippage_model="flat",
+            deviation_threshold=0.0,
+            position_sizing_model="evidence_confidence",
+            **overrides,
+        )
+
+    def _resolved(self, trigger_time, outcome_recorded_at, return_at_horizon):
+        return {
+            "trigger_time": trigger_time,
+            "outcome_recorded_at": outcome_recorded_at,
+            "return_at_horizon": return_at_horizon,
+        }
+
+    def test_runs_end_to_end_without_error(self):
+        prices, weights, _ = self._multi_symbol_inputs()
+        config = self._config(prices)
+        inp = SimulationInput("evidence_test", weights, prices, config)
+        result = WeightSimulator(config).run(inp)
+        assert np.isfinite(result.portfolio_values).all()
+
+    def test_sizer_actually_receives_evidence_triggers_and_current_date(self, monkeypatch):
+        prices, weights, _ = self._multi_symbol_inputs()
+        config = self._config(prices, evidence_min_sample_size=1)
+        evidence_triggers = {
+            "X": [self._resolved("2023-01-01T00:00:00+00:00", "2023-01-01T00:00:00+00:00", 0.02)],
+        }
+        inp = SimulationInput("evidence_test", weights, prices, config, evidence_triggers=evidence_triggers)
+        sim = WeightSimulator(config)
+
+        received_dates: list = []
+        received_triggers: list = []
+        real_size = sim._position_sizer.size
+
+        def _spy(target_weights, realized_returns, *, current_date=None, evidence_triggers=None, **kwargs):
+            received_dates.append(current_date)
+            received_triggers.append(evidence_triggers)
+            return real_size(
+                target_weights, realized_returns,
+                current_date=current_date, evidence_triggers=evidence_triggers, **kwargs,
+            )
+
+        monkeypatch.setattr(sim._position_sizer, "size", _spy)
+        sim.run(inp)
+
+        assert all(d is not None for d in received_dates)
+        assert all(t == evidence_triggers for t in received_triggers)
+
+    def test_symbol_with_resolved_evidence_trades_differently_than_without(self):
+        """The actual PnL-affecting behavior item #4 asked for: a
+        strategy given the exact same weight signal and price data
+        produces a different equity curve depending on whether Track 2
+        evidence is on file for the symbol it's holding."""
+        prices, weights, _ = self._multi_symbol_inputs()
+        config = self._config(prices, evidence_min_sample_size=1, evidence_min_confidence_scale=0.3)
+
+        # X has weak historical evidence (mostly losers) -- confidence
+        # well below 1.0, so its weight should be dampened; Y has none.
+        weak_triggers = {
+            "X": [
+                self._resolved(f"2023-01-0{i}T00:00:00+00:00", f"2023-01-0{i}T00:00:00+00:00", -0.01)
+                for i in range(1, 2)
+            ]
+            * 5,
+        }
+
+        inp_with_evidence = SimulationInput(
+            "evidence_test", weights, prices, config, evidence_triggers=weak_triggers,
+        )
+        inp_without_evidence = SimulationInput(
+            "evidence_test", weights, prices, config, evidence_triggers=None,
+        )
+
+        result_with = WeightSimulator(config).run(inp_with_evidence)
+        result_without = WeightSimulator(config).run(inp_without_evidence)
+
+        assert result_with.portfolio_values.iloc[-1] != result_without.portfolio_values.iloc[-1]
+
+
+class TestRegimeAwareSizerWiredThroughTheRealEngine:
+    """item #14A factor #2: confirms the engine actually classifies a
+    benchmark ticker's regime and passes it to the sizer when
+    position_sizing_model="regime_aware" -- not just that
+    RegimeAwareSizer itself works in isolation (see test_sizing.py for
+    that)."""
+
+    def _inputs_with_benchmark(self, n: int = 200, seed: int = 7):
+        dates = pd.date_range("2023-01-02", periods=n, freq="D")
+        rng = np.random.default_rng(seed)
+        # X: the strategy's own tradable symbol.
+        x_returns = rng.normal(0.0005, 0.01, n)
+        px = 100.0 * np.cumprod(1 + x_returns)
+        # SPY: the benchmark -- calm first half, then a real bear/high-vol
+        # stretch, so classify_regime has clear regime shifts to find.
+        bench_returns = np.concatenate([
+            rng.normal(0.0005, 0.005, n // 2),
+            rng.normal(-0.02, 0.03, n - n // 2),
+        ])
+        spy = 400.0 * np.cumprod(1 + bench_returns)
+        prices = pd.DataFrame({"X": px, "SPY": spy}, index=dates)
+        # Repeated rebalances throughout the run (not just one at the
+        # start) -- otherwise a real regime scale difference on a later,
+        # stressed rebalance day would never actually get applied.
+        weights = pd.DataFrame({"X": [1.0] * (n // 10)}, index=dates[::10])
+        return prices, weights, dates
+
+    def _config(self, prices, **overrides) -> SimulationConfig:
+        params = dict(
+            strategy_name="regime_test",
+            start_date=str(prices.index[0].date()),
+            end_date=str(prices.index[-1].date()),
+            initial_capital=1_000_000.0,
+            transaction_cost_pct=0.0,
+            slippage_pct=0.0,
+            slippage_model="flat",
+            deviation_threshold=0.0,
+            position_sizing_model="regime_aware",
+            benchmark_tickers=("SPY", "QQQ"),
+        )
+        params.update(overrides)
+        return SimulationConfig(**params)
+
+    def test_runs_end_to_end_without_error(self):
+        prices, weights, _ = self._inputs_with_benchmark()
+        config = self._config(prices)
+        inp = SimulationInput("regime_test", weights, prices, config)
+        result = WeightSimulator(config).run(inp)
+        assert np.isfinite(result.portfolio_values).all()
+
+    def test_sizer_actually_receives_a_real_regime_label(self, monkeypatch):
+        prices, weights, _ = self._inputs_with_benchmark()
+        config = self._config(prices)
+        inp = SimulationInput("regime_test", weights, prices, config)
+        sim = WeightSimulator(config)
+
+        received: list = []
+        real_size = sim._position_sizer.size
+
+        def _spy(target_weights, realized_returns, *, regime=None, **kwargs):
+            received.append(regime)
+            return real_size(target_weights, realized_returns, regime=regime, **kwargs)
+
+        monkeypatch.setattr(sim._position_sizer, "size", _spy)
+        sim.run(inp)
+
+        valid_labels = {"bull", "bear", "high_vol", "sideways"}
+        assert any(r in valid_labels for r in received)
+
+    def test_no_benchmark_ticker_in_price_data_leaves_regime_none(self, monkeypatch):
+        dates = pd.date_range("2023-01-02", periods=50, freq="D")
+        prices = pd.DataFrame({"X": 100.0 + np.arange(50)}, index=dates)  # no SPY/QQQ column
+        weights = pd.DataFrame({"X": [1.0]}, index=[dates[0]])
+        config = self._config(prices)
+        inp = SimulationInput("regime_test", weights, prices, config)
+        sim = WeightSimulator(config)
+
+        received: list = []
+        real_size = sim._position_sizer.size
+
+        def _spy(target_weights, realized_returns, *, regime=None, **kwargs):
+            received.append(regime)
+            return real_size(target_weights, realized_returns, regime=regime, **kwargs)
+
+        monkeypatch.setattr(sim._position_sizer, "size", _spy)
+        sim.run(inp)
+
+        assert all(r is None for r in received)
+
+    def test_regime_aware_sizing_produces_a_different_equity_curve_than_fixed(self):
+        """The actual PnL-affecting behavior item #14A asked for: the
+        exact same weight signal and price data produce a different
+        equity curve once regime shifts (a real bear/high-vol stretch in
+        the benchmark data) actually scale the position down."""
+        prices, weights, _ = self._inputs_with_benchmark()
+
+        regime_config = self._config(prices)
+        fixed_config = self._config(prices, position_sizing_model="fixed")
+
+        regime_result = WeightSimulator(regime_config).run(
+            SimulationInput("regime_test", weights, prices, regime_config)
+        )
+        fixed_result = WeightSimulator(fixed_config).run(
+            SimulationInput("regime_test", weights, prices, fixed_config)
+        )
+
+        assert regime_result.portfolio_values.iloc[-1] != fixed_result.portfolio_values.iloc[-1]
+
+
+class TestDrawdownAwareSizerWiredThroughTheRealEngine:
+    """item #14A factor #3: confirms the engine actually tracks NAV and
+    passes it to the sizer when position_sizing_model="drawdown_aware" --
+    not just that DrawdownAwareSizer itself works in isolation (see
+    test_sizing.py for that)."""
+
+    def _inputs(self, n: int = 80, seed: int = 5):
+        dates = pd.date_range("2023-01-02", periods=n, freq="D")
+        rng = np.random.default_rng(seed)
+        common = rng.normal(0.0005, 0.015, n)
+        px = 100.0 * np.cumprod(1 + common + rng.normal(0, 0.001, n))
+        prices = pd.DataFrame({"X": px}, index=dates)
+        weights = pd.DataFrame({"X": [1.0] * (n // 10)}, index=dates[::10])
+        return prices, weights, dates
+
+    def _config(self, prices, **overrides) -> SimulationConfig:
+        params = dict(
+            strategy_name="drawdown_test",
+            start_date=str(prices.index[0].date()),
+            end_date=str(prices.index[-1].date()),
+            initial_capital=1_000_000.0,
+            transaction_cost_pct=0.0,
+            slippage_pct=0.0,
+            slippage_model="flat",
+            deviation_threshold=0.0,
+            position_sizing_model="drawdown_aware",
+        )
+        params.update(overrides)
+        return SimulationConfig(**params)
+
+    def test_runs_end_to_end_without_error(self):
+        prices, weights, _ = self._inputs()
+        config = self._config(prices)
+        inp = SimulationInput("drawdown_test", weights, prices, config)
+        result = WeightSimulator(config).run(inp)
+        assert np.isfinite(result.portfolio_values).all()
+
+    def test_sizer_actually_receives_a_real_portfolio_value(self, monkeypatch):
+        prices, weights, _ = self._inputs()
+        config = self._config(prices)
+        inp = SimulationInput("drawdown_test", weights, prices, config)
+        sim = WeightSimulator(config)
+
+        received: list = []
+        real_size = sim._position_sizer.size
+
+        def _spy(target_weights, realized_returns, *, portfolio_value=None, **kwargs):
+            received.append(portfolio_value)
+            return real_size(target_weights, realized_returns, portfolio_value=portfolio_value, **kwargs)
+
+        monkeypatch.setattr(sim._position_sizer, "size", _spy)
+        sim.run(inp)
+
+        assert all(v is not None for v in received)
+        assert received[0] == pytest.approx(config.initial_capital)
+
+    def test_a_real_drawdown_produces_a_different_equity_curve_than_fixed(self):
+        """The actual PnL-affecting behavior item #14A asked for: a sharp
+        drawdown mid-run actually throttles exposure on the way down,
+        producing a different final equity than unscaled "fixed" sizing
+        for the identical weight/price input."""
+        dates = pd.date_range("2023-01-02", periods=60, freq="D")
+        # Flat, then a sharp -30% drop, then flat again -- guaranteed to
+        # cross halve/flat/halt thresholds on the way down.
+        px = np.concatenate([
+            np.full(20, 100.0),
+            np.linspace(100.0, 70.0, 20),
+            np.full(20, 70.0),
+        ])
+        prices = pd.DataFrame({"X": px}, index=dates)
+        weights = pd.DataFrame({"X": [1.0] * 6}, index=dates[::10])
+
+        drawdown_config = self._config(prices)
+        fixed_config = self._config(prices, position_sizing_model="fixed")
+
+        drawdown_result = WeightSimulator(drawdown_config).run(
+            SimulationInput("drawdown_test", weights, prices, drawdown_config)
+        )
+        fixed_result = WeightSimulator(fixed_config).run(
+            SimulationInput("drawdown_test", weights, prices, fixed_config)
+        )
+
+        assert drawdown_result.portfolio_values.iloc[-1] != fixed_result.portfolio_values.iloc[-1]

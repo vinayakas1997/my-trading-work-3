@@ -8,6 +8,8 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 
 from vinu_simulator.server.schemas import (
+    CUSTOM_SIMULATE_REQUEST_VERSION,
+    CUSTOM_SIMULATE_RESPONSE_VERSION,
     CustomSimulateRequest,
     CustomSimulateResponse,
     HealthResponse,
@@ -88,6 +90,12 @@ async def simulate_custom(req: CustomSimulateRequest) -> CustomSimulateResponse:
             result.daily_returns.fillna(0.0).tolist() if not result.daily_returns.empty else []
         ),
         diagnostics=result.diagnostics,
+        # item #17: lets a caller (or its logs) notice deploy-time drift
+        # between the schema it was written against and what this
+        # running simulator actually serves -- see schemas.py's own
+        # comment on these two fields.
+        request_schema_version=CUSTOM_SIMULATE_REQUEST_VERSION,
+        response_schema_version=CUSTOM_SIMULATE_RESPONSE_VERSION,
     )
 
 

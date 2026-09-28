@@ -99,7 +99,24 @@ def list_features() -> FeatureCatalogResponse:
 
 
 @router.get("/{symbol_or_kind}")
-async def get_feature_or_symbol(symbol_or_kind: str, indicators: str | None = None) -> Any:
+async def get_feature_or_symbol(
+    symbol_or_kind: str,
+    indicators: str | None = None,
+    as_of: int | None = Query(
+        default=None,
+        description=(
+            "Replay boundary (unix seconds), forwarded to vinu-stock-price's "
+            "own /stock/candles/{symbol} as_of param -- item #22 finding #3 "
+            "(system-wide-audit-and-design/02-open-questions-strategy-and-"
+            "simulation.md): this route used to always fetch the last 60 "
+            "days from wall-clock now, with no way for a caller (e.g. "
+            "vinu-strategy's FeaturesClient) to pin the effective 'now' a "
+            "feature snapshot reflects. Reuses vinu-stock-price's own "
+            "already-built clamp_to_as_of() enforcement rather than adding "
+            "a second, independent point-in-time mechanism here."
+        ),
+    ),
+) -> Any:
     from vinu_tools.compute.feature_catalog import list_indicators, get_indicator, format_help
 
     known_kinds = {m.kind.lower() for m in list_indicators()}
@@ -128,9 +145,11 @@ async def get_feature_or_symbol(symbol_or_kind: str, indicators: str | None = No
     else:
         svc = get_service()
         url = f"{svc.config.stock_api_url.rstrip('/')}/stock/candles/{symbol_or_kind.upper()}"
-        params = {"days": 60}
+        params: dict[str, Any] = {"days": 60}
         if indicators:
             params["indicators"] = indicators
+        if as_of is not None:
+            params["as_of"] = as_of
         try:
             delay = 1.0
             candles: list[Any] = []

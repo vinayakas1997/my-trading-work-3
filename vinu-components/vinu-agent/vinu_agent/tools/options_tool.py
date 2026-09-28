@@ -16,6 +16,7 @@ import requests
 from vinu_infra.secrets_loader import load_secret
 
 from ..agent.tools import BaseTool
+from ._call_cache import CallCache
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,9 @@ class OptionsGreeksTool(BaseTool):
     is_readonly = True
     _as_of: str | None = None
 
+    def __init__(self):
+        self._cache = CallCache()
+
     def execute(self, **kwargs) -> str:
         if self._as_of:
             return json.dumps({
@@ -172,6 +176,12 @@ class OptionsGreeksTool(BaseTool):
             return json.dumps({"status": "error", "error": "symbol is required"})
         expiration = kwargs.get("expiration")
         limit = int(kwargs.get("limit", 100))
+
+        cache_key = (symbol, expiration, limit)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         try:
             rows = fetch_chain(symbol, limit=limit, expiration=expiration)
         except RetryableOptionsError as exc:
@@ -181,14 +191,20 @@ class OptionsGreeksTool(BaseTool):
             logger.warning("Options fetch failed for %s: %s", symbol, exc)
             return json.dumps({"status": "error", "error": str(exc), "retryable": False})
         if not rows:
+            # Not cached: errors and "no contracts right now" are both
+            # things a later identical call within the same run should be
+            # allowed to re-check, not lock in for the rest of the run --
+            # only a real, successful result is cached below.
             return json.dumps({
                 "status": "empty",
                 "symbol": symbol,
                 "message": "No options contracts returned (symbol has no listed options, or the market is closed).",
             })
-        return json.dumps({
+        result = json.dumps({
             "status": "ok",
             "symbol": symbol,
             "n_contracts": len(rows),
             "contracts": rows,
         }, indent=2)
+        self._cache.set(cache_key, result)
+        return result
