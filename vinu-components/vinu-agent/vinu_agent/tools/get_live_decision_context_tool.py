@@ -19,6 +19,11 @@ strategy) pair that has reached ready_to_execute --
    used to be computed once and then discarded (only logged) -- now it's
    both durably recorded (poller.py::_trigger_live_decision) and fed
    back in as real context for the next decision.
+5. Track 2 moves for this ticker with no matching Track 1 trigger
+   (GET vinu-research's /research/unconfirmed-moves?symbol=) -- the
+   `track2_only` case: a real price move no strategy's must-condition
+   was watching for. Fails open to [] when the fetch fails, same as
+   every other field.
 
 Same BaseTool / in-process-first-then-HTTP-fallback shape as
 signal_evidence_tool.py, not a new pattern.
@@ -70,7 +75,12 @@ class GetLiveDecisionContextTool(BaseTool):
         "does not exist yet (see reverse-engineering/07-bucket-table-deferred.md). May also "
         "include maturity_status (the system-wide maturity tier: cold_start/paper_only/"
         "early_live/mature, with its real evidence) when that's enabled -- one more honest "
-        "input for your own judgment, never a hard gate."
+        "input for your own judgment, never a hard gate. Also includes unconfirmed_moves "
+        "(Track 2 real price moves with no matching Track 1 trigger -- check whether "
+        "Track 2 saw something your strategy missed before EXECUTE; [] means none on file "
+        "or the fetch failed) and reflection_notes (currently notable/significant "
+        "reflection beliefs across clusters -- advisory system-health notes, e.g. regime "
+        "degrading; [] means all routine or the fetch failed)."
     )
     parameters = {
         "type": "object",
@@ -111,6 +121,16 @@ class GetLiveDecisionContextTool(BaseTool):
 
         maturity_status = self._maturity_status_if_enabled(ticker, strategy_id)
 
+        research_url = self._services_config.get("vinu_research", "http://localhost:8087")
+        unconfirmed = self._fetch_json(
+            f"{research_url}/research/unconfirmed-moves?symbol={ticker}&limit=10",
+        )
+
+        reflection_url = self._services_config.get("vinu_reflection", "http://localhost:8092")
+        notable = self._fetch_json(
+            f"{reflection_url}/reflection/beliefs/notable?limit=10",
+        )
+
         return json.dumps({
             "status": "ok",
             "ticker": ticker,
@@ -124,6 +144,8 @@ class GetLiveDecisionContextTool(BaseTool):
             "signal_evidence_summary": signal_evidence_summary,
             "past_live_decisions": past_decisions.get("decisions", []),
             "maturity_status": maturity_status,
+            "unconfirmed_moves": unconfirmed.get("events", []),
+            "reflection_notes": notable.get("beliefs", []),
         }, indent=2)
 
     def _maturity_status_if_enabled(self, ticker: str, strategy_id: str) -> dict:

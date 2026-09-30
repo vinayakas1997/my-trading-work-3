@@ -7,6 +7,40 @@ was already being written but had no HTTP surface. The underlying data
 (HypothesisRegistry, ResearchStorage's catalog/checkpoint tables) was
 already written by the research loop; nothing here changes what gets
 recorded, only what can be read back over HTTP.
+
+Empty-meaning contract (C5 -- the one place "what empty means" is stated
+so no caller mistakes "no rows" for "not yet run"; every spelling pinned
+by vinu-research/tests/test_empty_meanings.py, behavior unchanged):
+
+- `outcome_status="passed"` -- a best result exists; `"no_strategy_found"`
+  -- stopped with no best result and no infra signal (genuine, not an
+  error); `"infra_failure"` -- the last iteration's reasoning carries the
+  INFRASTRUCTURE FAILURE prefix (retry later, do not treat as a verdict).
+- Per-candidate backtest `None` -- that one candidate's backtest raised;
+  the rest still rank. All-`None` plus a recorded exception re-raises the
+  exception (a real error surfaces, never a silent empty).
+- Sweep `ranked=[]` with `completeness=0.0` -- every grid point failed;
+  then `pbo` is `None` and `walk_forward` is skipped (`None`). (An empty
+  grid itself is rejected with ValueError, not an empty result.)
+- Sweep `pbo=None` -- fewer than 2 successful return columns to test.
+- `walk_forward=None` -- skipped (disabled or nothing ranked) or zero
+  completed windows.
+- `sweep_id=""` -- this sweep was not persisted (`persist=False` or the
+  persist write failed, which never fails the sweep itself); a non-empty
+  uuid means a row exists in `sweep_grid_points`.
+- Generation store `None`/disabled -- the round is not recorded;
+  generation itself is unaffected (deliberate no-op, not a miswire).
+- Eval `404` on one artifact -- never evaluated (expected state, read as
+  "none on file"); by-ticker `count=0` -- nothing evaluated for the
+  ticker (not an error). Agent-side eval context `""` -- env unset or
+  nothing to report; the prompt is byte-identical without it.
+- Paper-return `status` strings (`no_strategy_code_or_universe`,
+  `backtest_failed: ...`, `backtest_returned_none`, `no_returns`) --
+  degraded diagnostics with `daily_return=None`, never a crash.
+
+Agent mapping rule: empties mean WAIT (nothing to act on yet) or DONE
+(genuinely nothing found) -- only raised exceptions and transport errors
+mean ERROR.
 """
 
 from __future__ import annotations

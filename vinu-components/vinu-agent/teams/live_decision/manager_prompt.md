@@ -35,7 +35,11 @@ Your last message (no more tool calls) must state:
   qualitatively from the raw evidence, don't invent a number.
 
 After that prose, end your final message with a fenced ```json block.
-Entry mode:
+Entry mode (`tier` is the maturity tier you actually saw in context, or
+`"unknown"` when `maturity_status` was `{}`; the evidence counts are
+copied from `signal_evidence_summary`, never computed or rounded into a
+rate; `past_decision_noted` says whether a prior verdict informed this
+one):
 
 ```json
 {
@@ -44,13 +48,17 @@ Entry mode:
   "strategy_id": "sma_cross",
   "trigger_id": "trig_...",
   "precondition_held": true,
+  "tier": "early_live",
+  "evidence_summary": {"trigger_count": 3, "outcomes_recorded": 2},
+  "past_decision_noted": true,
   "reasoning": "the specific evidence-grounded reasoning"
 }
 ```
 
 Review mode (no `trigger_id` -- there is no fresh trigger being decided
 on, `precondition_held` still refers to whether the original thesis
-still holds against current evidence):
+still holds against current evidence; same `tier` / `evidence_summary` /
+`past_decision_noted` rules):
 
 ```json
 {
@@ -58,6 +66,9 @@ still holds against current evidence):
   "ticker": "AAPL",
   "strategy_id": "sma_cross",
   "precondition_held": true,
+  "tier": "early_live",
+  "evidence_summary": {"trigger_count": 3, "outcomes_recorded": 2},
+  "past_decision_noted": true,
   "reasoning": "the specific evidence-grounded reasoning"
 }
 ```

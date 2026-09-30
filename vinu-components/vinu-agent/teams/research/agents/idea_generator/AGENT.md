@@ -3,7 +3,7 @@ name: idea_generator
 role: idea-generator
 prompt_file: prompt.md
 depends_on: []
-tools: [list_available_features, get_features, get_stock_price, get_fundamentals, get_all_angles, list_sweep_recipes, explain_angle, get_reflection_synthesis]
+tools: [list_available_features, get_features, get_stock_price, get_fundamentals, get_all_angles, list_sweep_recipes, explain_angle, get_reflection_synthesis, get_signal_evidence, query_hypotheses, get_correlation]
 skills: [factor-research]
 ---
 

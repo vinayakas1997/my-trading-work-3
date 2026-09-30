@@ -6,11 +6,13 @@ import pytest
 
 from vinu_research.config import ResearchConfig
 from vinu_research.llm import (
+    DUPLICATE_IDEA_SYSTEM_PROMPT,
     LLM_SYSTEM_PROMPT,
     LlmCache,
     ResearchLlmClient,
     _build_risk_critic_prompt,
     _build_run_summary_prompt,
+    _format_duplicate_candidate,
 )
 from vinu_research.models import BacktestMetrics, BacktestResult, CriticFeedback
 from vinu_research.loop import StrategyResearchLoop
@@ -333,3 +335,35 @@ def test_build_run_summary_prompt_includes_key_metrics():
     assert "AAPL" in prompt
     assert "1.40" in prompt
     assert "Promoted to an active strategy artifact: True" in prompt
+
+
+class TestFormatDuplicateCandidate:
+    """B5 fix: the dedup LLM sees each idea's track record, not just its name."""
+
+    def test_plain_string_passes_through_unchanged(self):
+        assert _format_duplicate_candidate("SMA crossover") == "SMA crossover"
+
+    def test_enriched_dict_renders_status_evidence_and_rejection(self):
+        rendered = _format_duplicate_candidate({
+            "strategy_type": "RSI mean reversion",
+            "status": "rejected",
+            "best_sharpe": -0.2,
+            "evidence_count": 3,
+            "last_conclusion": "negative expectancy",
+            "invalidation_reason": "failed correlation gate",
+            "tfidf_score": 0.45,
+        })
+        assert "RSI mean reversion" in rendered
+        assert "status=rejected" in rendered
+        assert "evidence_entries=3" in rendered
+        assert "negative expectancy" in rendered
+        assert "failed correlation gate" in rendered
+
+    def test_missing_keys_degrade_to_blanks_not_guesses(self):
+        rendered = _format_duplicate_candidate({"strategy_type": "x"})
+        assert "status=unknown" in rendered
+        assert "rejection reason" not in rendered
+
+    def test_system_prompt_demands_status_and_evidence_citation(self):
+        assert "track record" in DUPLICATE_IDEA_SYSTEM_PROMPT
+        assert "Cite status + evidence" in DUPLICATE_IDEA_SYSTEM_PROMPT

@@ -10,7 +10,13 @@ from datetime import datetime, timezone
 
 import pytest
 
-from vinu_infra.evidence_confidence import laplace_smoothed_win_rate, summarize_resolved_triggers
+from vinu_infra.evidence_confidence import (
+    is_news_confounded,
+    laplace_smoothed_win_rate,
+    regime_of,
+    summarize_by_regime,
+    summarize_resolved_triggers,
+)
 
 
 class TestLaplaceSmoothedWinRate:
@@ -79,3 +85,69 @@ class TestSummarizeResolvedTriggers:
         result = summarize_resolved_triggers(triggers, reference_now=reference_now)
 
         assert result["days_since_last_trigger"] == 5
+
+
+class TestRegimeOf:
+    def test_plain_string_returned_as_is(self) -> None:
+        assert regime_of({"regime": "bull"}) == "bull"
+
+    def test_missing_none_nonstring_blank_all_map_to_unknown(self) -> None:
+        assert regime_of({}) == "unknown"
+        assert regime_of(None) == "unknown"
+        assert regime_of({"regime": None}) == "unknown"
+        assert regime_of({"regime": 42}) == "unknown"
+        assert regime_of({"regime": "  "}) == "unknown"
+
+
+class TestIsNewsConfounded:
+    def test_occurred_true_is_confounded(self) -> None:
+        assert is_news_confounded(
+            {"news_confound": {"occurred": True, "minutes_before": 5.0, "article_id": "a1"}}
+        ) is True
+
+    def test_occurred_false_missing_malformed_are_not_confounded(self) -> None:
+        assert is_news_confounded(
+            {"news_confound": {"occurred": False, "minutes_before": None, "article_id": None}}
+        ) is False
+        assert is_news_confounded({}) is False
+        assert is_news_confounded(None) is False
+        assert is_news_confounded({"news_confound": "yes"}) is False
+
+
+class TestSummarizeByRegime:
+    def _pair(self, ret, indicators):
+        return (
+            _resolved("2026-09-01T00:00:00+00:00", "2026-09-02T00:00:00+00:00", ret),
+            indicators,
+        )
+
+    def test_buckets_use_the_same_laplace_formula(self) -> None:
+        pairs = [
+            self._pair(0.02, {"regime": "bull"}),
+            self._pair(0.03, {"regime": "bull"}),
+            self._pair(-0.01, {"regime": "bear"}),
+        ]
+
+        result = summarize_by_regime(pairs)
+
+        assert result["bull"]["sample_size"] == 2
+        assert result["bull"]["evidence_confidence"] == pytest.approx((2 + 1) / (2 + 2))
+        assert result["bear"]["sample_size"] == 1
+
+    def test_news_confounded_count_is_exact_and_ex_news_excludes_it(self) -> None:
+        clean = {"regime": "bull", "news_confound": {"occurred": False}}
+        hit = {"regime": "bull", "news_confound": {"occurred": True}}
+        pairs = [self._pair(0.02, clean), self._pair(0.03, hit)]
+
+        result = summarize_by_regime(pairs)
+
+        assert result["bull"]["sample_size"] == 2
+        assert result["bull"]["news_confounded"] == 1
+        assert result["bull"]["ex_news"]["sample_size"] == 1
+
+    def test_fully_confounded_bucket_still_carries_an_empty_ex_news_shape(self) -> None:
+        hit = {"regime": "bear", "news_confound": {"occurred": True}}
+        result = summarize_by_regime([self._pair(-0.01, hit)])
+
+        assert result["bear"]["ex_news"]["sample_size"] == 0
+        assert result["bear"]["ex_news"]["evidence_confidence"] is None

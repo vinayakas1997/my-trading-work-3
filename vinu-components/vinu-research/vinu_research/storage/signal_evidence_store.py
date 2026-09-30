@@ -166,6 +166,36 @@ class SignalEvidenceStore(SQLiteBackend):
         result["indicators"] = {r["indicator_name"]: json.loads(r["indicator_data"]) for r in indicator_rows}
         return result
 
+    def get_indicators_for_triggers(self, trigger_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Batch raw indicator read: {trigger_id: {indicator_name: parsed value}}.
+
+        Read-only companion to `get_trigger()` for the analysis layer
+        (`track2_aggregate`): one query per chunk instead of one join per
+        trigger. Returns the raw parsed JSON exactly as recorded -- no
+        bucketing, no thresholds, no derived columns (same rule as
+        `list_triggers`: interpretation is the caller's job, not storage's).
+        Unknown ids are simply absent from the result.
+        """
+        result: dict[str, dict[str, Any]] = {}
+        ids = list(trigger_ids)
+        if not ids:
+            return result
+        conn = self._get_conn()
+        for offset in range(0, len(ids), 500):
+            chunk = ids[offset:offset + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                "SELECT trigger_id, indicator_name, indicator_data"
+                " FROM signal_evidence_indicators"
+                f" WHERE trigger_id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for r in rows:
+                result.setdefault(r["trigger_id"], {})[r["indicator_name"]] = json.loads(
+                    r["indicator_data"]
+                )
+        return result
+
     def list_triggers(self, symbol: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         """Metadata rows only (no indicator join) -- for browsing/counting;
         use get_trigger() for the full evidence row including indicators."""

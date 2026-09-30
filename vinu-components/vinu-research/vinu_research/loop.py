@@ -60,6 +60,66 @@ _MAX_CACHE_SIZE = 64
 INFRA_FAILURE_REASONING_PREFIX = "INFRASTRUCTURE FAILURE"
 
 
+def _build_eval_status_context(symbol: str, data_root) -> str:
+    """A6 fix: the machine gate verdicts for this ticker, as required
+    generation-prompt context (read-only, best-effort).
+
+    Reads the same `strategy_evaluation.db` the introspect routes serve --
+    in-process here because generation already runs inside vinu-research
+    (no HTTP hop needed, unlike vinu-agent's cross-process reads). Returns
+    "" when there is nothing to report (no db file, no rows, any failure)
+    so the prompt is byte-identical to before in the empty case -- the
+    caller appends only non-empty results. Never writes: unlike
+    `resolve_strategy_evaluation_store` this path skips `seed_step_registry`
+    and never creates a db file, since a prompt builder must not mutate
+    evaluation state as a side effect."""
+    try:
+        import os
+        from pathlib import Path
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        if not symbol:
+            return ""
+        env_root = os.environ.get("VINU_STRATEGY_EVAL_DATA_ROOT", "").strip()
+        root = Path(env_root) if env_root else (Path(data_root) if data_root else None)
+        if root is None:
+            return ""
+        db_path = root / "strategy_evaluation.db"
+        if not db_path.exists():
+            return ""
+        store = StrategyEvaluationStore(db_path)
+        try:
+            rows = store.list_status_for_ticker(symbol)
+        finally:
+            store.close()
+        if not rows:
+            return ""
+        # list_status_for_ticker's own contract: newest first.
+        in_flight = [r for r in rows if r.get("status") in ("in_progress", "active")][:5]
+        rejected = [r for r in rows if r.get("status") == "rejected"]
+        lines = [f"Machine evaluation history for {symbol.upper()} (gate verdicts, newest first):"]
+        for r in in_flight:
+            lines.append(
+                f"- In flight: {r.get('artifact_id')} "
+                f"(reached {r.get('furthest_step_passed')}, status={r.get('status')})"
+            )
+        if rejected:
+            r = rejected[0]
+            lines.append(
+                f"- Most recent rejection: {r.get('artifact_id')} failed at "
+                f"'{r.get('rejected_at_step')}': {str(r.get('rejected_reason') or '')[:200]}"
+            )
+            lines.append(
+                "Avoid these failure modes -- propose something that specifically clears "
+                "the blocking step, not a blind retry of the same idea."
+            )
+        return "\n".join(lines)
+    except Exception:
+        LOG.debug("eval-status prompt context unavailable for %s, continuing without it", symbol)
+        return ""
+
+
 def _classify_outcome_status(history: list[IterationRecord], best_result: BacktestResult | None) -> str:
     """`"infra_failure" | "no_strategy_found" | "passed"` -- the exact
     3-state classification item #17 finding #2 asks for, computed at the
@@ -101,6 +161,25 @@ _DUPLICATE_SIMILARITY_FALLBACK_MATCH = 0.35
 # when unsure; this is a second, structural safety net against a
 # borderline call.
 _DUPLICATE_LLM_MIN_CONFIDENCE = 0.6
+
+
+def _enrich_duplicate_candidate(h: Hypothesis, tfidf_score: float) -> dict[str, Any]:
+    """B5 fix: the track record the dedup LLM must judge, built from the
+    Hypothesis record already in scope -- status, best Sharpe, evidence
+    count + last conclusion, invalidation reason, and the TF-IDF score
+    that passed the skip screen. Short and bounded (conclusions/reasons
+    truncated at format time in llm.py); one call shape unchanged."""
+    status = h.status.value if hasattr(h.status, "value") else str(h.status)
+    evidence = h.evidence or []
+    return {
+        "strategy_type": h.strategy_type or "",
+        "status": status,
+        "best_sharpe": h.best_sharpe,
+        "evidence_count": len(evidence),
+        "last_conclusion": evidence[-1].conclusion if evidence else "",
+        "invalidation_reason": h.invalidation_reason or "",
+        "tfidf_score": round(float(tfidf_score), 3),
+    }
 
 
 def _split_research_and_holdout(
@@ -1389,8 +1468,17 @@ class StrategyResearchLoop:
 
         if self._llm and self._llm.is_configured():
             try:
+                enriched = [_enrich_duplicate_candidate(h, score) for h, score in candidates]
+                LOG.debug(
+                    "Duplicate-idea LLM check for %s: %d candidates with track records: %s",
+                    symbol, len(enriched),
+                    "; ".join(
+                        f"{c['strategy_type'][:40]}[{c['status']}/{c['best_sharpe']:.2f}]"
+                        for c in enriched
+                    ),
+                )
                 result = await self._llm.check_duplicate_idea(
-                    user_idea, symbol, [h.strategy_type or "" for h, _ in candidates],
+                    user_idea, symbol, enriched,
                 )
                 if result and isinstance(result, dict):
                     idx = result.get("duplicate_index")
@@ -1612,6 +1700,13 @@ class StrategyResearchLoop:
         symbol = self._symbol if hasattr(self, "_symbol") else ""
         from_date = self._from_date if hasattr(self, "_from_date") else ""
         to_date = self._to_date if hasattr(self, "_to_date") else ""
+        eval_context = _build_eval_status_context(
+            symbol, getattr(self._config, "data_root", None),
+        )
+        if eval_context:
+            if story is None:
+                story = {}
+            story["memory_context"] = (story.get("memory_context", "") + "\n\n" + eval_context).strip()
 
         if iteration == 1:
             llm_code: str | None = None

@@ -219,6 +219,21 @@ class StrategyEvaluationStore(SQLiteBackend):
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def count_by_status(self) -> dict[str, int]:
+        """How many artifacts currently sit in each evaluation status --
+        the one-line eval appendix the reflection brain cites (B6:
+        "41 lifetime trials, 3 in flight") without pulling full rows.
+        Read-only."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) AS n FROM strategy_evaluation_status "
+                "GROUP BY status",
+            ).fetchall()
+        except Exception:
+            return {}
+        return {r["status"]: r["n"] for r in rows}
+
     def get_history(self, artifact_id: str) -> list[dict[str, Any]]:
         conn = self._get_conn()
         rows = conn.execute(

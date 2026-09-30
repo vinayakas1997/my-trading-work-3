@@ -479,6 +479,20 @@ class ReflectionStore(SQLiteBackend):
         ).fetchall()
         return [self._decode_synthesis_row(r) for r in rows]
 
+    def list_recent_syntheses(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Newest synthesis outcomes first, resolved or still pending --
+        the brain's own history for its prompt's past-trend appendix (B6:
+        ids, action types, mechanical outcomes as data, never a second
+        LLM grading the first). Read-only, like every other list_*
+        here."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM reflection_synthesis_outcomes "
+            "ORDER BY computed_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [self._decode_synthesis_row(r) for r in rows]
+
     def resolve_synthesis(
         self, synthesis_id: str, *, observed_outcome_json: dict[str, Any], outcome_match: str,
     ) -> None:

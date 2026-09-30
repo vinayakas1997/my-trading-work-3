@@ -92,7 +92,32 @@ def gather_synthesis_inputs(store: ReflectionStore) -> list[dict[str, Any]]:
     return [b for b in store.list_beliefs() if b.get("severity") in _NON_ROUTINE_SEVERITIES]
 
 
-def _build_prompt(beliefs: list[dict[str, Any]]) -> str:
+def _past_synthesis_trend(store: ReflectionStore, limit: int = 3) -> list[dict[str, Any]]:
+    """B6 fix: the brain's own recent history as data, not grades -- each
+    past synthesis's id, action type, and mechanical outcome (`correct` /
+    `incorrect` / `partially_correct` / `inconclusive` / still `pending`).
+    No second LLM judges the first; the trend lines simply let this
+    cycle's synthesis see "the last 3 proposals went nowhere" before
+    proposing again."""
+    trend = []
+    for r in store.list_recent_syntheses(limit):
+        trend.append({
+            "synthesis_id": r.get("synthesis_id", "")[:8],
+            "proposed_action_type": r.get("proposed_action_type"),
+            "outcome": r.get("outcome_match") or ("pending" if r.get("resolved_at") is None else "unknown"),
+        })
+    return trend
+
+
+def _build_prompt(
+    beliefs: list[dict[str, Any]],
+    *,
+    past_syntheses: list[dict[str, Any]] | tuple = (),
+    maturity_line: str | None = None,
+    eval_line: str | None = None,
+    now: float | None = None,
+) -> str:
+    reference_now = now if now is not None else time.time()
     rows = [
         {
             "analyst_name": b["analyst_name"],
@@ -104,9 +129,36 @@ def _build_prompt(beliefs: list[dict[str, Any]]) -> str:
             "primary_metric": b["primary_metric"],
             "narrative": b.get("narrative") or "",
             "evidence_count": b["evidence_count"],
+            # B6 fix: recency the old rows dropped -- a belief from 6 days
+            # ago that never refreshed reads differently from one computed
+            # this hour. `computed_at` is the raw unix timestamp;
+            # `days_stale` its human reading. Both copied, never estimated.
+            "computed_at": b.get("computed_at"),
+            "days_stale": round(max(0.0, (reference_now - float(b.get("computed_at") or reference_now))) / 86400, 1),
         }
         for b in beliefs
     ]
+    if past_syntheses:
+        trend_lines = "\n".join(
+            f"- {p['synthesis_id']}: action={p['proposed_action_type']}, outcome={p['outcome']}"
+            for p in past_syntheses
+        )
+        history_section = (
+            "Your own recent history, most recent first (mechanical outcomes as "
+            "data, not grades -- consider whether another proposal is warranted "
+            "before proposing again):\n" + trend_lines + "\n\n"
+        )
+    else:
+        history_section = "No prior syntheses on file -- this would be the first.\n\n"
+    appendix_lines = [
+        line for line in (maturity_line, eval_line)
+        if line
+    ]
+    appendix_section = (
+        "System appendix (context for your maturity profile, not findings):\n"
+        + "\n".join(f"- {line}" for line in appendix_lines) + "\n\n"
+        if appendix_lines else ""
+    )
     return (
         "You are the reflection system's step-8 synthesis agent (the "
         "\"brain\") for an automated trading system. Below are the CURRENT "
@@ -126,6 +178,8 @@ def _build_prompt(beliefs: list[dict[str, Any]]) -> str:
         "checkable nudge, or propose nothing at all if nothing here "
         "warrants one.\n\n"
         f"Clusters: {', '.join(CLUSTERS)}\n\n"
+        f"{history_section}"
+        f"{appendix_section}"
         f"Current non-routine beliefs (JSON):\n{json.dumps(rows, indent=2)}\n\n"
         "Respond with EXACTLY one fenced ```json block and no other text, "
         "containing an object with this exact shape:\n"
@@ -171,20 +225,89 @@ def _resolution_criteria_for(action: dict[str, Any]) -> str:
     )
 
 
+def _maturity_line_for_prompt(data_root_paths: dict[str, Any] | None) -> str | None:
+    """B6 fix: the deterministic maturity tier as one appendix line. Best-
+    effort -- any failure (unmounted data roots, unreadable stores) drops
+    the line rather than blocking the synthesis, same fail-open posture as
+    every advisory input in this codebase."""
+    try:
+        if not data_root_paths or "vinu_agent" not in data_root_paths:
+            return None
+        from vinu_reflection.reflection._maturity_assessor import assess
+
+        assessment = assess(data_root_paths)
+        return (
+            f"maturity: tier={assessment.tier} "
+            f"(n_real_trades={assessment.n_real_trades}, "
+            f"paper_days={assessment.n_paper_trading_days}, "
+            f"directional_accuracy={assessment.directional_accuracy:.2f}, "
+            f"regimes={','.join(assessment.regime_coverage) or 'none'})"
+        )
+    except Exception:
+        LOG.debug("[reflection-brain] maturity appendix unavailable, continuing without it")
+        return None
+
+
+def _eval_line_for_prompt() -> str | None:
+    """B6 fix: machine gate verdict counts as one appendix line ("41
+    lifetime trials, 3 in flight"). Reads the same strategy_evaluation.db
+    the research introspect routes serve; resolves the root the same way
+    A6's generation-prompt helper does (env override, no guessing). Never
+    writes (no seeding, no file creation) -- absent db means no line."""
+    try:
+        import os
+        from pathlib import Path
+
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        env_root = os.environ.get("VINU_STRATEGY_EVAL_DATA_ROOT", "").strip()
+        if not env_root:
+            return None
+        db_path = Path(env_root) / "strategy_evaluation.db"
+        if not db_path.exists():
+            return None
+        store = StrategyEvaluationStore(db_path)
+        try:
+            counts = store.count_by_status()
+        finally:
+            store.close()
+        if not counts:
+            return None
+        total = sum(counts.values())
+        return (
+            f"evaluation: {total} lifetime artifacts "
+            f"({', '.join(f'{n} {s}' for s, n in sorted(counts.items()))})"
+        )
+    except Exception:
+        LOG.debug("[reflection-brain] eval appendix unavailable, continuing without it")
+        return None
+
+
 def run_synthesis(
     store: ReflectionStore, llm: Any, *, trigger_reason: str = "scheduled",
+    data_root_paths: dict[str, Any] | None = None,
 ) -> Optional[str]:
     """The brain's one LLM call for this cycle. Returns the new
     `synthesis_id`, or None when there's nothing to synthesize (no
     non-routine beliefs right now) or the LLM's response couldn't be
     parsed into the required JSON shape -- fails open to "wrote nothing
-    this cycle" in both cases, never a malformed row."""
+    this cycle" in both cases, never a malformed row.
+
+    `data_root_paths` (same dict the worker loop already holds) feeds only
+    the prompt's advisory appendix (maturity tier + eval counts); omitted
+    means those lines are skipped, never an error."""
     beliefs = gather_synthesis_inputs(store)
     if not beliefs:
         return None
 
     try:
-        response = llm.chat([{"role": "user", "content": _build_prompt(beliefs)}])
+        prompt = _build_prompt(
+            beliefs,
+            past_syntheses=_past_synthesis_trend(store),
+            maturity_line=_maturity_line_for_prompt(data_root_paths),
+            eval_line=_eval_line_for_prompt(),
+        )
+        response = llm.chat([{"role": "user", "content": prompt}])
     except Exception:
         LOG.exception("[reflection-brain] LLM call failed, skipping this cycle")
         return None

@@ -15,6 +15,44 @@ inventing what it might show. If an angle's name isn't already clear to
 you, call explain_angle for it before leaning on its value — don't guess
 what an unfamiliar angle measures from its name alone.
 
+## Required context before drafting (consulted-or-unknown)
+
+Before your final answer -- whichever of the three shapes it takes --
+work through this checklist and state the outcome of each step in your
+reasoning. "Consulted" means you called the tool and cite what it
+returned; "unknown" means the tool returned nothing usable (or the call
+failed) and you say so explicitly. Never silently skip an item, and
+never invent what an unconsulted source might have said.
+
+1. **System judgment:** call `get_reflection_synthesis()`. If it returns
+   a real synthesis, weigh it (a degrading-belief synthesis is a reason
+   for caution, never a sole reason to refuse an idea). If it returns
+   `status: none` or an error, write "synthesis: none on file" and move
+   on -- an empty synthesis is the common case, not a bad sign.
+2. **Trigger evidence:** call `get_signal_evidence(symbol=symbol)` for
+   your symbol. If past triggers with recorded outcomes exist, ground
+   your idea in them (what conditions fired, did they extend). If
+   `count == 0`, write "signal evidence: none on file" -- no history is
+   honest information, not a reason to stall.
+3. **Prior verdicts:** call `query_hypotheses(symbol=symbol)` and check
+   for `rejected` entries on this symbol or idea shape. Do not
+   re-propose an idea the registry already rejected for a stated reason
+   unless you explicitly address that reason. Cite the statuses you saw
+   (or "no prior hypotheses on file").
+4. **Regime citation:** your `get_all_angles` read (above) must include
+   an explicit regime citation -- which regime the symbol is in, from
+   real angle data -- or an explicit "regime unknown from available
+   angles" if none covers it. An idea with no stated regime assumption
+   is incomplete.
+5. **Correlation and drawdown:** call `get_correlation` for the symbol
+   against the current book where relevant, and read whatever drawdown
+   characterization the angles carry. If either source is unavailable,
+   write "correlation: unknown" / "drawdown: unknown" rather than
+   assuming diversification or calm. Honest gap: the machine gate
+   verdicts (evaluation-status) have no agent tool yet, so the closest
+   you get is item 3's prior verdicts -- if a rejection reason in your
+   task text names a specific gate, address that gate directly.
+
 IMPORTANT — angle data is for reasoning only, never for code. get_all_angles
 tells you *characteristics* of the symbol (regime, forecast direction, drawdown
 patterns) so you can decide what KIND of strategy fits — e.g. "ARIMA forecasts

@@ -291,6 +291,19 @@ class TestSynthesisOutcomes:
         store = ReflectionStore(tmp_path / "reflection.db")
         assert store.get_latest_synthesis() is None
 
+    def test_list_recent_syntheses_returns_newest_first_bounded_by_limit(self, tmp_path):
+        store = ReflectionStore(tmp_path / "reflection.db")
+        for tag in ("first", "second", "third"):
+            store.record_synthesis(
+                trigger_reason="scheduled", inputs_snapshot=[], prediction_json={"tag": tag},
+                proposed_action_type=None, resolution_criteria="", resolve_by=999999999.0,
+                evidence_count_at_synthesis=0,
+            )
+        recent = store.list_recent_syntheses(2)
+        assert len(recent) == 2
+        assert recent[0]["prediction_json"] == {"tag": "third"}
+        assert recent[1]["prediction_json"] == {"tag": "second"}
+
     def test_get_latest_synthesis_returns_the_most_recent_row(self, tmp_path):
         store = ReflectionStore(tmp_path / "reflection.db")
         store.record_synthesis(

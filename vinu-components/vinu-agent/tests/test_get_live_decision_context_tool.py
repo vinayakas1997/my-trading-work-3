@@ -49,13 +49,17 @@ class TestGetLiveDecisionContextTool:
                     "confirmation_conditions": [],
                     "precondition": {"description": "market quiet before cross", "defined": True, "tested": False},
                 })
+            if "/research/unconfirmed-moves" in url:
+                return _resp({"status": "ok", "events": [], "count": 0})
+            if "/reflection/beliefs/notable" in url:
+                return _resp({"beliefs": [], "count": 0})
             raise AssertionError(f"unexpected URL: {url}")
 
         with patch("httpx.get", side_effect=_get), \
-             patch(
-                 "vinu_agent.tools.get_live_decision_context_tool.GetSignalEvidenceTool.execute",
-                 return_value=json.dumps({"status": "ok", "symbol": "AAPL", "count": 3, "outcomes_recorded": 2, "triggers": []}),
-             ):
+              patch(
+                  "vinu_agent.tools.get_live_decision_context_tool.GetSignalEvidenceTool.execute",
+                  return_value=json.dumps({"status": "ok", "symbol": "AAPL", "count": 3, "outcomes_recorded": 2, "triggers": []}),
+              ):
             result = json.loads(tool.execute(ticker="aapl", strategy_id="sma_cross"))
 
         assert result["status"] == "ok"
@@ -68,6 +72,8 @@ class TestGetLiveDecisionContextTool:
         assert result["signal_evidence_summary"]["count"] == 3
         assert result["past_live_decisions"][0]["decision"] == "SKIP"
         assert result["past_live_decisions"][0]["reasoning"] == "evidence was thin last time"
+        assert result["unconfirmed_moves"] == []
+        assert result["reflection_notes"] == []
 
     def test_never_computes_a_win_rate_or_confidence_score(self) -> None:
         """Same honesty rule get_signal_evidence/get_move_evidence already
@@ -112,6 +118,10 @@ class TestMaturityStatusFollowUp:
         if "/research/maturity/status" in url:
             return _resp({"tier": "early_live", "n_real_trades": 8, "n_paper_trading_days": 40,
                            "directional_accuracy": 0.55, "regime_coverage": ["trend"]})
+        if "/research/unconfirmed-moves" in url:
+            return _resp({"status": "ok", "events": [], "count": 0})
+        if "/reflection/beliefs/notable" in url:
+            return _resp({"beliefs": [], "count": 0})
         raise AssertionError(f"unexpected URL: {url}")
 
     def test_disabled_by_default_never_calls_the_research_api(self) -> None:
@@ -180,3 +190,103 @@ class TestMaturityStatusFollowUp:
         kwargs = mock_store.record.call_args.kwargs
         assert kwargs["action_taken"] == "no_change_status_unavailable"
         assert kwargs["tier"] == "unknown"
+
+
+class TestUnconfirmedMovesFollowUp:
+    """A2 fix: live_decision context carries Track 2's unconfirmed moves
+    (real moves no must-condition watched for) -- fails open to []."""
+
+    def _base_get(self, url, **kwargs):
+        if "/live/decision-context/" in url:
+            return _resp({"status": "ok", "stage": "ready_to_execute", "trigger_id": "trig_abc", "live_snapshot": {}})
+        if "/live/decisions/" in url:
+            return _resp({"status": "ok", "count": 0, "decisions": []})
+        if "/strategy/strategies/" in url:
+            return _resp({"name": "sma_cross", "must_conditions": [], "confirmation_conditions": [], "precondition": {}})
+        if "/research/unconfirmed-moves" in url:
+            return _resp({"status": "ok", "count": 1, "events": [
+                {"symbol": "AAPL", "direction": "up", "price_move": 0.03,
+                 "confirmed_by_track1": False},
+            ]})
+        if "/reflection/beliefs/notable" in url:
+            return _resp({"beliefs": [], "count": 0})
+        raise AssertionError(f"unexpected URL: {url}")
+
+    def test_unconfirmed_moves_included_when_api_returns_events(self) -> None:
+        tool = _tool()
+        with patch("httpx.get", side_effect=self._base_get), \
+              patch(
+                  "vinu_agent.tools.get_live_decision_context_tool.GetSignalEvidenceTool.execute",
+                  return_value=json.dumps({"status": "ok", "symbol": "AAPL", "count": 0, "outcomes_recorded": 0, "triggers": []}),
+              ):
+            result = json.loads(tool.execute(ticker="AAPL", strategy_id="sma_cross"))
+        assert result["status"] == "ok"
+        assert len(result["unconfirmed_moves"]) == 1
+        assert result["unconfirmed_moves"][0]["confirmed_by_track1"] is False
+
+    def test_unconfirmed_fetch_failure_degrades_to_empty_list(self) -> None:
+        tool = _tool()
+
+        def _get(url, **kwargs):
+            if "/research/unconfirmed-moves" in url:
+                raise ConnectionError("down")
+            return self._base_get(url, **kwargs)
+
+        with patch("httpx.get", side_effect=_get), \
+              patch(
+                  "vinu_agent.tools.get_live_decision_context_tool.GetSignalEvidenceTool.execute",
+                  return_value=json.dumps({"status": "ok", "symbol": "AAPL", "count": 0, "outcomes_recorded": 0, "triggers": []}),
+              ):
+            result = json.loads(tool.execute(ticker="AAPL", strategy_id="sma_cross"))
+        assert result["status"] == "ok"
+        assert result["unconfirmed_moves"] == []
+
+
+class TestReflectionNotesFollowUp:
+    """A6 fix: live-decision context carries currently notable reflection
+    beliefs as advisory notes -- fails open to []."""
+
+    def _base_get(self, url, **kwargs):
+        if "/live/decision-context/" in url:
+            return _resp({"status": "ok", "stage": "ready_to_execute", "trigger_id": "trig_abc", "live_snapshot": {}})
+        if "/live/decisions/" in url:
+            return _resp({"status": "ok", "count": 0, "decisions": []})
+        if "/strategy/strategies/" in url:
+            return _resp({"name": "sma_cross", "must_conditions": [], "confirmation_conditions": [], "precondition": {}})
+        if "/research/unconfirmed-moves" in url:
+            return _resp({"status": "ok", "events": [], "count": 0})
+        if "/reflection/beliefs/notable" in url:
+            return _resp({"beliefs": [
+                {"analyst_name": "regime_drift", "cluster": "Regime",
+                 "scope_type": "system", "scope_key": "market", "severity": "notable"},
+            ], "count": 1})
+        raise AssertionError(f"unexpected URL: {url}")
+
+    def test_notable_beliefs_included_as_advisory_notes(self) -> None:
+        tool = _tool()
+        with patch("httpx.get", side_effect=self._base_get), \
+              patch(
+                  "vinu_agent.tools.get_live_decision_context_tool.GetSignalEvidenceTool.execute",
+                  return_value=json.dumps({"status": "ok", "symbol": "AAPL", "count": 0, "outcomes_recorded": 0, "triggers": []}),
+              ):
+            result = json.loads(tool.execute(ticker="AAPL", strategy_id="sma_cross"))
+        assert result["status"] == "ok"
+        assert len(result["reflection_notes"]) == 1
+        assert result["reflection_notes"][0]["analyst_name"] == "regime_drift"
+
+    def test_beliefs_fetch_failure_degrades_to_empty_list(self) -> None:
+        tool = _tool()
+
+        def _get(url, **kwargs):
+            if "/reflection/beliefs/notable" in url:
+                raise ConnectionError("down")
+            return self._base_get(url, **kwargs)
+
+        with patch("httpx.get", side_effect=_get), \
+              patch(
+                  "vinu_agent.tools.get_live_decision_context_tool.GetSignalEvidenceTool.execute",
+                  return_value=json.dumps({"status": "ok", "symbol": "AAPL", "count": 0, "outcomes_recorded": 0, "triggers": []}),
+              ):
+            result = json.loads(tool.execute(ticker="AAPL", strategy_id="sma_cross"))
+        assert result["status"] == "ok"
+        assert result["reflection_notes"] == []

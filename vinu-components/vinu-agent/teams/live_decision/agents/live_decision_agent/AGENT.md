@@ -4,12 +4,13 @@ role: live-decision-maker
 prompt_file: prompt.md
 depends_on: []
 # get_move_evidence (Track 2) is not in this list -- checked directly,
-# it does not exist as a real tool yet (Track 2 is design-only, see
-# ../../../../missing-pieces-of-system/new-theory-of-trading/
-# how-to-use-29th-angle/05-track2-how-to-ask.md). Add it here once it's
-# built, not before -- an unregistered tool name would break this
-# agent's tool resolution.
-tools: [get_live_decision_context, get_signal_evidence]
+# there is no such agent tool yet. Track 2 moves still reach this agent
+# through get_live_decision_context's `unconfirmed_moves[]` field (GET
+# vinu-research's /research/unconfirmed-moves), so this is coverage, not
+# a gap -- register a dedicated tool here only once one exists, not
+# before, since an unregistered tool name would break this agent's tool
+# resolution.
+tools: [get_live_decision_context, get_signal_evidence, get_reflection_synthesis]
 skills: []
 ---
 

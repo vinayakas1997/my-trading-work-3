@@ -205,3 +205,86 @@ class TestResolvePendingSyntheses:
         )
         assert brain.resolve_pending_syntheses(store) == 1
         assert brain.resolve_pending_syntheses(store) == 0
+
+
+class TestBuildPromptRecencyAndHistory:
+    """B6 fix: the synthesis prompt carries recency per row, its own past
+    trend as data, and the system appendix -- one LLM call shape kept."""
+
+    def _beliefs(self, tmp_path):
+        store = _store(tmp_path)
+        _write_belief(store, psi=0.3)
+        return store, brain.gather_synthesis_inputs(store)
+
+    def test_rows_carry_computed_at_and_days_stale(self, tmp_path):
+        _, beliefs = self._beliefs(tmp_path)
+        assert len(beliefs) == 1
+        prompt = brain._build_prompt(beliefs, now=beliefs[0]["computed_at"] + 3 * 86400)
+        assert '"computed_at"' in prompt
+        assert '"days_stale": 3.0' in prompt
+
+    def test_first_synthesis_says_so_explicitly(self, tmp_path):
+        _, beliefs = self._beliefs(tmp_path)
+        prompt = brain._build_prompt(beliefs)
+        assert "No prior syntheses on file" in prompt
+
+    def test_past_trend_lists_action_and_mechanical_outcome(self, tmp_path):
+        store, beliefs = self._beliefs(tmp_path)
+        sid = store.record_synthesis(
+            trigger_reason="scheduled", inputs_snapshot=[], prediction_json={},
+            proposed_action_type="narrative_only", resolution_criteria="",
+            resolve_by=time.time() - 10, evidence_count_at_synthesis=1,
+        )
+        store.resolve_synthesis(sid, observed_outcome_json={"ok": True}, outcome_match="confirmed")
+        prompt = brain._build_prompt(beliefs, past_syntheses=brain._past_synthesis_trend(store))
+        assert sid[:8] in prompt
+        assert "narrative_only" in prompt
+        assert "confirmed" in prompt
+
+    def test_appendix_lines_included_only_when_given(self, tmp_path):
+        _, beliefs = self._beliefs(tmp_path)
+        assert "System appendix" not in brain._build_prompt(beliefs)
+        prompt = brain._build_prompt(
+            beliefs, maturity_line="maturity: tier=early_live (n_real_trades=8)",
+            eval_line="evaluation: 41 lifetime artifacts (3 in_progress)",
+        )
+        assert "tier=early_live" in prompt
+        assert "41 lifetime artifacts" in prompt
+
+    def test_run_synthesis_prompt_contains_trend_and_recency(self, tmp_path):
+        store, _ = self._beliefs(tmp_path)
+        sid = store.record_synthesis(
+            trigger_reason="scheduled", inputs_snapshot=[], prediction_json={},
+            proposed_action_type="threshold_nudge", resolution_criteria="",
+            resolve_by=time.time() + 3600, evidence_count_at_synthesis=1,
+        )
+        llm = _FakeLLM(content=_VALID_RESPONSE)
+        assert brain.run_synthesis(store, llm) is not None
+        content = llm.calls[0][0]["content"]
+        assert sid[:8] in content
+        assert '"days_stale"' in content
+        assert "No prior syntheses on file" not in content
+
+    def test_maturity_helper_fails_open_without_data_roots(self):
+        assert brain._maturity_line_for_prompt(None) is None
+        assert brain._maturity_line_for_prompt({}) is None
+
+    def test_eval_helper_fails_open_without_env_root(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("VINU_STRATEGY_EVAL_DATA_ROOT", raising=False)
+        assert brain._eval_line_for_prompt() is None
+
+    def test_eval_helper_reports_counts_from_env_root(self, tmp_path, monkeypatch):
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore, VERDICT_PASS
+
+        eval_root = tmp_path / "evalroot"
+        eval_root.mkdir()
+        store = StrategyEvaluationStore(eval_root / "strategy_evaluation.db")
+        store.write_step_result(
+            artifact_id="a1", ticker="AAPL", step_name="risk_critic",
+            step_order=1, verdict=VERDICT_PASS, reasoning="ok",
+        )
+        store.close()
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(eval_root))
+        line = brain._eval_line_for_prompt()
+        assert line is not None
+        assert "1 lifetime artifacts" in line

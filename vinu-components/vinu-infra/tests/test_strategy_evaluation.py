@@ -196,3 +196,29 @@ class TestResolveStrategyEvaluationStore:
     def test_missing_step_returns_none(self, tmp_path):
         store = StrategyEvaluationStore(tmp_path / "se.db")
         assert store.get_step_definition("not_a_real_step") is None
+
+
+class TestCountByStatus:
+    """B6 fix: the brain's eval appendix needs artifact counts by status
+    without pulling full rows."""
+
+    def test_counts_grouped_by_status(self, tmp_path):
+        store = StrategyEvaluationStore(tmp_path / "se.db")
+        store.write_step_result(
+            artifact_id="a1", ticker="AAPL", step_name="risk_critic",
+            step_order=1, verdict=VERDICT_PASS, reasoning="ok",
+        )
+        store.write_step_result(
+            artifact_id="a2", ticker="MSFT", step_name="risk_critic",
+            step_order=1, verdict=VERDICT_FAIL, reasoning="bad",
+        )
+        counts = store.count_by_status()
+        assert sum(counts.values()) == 2
+        assert counts.get(STATUS_REJECTED) == 1
+        assert counts.get(STATUS_IN_PROGRESS) == 1
+        store.close()
+
+    def test_empty_store_returns_empty(self, tmp_path):
+        store = StrategyEvaluationStore(tmp_path / "se.db")
+        assert store.count_by_status() == {}
+        store.close()

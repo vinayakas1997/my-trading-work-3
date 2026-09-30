@@ -23,6 +23,74 @@ from datetime import datetime, timezone
 from typing import Any
 
 
+UNKNOWN_REGIME = "unknown"
+
+
+def regime_of(indicators: dict[str, Any] | None) -> str:
+    """Regime label recorded with a trigger, or "unknown" when absent.
+
+    The writer (`signal_evidence/compute.py`) records `indicators["regime"]`
+    as a plain string (e.g. "bull"/"bear") only when a regime frame was
+    available for that bar -- anything else (missing, None, non-string,
+    blank) means "no regime on file", bucketed as unknown rather than
+    dropped, so per-regime sample counts always reconcile with the overall
+    aggregate.
+    """
+    regime = (indicators or {}).get("regime")
+    if isinstance(regime, str) and regime.strip():
+        return regime
+    return UNKNOWN_REGIME
+
+
+def is_news_confounded(indicators: dict[str, Any] | None) -> bool:
+    """Whether a news event fell inside the confound window of this trigger.
+
+    Shape contract with the writer: `indicators["news_confound"]` is a dict
+    with an `occurred` bool (`{"occurred": False, ...}` when no article
+    qualified). Missing or malformed entries count as not confounded --
+    absence of evidence is not evidence of confounding.
+    """
+    confound = (indicators or {}).get("news_confound")
+    return isinstance(confound, dict) and confound.get("occurred") is True
+
+
+def summarize_by_regime(
+    resolved_with_indicators: list[tuple[dict[str, Any], dict[str, Any] | None]],
+    *,
+    as_of_iso: str | None = None,
+    reference_now: datetime | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Partition resolved triggers by recorded regime, summarize each bucket
+    with the same Laplace formula (`summarize_resolved_triggers` -- one
+    formula, every caller), and additionally summarize each bucket's
+    non-news-confounded subset under `ex_news`.
+
+    Returns `{regime: {<summary keys>, "news_confounded": int,
+    "ex_news": {<summary keys>}}}`. `news_confounded` is derived as
+    full-bucket sample minus clean-bucket sample (both after the same
+    point-in-time cut), so it is exact, never estimated. Buckets whose
+    clean subset is empty still carry an `ex_news` zero-sample summary
+    rather than a missing key, so consumers never guess the shape.
+    """
+    buckets: dict[str, list[tuple[dict[str, Any], dict[str, Any] | None]]] = {}
+    for trigger, indicators in resolved_with_indicators:
+        buckets.setdefault(regime_of(indicators), []).append((trigger, indicators))
+    result: dict[str, dict[str, Any]] = {}
+    for regime, pairs in buckets.items():
+        triggers = [t for t, _ in pairs]
+        clean = [t for t, ind in pairs if not is_news_confounded(ind)]
+        full = summarize_resolved_triggers(
+            triggers, as_of_iso=as_of_iso, reference_now=reference_now,
+        )
+        ex_news = summarize_resolved_triggers(
+            clean, as_of_iso=as_of_iso, reference_now=reference_now,
+        )
+        full["news_confounded"] = full["sample_size"] - ex_news["sample_size"]
+        full["ex_news"] = ex_news
+        result[regime] = full
+    return result
+
+
 def laplace_smoothed_win_rate(wins: int, n: int) -> float:
     return (wins + 1) / (n + 2)
 

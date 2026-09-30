@@ -11,7 +11,12 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from vinu_infra.reflection import ReflectionStore
+from vinu_infra.reflection import (
+    Finding,
+    POLARITY_HIGHER_IS_WORSE,
+    ReflectionStore,
+    write_finding,
+)
 from vinu_reflection.config import ReflectionConfig
 from vinu_reflection.server.app import create_app
 
@@ -111,3 +116,43 @@ class TestListPendingSyntheses:
         store.resolve_synthesis(synthesis_id, observed_outcome_json={"ok": True}, outcome_match="confirmed")
         resp = client.get("/reflection/synthesis/pending")
         assert resp.json()["count"] == 0
+
+
+def _write_belief(store, *, psi=0.3) -> None:
+    store.upsert_reference_config(
+        analyst_name="regime_drift", scope_type="system", metric_name="retry_rejection_delta",
+        metric_polarity=POLARITY_HIGHER_IS_WORSE,
+    )
+    write_finding(store, Finding(
+        analyst_name="regime_drift", cluster="Regime", scope_type="system", scope_key="market",
+        signal_json={"retry_rejection_delta": 0.3}, evidence_count=40, primary_metric=0.3,
+        metric_name="retry_rejection_delta", psi=psi,
+    ))
+
+
+class TestListNotableBeliefs:
+    """A6 fix: advisory consumers read the brain's notable-belief set
+    over HTTP instead of importing this package in-process."""
+
+    def test_empty_store_returns_empty_not_404(self, client) -> None:
+        resp = client.get("/reflection/beliefs/notable")
+        assert resp.status_code == 200
+        assert resp.json() == {"beliefs": [], "count": 0}
+
+    def test_routine_beliefs_never_written_never_listed(self, client, store) -> None:
+        _write_belief(store, psi=0.02)  # routine -> write_finding stores nothing
+        resp = client.get("/reflection/beliefs/notable")
+        assert resp.json()["count"] == 0
+
+    def test_notable_belief_listed_with_its_identity(self, client, store) -> None:
+        _write_belief(store, psi=0.3)
+        resp = client.get("/reflection/beliefs/notable")
+        body = resp.json()
+        assert body["count"] == 1
+        assert body["beliefs"][0]["analyst_name"] == "regime_drift"
+        assert body["beliefs"][0]["severity"] in ("notable", "significant")
+
+    def test_limit_is_respected(self, client, store) -> None:
+        _write_belief(store, psi=0.3)
+        resp = client.get("/reflection/beliefs/notable", params={"limit": 1})
+        assert resp.json()["count"] == 1

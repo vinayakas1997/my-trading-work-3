@@ -58,3 +58,23 @@ async def list_pending_syntheses_route(
     store = _require_store()
     rows = store.list_pending_syntheses(as_of)
     return {"syntheses": rows, "count": len(rows)}
+
+
+@router.get("/beliefs/notable")
+async def list_notable_beliefs_route(
+    limit: int = Query(default=20, ge=1, le=100),
+) -> dict[str, Any]:
+    """A6 fix: every belief currently notable/significant, across all
+    clusters -- the same set the brain itself synthesizes from
+    (`gather_synthesis_inputs`), exposed so advisory consumers (e.g.
+    vinu-agent's live-decision context) can cite "Regime cluster:
+    degrading" without importing this package in-process (same
+    cross-process rule `get_reflection_synthesis` already follows).
+    Honest raw rows, newest first by store order; `{"beliefs": [],
+    "count": 0}` most cycles -- most scopes are routine, which is the
+    expected outcome, not a gap. Read-only, like every route here."""
+    from vinu_reflection.reflection.brain import gather_synthesis_inputs
+
+    store = _require_store()
+    rows = gather_synthesis_inputs(store)[:limit]
+    return {"beliefs": rows, "count": len(rows)}

@@ -9,6 +9,7 @@ from vinu_research.config import ResearchConfig
 from vinu_research.loop import (
     INFRA_FAILURE_REASONING_PREFIX,
     StrategyResearchLoop,
+    _build_eval_status_context,
     _classify_outcome_status,
     _LRUCache,
     _split_research_and_holdout,
@@ -28,6 +29,76 @@ class TestNormalizeSuggestionKey:
     def test_lowercases_and_strips(self):
         result = StrategyResearchLoop._normalize_suggestion_key("  Add ADX Filter  ")
         assert result == "add adx filter"
+
+
+class TestBuildEvalStatusContext:
+    """A6 fix: generation prompt carries the machine gate verdicts for
+    the ticker -- read-only, best-effort, empty when nothing on file."""
+
+    def _seed(self, db_path, artifact_id, ticker, verdicts):
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        store = StrategyEvaluationStore(db_path)
+        for i, (step, verdict, reasoning) in enumerate(verdicts):
+            store.write_step_result(
+                artifact_id=artifact_id, ticker=ticker, step_name=step,
+                step_order=i + 1, verdict=verdict, reasoning=reasoning,
+            )
+        store.close()
+
+    def test_no_db_file_returns_empty_and_creates_nothing(self, tmp_path):
+        result = _build_eval_status_context("AAPL", tmp_path)
+        assert result == ""
+        assert list(tmp_path.iterdir()) == []
+
+    def test_empty_symbol_returns_empty(self, tmp_path):
+        assert _build_eval_status_context("", tmp_path) == ""
+
+    def test_rejection_and_in_flight_rows_rendered(self, tmp_path):
+        from vinu_infra.strategy_evaluation import VERDICT_FAIL, VERDICT_PASS
+
+        self._seed(
+            tmp_path / "strategy_evaluation.db", "cand-1", "AAPL",
+            [("risk_critic", VERDICT_PASS, "ok"),
+             ("correlation_gate", VERDICT_FAIL, "too correlated with existing book")],
+        )
+        self._seed(
+            tmp_path / "strategy_evaluation.db", "cand-2", "AAPL",
+            [("risk_critic", VERDICT_PASS, "ok")],
+        )
+
+        result = _build_eval_status_context("AAPL", tmp_path)
+
+        assert "cand-1" in result
+        assert "correlation_gate" in result
+        assert "too correlated" in result
+        assert "cand-2" in result
+        assert "In flight" in result
+
+    def test_other_tickers_excluded(self, tmp_path):
+        from vinu_infra.strategy_evaluation import VERDICT_FAIL
+
+        self._seed(
+            tmp_path / "strategy_evaluation.db", "cand-9", "MSFT",
+            [("risk_critic", VERDICT_FAIL, "bad")],
+        )
+
+        assert _build_eval_status_context("AAPL", tmp_path) == ""
+
+    def test_env_root_override_respected(self, tmp_path, monkeypatch):
+        from vinu_infra.strategy_evaluation import VERDICT_FAIL
+
+        eval_root = tmp_path / "evalroot"
+        eval_root.mkdir()
+        self._seed(
+            eval_root / "strategy_evaluation.db", "cand-7", "AAPL",
+            [("risk_critic", VERDICT_FAIL, "bad sharpe")],
+        )
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(eval_root))
+
+        result = _build_eval_status_context("AAPL", tmp_path / "does-not-exist")
+
+        assert "cand-7" in result
 
     def test_removes_numbers(self):
         result = StrategyResearchLoop._normalize_suggestion_key("Iteration 3: reduce position size by 50%")
@@ -748,6 +819,37 @@ class TestMatchExistingHypothesis:
         args, kwargs = llm.check_duplicate_idea.call_args
         candidate_ideas = args[2] if len(args) > 2 else kwargs["candidate_ideas"]
         assert len(candidate_ideas) == 2
+
+    async def test_enriched_candidates_carry_each_ideas_track_record(self):
+        """B5 fix: rejected-with-evidence must look different from
+        exploring-with-evidence to the dedup LLM, even with overlapping words."""
+        from vinu_research.models import Evidence, HypothesisStatus
+
+        h1 = Hypothesis.create("H1", "H1", universe=["AAPL"])
+        h1.strategy_type = "RSI mean reversion on oversold bounces"
+        h1.status = HypothesisStatus.rejected
+        h1.best_sharpe = -0.3
+        h1.invalidation_reason = "failed correlation gate"
+        h1.evidence = [Evidence(run_id=1, iteration=1, metric="sharpe", value=-0.3,
+                                conclusion="negative expectancy", reasoning="lost money")]
+        h2 = Hypothesis.create("H2", "H2", universe=["AAPL"])
+        h2.strategy_type = "RSI mean reversion on oversold bounces with volume filter"
+        h2.status = HypothesisStatus.exploring
+        h2.best_sharpe = 0.4
+        llm = _fake_llm_with_duplicate_check(result={"duplicate_index": None, "confidence": 0.9})
+        loop = self._loop(llm)
+        await loop._match_existing_hypothesis("RSI mean reversion oversold bounce", "AAPL", [h1, h2])
+        args, kwargs = llm.check_duplicate_idea.call_args
+        candidate_ideas = args[2] if len(args) > 2 else kwargs["candidate_ideas"]
+        assert len(candidate_ideas) == 2
+        by_status = {c["status"]: c for c in candidate_ideas}
+        assert by_status["rejected"]["best_sharpe"] == -0.3
+        assert by_status["rejected"]["evidence_count"] == 1
+        assert by_status["rejected"]["last_conclusion"] == "negative expectancy"
+        assert by_status["rejected"]["invalidation_reason"] == "failed correlation gate"
+        assert by_status["exploring"]["evidence_count"] == 0
+        for c in candidate_ideas:
+            assert "tfidf_score" in c and c["tfidf_score"] >= 0.1
 
 
 class TestDefaultQuantCoderRefinement:

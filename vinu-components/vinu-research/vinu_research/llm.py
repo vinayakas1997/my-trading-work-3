@@ -285,6 +285,8 @@ DUPLICATE_IDEA_SYSTEM_PROMPT = """You are a senior quantitative researcher check
 
 A duplicate means the same underlying trading concept (same indicators/signal logic, same entry/exit rationale), not just overlapping words — "SMA crossover trend-following" and "moving-average crossover trend-following" are duplicates; "RSI mean-reversion" and "RSI-filtered momentum" are not, despite sharing the word RSI. Only flag a duplicate you are genuinely confident about; when unsure, say it is not a duplicate — a missed duplicate wastes one research run, but a false duplicate silently merges two different ideas' evidence together, which is worse.
 
+Each candidate below carries its track record (status, best Sharpe, evidence-entry count, last conclusion, TF-IDF similarity to the new idea, rejection reason when rejected) — use it: a `rejected` idea with negative evidence is not the same as an `exploring` idea with positive evidence, even when the wording overlaps. Cite status + evidence in your reasoning, not just wording overlap.
+
 Return JSON with this exact schema:
 {
   "duplicate_index": null,
@@ -292,6 +294,32 @@ Return JSON with this exact schema:
   "confidence": 0.0
 }
 `duplicate_index` is the 0-based index (from the candidate list below) of the existing idea this duplicates, or null if none is a genuine duplicate."""
+
+
+def _format_duplicate_candidate(idea: str | dict[str, Any]) -> str:
+    """Render one dedup candidate for the LLM prompt. Plain strings pass
+    through unchanged (legacy shape); enriched dicts (B5 -- loop.py's
+    `_match_existing_hypothesis` builds these from the Hypothesis record)
+    render name plus the track record the verdict must cite. Every value
+    is copied from stored state, never estimated -- missing keys degrade
+    to blank/zero, not to guesses."""
+    if isinstance(idea, str):
+        return idea
+    parts = [str(idea.get("strategy_type") or "(unnamed idea)")]
+    meta = (
+        f"[status={idea.get('status', 'unknown')}, "
+        f"best_sharpe={idea.get('best_sharpe', 0.0):.2f}, "
+        f"evidence_entries={idea.get('evidence_count', 0)}, "
+        f"tfidf={idea.get('tfidf_score', 0.0):.2f}]"
+    )
+    parts.append(meta)
+    last = str(idea.get("last_conclusion") or "").strip()
+    if last:
+        parts.append(f"last conclusion: {last[:200]}")
+    reason = str(idea.get("invalidation_reason") or "").strip()
+    if reason:
+        parts.append(f"rejection reason: {reason[:200]}")
+    return " ".join(parts)
 
 
 RUN_SUMMARY_SYSTEM_PROMPT = """You are a senior quantitative analyst writing a short status update for a colleague who has not been following this research run.
@@ -527,8 +555,18 @@ Is this approach suitable?"""
         `loop.py::_match_existing_hypothesis`) -- a real semantic
         duplicate judgment for the ambiguous cases a bare similarity
         score can't reliably separate, not a per-idea classifier run on
-        every submission regardless of overlap."""
-        listed = "\n".join(f"{i}. {idea}" for i, idea in enumerate(candidate_ideas))
+        every submission regardless of overlap.
+
+        B5 fix: each candidate may be a plain name string (legacy shape,
+        still accepted) or an enriched dict carrying that idea's track
+        record (`strategy_type`, `status`, `best_sharpe`,
+        `evidence_count`, `last_conclusion`, `invalidation_reason`,
+        `tfidf_score`) -- the LLM judges status + evidence, not just
+        wording overlap."""
+        listed = "\n".join(
+            f"{i}. {_format_duplicate_candidate(idea)}"
+            for i, idea in enumerate(candidate_ideas)
+        )
         prompt = f"""New strategy idea for {symbol}: {new_idea}
 
 Already-researched ideas for {symbol}:

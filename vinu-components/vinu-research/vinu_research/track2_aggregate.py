@@ -42,7 +42,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from vinu_infra.evidence_confidence import summarize_resolved_triggers
+from vinu_infra.evidence_confidence import summarize_by_regime, summarize_resolved_triggers
 from vinu_research.storage.signal_evidence_store import SignalEvidenceStore
 
 
@@ -63,6 +63,12 @@ def compute_track2_aggregate(
         "evidence_confidence": float | None,  # Laplace-smoothed win rate, None if sample_size == 0
         "avg_return_at_horizon": float | None,
         "days_since_last_trigger": int | None,
+        # Regime-aware breakdown (A1 fix): same Laplace formula per
+        # recorded regime bucket, each with its non-news-confounded
+        # subset under "ex_news". Additive only -- every key above keeps
+        # its exact prior meaning so existing consumers never change.
+        "by_regime": {regime: {<summary keys>, "news_confounded": int, "ex_news": {<summary keys>}}},
+        "news_confounded_total": int,     # confounded triggers across all buckets
     }
     """
     as_of_iso = (
@@ -86,6 +92,15 @@ def compute_track2_aggregate(
         resolved, as_of_iso=as_of_iso, reference_now=reference_now,
     )
 
+    indicators_by_id = evidence_store.get_indicators_for_triggers(
+        [t["trigger_id"] for t in resolved]
+    )
+    by_regime = summarize_by_regime(
+        [(t, indicators_by_id.get(t["trigger_id"])) for t in resolved],
+        as_of_iso=as_of_iso,
+        reference_now=reference_now,
+    )
+
     return {
         "symbol": symbol,
         "must_condition": must_condition,
@@ -96,4 +111,6 @@ def compute_track2_aggregate(
         "evidence_confidence": summary["evidence_confidence"],
         "avg_return_at_horizon": summary["avg_return_at_horizon"],
         "days_since_last_trigger": summary["days_since_last_trigger"],
+        "by_regime": by_regime,
+        "news_confounded_total": sum(b["news_confounded"] for b in by_regime.values()),
     }

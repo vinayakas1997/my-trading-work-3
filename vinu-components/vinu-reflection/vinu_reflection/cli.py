@@ -270,7 +270,9 @@ def reflection_worker_main(args: argparse.Namespace) -> None:
                     resolved = brain.resolve_pending_syntheses(reflection_store)
                     if resolved:
                         print(f"[reflection-brain] resolved {resolved} pending synthesis outcome(s)")
-                    synthesis_id = brain.run_synthesis(reflection_store, brain_llm)
+                    synthesis_id = brain.run_synthesis(
+                        reflection_store, brain_llm, data_root_paths=data_root_paths,
+                    )
                     if synthesis_id:
                         print(f"[reflection-brain] wrote synthesis {synthesis_id}")
                 except Exception:
