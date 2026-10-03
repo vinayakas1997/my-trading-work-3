@@ -45,6 +45,7 @@ from vinu_live.trade_plan.condition_evaluator import find_triggered_rules
 from vinu_live.trade_plan.guards import (
     event_blackout_reason,
     fetch_spread_bps,
+    symbol_lockout_active,
     halt_reason as _halt_reason,
     spread_bps_from_quote as _spread_bps_from_quote,
     spread_gate_reason_from_bps,
@@ -560,6 +561,7 @@ _ACTION_CLASS_MAP: dict[str, str] = {
     "entry_blocked_by_wide_spread": "HOLD",
     "entry_blocked_by_breaker": "HOLD",
     "entry_blocked_by_cooldown": "HOLD",
+    "entry_blocked_by_symbol_lockout": "HOLD",
     "entry_blocked_by_turbulence": "HOLD",
     "entry_blocked_by_borrow": "HOLD",
     "entry_blocked_by_entry_decision": "HOLD",
@@ -1319,6 +1321,11 @@ class TradePlanOrchestrator:
         if locked:
             LOG.warning("Cooldown -- skipping entry for %s: %s", symbol, lock_reason)
             return {"symbol": symbol, "action": "entry_blocked_by_cooldown", "reason": lock_reason}
+
+        sym_locked, sym_reason = symbol_lockout_active(self._book, symbol)
+        if sym_locked:
+            LOG.warning("Symbol lockout -- skipping entry for %s: %s", symbol, sym_reason)
+            return {"symbol": symbol, "action": "entry_blocked_by_symbol_lockout", "reason": sym_reason}
 
         turb, turb_reason = await turbulence_active(self._fetch_recent_prices, symbol)
         if turb:

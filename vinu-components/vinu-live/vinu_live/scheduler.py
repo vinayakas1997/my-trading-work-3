@@ -35,6 +35,7 @@ from vinu_live.trade_plan.guards import (
     halt_reason,
     instruction_increases_exposure,
     spread_gate_reason_from_bps,
+    symbol_lockout_active,
 )
 # Reuses the orchestrator's own MAX_SPREAD_BPS/EVENT_BLACKOUT_HOURS/
 # MAX_SLIPPAGE_PCT/PASSIVE_LIMIT_OFFSET_BPS env-parsed thresholds and its
@@ -421,6 +422,10 @@ class LiveScheduler:
                 guard, reason = "", ""
                 if locked:
                     guard, reason = "cooldown", lock_reason
+                if not guard:
+                    sym_locked, sym_reason = symbol_lockout_active(self._book, instr.symbol)
+                    if sym_locked:
+                        guard, reason = "symbol_lockout", sym_reason
                 if not guard and PRICE_MAX_AGE_HOURS > 0:
                     age = _price_ts_age_hours(self._last_price_ts.get(instr.symbol))
                     if age is not None and age > PRICE_MAX_AGE_HOURS:

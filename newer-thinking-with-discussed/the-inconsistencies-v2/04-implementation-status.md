@@ -1016,3 +1016,34 @@ cost is far above it, and feed that into sizing / spread gates. That is a consum
 always using the close fails 8; final statuses not excluded fails 2; batch ignored fails 1; a partial fill treated as final fails 2; mid not recorded fails 1.
 
 - **2026-10-03** — Phase 5.5: fill prices + slippage in the order ledger (agent order-lookup route, enrichment pass). `vinu-live` 772 -> 803. Nothing committed.
+
+### 5.6: per-symbol loss lockout (v1 C1 / v2 gap list) — DONE 2026-10-03 (opt-in, default OFF)
+
+**What was built:** the portfolio-wide cooldown (`cooldown_active`: 2 losses in a row locks ALL entries for 24 h) cannot say "stop re-entering the name that keeps losing". New in
+`vinu_live/trade_plan/guards.py`: with `VINU_LIVE_SYMBOL_LOCKOUT_LOSSES` = N > 0 (default **0 = off**), a symbol whose last N closed trades were all losses is locked for new
+**entries** for `VINU_LIVE_SYMBOL_LOCKOUT_HOURS` (default 72) after the latest of those losses. A win or flat trade on that symbol resets its streak; the lock ends on its own at
+`locked_until`; every lock carries a reason ("symbol lockout: last 2 closed trade(s) in this name all lost (-50.00); entries locked until 2026-10-06 14:00Z").
+- Pure core `symbol_lockout(rows, losses, hours, now)`; `symbol_lockout_active(book, symbol)` and `active_symbol_lockouts(book)` read the trade-plan book's closed positions. Any error -> not
+  locked (a guard bug must never stop an order); rows without a parseable `closed_at` cannot start a lock (fail-open).
+- **Orchestrator:** `_maybe_enter` returns `entry_blocked_by_symbol_lockout` (classified `HOLD`) right after the portfolio-wide cooldown check. Exits are never touched.
+- **Scheduler path:** the A4 entry guards (`scheduler_entry_guards_enabled`) gain a `symbol_lockout` guard after cooldown; increases only, reductions always pass.
+- **Visibility:** `GET /live/lockouts` lists the symbols currently locked with streak, loss total and expiry (`enabled: false` when off).
+- The 2-in-a-row / 72 h figures are guessed starting values, not fitted to anything. Like the cooldown it is configured by environment variable, not `LiveConfig`.
+
+**Limits:** it reads only the trade-plan book, and the scheduler path writes no fills there (edge `book.writes->live.scheduler`), so on the scheduler path it reflects plan-path losses only,
+exactly like the existing cooldown. With the default 2-loss setting the portfolio-wide cooldown (checked first, 24 h) fires before the lockout on the same two losses; the lockout is what keeps
+one name blocked for the longer 72 h once the cooldown has lapsed. Realised P&L per closed position, not per signal.
+
+| File (inside `vinu-components/`) | Action |
+|---|---|
+| `vinu-live/vinu_live/trade_plan/guards.py` | modified: `SYMBOL_LOCKOUT_LOSSES/HOURS`, `symbol_lockout`, `symbol_lockout_active`, `active_symbol_lockouts` |
+| `vinu-live/vinu_live/trade_plan/orchestrator.py` | modified: entry check + `entry_blocked_by_symbol_lockout: HOLD` in the action map |
+| `vinu-live/vinu_live/scheduler.py` | modified: `symbol_lockout` entry guard |
+| `vinu-live/vinu_live/server/app.py` | modified: `GET /live/lockouts` |
+| `vinu-live/tests/test_symbol_lockout.py` | **created**, 20 tests (disabled values; streak / total / expiry; fewer than N; a win or flat resets; expiry; order independence; unparseable and naive timestamps; real book: locked vs other symbols, a win frees it, default off, broken book, listing; orchestrator refuses / enters elsewhere / off; scheduler blocks increase never reduce / off; route) |
+
+**Tests:** `vinu-live` 803 -> **823** (+20), same 3 pre-existing errors. A completeness test (`test_orchestrator_action_classify`) forced the new action string into the HOLD map. Mutation checks
+(each restored): a win not resetting the streak fails 3; a lock that never expires fails 1; off-by-one threshold fails 5; orchestrator not wired fails 1; scheduler not wired fails 1; counting every
+symbol's losses fails 3.
+
+- **2026-10-03** — Phase 5.6: per-symbol loss lockout (opt-in). `vinu-live` 803 -> 823. Committed up to 5.5 (39281bd0, 694dbd43); 5.6 not yet.

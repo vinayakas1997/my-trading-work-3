@@ -12,6 +12,8 @@ the checks are written once here as small async functions over a plain
 from __future__ import annotations
 
 import logging
+import os as _os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -137,6 +139,96 @@ async def event_blackout_reason(
     except Exception as e:  # noqa: BLE001 -- fail-open on any fetch error
         LOG.debug("Event blackout check failed for %s, failing open: %s", symbol, e)
     return None
+
+
+# Per-symbol loss lockout (v1 C1 / v2 gap list): the portfolio-wide cooldown (`cooldown_active` in orchestrator.py)
+# locks ALL entries after N losses in a row, whichever symbols they were in. It cannot say "stop re-entering the
+# name that keeps losing". With SYMBOL_LOCKOUT_LOSSES > 0, a symbol whose last N closed trades were all losses is
+# locked for new ENTRIES for SYMBOL_LOCKOUT_HOURS after the latest of those losses, with a reason and an expiry.
+# A win (or a flat trade) on that symbol resets its streak. Exits are never blocked. 0 (the default) disables it.
+# The 2-in-a-row / 72h figures are guessed starting values, not fitted to anything.
+SYMBOL_LOCKOUT_LOSSES = int(_os.environ.get("VINU_LIVE_SYMBOL_LOCKOUT_LOSSES", "0"))
+SYMBOL_LOCKOUT_HOURS = float(_os.environ.get("VINU_LIVE_SYMBOL_LOCKOUT_HOURS", "72"))
+
+
+def _parse_ts(value: Any) -> datetime | None:
+    try:
+        dt = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def symbol_lockout(
+    closed_rows: list[dict[str, Any]], *, losses: int, hours: float, now: datetime | None = None,
+) -> dict[str, Any] | None:
+    """Pure core. `closed_rows`: one symbol's closed trades (any order; each with `realized_pnl` and `closed_at`).
+    Returns None when the symbol is free to trade, else `{streak, total_loss, last_loss_at, locked_until, reason}`.
+    Fail-open: rows without a parseable `closed_at` cannot start a lock."""
+    if losses <= 0 or hours <= 0:
+        return None
+    dated = [(dt, r) for r in closed_rows if (dt := _parse_ts(r.get("closed_at"))) is not None]
+    dated.sort(key=lambda x: x[0])
+    streak, total, last_loss_at = 0, 0.0, None
+    for dt, r in reversed(dated):
+        pnl = r.get("realized_pnl") or 0.0
+        if pnl < 0:
+            streak += 1
+            total += pnl
+            last_loss_at = last_loss_at or dt
+        else:
+            break
+    if streak < losses or last_loss_at is None:
+        return None
+    until = last_loss_at + timedelta(hours=hours)
+    if (now or datetime.now(timezone.utc)) >= until:
+        return None
+    return {
+        "streak": streak, "total_loss": round(total, 2), "last_loss_at": last_loss_at.isoformat(),
+        "locked_until": until.isoformat(),
+        "reason": f"symbol lockout: last {streak} closed trade(s) in this name all lost ({total:.2f}); "
+                  f"entries locked until {until.strftime('%Y-%m-%d %H:%M')}Z",
+    }
+
+
+def symbol_lockout_active(book: Any, symbol: str, *, losses: int | None = None, hours: float | None = None) -> tuple[bool, str]:
+    """(locked, reason) for `symbol` from the trade-plan book's closed positions. Never raises: any error means
+    not locked (a guard bug must never stop an order). Uses the module constants unless overridden."""
+    n = SYMBOL_LOCKOUT_LOSSES if losses is None else losses
+    h = SYMBOL_LOCKOUT_HOURS if hours is None else hours
+    if n <= 0 or h <= 0:
+        return False, ""
+    try:
+        from vinu_live.book.positions import list_closed_positions
+
+        lock = symbol_lockout(list_closed_positions(book, symbol=symbol), losses=n, hours=h)
+        return (True, lock["reason"]) if lock else (False, "")
+    except Exception as e:  # noqa: BLE001
+        LOG.debug("symbol lockout check failed for %s, treating as not locked: %s", symbol, e)
+        return False, ""
+
+
+def active_symbol_lockouts(book: Any, *, losses: int | None = None, hours: float | None = None) -> list[dict[str, Any]]:
+    """Every symbol currently locked, with its streak, loss total and expiry (read-only visibility). [] on any error."""
+    n = SYMBOL_LOCKOUT_LOSSES if losses is None else losses
+    h = SYMBOL_LOCKOUT_HOURS if hours is None else hours
+    if n <= 0 or h <= 0:
+        return []
+    try:
+        from vinu_live.book.positions import list_closed_positions
+
+        by_symbol: dict[str, list[dict[str, Any]]] = {}
+        for row in list_closed_positions(book):
+            by_symbol.setdefault(str(row.get("symbol", "")).upper(), []).append(row)
+        out = []
+        for sym, rows in sorted(by_symbol.items()):
+            lock = symbol_lockout(rows, losses=n, hours=h)
+            if lock:
+                out.append({"symbol": sym, **lock})
+        return out
+    except Exception as e:  # noqa: BLE001
+        LOG.debug("active symbol lockouts unavailable: %s", e)
+        return []
 
 
 async def halt_reason(http: Any, agent_api_url: str, edge_id: str | None = None) -> str | None:

@@ -202,6 +202,26 @@ def create_app() -> FastAPI:
             ],
         }
 
+    @router.get("/lockouts")
+    async def lockouts() -> dict[str, Any]:
+        """Symbols currently locked out of new entries by the per-symbol loss lockout (guards.symbol_lockout): streak,
+        loss total, when it ends. Read-only. `enabled: false` means the lockout is off (VINU_LIVE_SYMBOL_LOCKOUT_LOSSES=0),
+        in which case the list is empty by design. Built from the trade-plan book only (the scheduler writes no fills there)."""
+        from vinu_live.book.positions import init_book
+        from vinu_live.trade_plan import guards
+
+        config = load_config()
+        path = config.data_root / "trade_plan_book.db"
+        enabled = guards.SYMBOL_LOCKOUT_LOSSES > 0 and guards.SYMBOL_LOCKOUT_HOURS > 0
+        if not enabled or not path.exists():
+            return {"enabled": enabled, "losses": guards.SYMBOL_LOCKOUT_LOSSES, "hours": guards.SYMBOL_LOCKOUT_HOURS, "count": 0, "lockouts": []}
+        book = init_book(str(path))
+        try:
+            rows = guards.active_symbol_lockouts(book)
+        finally:
+            book.close()
+        return {"enabled": True, "losses": guards.SYMBOL_LOCKOUT_LOSSES, "hours": guards.SYMBOL_LOCKOUT_HOURS, "count": len(rows), "lockouts": rows}
+
     @router.get("/executions")
     async def executions(limit: int = 100, symbol: str | None = None) -> dict[str, Any]:
         """The scheduler's order ledger (execution_log.py): every slice it tried to place or skipped, with the
