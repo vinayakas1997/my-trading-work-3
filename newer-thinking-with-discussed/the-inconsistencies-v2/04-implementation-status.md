@@ -1,7 +1,7 @@
 # Implementation status — what is done, what files were touched
 
 Tracks `03-implementation-plan.md`. Updated after every piece of work: status, files touched, tests, and anything
-found or decided on the way. Newest entries at the bottom of each section. Nothing is committed to git unless noted.
+found or decided on the way. Newest entries at the bottom of each section. Everything up to the latest entry is committed to the local git repository; nothing is pushed to a remote.
 
 Legend: DONE · IN PROGRESS · NEXT · WAITING (needs your decision) · BLOCKED
 
@@ -12,10 +12,38 @@ Legend: DONE · IN PROGRESS · NEXT · WAITING (needs your decision) · BLOCKED
 | 0 | Audits and plan (docs only) | DONE |
 | 1 | Edge manifest + static check (read-only) | **DONE 2026-10-02** |
 | 2 | Fixes that need no decision | **DONE 2026-10-03** (2.1, 2.2, 2.3, 2.4a-e, 2.5) |
-| 3 | Runtime recorder + report (first slice: the vinu-live money path) | **DONE 2026-10-03** (8 of 31 wired edges instrumented, see below) |
+| 3 | Runtime recorder + report (first slice: the vinu-live money path) | **DONE 2026-10-03** (every wired edge instrumented; one declared gap, see "Still open") |
 | 4 | Decisions that change live behavior (A1, A2, A5, A6, A7, A8, v1 A8, B1) | **DONE as opt-in flags** (all eight; switching them on is an operations decision) |
-| 5 | New safeguards (lookahead, warmup, uncertainty, novelty, parity, lockout) | **IN PROGRESS** (5.1 features, 5.2, 5.3, 5.4 novelty, 5.5 uncertainty done) |
+| 5 | New safeguards (lookahead, warmup, uncertainty, novelty, parity, lockout) | **IN PROGRESS** (5.1 features, 5.2, 5.3, 5.4 novelty, 5.5 uncertainty done; strategy-level look-ahead test still open) |
 | 6 | Enforcement once data exists | not started |
+
+---
+
+## Still open — one list (as of 2026-10-03)
+
+Everything not listed here is implemented and committed. Most new behaviour is behind **off-by-default flags** that still have to be switched on (see `06-live-behavior-flags.md`). Nothing is pushed to a remote.
+
+**Waiting for paper-trading data (cannot be done yet):**
+- Phase 6 enforcement (turning the log-only checks into real refusals), see `03-implementation-plan.md` Phase 6.
+- Compare the order ledger's realised slippage with the cost the backtests assume (the simulator's cost model).
+- Per-regime / per-artifact refinements of confidence and parity.
+- Attach the uncertainty assessment (5.5) to the evaluation-status view and the audit log, and use it as a sizing scaler: the audit says only after log-only data shows it behaves.
+
+**Not built yet:**
+- Strategy-level look-ahead test: run whole strategies / `simulate_custom` code on truncated data (5.1 covers features only).
+- Trade Score tier cap when input novelty is high (5.4 only logs it and warns the live-decision agent; the score path has no feature vector).
+- Edge `book.writes->live.scheduler`: the scheduler path writes nothing to the plan book, so lockout and cooldown read only the plan book (the one declared wiring gap).
+- Screener: its fires reach nobody (`on_fire` is not wired, fires are only an audit row); its edge/cooldown state is in memory, so a restart re-fires every symbol already true; it scans the still-forming daily bar (does not pass `closed_only`).
+- News: the threat level (CRITICAL / HIGH ...) is stored and shown but no gate reads it; several news read routes have no non-UI consumer.
+- Model service: backtest batches (`orchestration_registry`) still import every model backtest, so they run only where torch is installed; moirai, moment and lag_llama stay disabled.
+
+**Built but not verified:**
+- The `models-api` Docker image, its read-only weights mount and GPU use (Docker was not running; real models were run through the live service in a temporary environment instead). `timesfm` was not seen loading its real model. Weights must be downloaded first (`make models`).
+- The 28 analysis angles' model math, the news embedding methods and vinu-ui were never audited.
+
+**Operations (yours):**
+- Switch the flags on in the order in `06-live-behavior-flags.md`; recreate `portfolio-api`, `quant-core-api`, `initial-analysis-api` and `news-api` to pick up the edge mount; build and start `models-api`.
+- Delete the stray folder `vinu-components/vinu-infra/vinu_infra/` (an accidental duplicate of `uncertainty.py`; the real file is `vinu-infra/uncertainty.py`).
 
 ---
 
@@ -573,7 +601,7 @@ These were open questions. They are now decided and built, so they no longer wai
 - **2026-10-03** — Phase 3 completed (first slice). `vinu-infra` 368 → 397, `vinu-live` 637 → 651, `vinu-research` 1232 → 1239 passed (2 pre-existing failures, one flaky). Edge recorder + `GET /research/pipeline-edges`; 8 of 31 wired edges instrumented. Nothing committed.
 - **2026-10-03** — Phase 5.1 (features) + 5.2 completed: bias_checks module; found and fixed two registry bugs that had silently killed the alpha factor families; quantified live-window drift (EMA-200 up to ~4.5%). `vinu-tools` 177 -> 204, `vinu-live` 651 -> 653. Nothing committed.
 
-- **2026-10-03** — Files renamed with number prefixes (01-..05-). Convention: when every point in a list file is fixed, its name gets a `(comp)-` prefix, e.g. `(comp)-01-inconsistencies-v2.md`. None are complete yet (A1, A2, A5, A6, A7, A8, v1 A8, B1 still open).
+- **2026-10-03** — Files renamed with number prefixes (01-..05-). Convention: when every point in a list file is fixed, its name gets a `(comp)-` prefix, e.g. `(comp)-01-inconsistencies-v2.md`. None are complete yet (this line was out of date: A1, A2, A5, A6, A7, A8, v1 A8 and B1 were all done later; the current open items are in "Still open" at the top).
 
 ## Phase 4 — Decisions that change live behavior (started 2026-10-03 on your "ok proceed")
 

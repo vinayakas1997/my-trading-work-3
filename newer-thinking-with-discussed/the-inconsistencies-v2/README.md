@@ -12,3 +12,5 @@ The main file is **01**. The rest support it.
 | `06-live-behavior-flags.md` | Every opt-in switch that changes live behavior, and a suggested order to turn them on. |
 
 Fixes go into `vinu-components/`. When every point in a file is fixed, its name gets a `(comp)-` prefix.
+
+**What is left to do:** see "Still open" at the top of `04-implementation-status.md`.
