@@ -14,7 +14,7 @@ Legend: DONE · IN PROGRESS · NEXT · WAITING (needs your decision) · BLOCKED
 | 2 | Fixes that need no decision | **DONE 2026-10-03** (2.1, 2.2, 2.3, 2.4a-e, 2.5) |
 | 3 | Runtime recorder + report (first slice: the vinu-live money path) | **DONE 2026-10-03** (8 of 31 wired edges instrumented, see below) |
 | 4 | Decisions that change live behavior (A1, A2, A5, A6, A7, A8, v1 A8, B1) | **DONE as opt-in flags** (all eight; switching them on is an operations decision) |
-| 5 | New safeguards (lookahead, warmup, uncertainty, novelty, parity, lockout) | **IN PROGRESS** (5.1 features, 5.2, 5.3, 5.4 novelty done) |
+| 5 | New safeguards (lookahead, warmup, uncertainty, novelty, parity, lockout) | **IN PROGRESS** (5.1 features, 5.2, 5.3, 5.4 novelty, 5.5 uncertainty done) |
 | 6 | Enforcement once data exists | not started |
 
 ---
@@ -1119,3 +1119,24 @@ The reference is a ticker's own history, not the calibration set; a ticker with 
 **Tests:** `vinu-live` 847 -> **857** (same 3 old errors), `vinu-agent` 1522 -> **1524** passed (same 16 failed / 2 errors), `vinu-infra` 397 (static check passes). Mutation checks: inverted threshold comparison -> 4 failed; flag guard removed -> 1 failed.
 
 - **2026-10-03** — 5.4 input-novelty check built (opt-in, off, observe-only).
+
+### 5.5 Single uncertainty assessment (v2 B2) — DONE 2026-10-03 (read-only, no gate)
+
+**What was built:** `vinu-infra/uncertainty.py` `assess_uncertainty(...)` returns `{level: low|medium|high, points, reasons[], missing_inputs[]}`. Points: novelty high 2, no recorded outcomes 2 (fewer than 20: 1),
+maturity tier not `mature` 1, precondition untested 1, live snapshot missing 2, evidence unavailable 2, strategy config missing 1; 0-1 low, 2-3 medium, 4+ high. A missing or not-yet-run novelty check is listed in
+`missing_inputs` but not scored (the check is opt-in). `get_live_decision_context` now returns `uncertainty`; vinu-live's `/live/decision-context` now returns the latest `novelty` (None until the check ran);
+the live-decision agent prompt tells it to say so and lean to SKIP on `high` or missing key inputs, and that `low` is not a reason to EXECUTE. It never changes a size and never overrides a risk limit.
+
+**Not built:** attaching it to the evaluation-status view and the audit log, a sizing scaler, and the reflection tracking of the share of high-uncertainty periods (the audit says do those only after log-only data shows it behaves);
+the correlation gate, calibration gate, parity and `confidence_gaps[]` are not yet inputs. The points are a first judgement, not fitted to outcomes.
+
+| File (inside `vinu-components/`) | Action |
+|---|---|
+| `vinu-infra/uncertainty.py` | **created** |
+| `vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py`, `teams/live_decision/agents/live_decision_agent/prompt.md` | modified |
+| `vinu-live/vinu_live/server/app.py` | modified: `novelty` in decision-context |
+| `vinu-infra/tests/test_uncertainty.py` | **created**, 5 tests; `vinu-agent/tests/test_get_live_decision_context_tool.py` +2; `vinu-live/tests/test_decision_context_route.py` +1 |
+
+**Tests:** `vinu-infra` 397 -> **402**, `vinu-live` 857 -> **858** (same 3 old errors), `vinu-agent` 1524 -> **1526** (same 16 failed / 2 errors). Mutation check: novelty weight set to 0 -> 1 failed.
+
+- **2026-10-03** — 5.5 uncertainty assessment built (read-only).

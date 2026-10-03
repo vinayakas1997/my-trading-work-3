@@ -25,7 +25,12 @@ on.
    historical must-condition evidence for this ticker,
    `past_live_decisions`, `maturity_status` (when enabled, else `{}`),
    `unconfirmed_moves[]` (Track 2 moves no must-condition watched for),
-   and `reflection_notes[]` (currently notable reflection beliefs).
+   `reflection_notes[]` (currently notable reflection beliefs), and
+   `uncertainty` (`level` low|medium|high, `reasons[]`, `missing_inputs[]`:
+   how much is not known). A `high` level, or a `missing_inputs` entry for
+   the live snapshot, evidence or strategy config, means say so and lean
+   to SKIP unless the case is clearly strong; `low` is not a reason to
+   EXECUTE by itself. Advisory only -- it never overrides a risk limit.
 2. If the precondition has a real `description` (check `defined`), read
    it carefully and check whether the live_snapshot you were just given
    actually supports that claim being true right now -- e.g. if the

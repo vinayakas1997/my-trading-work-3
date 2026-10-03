@@ -163,10 +163,12 @@ def create_app() -> FastAPI:
         backend = LiveDecisionBackend(str(config.data_root / "live_decision.db"))
         try:
             state = get_stage_state(backend, ticker.upper(), strategy_id)
+            novelty_row = get_latest_snapshot(backend, ticker.upper(), "live_novelty")
         finally:
             backend.close()
         return {
             "status": "ok",
+            "novelty": novelty_row.snapshot_data if novelty_row else None,   # v2 B1/B2; None until the check has run
             "ticker": ticker.upper(),
             "strategy_id": strategy_id,
             "stage": state.stage,

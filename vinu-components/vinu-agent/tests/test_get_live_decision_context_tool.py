@@ -290,3 +290,31 @@ class TestReflectionNotesFollowUp:
             result = json.loads(tool.execute(ticker="AAPL", strategy_id="sma_cross"))
         assert result["status"] == "ok"
         assert result["reflection_notes"] == []
+
+
+class TestUncertaintyInContext:
+    """v2 B2: the tool attaches one read-only uncertainty assessment; it never changes the other fields."""
+
+    def _run(self, context_body, evidence):
+        tool = _tool()
+
+        def _get(url, **kwargs):
+            if "/live/decision-context/" in url:
+                return _resp(context_body)
+            if "/strategy/strategies/" in url:
+                return _resp({"name": "s", "precondition": {"description": "x", "defined": True, "tested": True}})
+            return _resp({})
+
+        with patch("httpx.get", side_effect=_get), \
+             patch("vinu_agent.tools.get_live_decision_context_tool.GetSignalEvidenceTool.execute", return_value=json.dumps(evidence)):
+            return json.loads(tool.execute(ticker="AAPL", strategy_id="s"))
+
+    def test_high_novelty_and_thin_evidence_are_reported_high(self) -> None:
+        out = self._run({"stage": "ready_to_execute", "live_snapshot": {"a": 1}, "novelty": {"status": "ok", "novelty_high": True}},
+                        {"status": "ok", "count": 0, "outcomes_recorded": 0, "triggers": []})
+        assert out["uncertainty"]["level"] == "high" and "novelty_high" in out["uncertainty"]["reasons"]
+        assert out["live_snapshot"] == {"a": 1}
+
+    def test_missing_snapshot_and_unavailable_evidence_are_named(self) -> None:
+        out = self._run({}, {"status": "error"})
+        assert {"live_snapshot", "signal_evidence"} <= set(out["uncertainty"]["missing_inputs"])

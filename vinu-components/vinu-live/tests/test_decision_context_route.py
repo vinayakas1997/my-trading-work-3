@@ -93,3 +93,16 @@ class TestDecisionsHistoryRoute:
         assert body["decisions"][0]["decision"] == "EXECUTE"
         assert body["decisions"][0]["precondition_held"] is True
         assert body["decisions"][0]["reasoning"] == "real evidence cited"
+
+
+class TestDecisionContextNovelty:
+    def test_novelty_is_none_until_the_check_has_run_then_the_latest_result(self, client, tmp_path) -> None:
+        from vinu_live.live_decision.storage import record_live_snapshot
+
+        test_client, _config = client
+        assert test_client.get("/live/decision-context/AAPL/s").json()["novelty"] is None
+        backend = LiveDecisionBackend(str(tmp_path / "live_decision.db"))
+        record_live_snapshot(backend, symbol="AAPL", angle_name="live_novelty", granularity="1d",
+                             snapshot_data={"status": "ok", "ratio": 3.0, "novelty_high": True})
+        backend.close()
+        assert test_client.get("/live/decision-context/AAPL/s").json()["novelty"]["novelty_high"] is True

@@ -133,8 +133,22 @@ class GetLiveDecisionContextTool(BaseTool):
             edge_id="reflection.notable_beliefs->agent.live_decision_context", non_empty_key="beliefs",
         )
 
+        from vinu_infra.uncertainty import assess_uncertainty
+
+        precondition = strategy_config.get("precondition")
+        uncertainty = assess_uncertainty(
+            novelty=decision_context.get("novelty"),
+            outcomes_recorded=signal_evidence_summary.get("outcomes_recorded"),
+            evidence_ok=signal_evidence_summary.get("status") == "ok",
+            maturity_tier=(maturity_status or {}).get("tier") if maturity_status else None,
+            precondition_tested=precondition.get("tested") if isinstance(precondition, dict) else None,
+            live_snapshot_present=bool(decision_context.get("live_snapshot")),
+            strategy_config_present=bool(strategy_config),
+        )
+
         return json.dumps({
             "status": "ok",
+            "uncertainty": uncertainty,
             "ticker": ticker,
             "strategy_id": strategy_id,
             "stage": decision_context.get("stage"),
