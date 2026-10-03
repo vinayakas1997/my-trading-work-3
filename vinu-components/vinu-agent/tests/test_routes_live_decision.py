@@ -147,3 +147,22 @@ class TestReviewMode:
 
         args, _kwargs = fake_svc.session_service.run_team_once.call_args
         assert "Mode: POSITION_REVIEW" not in args[1]
+
+
+class TestInputNoveltyCaution:
+    """v2 B1: vinu-live passes its novelty result only when high; the task text then carries a caution."""
+
+    def _task(self, client, **body) -> str:
+        test_client, _app = client
+        fake_svc, session_service = _fake_service({"status": "completed", "content": ""})
+        routes_live_decision._get_service = lambda: fake_svc
+        assert test_client.post("/agent/live-decision/run", json={"ticker": "aapl", "strategy_id": "s", **body}).status_code == 200
+        return session_service.run_team_once.call_args.args[1]
+
+    def test_high_novelty_adds_a_caution_to_the_task(self, client) -> None:
+        task = self._task(client, novelty={"novelty_high": True, "ratio": 3.4})
+        assert "Input novelty: HIGH" in task and "3.4" in task
+
+    def test_absent_or_normal_novelty_leaves_the_task_unchanged(self, client) -> None:
+        assert "novelty" not in self._task(client).lower()
+        assert "novelty" not in self._task(client, novelty={"novelty_high": False, "ratio": 1.1}).lower()

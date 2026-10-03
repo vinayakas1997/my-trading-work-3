@@ -14,7 +14,7 @@ Legend: DONE · IN PROGRESS · NEXT · WAITING (needs your decision) · BLOCKED
 | 2 | Fixes that need no decision | **DONE 2026-10-03** (2.1, 2.2, 2.3, 2.4a-e, 2.5) |
 | 3 | Runtime recorder + report (first slice: the vinu-live money path) | **DONE 2026-10-03** (8 of 31 wired edges instrumented, see below) |
 | 4 | Decisions that change live behavior (A1, A2, A5, A6, A7, A8, v1 A8, B1) | **DONE as opt-in flags** (all eight; switching them on is an operations decision) |
-| 5 | New safeguards (lookahead, warmup, uncertainty, novelty, parity, lockout) | **IN PROGRESS** (5.1 features, 5.2, 5.3 done) |
+| 5 | New safeguards (lookahead, warmup, uncertainty, novelty, parity, lockout) | **IN PROGRESS** (5.1 features, 5.2, 5.3, 5.4 novelty done) |
 | 6 | Enforcement once data exists | not started |
 
 ---
@@ -1094,3 +1094,28 @@ its id in a consumer file). Mutation checks (each restored): precondition record
 run-quality status -- each failed 1-2 tests.
 
 - **2026-10-03** — Phase 3 extension: all 34 wired edges instrumented (was 9); compose gives portfolio and quant-core the shared edge mount. Nothing uncommitted before this; this work is committed with it.
+
+### 5.4 Input-novelty check (v2 B1) — DONE 2026-10-03 (opt-in, observe-only)
+
+**What was built:** `vinu-live/vinu_live/live_decision/novelty.py` (`novelty_ratio`): Dissimilarity-Index style. Features are standardised by the reference's mean/std; the ratio is the live vector's mean distance to its 5 nearest
+reference points divided by the reference's own typical nearest-neighbour distance (~1 = looks familiar, >= 2 = unlike anything in the reference). The reference is the ticker's **own previously recorded `live_indicators` snapshots**
+(last 250), so no new store and no training set is needed. Fewer than 30 snapshots, or no usable features, reports `insufficient_reference` (unknown, never "novel").
+The poller (`_check_novelty`, before the new snapshot is recorded) logs a WARNING when high, stores the result as a `live_novelty` snapshot row, writes edge `live_decision.input_novelty->live.poller`
+(`received` / `empty` while history is thin / `missing` if the check fails), and passes `novelty` to `/agent/live-decision/run` **only when high**; the route adds an "Input novelty: HIGH ... prefer SKIP unless clearly strong" line to the task.
+Flag: `live_decision_novelty_enabled` (`VINU_LIVE_DECISION_NOVELTY_ENABLED`, default **off**; `_RATIO`, `_MIN_REFERENCE`, `_REFERENCE_ROWS`). It never blocks an order by itself (log-only first, as the audit says).
+
+**Not built (stated plainly):** the audit also said "cap the Trade Score tier one level". That is not done: the score path lives in vinu-research and has no feature vector, and the live-decision path is the only place with the 51 live features.
+The reference is a ticker's own history, not the calibration set; a ticker with a history of only quiet days will call its first volatile day novel (that is the intended behaviour, but it will flag often at first).
+
+| File (inside `vinu-components/`) | Action |
+|---|---|
+| `vinu-live/vinu_live/live_decision/novelty.py` | **created** |
+| `vinu-live/vinu_live/live_decision/poller.py`, `config.py` | modified: `_check_novelty`, payload `novelty`, 4 config fields |
+| `vinu-agent/vinu_agent/server/routes_live_decision.py` | modified: optional `novelty` field and the caution line |
+| `vinu-infra/pipeline_edges.yaml` | modified: edge `live_decision.input_novelty->live.poller` (35 -> 36 edges, 35 wired, all instrumented except the A1 gap) |
+| `vinu-live/tests/test_input_novelty.py` | **created**, 10 tests |
+| `vinu-agent/tests/test_routes_live_decision.py` | modified: +2 tests |
+
+**Tests:** `vinu-live` 847 -> **857** (same 3 old errors), `vinu-agent` 1522 -> **1524** passed (same 16 failed / 2 errors), `vinu-infra` 397 (static check passes). Mutation checks: inverted threshold comparison -> 4 failed; flag guard removed -> 1 failed.
+
+- **2026-10-03** — 5.4 input-novelty check built (opt-in, off, observe-only).

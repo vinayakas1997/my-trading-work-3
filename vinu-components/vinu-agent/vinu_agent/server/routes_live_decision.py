@@ -53,6 +53,8 @@ class LiveDecisionRequest(BaseModel):
     # own prompt.md applies and what task context is given.
     mode: str = "entry"
     position_context: dict[str, Any] | None = None
+    # v2 B1: set by vinu-live only when its input-novelty check says the live features are unlike recent history.
+    novelty: dict[str, Any] | None = None
 
 
 @router.post("/live-decision/run")
@@ -65,6 +67,13 @@ async def run_live_decision(body: LiveDecisionRequest) -> dict[str, Any]:
     task = f"Ticker: {ticker}\nStrategy: {body.strategy_id}"
     if body.trigger_id:
         task += f"\nTrigger id: {body.trigger_id}"
+
+    if body.novelty and body.novelty.get("novelty_high"):
+        task += (
+            f"\nInput novelty: HIGH (dissimilarity ratio {body.novelty.get('ratio')}; this ticker's current features are "
+            "unlike its recent recorded history). Treat the historical evidence as weaker than usual and prefer SKIP "
+            "unless the case is clearly strong."
+        )
 
     if body.mode == "review":
         task += "\nMode: POSITION_REVIEW"

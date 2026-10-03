@@ -201,6 +201,15 @@ class LiveConfig:
     # accumulation_distribution_line, vwap) stay window-dependent regardless.
     live_decision_feature_window_bars: int = 0
 
+    # v2 B1: input-novelty check. Off by default. When on, each new candle's live snapshot is compared with the
+    # ticker's own recorded snapshot history (novelty.py); the result is logged, recorded as a `live_novelty`
+    # snapshot row, written to the `live_decision.input_novelty` edge, and -- when high -- passed to the
+    # live-decision agent as a caution. Never blocks anything by itself (log-only first, enforce later).
+    live_decision_novelty_enabled: bool = False
+    live_decision_novelty_ratio: float = 2.0
+    live_decision_novelty_min_reference: int = 30
+    live_decision_novelty_reference_rows: int = 250
+
     @classmethod
     def from_env(cls) -> LiveConfig:
         _ensure_dotenv_loaded()
@@ -279,6 +288,12 @@ class LiveConfig:
             live_decision_feature_window_bars=int(
                 os.getenv("VINU_LIVE_DECISION_FEATURE_WINDOW_BARS", "0"),
             ),
+            live_decision_novelty_enabled=os.getenv(
+                "VINU_LIVE_DECISION_NOVELTY_ENABLED", "false",
+            ).lower() in ("1", "true", "yes"),
+            live_decision_novelty_ratio=float(os.getenv("VINU_LIVE_DECISION_NOVELTY_RATIO", "2.0")),
+            live_decision_novelty_min_reference=int(os.getenv("VINU_LIVE_DECISION_NOVELTY_MIN_REFERENCE", "30")),
+            live_decision_novelty_reference_rows=int(os.getenv("VINU_LIVE_DECISION_NOVELTY_REFERENCE_ROWS", "250")),
         )
 
 

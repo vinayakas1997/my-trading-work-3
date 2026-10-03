@@ -522,6 +522,22 @@ edges:
     instrumented: true
     note: added 2026-10-03 (plan 2.4, v1 C1)
 
+  - id: live_decision.input_novelty->live.poller
+    producer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/live_decision/novelty.py]
+      defines: ['def novelty_ratio']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/live_decision/poller.py]
+      references: ['novelty_ratio']
+      purpose: per-ticker dissimilarity of the live feature vector from its own recorded history; logged, stored as a live_novelty snapshot, and passed to the live-decision agent when high
+    cadence: per new candle per ticker (only when VINU_LIVE_DECISION_NOVELTY_ENABLED)
+    empty_ok: true
+    status: wired
+    instrumented: true
+    note: added 2026-10-03 (v2 B1); observe-only, `empty` while the ticker has too little snapshot history
+
   - id: sweep.base_code_hash->research.graveyard
     producer:
       service: vinu-research

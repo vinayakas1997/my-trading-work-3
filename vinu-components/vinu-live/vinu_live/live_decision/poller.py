@@ -35,6 +35,7 @@ from vinu_live.live_decision.storage import (
     get_cursor,
     get_stage_state,
     list_open_positions,
+    list_snapshots,
     mark_position_reviewed,
     record_live_snapshot,
 )
@@ -65,6 +66,7 @@ class CandleClosePoller:
         except Exception:
             headers = None
         self._http = httpx.AsyncClient(timeout=30.0, headers=headers)
+        self._novelty: dict[str, dict[str, Any]] = {}   # latest per-ticker novelty result (B1), when enabled
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -130,6 +132,7 @@ class CandleClosePoller:
             if warmup.empty:
                 continue
             snapshot = compute_live_snapshot(warmup)
+            self._check_novelty(ticker, timeframe, snapshot)   # before recording, so the reference excludes this row
 
             # Present-data recording (missing-pieces-of-system/new-theory-
             # of-trading/system-wide-audit-and-design/
@@ -278,6 +281,36 @@ class CandleClosePoller:
         except Exception as exc:  # noqa: BLE001 -- must not stop the poll
             LOG.warning("position rules failed for %s: %s", ticker, exc)
         return closed
+
+    def _check_novelty(self, ticker: str, timeframe: str, snapshot: dict[str, Any]) -> None:
+        """v2 B1 (opt-in, observe-only): compare this snapshot with the ticker's own recorded history."""
+        if not self._config.live_decision_novelty_enabled or not snapshot:
+            return
+        try:
+            from vinu_live.live_decision.novelty import novelty_ratio
+
+            history = list_snapshots(
+                self._backend, ticker, "live_indicators", limit=self._config.live_decision_novelty_reference_rows,
+            )
+            result = novelty_ratio(
+                snapshot, [h.snapshot_data for h in history],
+                min_reference=self._config.live_decision_novelty_min_reference,
+                ratio_threshold=self._config.live_decision_novelty_ratio,
+            )
+            self._novelty[ticker] = result
+            record_live_snapshot(self._backend, symbol=ticker, angle_name="live_novelty", granularity=timeframe,
+                                 snapshot_data=result)
+            if result["status"] != "ok":
+                record_edge("live_decision.input_novelty->live.poller", "empty", f"{ticker}: {result.get('reason')}")
+                return
+            record_edge("live_decision.input_novelty->live.poller", "received", f"{ticker}: ratio {result['ratio']:.2f}")
+            if result["novelty_high"]:
+                LOG.warning("input novelty HIGH for %s: ratio %.2f >= %.2f over %d snapshots -- this feature vector is "
+                            "unlike its recent history", ticker, result["ratio"],
+                            self._config.live_decision_novelty_ratio, result["n_reference"])
+        except Exception as exc:                      # observe-only: never disturb the poll cycle
+            LOG.warning("novelty check failed for %s: %s", ticker, exc)
+            record_edge("live_decision.input_novelty->live.poller", "missing", f"{ticker}: {exc}")
 
     async def _review_open_positions(self, strategy_by_id: dict[str, Any]) -> int:
         """The exit-mechanism fix (missing-pieces-of-system/new-theory-
@@ -478,10 +511,14 @@ class CandleClosePoller:
         from vinu_live.live_decision.schema import LiveDecisionRecord
         from vinu_live.live_decision.storage import record_live_decision
 
+        payload: dict[str, Any] = {"ticker": ticker, "strategy_id": strategy_id, "trigger_id": trigger_id}
+        novelty = self._novelty.get(ticker)
+        if novelty and novelty.get("novelty_high"):
+            payload["novelty"] = novelty
         try:
             resp = await self._http.post(
                 f"{self._config.agent_api_url}/agent/live-decision/run",
-                json={"ticker": ticker, "strategy_id": strategy_id, "trigger_id": trigger_id},
+                json=payload,
             )
             resp.raise_for_status()
             result = resp.json()
