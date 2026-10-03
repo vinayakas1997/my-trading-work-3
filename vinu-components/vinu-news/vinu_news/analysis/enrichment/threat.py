@@ -1,5 +1,6 @@
 """Threat classification pattern matrix (Fincept Section 6H)."""
 
+import re
 from typing import TypedDict
 
 
@@ -75,11 +76,16 @@ INFO_FALLBACK: ThreatResult = {
 }
 
 
+# A keyword must START at a word boundary (several are deliberate stems: "downgrad", "escalat", "layoff"), so
+# "Patriot" no longer matches "riot" and "Deregulation" no longer matches "regulation" (v2 audit N2).
+_KEYWORD_RES = {kw: re.compile(r"\b" + re.escape(kw)) for kw, _c, _l, _p in THREAT_PATTERNS}
+
+
 def classify_threat(combined_text: str, sentiment: str) -> ThreatResult:
     """Match threat patterns in priority order; fallback on sentiment."""
     lower = combined_text.lower()
     for keyword, category, level, confidence in THREAT_PATTERNS:
-        if keyword in lower:
+        if _KEYWORD_RES[keyword].search(lower):
             return {
                 "threat_level": level,
                 "threat_cat": category,

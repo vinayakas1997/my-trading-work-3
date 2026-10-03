@@ -201,6 +201,10 @@ class LiveConfig:
     # accumulation_distribution_line, vwap) stay window-dependent regardless.
     live_decision_feature_window_bars: int = 0
 
+    # v2 audit S2: ask vinu-stock-price for CLOSED bars only, so a candle-close decision never evaluates a bar
+    # that is still forming (its first minute looks like a new candle to the cursor). Off = old behaviour.
+    live_decision_closed_bars_only: bool = False
+
     # v2 B1: input-novelty check. Off by default. When on, each new candle's live snapshot is compared with the
     # ticker's own recorded snapshot history (novelty.py); the result is logged, recorded as a `live_novelty`
     # snapshot row, written to the `live_decision.input_novelty` edge, and -- when high -- passed to the
@@ -288,6 +292,9 @@ class LiveConfig:
             live_decision_feature_window_bars=int(
                 os.getenv("VINU_LIVE_DECISION_FEATURE_WINDOW_BARS", "0"),
             ),
+            live_decision_closed_bars_only=os.getenv(
+                "VINU_LIVE_DECISION_CLOSED_BARS_ONLY", "false",
+            ).lower() in ("1", "true", "yes"),
             live_decision_novelty_enabled=os.getenv(
                 "VINU_LIVE_DECISION_NOVELTY_ENABLED", "false",
             ).lower() in ("1", "true", "yes"),

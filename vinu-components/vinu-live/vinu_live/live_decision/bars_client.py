@@ -26,6 +26,7 @@ async def fetch_recent_bars(
     symbol: str,
     interval: str,
     limit: int,
+    closed_only: bool = False,
 ) -> pd.DataFrame:
     """Returns a DataFrame with open/high/low/close/volume/bar_ts columns,
     most-recent bar last -- empty DataFrame on any fetch failure (fail
@@ -35,7 +36,7 @@ async def fetch_recent_bars(
     try:
         resp = await http.get(
             f"{stock_price_api_url}/stock/candles/{symbol}",
-            params={"interval": interval, "limit": limit, "adjusted": True},
+            params={"interval": interval, "limit": limit, "adjusted": True, **({"closed_only": True} if closed_only else {})},
         )
         if resp.status_code != 200:
             LOG.warning("fetch_recent_bars(%s, %s): HTTP %s", symbol, interval, resp.status_code)

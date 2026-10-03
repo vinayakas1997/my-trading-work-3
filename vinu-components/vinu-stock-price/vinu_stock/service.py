@@ -216,10 +216,13 @@ class StockService:
         indicators: list[str] | None = None,
         adjusted: bool = True,
         cache_info: dict | None = None,
+        closed_only: bool = False,
     ) -> list[dict[str, Any]]:
         end_ts = to_ts
         start_ts = from_ts
+        tail = None
         if days is not None and start_ts is None:
+            tail = True          # `days` is "the last N days": a limit keeps the most recent bars of that window
             end = datetime.now(timezone.utc) if end_ts is None else datetime.fromtimestamp(end_ts, tz=timezone.utc)
             start = end - timedelta(days=max(1, days))
             start_ts = int(start.timestamp())
@@ -236,6 +239,8 @@ class StockService:
             adjusted=adjusted,
             connection=self._duckdb_conn,
             cache_info=cache_info,
+            tail=tail,
+            closed_only=closed_only,
         )
 
     # A full-market scanner (vinu-screener) polling ~8000 symbols with no

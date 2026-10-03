@@ -1140,3 +1140,34 @@ the correlation gate, calibration gate, parity and `confidence_gaps[]` are not y
 **Tests:** `vinu-infra` 397 -> **402**, `vinu-live` 857 -> **858** (same 3 old errors), `vinu-agent` 1524 -> **1526** (same 16 failed / 2 errors). Mutation check: novelty weight set to 0 -> 1 failed.
 
 - **2026-10-03** — 5.5 uncertainty assessment built (read-only).
+
+## Audit extension 2026-10-03: the services that had not been read (stock-price, screener, news, initial-analysis, agent prompts)
+
+Method: followed each service's output to whoever reads it, and read the wiring code between. **Fixed here** = bug confirmed by running it, fixed, tested. **Open** = confirmed by reading, not changed.
+
+### Fixed
+- **S1 (stock-price, serious): `limit` returned the OLDEST bars.** `fetch_candles` sorted ascending and kept `[:limit]`, so an open-ended request with a `limit` (exactly what vinu-live's live-decision poller sends: `interval` + `limit=2`, and `limit=<warmup>`) got the first bars of the whole history, not the latest. Proved with a 10-day frame: `1d, limit=2` returned days 1-2. Now the most recent bars come back when the window has no explicit start (`from` absent, or `days` given); an explicit `from` still paginates forward. Callers that pass `days` (most of them) were also affected whenever the window held more than `limit` bars.
+- **S2 (stock-price): a still-forming bar was served as if it were a candle.** The aggregate of a bucket that has not ended (today's daily bar, the current hour) was returned like any other. Added `closed_only` (GET /candles, default off) which drops a trailing bucket whose end is in the future; vinu-live gets `live_decision_closed_bars_only` (`VINU_LIVE_DECISION_CLOSED_BARS_ONLY`, default off) to ask for it. Off by default because turning it on delays decisions by one candle.
+- **S3 (stock-price): indicator cache key ignored `limit`**, so two calls over the same window with different limits could be served each other's rows for 5 minutes. The key now includes limit, tail and closed_only.
+- **N2 (news): threat keywords matched inside other words** ("Patriot Brands beats estimates" -> conflict threat via "riot"; "Deregulation" -> regulatory). Keywords now match at a word start (stems such as "downgrad" and "layoff" still work).
+- **IA1 (initial-analysis): a failed price fetch was recorded as a healthy empty run.** If vinu-stock-price was unreachable every angle came back `completed` with 0 rows. Now a raised fetch error becomes an `error` run (logged in RunLog, retried next time); genuinely no bars is unchanged. A news fetch failure is flagged on the result (`news_fetch_failed`).
+
+### Open (found, not changed)
+- **Screener: fires reach nobody.** `vinu-screener scan` builds `Scheduler(...)` with **no `on_fire`**, so a condition-rule match is only written to the audit database. The agent, research and live services do not read it; only reflection's `screener_agreement` and `GET /screener/rules/{id}/history` do. The notification design (`rules/actions.py`) exists and is unused. Recommendation: wire `on_fire` to the agent notify route, once you decide which rules should alert.
+- **Screener: edge/cooldown state is in memory.** After a restart every symbol whose condition is already true looks like a fresh false-to-true edge and fires again (duplicate audit rows, doubled `screener_agreement` counts). Recommendation: seed the gate from the audit store on start.
+- **Screener scans the forming bar** (daily bar of today) unless `closed_only` is passed; `HttpStockDataSource` does not pass it yet.
+- **News: the threat level (CRITICAL "trading halt", etc.) is stored and shown but no gate reads it.** Nothing in live, portfolio or the agent uses `threat_level`. Several unused read routes (`/news/high-impact`, `/threads`, `/stats`, `/articles/since`) likewise have no non-UI consumer. A text "news cooling-off" line appears in a research template (`loop.py`) with no code behind it that I could find.
+- **Agent prompts and tools: clean.** All 57 registered tool names resolve; every `AGENT.md` tool list names registered tools; no prompt calls an undeclared tool.
+- **Not examined:** the 28 analysis angles' model math, the news embedding methods, vinu-ui.
+
+| File (inside `vinu-components/`) | Action |
+|---|---|
+| `vinu-stock-price/vinu_stock/query/engine.py`, `aggregate.py`, `service.py`, `server/routes_read.py` | modified: tail/limit, `closed_only`, `bucket_end`, cache key |
+| `vinu-live/vinu_live/live_decision/bars_client.py`, `poller.py`, `config.py` | modified: `closed_only` pass-through, flag |
+| `vinu-news/vinu_news/analysis/enrichment/threat.py` | modified: word-start matching |
+| `vinu-initial-analysis/vinu_initial_analysis/runner.py` | modified: fetch errors |
+| `vinu-stock-price/tests/test_candle_limit_and_closed_only.py` (6), `vinu-live/tests/test_closed_bars_flag.py` (2), `vinu-news/tests/test_threat_word_boundary.py` (2), `vinu-initial-analysis/tests/test_runner_fetch_failures.py` (3) | **created** |
+
+**Tests:** `vinu-stock-price` 143 -> **149** passed; `vinu-live` 858 -> **860** (same 3 old errors); `vinu-news` failing/erroring set identical to before (38 old failures/errors) with the 2 new tests passing; `vinu-initial-analysis` runner tests 11 pass (its full suite cannot run here: `torch` is not installed; `test_model_angle_runs_when_models_enabled` already failed before). Mutation check: reverting the tail logic made 2 stock-price tests fail.
+
+- **2026-10-03** — audit extension over stock-price, screener, news, initial-analysis, agent prompts: 5 fixed, 4 open.

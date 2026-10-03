@@ -18,7 +18,7 @@ from typing import Any
 import duckdb
 import pyarrow.parquet as pq
 
-from vinu_stock.query.aggregate import aggregate_bars, interval_to_seconds
+from vinu_stock.query.aggregate import aggregate_bars, bucket_end, interval_to_seconds
 from vinu_stock.query.cache import get_cache
 from vinu_stock.query.indicators import apply_adjusted_prices, apply_indicators
 from vinu_stock.storage.paths import parquet_globs
@@ -155,8 +155,17 @@ def fetch_candles(
     adjusted: bool = True,
     connection: duckdb.DuckDBPyConnection | None = None,
     cache_info: dict | None = None,
+    tail: bool | None = None,
+    closed_only: bool = False,
+    now_ts: int | None = None,
 ) -> list[dict]:
-    """`cache_info`, if passed, is filled in place with `{"hit": True,
+    """`tail`: which `limit` bars to keep. True = the most recent ones, False = the oldest. Default (None):
+    the most recent when the window has no explicit start (`from_ts` is None), the oldest when it does
+    (forward pagination from `from_ts`). Before this, an open-ended request with a `limit` silently got the OLDEST
+    bars of the whole history (v2 audit S1).
+    `closed_only`: drop a trailing bar that is still forming (its bucket has not ended yet; v2 audit S2).
+
+    `cache_info`, if passed, is filled in place with `{"hit": True,
     "age_seconds": float}` on an indicator-cache hit (item #19 finding #5)
     -- an out-param rather than changing this function's own return shape,
     since `list[dict]` is relied on by every other caller."""
@@ -173,6 +182,12 @@ def fetch_candles(
     if provider:
         mask &= df["provider"] == provider.strip().lower()
     sub = df[mask].sort_values("bar_ts")
+    if tail is None:
+        tail = from_ts is None
+    now_ts = int(time.time()) if now_ts is None else int(now_ts)
+
+    def _keep(records: list[dict]) -> list[dict]:
+        return records[-limit:] if tail else records[:limit]
 
     is_raw = interval.lower() == "1m"
     if is_raw:
@@ -180,7 +195,9 @@ def fetch_candles(
         for rec in rows:
             rec["bar_ts"] = int(rec["bar_ts"])
             rec["adj_factor"] = float(rec.get("adj_factor", 1.0) or 1.0)
-        records = rows[:limit]
+        if closed_only:
+            rows = [r for r in rows if r["bar_ts"] + 60 <= now_ts]
+        records = _keep(rows)
         if adjusted:
             records = apply_adjusted_prices(records)
     else:
@@ -200,12 +217,17 @@ def fetch_candles(
                     rec["adj_factor"] = 1.0
                 adjusted_rows.append(rec)
             rows = adjusted_rows
-        records = aggregate_bars(rows, interval)[:limit]
+        aggregated = aggregate_bars(rows, interval)
+        if closed_only:
+            aggregated = [r for r in aggregated if bucket_end(r["bar_ts"], interval) <= now_ts]
+        records = _keep(aggregated)
 
     if indicators:
         indicator_set = frozenset(indicators)
         cache = get_cache()
-        cached = cache.get(sym, interval, from_ts, to_ts, indicator_set, adjusted)
+        # limit / tail / closed_only change which rows come back, so they belong in the key (v2 audit S3)
+        ckey = f"{interval}#{limit}#{int(bool(tail))}#{int(closed_only)}"
+        cached = cache.get(sym, ckey, from_ts, to_ts, indicator_set, adjusted)
         if cached is not None:
             records, age = cached
             if cache_info is not None:
@@ -213,5 +235,5 @@ def fetch_candles(
                 cache_info["age_seconds"] = age
         else:
             records = apply_indicators(records, indicators)
-            cache.set(sym, interval, from_ts, to_ts, indicator_set, adjusted, records)
+            cache.set(sym, ckey, from_ts, to_ts, indicator_set, adjusted, records)
     return records

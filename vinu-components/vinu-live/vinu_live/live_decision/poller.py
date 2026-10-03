@@ -118,6 +118,7 @@ class CandleClosePoller:
             cursor = get_cursor(self._backend, ticker, timeframe)
             latest = await fetch_recent_bars(
                 self._http, self._config.stock_price_api_url, ticker, timeframe, limit=2,
+                closed_only=self._config.live_decision_closed_bars_only,
             )
             if latest.empty or "bar_ts" not in latest.columns:
                 continue
@@ -128,6 +129,7 @@ class CandleClosePoller:
             warmup = await fetch_recent_bars(
                 self._http, self._config.stock_price_api_url, ticker, timeframe,
                 limit=feature_window_bars(self._config.live_decision_feature_window_bars),
+                closed_only=self._config.live_decision_closed_bars_only,
             )
             if warmup.empty:
                 continue

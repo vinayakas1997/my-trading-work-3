@@ -76,6 +76,17 @@ def _bucket_fn_for(interval: str):
     return lambda ts: bucket_ts(ts, interval_sec)
 
 
+def bucket_end(bucket_start: int, interval: str) -> int:
+    """First instant after the bucket starting at `bucket_start` (calendar-aware for 1mo / 6mo)."""
+    key = interval.strip().lower()
+    if key in ("1mo", "6mo"):
+        dt = datetime.fromtimestamp(bucket_start, tz=timezone.utc)
+        months = 1 if key == "1mo" else 6
+        total = dt.year * 12 + (dt.month - 1) + months
+        return int(datetime(total // 12, total % 12 + 1, 1, tzinfo=timezone.utc).timestamp())
+    return bucket_start + interval_to_seconds(key)
+
+
 def aggregate_bars(rows: list[dict], interval: str) -> list[dict]:
     """Aggregate 1m bar dicts to higher timeframe."""
     if interval.lower() == "1m":

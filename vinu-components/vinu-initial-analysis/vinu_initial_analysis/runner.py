@@ -43,6 +43,9 @@ class AngleRunner:
         self._angles: list[dict[str, Any]] = []
         self._bar_cache: dict[tuple[str, str], pd.DataFrame] = {}
         self._news_cache: dict[tuple[str, int | None, int | None], list[dict]] = {}
+        # Why a fetch came back empty: a raised error is NOT the same as "no data" (v2 audit IA1).
+        self._bar_errors: dict[tuple[str, str], str] = {}
+        self._news_errors: dict[tuple[str, int | None, int | None], str] = {}
         self._discover()
 
     # -- discovery ----------------------------------------------------------
@@ -176,6 +179,10 @@ class AngleRunner:
                         "status": "completed",
                         "row_count": count,
                     }
+                    news_err = self._news_errors.get((symbol.upper(), from_ts, to_ts))
+                    if news_err:
+                        # computed while the news service was failing: say so instead of looking like a normal run
+                        entry["news_fetch_failed"] = news_err
                     if skipped_tfs:
                         entry["skipped_timeframes"] = skipped_tfs
                     results[angle["name"]] = entry
@@ -259,6 +266,10 @@ class AngleRunner:
 
             tf_t0 = time.perf_counter()
             bars = self._fetch_bars(symbol, tf, from_ts, to_ts) if needs_bars else pd.DataFrame()
+            if needs_bars and bars.empty and (symbol, tf) in self._bar_errors:
+                # The price service failed -- recording this as a "completed" empty run would hide the outage
+                # behind a healthy-looking result. Raising lets run() record a real error row instead.
+                raise RuntimeError(f"bars fetch failed for {symbol} at {tf}: {self._bar_errors[(symbol, tf)]}")
             compute_kwargs: dict[str, Any] = {
                 "symbol": symbol,
                 "bars": bars,
@@ -334,6 +345,7 @@ class AngleRunner:
         cached = self._bar_cache.get(key)
         if cached is not None:
             return cached
+        self._bar_errors.pop(key, None)
         if self._price_client is None:
             return pd.DataFrame()
         try:
@@ -345,8 +357,9 @@ class AngleRunner:
                 df["bar_ts"] = df["bar_ts"].astype(int)
             self._bar_cache[key] = df
             return df
-        except Exception:
+        except Exception as exc:
             LOG.exception("Failed to fetch bars for %s at %s", symbol, time_format)
+            self._bar_errors[key] = str(exc)
             return pd.DataFrame()
 
     def _fetch_news(
@@ -366,8 +379,9 @@ class AngleRunner:
             articles = self._news_client.get_ticker_news(symbol, from_ts=from_ts, to_ts=to_ts)
             self._news_cache[key] = articles or []
             return articles or []
-        except Exception:
+        except Exception as exc:
             LOG.exception("Failed to fetch news for %s", symbol)
+            self._news_errors[key] = str(exc)
             self._news_cache[key] = []
             return []
 

@@ -88,6 +88,10 @@ def candles(
     limit: int = Query(default=5000, ge=1, le=50000),
     indicators: str | None = Query(default=None, description="Comma-separated indicator names"),
     adjusted: bool = Query(default=True),
+    closed_only: bool = Query(
+        default=False,
+        description="Drop a trailing bar whose interval has not ended yet (a still-forming candle).",
+    ),
     as_of: int | None = Query(
         default=None,
         description=(
@@ -119,6 +123,7 @@ def candles(
         indicators=indicator_list or None,
         adjusted=adjusted,
         cache_info=cache_info,
+        closed_only=closed_only,
     )
     if cache_info.get("hit"):
         # item #19 finding #5: a "live" caller polling an open-ended
