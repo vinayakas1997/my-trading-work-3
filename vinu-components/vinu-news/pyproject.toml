@@ -16,12 +16,13 @@ dependencies = [
   "pydantic>=2.0",
   "python-dotenv>=1.0",
   "filelock>=3.0",
-  "torch>=2.2",
-  "transformers>=4.40",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "httpx>=0.27"]
+# FinBERT runs in the model-serving service (vinu-models); install this extra only to run it in-process
+# (VINU_MODEL_SERVICE_URL unset).
+models = ["torch>=2.2", "transformers>=4.40"]
 postgres = ["psycopg[binary]>=3.1"]
 
 [project.scripts]

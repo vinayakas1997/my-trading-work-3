@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import torch
+# `torch` is imported inside save()/load(): the non-model angles' backtests import this module too, and they must not
+# need torch just to import it (torch lives only in the model-serving service image).
 
 
 class WeightsStore:
@@ -44,6 +45,8 @@ class WeightsStore:
         enough to `load()` the exact model back later without separately
         having to remember which symbol/angle/timeframe/month it came from.
         """
+        import torch
+
         dt = datetime.fromtimestamp(bar_ts, tz=timezone.utc)
         rel_path = Path(symbol) / angle_name / timeframe / f"{dt.year:04d}" / f"{dt.year:04d}{dt.month:02d}" / f"{bar_ts}.pt"
         full_path = self._root / rel_path
@@ -53,5 +56,7 @@ class WeightsStore:
 
     def load(self, weights_ref: str) -> Any:
         """Loads back whatever `save()` stored for this weights_ref."""
+        import torch
+
         full_path = self._root / weights_ref
         return torch.load(full_path, weights_only=False)

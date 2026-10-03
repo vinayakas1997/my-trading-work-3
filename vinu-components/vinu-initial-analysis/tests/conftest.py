@@ -61,3 +61,31 @@ def synthetic_articles() -> list[dict[str, Any]]:
          "tickers": ["AAPL", "MSFT"], "sentiment": "NEUTRAL", "sentiment_score": 0,
          "impact": "low", "thread_id": ""},
     ]
+
+
+# ---- model-angle tests need torch, which now lives only in the model-serving image (vinu-models) ----------------------
+# Without torch these files cannot even be imported (they import the angle code). They are skipped here with a note in
+# the header instead of failing collection; they run, unchanged, in an environment that has torch.
+import importlib.util as _ilu
+import re as _re
+
+_NEEDS_TORCH = _re.compile(
+    r"test_(chronos|dlinear|itransformer|kronos|lpatchtst|lstm|patchtst|tft|timer_timerxl|timesfm|"
+    r"tips_regime_aware_transformer)(_backtest)?\.py$|test_orchestration_registry.*\.py$|test_weights\.py$"
+)
+_TORCH_MISSING = _ilu.find_spec("torch") is None
+_IGNORED_FOR_TORCH: list[str] = []
+
+
+def pytest_ignore_collect(collection_path, config):
+    if _TORCH_MISSING and _NEEDS_TORCH.search(collection_path.name):
+        if collection_path.name not in _IGNORED_FOR_TORCH:
+            _IGNORED_FOR_TORCH.append(collection_path.name)
+        return True
+    return None
+
+
+def pytest_report_header(config):
+    if _TORCH_MISSING:
+        return "torch not installed: model-angle and orchestration-registry tests are not collected (they run where torch is installed)"
+    return None

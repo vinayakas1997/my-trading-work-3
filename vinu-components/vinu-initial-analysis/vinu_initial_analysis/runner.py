@@ -14,6 +14,7 @@ import pandas as pd
 from vinu_initial_analysis.storage.parquet import AngleStorage
 from vinu_initial_analysis.storage.meta import RunLog
 from vinu_initial_analysis.storage.run_id import generate_run_id
+from vinu_infra import model_client
 from vinu_infra.debug import sync_timer
 from vinu_infra.model_policy import models_enabled, policy_version
 from vinu_infra.system_manifest import resolve_active_angles
@@ -233,9 +234,14 @@ class AngleRunner:
         though 1H rows existed, mixed in under "1D". Returns (total row count
         across every time_format actually run (skipped/empty ones excluded),
         skipped time_formats that already had a run for this window)."""
-        module = self._import_compute(angle["name"])
-        if module is None:
-            raise ImportError(f"Could not import compute for {angle['name']}")
+        # Model-category angles run in the model-serving service (vinu-models) when VINU_MODEL_SERVICE_URL is set:
+        # this process then never imports them (and never needs torch). Unset = the old in-process path.
+        remote = angle["spec"].get("category") == "model" and model_client.service_url() is not None
+        module = None
+        if not remote:
+            module = self._import_compute(angle["name"])
+            if module is None:
+                raise ImportError(f"Could not import compute for {angle['name']}")
 
         declared_time_formats = angle["spec"].get("time_formats", DEFAULT_TIME_FORMATS)
         if time_format is not None:
@@ -270,17 +276,20 @@ class AngleRunner:
                 # The price service failed -- recording this as a "completed" empty run would hide the outage
                 # behind a healthy-looking result. Raising lets run() record a real error row instead.
                 raise RuntimeError(f"bars fetch failed for {symbol} at {tf}: {self._bar_errors[(symbol, tf)]}")
-            compute_kwargs: dict[str, Any] = {
-                "symbol": symbol,
-                "bars": bars,
-                "news": news,
-                "from_ts": from_ts,
-                "to_ts": to_ts,
-                "time_format": tf,
-            }
-            if "price_client" in inspect.signature(module.compute).parameters:
-                compute_kwargs["price_client"] = self._price_client
-            df = module.compute(**compute_kwargs)
+            if remote:
+                df = self._compute_remote(angle["name"], symbol, bars, news, from_ts, to_ts, tf)
+            else:
+                compute_kwargs: dict[str, Any] = {
+                    "symbol": symbol,
+                    "bars": bars,
+                    "news": news,
+                    "from_ts": from_ts,
+                    "to_ts": to_ts,
+                    "time_format": tf,
+                }
+                if "price_client" in inspect.signature(module.compute).parameters:
+                    compute_kwargs["price_client"] = self._price_client
+                df = module.compute(**compute_kwargs)
 
             if not isinstance(df, pd.DataFrame) or df.empty:
                 continue
@@ -332,6 +341,25 @@ class AngleRunner:
             total_rows += len(df)
 
         return total_rows, skipped
+
+    def _compute_remote(
+        self, angle_name: str, symbol: str, bars: pd.DataFrame, news: list[dict],
+        from_ts: int | None, to_ts: int | None, time_format: str,
+    ) -> pd.DataFrame:
+        """Run a model-category angle in the model-serving service. A failure raises (run() then records an `error`
+        run, so it is retried later), it is never turned into an empty result."""
+        from vinu_infra.pipeline_edge_recorder import record_edge
+
+        edge = "models.angle_compute->initial_analysis.runner"
+        try:
+            df = model_client.compute_angle(
+                angle_name, symbol=symbol, bars=bars, news=news, from_ts=from_ts, to_ts=to_ts, time_format=time_format,
+            )
+        except model_client.ModelServiceError as exc:
+            record_edge(edge, "missing", f"{angle_name}: {exc}")
+            raise
+        record_edge(edge, "received" if len(df) else "empty", f"{angle_name}/{symbol}: {len(df)} row(s)")
+        return df
 
     def _fetch_bars(
         self,

@@ -592,9 +592,19 @@ def write_summary(
     re-sorted by value, so order never implies a ranking. Angles with no
     real completed run yet get one plain line saying so, not fabricated
     content and not silently skipped."""
-    from vinu_initial_analysis.storage.orchestration_registry import ANGLE_REGISTRY
+    if angle_names is not None:
+        names = angle_names
+    else:
+        try:
+            from vinu_initial_analysis.storage.orchestration_registry import ANGLE_REGISTRY
 
-    names = angle_names if angle_names is not None else list(ANGLE_REGISTRY)
+            names = list(ANGLE_REGISTRY)
+        except ImportError:
+            # The registry imports every angle's backtest, including the model angles, which need torch -- that
+            # lives only in the model-serving image. Fall back to the angle folders (sorted: still a fixed order).
+            from vinu_initial_analysis.runner import ANGLES_DIR
+
+            names = sorted(p.parent.name for p in ANGLES_DIR.glob("*/spec.yaml"))
     sections = [
         f"# Angle results summary -- {symbol}",
         "",

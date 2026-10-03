@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vinu-models"
+version = "0.1.0"
+description = "Model-serving service: runs the model-category analysis angles and FinBERT (the only place torch is installed)"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "pydantic>=2.0",
+  "pandas>=1.5",
+  "numpy>=1.24",
+  "pyyaml>=6.0",
+  "requests>=2.31",
+]
+# torch, chronos-forecasting, timesfm and transformers come with `vinu-initial-analysis[models]` and
+# `vinu-news[models]` in the Dockerfile; this package only adds the server around them.
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[project.scripts]
+vinu-model-server = "vinu_models.cli:serve_main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vinu_models*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

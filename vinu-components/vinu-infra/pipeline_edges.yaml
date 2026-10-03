@@ -538,6 +538,38 @@ edges:
     instrumented: true
     note: added 2026-10-03 (v2 B1); observe-only, `empty` while the ticker has too little snapshot history
 
+  - id: models.angle_compute->initial_analysis.runner
+    producer:
+      service: vinu-models
+      files: [vinu-models/vinu_models/service.py]
+      defines: ['async def compute_angle']
+    consumer:
+      service: vinu-initial-analysis
+      files: [vinu-initial-analysis/vinu_initial_analysis/runner.py]
+      references: ['model_client.compute_angle(']
+      purpose: model-category angles (chronos, timesfm, kronos, timer, lstm, dlinear, patchtst, lpatchtst, itransformer, tft, tips) are computed by the model service, not in-process
+    cadence: per model angle per ticker per timeframe, on each analysis run
+    empty_ok: true
+    status: wired
+    instrumented: true
+    note: added 2026-10-03; `missing` = the model service refused or was unreachable (the run is recorded as an error and retried)
+
+  - id: models.finbert_score->news.backfill
+    producer:
+      service: vinu-models
+      files: [vinu-models/vinu_models/service.py]
+      defines: ['async def score_finbert']
+    consumer:
+      service: vinu-news
+      files: [vinu-news/vinu_news/analysis/enrichment/finbert_sentiment.py]
+      references: ['model_client.score_finbert(']
+      purpose: FinBERT sentiment for articles is scored by the model service, not by torch inside vinu-news
+    cadence: on each FinBERT backfill batch
+    empty_ok: true
+    status: wired
+    instrumented: true
+    note: added 2026-10-03
+
   - id: sweep.base_code_hash->research.graveyard
     producer:
       service: vinu-research

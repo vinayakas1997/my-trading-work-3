@@ -9,8 +9,8 @@ COPY vinu-news /app/vinu-news
 
 WORKDIR /app/vinu-news
 
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch>=2.2 \
-    && pip install --no-cache-dir -e .
+# No torch here: FinBERT scoring is done by the model-serving service (models-api, VINU_MODEL_SERVICE_URL).
+RUN pip install --no-cache-dir -e .
 
 # FinBERT is NOT baked into the image anymore — weights live in the shared
 # models dir (data/models/finbert, see vinu-infra/models.py), downloaded via

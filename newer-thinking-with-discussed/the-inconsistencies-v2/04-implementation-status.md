@@ -1171,3 +1171,31 @@ Method: followed each service's output to whoever reads it, and read the wiring 
 **Tests:** `vinu-stock-price` 143 -> **149** passed; `vinu-live` 858 -> **860** (same 3 old errors); `vinu-news` failing/erroring set identical to before (38 old failures/errors) with the 2 new tests passing; `vinu-initial-analysis` runner tests 11 pass (its full suite cannot run here: `torch` is not installed; `test_model_angle_runs_when_models_enabled` already failed before). Mutation check: reverting the tail logic made 2 stock-price tests fail.
 
 - **2026-10-03** — audit extension over stock-price, screener, news, initial-analysis, agent prompts: 5 fixed, 4 open.
+
+## Model-serving service (`vinu-models`) — DONE 2026-10-03
+
+**What was built:** every `torch` dependency moved out of `vinu-initial-analysis` and `vinu-news` into one new container, `models-api` (port 8096). Design and "as built" notes: `newer-thinking-with-discussed/model-serving-service-design.md`.
+- **Moves to the service (11 model-category angles):** chronos, timesfm, kronos, timer_timerxl (pretrained); lstm, dlinear, patchtst, lpatchtst, itransformer, tft, tips_regime_aware_transformer (trained per ticker). Plus **FinBERT** scoring for vinu-news. The other 17 active angles stay in initial-analysis; moirai / moment / lag_llama stay disabled.
+- **How:** the service runs each angle's own `compute()` (imported from the `vinu-initial-analysis` package, no copy). `vinu-infra/model_client.py` is the client; `VINU_MODEL_SERVICE_URL` unset = the old in-process path, set = remote. A service failure raises and the runner records an `error` run (retried), never an empty or "completed" one. `VINU_MODELS_ALLOW_PROXY=false` additionally turns an angle's own `fallback_proxy` row into an error (default true: kept, reported in the response `backends` and in `/models/status`).
+- **Dependencies:** `torch`, `chronos-forecasting`, `timesfm` moved from initial-analysis's dependencies to an optional `models` extra; news lost `torch` and `transformers` (optional `models` extra) and its Dockerfile torch install. initial-analysis lost the GPU reservation (8 GB -> 4 GB) and the `/models` mount. `storage/weights.py` imports torch lazily; `write_summary` falls back to the angle folders when the torch registry cannot import.
+- **Compose:** new `models-api` (GPU, 8 GB, weights read-only, `./data/initial-analysis:/data`). initial-analysis and news get `VINU_MODEL_SERVICE_URL` and the edge mount, and do **not** depend on `models-api`.
+- **Edges:** `models.angle_compute->initial_analysis.runner`, `models.finbert_score->news.backfill` (instrumented).
+
+**Verified:** (1) a subprocess that blocks `torch`, `transformers`, `chronos`, `timesfm` imports the initial-analysis app, builds it, discovers every angle, writes a factsheet summary, and runs `chronos` and `kronos` through the (faked) service without torch ever entering `sys.modules`; (2) with a real CPU `torch 2.14.1` in a temporary environment, the live service over HTTP: `status?deep=true` imported all 11 angles; real FinBERT scored `positive 0.77 / negative -0.76 / empty neutral`; lstm, dlinear, patchtst, lpatchtst, itransformer, tft, tips returned real rows (0.1-2.6 s on 700 daily bars); kronos, timer_timerxl and chronos returned `model_backend=pretrained` with real weights (18 s, 0.3 s, 41 s); (3) `docker compose config` validates and lists `models-api`.
+
+**Not verified (stated plainly):** no Docker image was built (Docker Desktop was not running, and a torch image is multi-gigabyte), so the Dockerfile, the read-only mounts and GPU use are untested; `timesfm` returned its proxy in my temporary environment because the `timesfm` library was not installed there (the image installs it via the `models` extra, untested); the first `chronos` call timed out once at 600 s because it was downloading 710M-parameter weights.
+**Operational note:** `./data/models` is mounted read-only, so weights must exist before the first call: run `make models` (or `vinu-models`) for chronos-t5-large, timesfm-2.5, timer-timerxl, kronos and kronos-tokenizer. This machine's `data/models` only has `finbert`. First start: `docker compose build models-api initial-analysis-api news-api && docker compose up -d`.
+**Still in the old shape:** the offline walk-forward backtest batches (`orchestration_registry`) import every model backtest, so they run where torch is installed (the `models-api` image has it; use `docker compose exec models-api ...`).
+
+| File (inside `vinu-components/`) | Action |
+|---|---|
+| `vinu-models/` (`vinu_models/service.py`, `server/app.py`, `cli.py`, `pyproject.toml`, `Dockerfile`, `tests/`) | **created** |
+| `vinu-infra/model_client.py`, `vinu-infra/finbert_scoring.py`, `vinu-infra/pipeline_edges.yaml` | **created / modified** |
+| `vinu-initial-analysis/vinu_initial_analysis/runner.py`, `storage/weights.py`, `storage/factsheet.py`, `pyproject.toml`, `tests/conftest.py` | modified |
+| `vinu-news/vinu_news/analysis/enrichment/finbert_sentiment.py`, `pyproject.toml`, `Dockerfile` | modified |
+| `docker-compose.yml`, `.env-example` | modified |
+| tests: `vinu-models/tests/test_model_service.py` (20), `vinu-infra/tests/test_model_client.py` (9), `vinu-initial-analysis/tests/test_runner_model_service.py` (6), `test_runs_without_torch.py` (3), `vinu-news/tests/test_finbert_via_model_service.py` (5) | **created** |
+
+**Tests:** `vinu-models` 20 passed; `vinu-infra` 402 -> **411**; `vinu-initial-analysis`: the new and related runner tests pass (18), and the torch-needing test files are now skipped (with a header note) when torch is missing instead of failing collection; the rest of its suite shows only failures that need `statsmodels` / `vinu_stock` (not installed in this local environment) plus the old Windows file-lock error in `test_model_angle_runs_when_models_enabled`; `vinu-news` failing set identical to before (+5 passing); `vinu-research` pipeline-edges route test 7 passed.
+
+- **2026-10-03** — model-serving service built; torch moved out of initial-analysis and news.

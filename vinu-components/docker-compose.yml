@@ -8,7 +8,10 @@ services:
       dockerfile: vinu-news/Dockerfile
     env_file: .env
     environment:
-      VINU_MODELS_DIR: /models
+      # FinBERT scoring runs in models-api (the only image with torch); news no longer loads any model itself.
+      VINU_MODEL_SERVICE_URL: http://models-api:8096
+      # Shared pipeline-edge recording (vinu_infra.pipeline_edge_recorder): the same mount research / live / agent use.
+      VINU_STRATEGY_EVAL_DATA_ROOT: /strategy-eval
     secrets:
       - alpaca_api_key
       - alpaca_api_secret
@@ -18,7 +21,7 @@ services:
     volumes:
       - ./data/news:/data
       - ./data/shared:/shared
-      - ./data/models:/models:ro
+      - ./data/strategy-evaluation:/strategy-eval
     cap_drop:
       - ALL
     cap_add:
@@ -173,18 +176,70 @@ services:
       dockerfile: vinu-initial-analysis/Dockerfile
     env_file: .env
     environment:
-      VINU_MODELS_DIR: /models
-      HF_HOME: /home/app/.cache/huggingface
-      # Triton (torch 2.13 CUDA kernels) JIT-compiles a .so and must mmap it;
-      # the default /tmp tmpfs is noexec here, so give it a dedicated
-      # executable tmpfs (see tmpfs: /triton-cache).
-      TRITON_CACHE_DIR: /triton-cache
+      # The model-category angles (chronos, timesfm, kronos, timer, lstm, dlinear, patchtst, lpatchtst, itransformer,
+      # tft, tips) run in models-api, the only image with torch + the GPU. This container no longer loads any model.
+      VINU_MODEL_SERVICE_URL: http://models-api:8096
+      # Shared pipeline-edge recording (vinu_infra.pipeline_edge_recorder): the same mount research / live / agent use.
+      VINU_STRATEGY_EVAL_DATA_ROOT: /strategy-eval
     ports:
       - "127.0.0.1:8083:8083"
     volumes:
       - ./data/initial-analysis:/data
-      - ./data/models:/models:ro
       - ./data/shared:/shared
+      - ./data/strategy-evaluation:/strategy-eval
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+      - SYS_PTRACE
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/app/.cache
+    mem_limit: 4g
+    cpus: 4
+    pids_limit: 256
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/analysis/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    # models-api is deliberately NOT a dependency: analysis starts without it, and a model angle then records an
+    # explicit error run ("model service unreachable") until models-api is up, then is retried.
+    depends_on:
+      news-api:
+        condition: service_healthy
+      stock-api:
+        condition: service_healthy
+
+  # =========================================================================
+  # vinu-models (Port: 8096) — model-serving service: the only image with torch
+  # Runs the model-category analysis angles and FinBERT scoring. Stateless apart from the read-only weights
+  # mount. See newer-thinking-with-discussed/model-serving-service-design.md.
+  # =========================================================================
+  models-api:
+    build:
+      context: .
+      dockerfile: vinu-models/Dockerfile
+    env_file: .env
+    environment:
+      VINU_MODELS_DIR: /models
+      HF_HOME: /home/app/.cache/huggingface
+      VINU_INITIAL_ANALYSIS_DATA_ROOT: /data
+      # Triton (torch CUDA kernels) JIT-compiles a .so and must mmap it; the default /tmp tmpfs is noexec here, so
+      # give it a dedicated executable tmpfs (see tmpfs: /triton-cache).
+      TRITON_CACHE_DIR: /triton-cache
+    ports:
+      - "127.0.0.1:8096:8096"
+    volumes:
+      - ./data/models:/models:ro
+      # trained-model angles read their per-ticker settings/weights path from here
+      - ./data/initial-analysis:/data
     cap_drop:
       - ALL
     cap_add:
@@ -210,16 +265,11 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/analysis/health', timeout=3)"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8096/models/health', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
-    depends_on:
-      news-api:
-        condition: service_healthy
-      stock-api:
-        condition: service_healthy
+      start_period: 30s
 
   # =========================================================================
   # vinu-quant-core (Port: 8084) — merged vinu-strategy + vinu-simulator

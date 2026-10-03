@@ -23,9 +23,6 @@ dependencies = [
   "pandas>=1.5",
   "scikit-learn>=1.3",
   "xgboost>=2.0",
-  "torch>=2.2",
-  "chronos-forecasting>=1.4",
-  "timesfm[torch]>=2.0",
   # search_trends angle (system-wide-audit-and-design, high-expectations
   # cross-check item #22): unofficial Google Trends API wrapper -- no
   # paid tier/API key needed, unlike the order-book/on-chain alt-data
@@ -35,6 +32,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "httpx>=0.27"]
+# The model-category angles (chronos, timesfm, kronos, timer, lstm, dlinear, patchtst, lpatchtst, itransformer, tft,
+# tips) run in the model-serving service (vinu-models, docker service models-api), which installs this extra.
+# initial-analysis itself no longer needs torch.
+models = [
+  "torch>=2.2",
+  "chronos-forecasting>=1.4",
+  "timesfm[torch]>=2.0",
+]
 
 [project.scripts]
 vinu-initial-analysis = "vinu_initial_analysis.cli:main"
