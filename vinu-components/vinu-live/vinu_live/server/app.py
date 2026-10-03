@@ -176,6 +176,52 @@ def create_app() -> FastAPI:
             "grace_window_expires_at": state.grace_window_expires_at,
         }
 
+    @router.get("/decisions/needs-sizing")
+    async def decisions_needs_sizing(limit: int = 100) -> dict[str, Any]:
+        """EXECUTE decisions that never became a position because the strategy has no
+        `live_decision_position_size` (v1 C2). Read-time anti-join, so it drains by
+        itself once a size is configured and a later EXECUTE opens a position."""
+        from vinu_live.live_decision.storage import list_needs_sizing
+
+        config = load_config()
+        backend = LiveDecisionBackend(str(config.data_root / "live_decision.db"))
+        try:
+            records = list_needs_sizing(backend, limit=limit)
+        finally:
+            backend.close()
+        return {
+            "status": "ok",
+            "count": len(records),
+            "hint": "set live_decision_position_size in the strategy YAML; later EXECUTEs will then open positions",
+            "decisions": [
+                {
+                    "ticker": r.ticker, "strategy_id": r.strategy_id, "trigger_id": r.trigger_id,
+                    "bar_ts": r.bar_ts, "recorded_at": r.recorded_at, "reasoning": r.reasoning,
+                }
+                for r in records
+            ],
+        }
+
+    @router.get("/executions")
+    async def executions(limit: int = 100, symbol: str | None = None) -> dict[str, Any]:
+        """The scheduler's order ledger (execution_log.py): every slice it tried to place or skipped, with the
+        reference price it was sized at, the spread at decision time, the order type and the broker's
+        submission answer, newest first, plus counts by outcome. Read-only. Records the SUBMISSION answer, not
+        the fill price (an order is usually still working when the answer returns)."""
+        from vinu_live.execution_log import ExecutionLog
+
+        config = load_config()
+        path = config.data_root / "execution_log.db"
+        if not path.exists():
+            return {"status": "none", "enabled": config.execution_log_enabled, "summary": {"total": 0}, "executions": []}
+        log = ExecutionLog(path)
+        try:
+            rows = log.recent(limit=limit, symbol=symbol)
+            summary = log.summary()
+        finally:
+            log.close()
+        return {"status": "ok", "enabled": config.execution_log_enabled, "summary": summary, "count": len(rows), "executions": rows}
+
     @router.get("/decisions/{ticker}/{strategy_id}")
     async def decisions(ticker: str, strategy_id: str, limit: int = 20) -> dict[str, Any]:
         """The "accessing" half of the fix that closed the gap where

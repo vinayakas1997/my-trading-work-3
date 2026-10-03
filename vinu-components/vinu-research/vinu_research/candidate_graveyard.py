@@ -15,12 +15,15 @@ not a fourth table: none of them change what they record, and nothing
 here re-attributes a generation-discard to look like a sweep-failure or
 vice versa (each entry keeps its own `source` tag and identifiers) --
 just a way to ask about all three together. `code_hash` is the one
-identifier that could, in principle, link a generation-time discard to a
-later sweep-time failure of the "same" candidate, but that link isn't
-made here: `sweep_grid_points` records params, not the code_hash of the
-candidate that produced them, and joining the two on that basis would be
-a real, separate design decision (not made here) rather than a query
-detail.
+identifier that links a generation-time discard to a later sweep of the
+"same" candidate. That join is now made (the-inconsistencies-v2 plan
+2.4c, v1 A4): a base-code-mode sweep stores the hash of the base code it
+varied (`sweep_runs.base_code_hash`, same `code_hash` function the
+generation store uses), so a discarded generation candidate lists the
+sweeps that later varied it (`swept_in`), and a failed sweep point lists
+the generation rounds that produced its base code (`generation_ids`).
+Recipe-mode sweeps have no base code and never join. Read-only: nothing
+here blocks a candidate (a graveyard-as-gate is still a separate decision).
 """
 
 from __future__ import annotations
@@ -76,6 +79,10 @@ def query_candidate_graveyard(
                 "reason": c["reasoning_excerpt"] or "discarded by heuristic complexity-penalty ranking",
                 "created_at": created_at,
                 "generation_id": round_["generation_id"],
+                "swept_in": [
+                    {k: sw[k] for k in ("sweep_id", "requested", "succeeded", "completeness")}
+                    for sw in sweep_store.find_sweeps_by_base_code_hash(c["code_hash"])
+                ],
             })
 
     for sweep in sweep_store.list_sweeps(symbol=symbol, limit=limit):
@@ -83,6 +90,11 @@ def query_candidate_graveyard(
         if detail is None:
             continue
         created_at = _epoch_to_iso(sweep["created_at"])
+        base_hash = detail.get("base_code_hash")
+        generation_ids = (
+            sorted({g["generation_id"] for g in generation_store.find_by_code_hash(base_hash)})
+            if base_hash else []
+        )
         for p in detail["points"]:
             if p["succeeded"]:
                 continue
@@ -94,6 +106,8 @@ def query_candidate_graveyard(
                 "created_at": created_at,
                 "sweep_id": sweep["sweep_id"],
                 "params": p["params"],
+                "param_diff_from_winner": p.get("param_diff_from_winner"),
+                "generation_ids": generation_ids,
             })
 
     if hypothesis_registry is not None:

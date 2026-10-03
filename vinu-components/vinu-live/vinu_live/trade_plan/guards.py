@@ -15,9 +15,28 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from vinu_infra.pipeline_edge_recorder import record_edge
+
 LOG = logging.getLogger(__name__)
 
 HALT_FILE_PATH = Path.home() / ".vinu-live" / "HALT"
+
+
+def instruction_increases_exposure(side: str, qty: float, current_qty: float) -> bool:
+    """True when filling this instruction moves the position FURTHER from flat
+    (opens, adds to, or flips through zero into a larger opposite position);
+    False for anything that only shrinks or closes it.
+
+    The entries-only guards (cooldown, stale data, turbulence) must never hold
+    back a risk-reducing order -- see logic-audit-2026-10-02 A5 -- so every
+    caller classifies an instruction with this before gating it. Pure and
+    total: a side other than buy/sell cannot be classified, so it is treated
+    as increasing and the caller decides what to do with it."""
+    s = (side or "").lower()
+    if s not in ("buy", "sell"):
+        return True
+    delta = qty if s == "buy" else -qty
+    return abs(current_qty + delta) > abs(current_qty)
 
 
 def spread_bps_from_quote(payload: Any) -> float | None:
@@ -34,6 +53,26 @@ def spread_bps_from_quote(payload: Any) -> float | None:
     if sb < 0.0:
         return None
     return sb
+
+
+async def fetch_quote_snapshot(http: Any, stock_price_api_url: str, symbol: str) -> tuple[float | None, float | None]:
+    """(spread in basis points, mid price) from one quote call; each None when unavailable (fail-open, same parse as
+    spread_bps_from_quote). The mid is what slippage is measured against."""
+    payload: Any = None
+    try:
+        resp = await http.get(f"{stock_price_api_url}/stock/quote/{symbol}")
+        if getattr(resp, "status_code", None) == 200:
+            payload = resp.json()
+    except Exception as e:  # noqa: BLE001
+        LOG.debug("Quote fetch failed for %s, failing open: %s", symbol, e)
+    mid = None
+    if isinstance(payload, dict) and payload.get("ok"):
+        try:
+            m = float(payload.get("mid"))
+            mid = m if m > 0 else None
+        except (TypeError, ValueError):
+            mid = None
+    return spread_bps_from_quote(payload), mid
 
 
 async def fetch_spread_bps(http: Any, stock_price_api_url: str, symbol: str) -> float | None:
@@ -100,7 +139,7 @@ async def event_blackout_reason(
     return None
 
 
-async def halt_reason(http: Any, agent_api_url: str) -> str | None:
+async def halt_reason(http: Any, agent_api_url: str, edge_id: str | None = None) -> str | None:
     """None if trading may proceed, else a human-readable block reason.
 
     There are two independent kill-switch sources in this stack:
@@ -116,6 +155,10 @@ async def halt_reason(http: Any, agent_api_url: str) -> str | None:
     remote halt didn't stop the scheduler's TWAP/VWAP loop cleanly. Both
     callers now check both sources through this one function.
 
+    `edge_id` (Phase 3 runtime recorder): when given, the remote status read is recorded
+    as that pipeline edge -- `received` on a 200, `missing` on a non-200 or an exception
+    (the fail-open case below, which used to leave no trace). Observe-only; never raises.
+
     Fail-open on the remote check only (an unreachable agent means no order
     can be placed anyway, same posture as the orchestrator's prior
     `_is_trading_halted`); the local file check is a plain `Path.exists()`
@@ -126,8 +169,14 @@ async def halt_reason(http: Any, agent_api_url: str) -> str | None:
     try:
         resp = await http.get(f"{agent_api_url}/agent/broker/status")
         if getattr(resp, "status_code", None) == 200:
+            if edge_id:
+                record_edge(edge_id, "received")
             if bool((resp.json() or {}).get("halted")):
                 return "agent kill switch engaged (GET /agent/broker/status)"
+        elif edge_id:
+            record_edge(edge_id, "missing", f"GET /agent/broker/status -> HTTP {getattr(resp, 'status_code', '?')}")
     except Exception as e:  # noqa: BLE001 -- fail-open on any fetch error
         LOG.debug("Remote halt-status check failed, failing open: %s", e)
+        if edge_id:
+            record_edge(edge_id, "missing", f"GET /agent/broker/status failed: {e}")
     return None

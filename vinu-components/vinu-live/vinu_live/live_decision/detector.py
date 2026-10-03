@@ -68,6 +68,12 @@ def min_warmup_bars() -> int:
     return warmup_bars_for_features(BASE_FEATURE_NAMES)
 
 
+def feature_window_bars(configured: int = 0) -> int:
+    """Bars the live poller should fetch: never fewer than `min_warmup_bars()`, and `configured`
+    when that is larger (logic-audit A8: slow EMAs need several times their period to converge)."""
+    return max(min_warmup_bars(), int(configured or 0))
+
+
 def _vwap_dist(bars: pd.DataFrame) -> float | None:
     """Mirrors signal_evidence/compute.py::_vwap_supporting exactly:
     session-date-sliced (UTC calendar date from bar_ts), vwap module

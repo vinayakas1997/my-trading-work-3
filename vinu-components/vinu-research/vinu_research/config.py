@@ -245,6 +245,38 @@ class ResearchConfig:
     # VINU_RESEARCH_AGENT_DATA_ROOT.
     maturity_tier_enabled: bool = False
     agent_data_root: Path | None = None
+    # logic-audit B3 (the-inconsistencies-v2 plan 2.4e): the forecast LLM never saw the
+    # current market regime or the options-implied move, although the Trade Score and
+    # the size multipliers apply both seconds later -- so a forecast that ignored them
+    # was then scaled against them. When on, both are shown to the forecast prompt
+    # (data this function already fetches; no new calls). Off by default: it changes
+    # what the LLM sees, and there is no live data yet to say whether it helps.
+    # Env: VINU_RESEARCH_FORECAST_PROMPT_EXTRA_CONTEXT_ENABLED.
+    forecast_prompt_extra_context_enabled: bool = False
+    # logic-audit B4 (the-inconsistencies-v2 plan 2.4e): the refinement prompt showed the
+    # LLM five scalars (Sharpe / MaxDD / win rate / return / trade count) of the ~35-field
+    # metric row the candidate is actually ranked and judged on. When on, it also shows
+    # Sortino, Calmar, CVaR 95, profit factor, win/loss ratio, annual turnover and the
+    # Sharpe confidence interval + p-value (all already computed, no new calls). Off by
+    # default: it changes what the LLM sees. Env: VINU_RESEARCH_REFINE_PROMPT_FULL_METRICS_ENABLED.
+    refine_prompt_full_metrics_enabled: bool = False
+    # logic-audit B1: `forecast.confidence` is stated by the forecast LLM and was used raw three times
+    # -- as a confluence-ledger vote, as P(win) in the Trade Score's EV term, and (through the tier) as a
+    # size scale -- with nothing ever checking what a stated 0.8 has actually meant. Three flags:
+    #  * confidence_reliability_log_enabled (default ON, no behavior change): learn the reliability map
+    #    from closed trades (calibration_entries; see confidence_calibration.py) and write one reasons
+    #    line on the frozen plan: raw vs calibrated confidence and the evidence behind it.
+    #  * calibrated_confidence_in_ev_enabled (default OFF): the EV term uses the calibrated confidence
+    #    (raw below the sample floor) instead of the raw one.
+    #  * confluence_excludes_forecast_confidence (default OFF): drop the `forecast_confidence` vote from
+    #    the confluence ledger so the same LLM number is not counted a second time as independent evidence.
+    # Env: VINU_RESEARCH_CONFIDENCE_RELIABILITY_LOG_ENABLED / ..._CALIBRATED_CONFIDENCE_IN_EV_ENABLED /
+    # ..._CONFLUENCE_EXCLUDES_FORECAST_CONFIDENCE.
+    confidence_reliability_log_enabled: bool = True
+    calibrated_confidence_in_ev_enabled: bool = False
+    confluence_excludes_forecast_confidence: bool = False
+    # Minimum closed trades in a stated-confidence bucket before its realized hit rate is trusted.
+    confidence_calibration_min_samples: int = 30
 
     # Regime router for the LLM trade-plan pipeline (high-expectations
     # follow-up): mirrors vinu-portfolio's own already-proven
@@ -475,6 +507,24 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         maturity_tier_enabled=os.environ.get(
             "VINU_RESEARCH_MATURITY_TIER_ENABLED", "false"
         ).lower() in ("1", "true", "yes"),
+        forecast_prompt_extra_context_enabled=os.environ.get(
+            "VINU_RESEARCH_FORECAST_PROMPT_EXTRA_CONTEXT_ENABLED", "false"
+        ).lower() in ("1", "true", "yes"),
+        refine_prompt_full_metrics_enabled=os.environ.get(
+            "VINU_RESEARCH_REFINE_PROMPT_FULL_METRICS_ENABLED", "false"
+        ).lower() in ("1", "true", "yes"),
+        confidence_reliability_log_enabled=os.environ.get(
+            "VINU_RESEARCH_CONFIDENCE_RELIABILITY_LOG_ENABLED", "true"
+        ).lower() in ("1", "true", "yes"),
+        calibrated_confidence_in_ev_enabled=os.environ.get(
+            "VINU_RESEARCH_CALIBRATED_CONFIDENCE_IN_EV_ENABLED", "false"
+        ).lower() in ("1", "true", "yes"),
+        confluence_excludes_forecast_confidence=os.environ.get(
+            "VINU_RESEARCH_CONFLUENCE_EXCLUDES_FORECAST_CONFIDENCE", "false"
+        ).lower() in ("1", "true", "yes"),
+        confidence_calibration_min_samples=int(
+            os.environ.get("VINU_RESEARCH_CONFIDENCE_CALIBRATION_MIN_SAMPLES", "30")
+        ),
         agent_data_root=(
             Path(os.environ["VINU_RESEARCH_AGENT_DATA_ROOT"])
             if os.environ.get("VINU_RESEARCH_AGENT_DATA_ROOT")

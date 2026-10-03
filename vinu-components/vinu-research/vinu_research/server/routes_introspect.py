@@ -305,3 +305,85 @@ async def get_evaluation_history(artifact_id: str) -> dict[str, Any]:
     store = resolve_strategy_evaluation_store(_service.config.data_root)
     history = store.get_history(artifact_id)
     return {"artifact_id": artifact_id, "count": len(history), "history": history}
+
+
+@router.get("/pipeline-edges")
+async def get_pipeline_edges(only_problems: bool = False) -> dict[str, Any]:
+    """Phase 3 of the-inconsistencies-v2 plan: which declared pipeline connections are actually
+    flowing at runtime. Joins the edge manifest (`vinu-infra/pipeline_edges.yaml`: what SHOULD flow
+    where, with known gaps) with what the instrumented consumers recorded
+    (`vinu_infra.pipeline_edge_recorder`: received / empty / stale / missing, with age and counts).
+
+    `state` per edge: known_gap (declared unwired), not_instrumented (no recording call site yet --
+    silence says nothing), never_seen (instrumented, nothing ever recorded: producer or consumer
+    never ran), flowing, empty (empty where it should not be), stale (older than the edge's
+    `stale_after_sec`), missing (the last read failed). `only_problems=true` returns just the edges
+    that need attention. Read-only; reports presence and age, NOT whether a value that arrived is
+    correct. Recording needs a shared root (VINU_EDGE_DATA_ROOT, or the VINU_STRATEGY_EVAL_DATA_ROOT
+    research/live/agent already share) -- without one this reports `recording_enabled: false`."""
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    from vinu_infra import pipeline_edge_recorder as recorder
+    from vinu_infra import pipeline_edges
+
+    store = recorder.resolve_edge_status_store()  # no fallback: a private root would show nothing and mislead
+    try:
+        edges = pipeline_edges.load_edges()
+    except Exception as exc:  # noqa: BLE001 -- a missing/garbled manifest must not 500 a read route
+        return {
+            "recording_enabled": store is not None, "manifest": "unavailable", "error": str(exc),
+            "states": store.list_states() if store is not None else [],
+        }
+    report = recorder.edges_flow_report(edges, store)
+    flagged = recorder.not_flowing(report)
+    return {
+        "recording_enabled": store is not None,
+        "count": len(report),
+        "not_flowing": len(flagged),
+        "edges": flagged if only_problems else report,
+    }
+
+
+@router.get("/parity-report")
+async def get_parity_report(min_days: int = 20, min_trades: int = 30) -> dict[str, Any]:
+    """v2 A3: does what a strategy / forecast promised match what it then delivered? Read-only and advisory.
+
+    `strategies`: each strategy artifact's backtest Sharpe / max drawdown against its paper days (Sharpe with a
+    standard error, so a short window says so). **The paper series is the strategy's code re-run on new days, not
+    real fills**, so this is out-of-sample stability, not execution parity (slippage, spread, fills). `trade_plans`:
+    mean stated confidence vs realized hit rate, and forecast magnitude vs realized move, over closed live trades.
+    Paper days come from vinu-agent's paper_performance.db when `agent_data_root` is mounted here, else from the
+    agent API; `paper_source` says which."""
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    import httpx
+
+    from vinu_research import parity_report as pr
+    from vinu_research.models import ArtifactStatus
+
+    store = _service.strategy_store
+    statuses = (ArtifactStatus.BENCHING, ArtifactStatus.ACTIVE, ArtifactStatus.MONITORING, ArtifactStatus.DECAYED)
+    strategies = [a for st in statuses for a in store.list_artifacts(status=st, type_="strategy")]
+
+    paper_source = "db"
+    paper = pr.read_paper_returns_db(_service.config.agent_data_root)
+    if paper is None:
+        paper_source, paper = "agent_api", {}
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                for a in strategies:
+                    try:
+                        resp = await client.get(f"{_service.config.agent_api_url}/agent/broker/performance/{a.artifact_id}")
+                        if resp.status_code == 200:
+                            paper[a.artifact_id] = resp.json().get("daily_returns") or []
+                    except Exception:  # noqa: BLE001 -- one artifact's failure must not hide the others
+                        continue
+        except Exception:  # noqa: BLE001
+            paper_source = "unavailable"
+    try:
+        entries = store.list_all_calibration_entries()
+    except Exception:  # noqa: BLE001 -- a store problem must not 500 a read route
+        entries = []
+    report = pr.build_parity_report(strategies, paper, entries, min_days=min_days, min_trades=min_trades)
+    report["paper_source"] = paper_source
+    return report

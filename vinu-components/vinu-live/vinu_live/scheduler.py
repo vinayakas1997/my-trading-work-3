@@ -1,32 +1,39 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 
 from vinu_infra.maturity_consultation import MaturityConsultationStore
+from vinu_infra.pipeline_edge_recorder import record_edge
 from vinu_live.book.positions import daily_realized_pnl, init_book
 from vinu_live.breaker.engine import BreakerVerdict, check_limits
 from vinu_live.breaker.limits import DEFAULT_LIMITS, BreakerLimits, BreakerState
 from vinu_live.config import LiveConfig, load_config
 from vinu_live.execution import compute_volume_profile, plan_twap, plan_vwap, schedule_slice_delays
+from vinu_live.execution_log import ExecutionLog
 from vinu_live.live_decision.storage import (
     LiveDecisionBackend,
+    list_needs_sizing,
     list_open_positions,
     list_unapplied_executes,
     mark_decision_applied,
     open_position,
+    set_entry_price_if_missing,
 )
 from vinu_live.maturity_link import fetch_maturity_status, scale_limits_for_tier
 from vinu_live.reconciliation import ReconciliationEngine
 from vinu_live.signal_translator import SignalTranslator
 from vinu_live.trade_plan.guards import (
     event_blackout_reason,
-    fetch_spread_bps,
+    fetch_quote_snapshot,
     halt_reason,
+    instruction_increases_exposure,
     spread_gate_reason_from_bps,
 )
 # Reuses the orchestrator's own MAX_SPREAD_BPS/EVENT_BLACKOUT_HOURS/
@@ -41,7 +48,11 @@ from vinu_live.trade_plan.orchestrator import (
     MAX_SLIPPAGE_PCT,
     MAX_SPREAD_BPS,
     PASSIVE_LIMIT_OFFSET_BPS,
+    PRICE_MAX_AGE_HOURS,
     _choose_entry_order_type,
+    _price_ts_age_hours,
+    cooldown_active,
+    turbulence_active,
 )
 
 LOG = logging.getLogger(__name__)
@@ -108,6 +119,23 @@ class LiveScheduler:
         # not "notify on any drift".
         self._recon_drift_streak: dict[str, int] = {}
         self._recon_drift_notified: set[str] = set()
+        # Newest bar timestamp (UTC epoch s) per symbol, filled by
+        # _fetch_prices -- only read by the opt-in entry guards below.
+        self._last_price_ts: dict[str, float] = {}
+        # True only when the last portfolio value came from a real broker equity read (logic-audit A6:
+        # an equity-based daily P&L must never be built from a placeholder).
+        self._equity_is_real = False
+        # EXECUTEs the precondition gate refused in the most recent weights fetch (v1 A8); read by cycle().
+        self._precondition_blocked: list[dict[str, Any]] = []
+        # Order ledger (execution_log.py): log-only, never raises. None when disabled.
+        self._execution_log: ExecutionLog | None = (
+            ExecutionLog(self._config.data_root / "execution_log.db") if self._config.execution_log_enabled else None
+        )
+        self._current_cycle_id = ""
+        # Broker health (loud failure reporting): reasons found during the current cycle, and how many
+        # consecutive cycles had at least one.
+        self._broker_problems: list[str] = []
+        self._broker_down_streak = 0
         # high-expectations follow-up, points #2/#3: one shared, queryable
         # log of every maturity-tier consultation across every consumer in
         # this codebase (not one log per consumer -- see
@@ -122,6 +150,8 @@ class LiveScheduler:
         await self._http.aclose()
         self._book.close()
         self._live_decision_backend.close()
+        if self._execution_log is not None:
+            self._execution_log.close()
         self._maturity_consultation_store.close()
 
     async def cycle(self) -> dict[str, Any]:
@@ -132,6 +162,9 @@ class LiveScheduler:
         self._cycle_count += 1
         cycle_id = f"cycle_{self._cycle_count}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         LOG.info("[%s] Starting trading cycle", cycle_id)
+        self._current_cycle_id = cycle_id
+        self._broker_problems = []
+        await self._enrich_execution_fills()
 
         result: dict[str, Any] = {
             "cycle_id": cycle_id,
@@ -153,6 +186,18 @@ class LiveScheduler:
             # design doc's own recommended default.
             live_decision_weights = await self._fetch_live_decision_weights(cycle_id)
             target_weights = target_weights + live_decision_weights
+            if self._precondition_blocked:
+                result["precondition_blocked"] = list(self._precondition_blocked)
+
+            # v1 C2: an EXECUTE with no configured size is marked applied and
+            # contributes no weight; surface how many are waiting on a size so
+            # it is visible in the cycle result, not one log line.
+            try:
+                n_needs_sizing = len(list_needs_sizing(self._live_decision_backend))
+                if n_needs_sizing:
+                    result["needs_sizing"] = n_needs_sizing
+            except Exception as e:  # noqa: BLE001 -- visibility only
+                LOG.debug("needs-sizing count unavailable: %s", e)
 
             if not target_weights:
                 LOG.info("[%s] No target weights — skipping", cycle_id)
@@ -160,7 +205,22 @@ class LiveScheduler:
                 return result
 
             current_positions = await self._fetch_positions()
-            prices = await self._fetch_prices(target_weights)
+            all_broker_positions = dict(current_positions)  # unfiltered: the breaker sees the whole account
+            if self._config.scheduler_use_daily_allocation:
+                result["allocation_source"] = portfolio.get("allocation_source", "state_fallback")
+                if "deployable_fraction" in portfolio:
+                    result["deployable_fraction"] = portfolio["deployable_fraction"]
+            if self._config.scheduler_respect_trade_plan_symbols:
+                target_weights, current_positions, ownership = await self._apply_symbol_ownership(
+                    target_weights, current_positions,
+                )
+                if ownership:
+                    result["ownership"] = ownership
+            # A symbol the scheduler owns that nothing targets any more still needs a price, or the translator
+            # skips it ("No usable price") and it is never closed.
+            _orphans = (result.get("ownership") or {}).get("orphans_to_liquidate", [])
+            prices = await self._fetch_prices(target_weights + [{"symbol": s} for s in _orphans])
+            self._record_live_decision_entry_prices(prices)
             portfolio_value = await self._fetch_portfolio_value(current_positions, prices)
 
             instructions = self._translator.translate(
@@ -168,13 +228,33 @@ class LiveScheduler:
             )
             result["n_instructions"] = len(instructions)
 
+            # logic-audit A4: opt-in entries-only guards (cooldown / stale data
+            # / turbulence). Reducing instructions are never touched.
+            instructions, guard_blocked = await self._apply_entry_guards(instructions)
+            if guard_blocked:
+                result["guard_blocked"] = guard_blocked
+            blocked_symbols = {b["symbol"] for b in guard_blocked}
+
+            # logic-audit A5: tag instructions that only shrink / close a position
+            # so halts and gates below can leave them alone.
+            if self._config.scheduler_exits_exempt_from_halts:
+                for instr in instructions:
+                    instr.reduces_exposure = not instruction_increases_exposure(
+                        instr.side, instr.qty, instr.current_qty,
+                    )
+
             if instructions:
                 # item #24 finding #1: real risk-limit check (daily loss,
                 # VaR, leverage, cluster exposure, position count) before
                 # any order is planned/submitted -- this loop used to
                 # never call this at all, unlike the orchestrator's own
                 # entry/exit paths.
-                breaker_verdict, breaker_reason = await self._check_breaker(portfolio_value)
+                if self._config.scheduler_breaker_uses_broker_account:
+                    breaker_verdict, breaker_reason = await self._check_breaker(
+                        portfolio_value, broker_positions=all_broker_positions,
+                    )
+                else:
+                    breaker_verdict, breaker_reason = await self._check_breaker(portfolio_value)
                 if breaker_verdict == BreakerVerdict.HALT:
                     LOG.warning(
                         "[%s] Breaker HALT -- skipping all order planning/execution this cycle: %s",
@@ -182,6 +262,16 @@ class LiveScheduler:
                     )
                     result["status"] = "halted_by_breaker"
                     result["breaker_reason"] = breaker_reason
+                    exits = [i for i in instructions if i.reduces_exposure]
+                    if self._config.scheduler_exits_exempt_from_halts and exits:
+                        LOG.warning(
+                            "[%s] Breaker HALT blocks new exposure only -- still executing %d "
+                            "risk-reducing instruction(s)", cycle_id, len(exits),
+                        )
+                        exit_plan = await self._plan_execution(exits)
+                        result["n_slices"] = exit_plan.total_orders
+                        result["exits_only"] = True
+                        result["submitted"] = await self._execute_plan(exit_plan, prices)
                 else:
                     execution_plan = await self._plan_execution(instructions)
                     result["n_slices"] = execution_plan.total_orders
@@ -189,8 +279,11 @@ class LiveScheduler:
                     submitted = await self._execute_plan(execution_plan, prices)
                     result["submitted"] = submitted
 
+            # A symbol an entry guard deliberately held back is a decision, not
+            # drift -- exclude it so reconciliation does not alert on it.
             expected_positions = self._compute_expected_positions(
-                target_weights, prices, portfolio_value,
+                [tw for tw in target_weights if tw.get("symbol") not in blocked_symbols],
+                prices, portfolio_value,
             )
             recon_report = self._reconciler.reconcile(
                 expected_positions, current_positions, portfolio_value,
@@ -213,7 +306,160 @@ class LiveScheduler:
             result["status"] = "failed"
             result["error"] = str(e)
 
+        await self._finish_broker_health(cycle_id, result)
         return result
+
+    async def _enrich_execution_fills(self) -> None:
+        """Ask the broker how the recently accepted orders ended up and write fill price / quantity / status and the
+        slippage into the ledger. Read-only toward the broker, bounded by `execution_fill_enrichment_batch`, and
+        best-effort: any failure (including the agent API being down) is swallowed and the same rows are retried
+        next cycle. Never changes an order."""
+        if self._execution_log is None or not self._config.execution_fill_enrichment_enabled:
+            return
+        try:
+            rows = self._execution_log.unresolved_orders(limit=self._config.execution_fill_enrichment_batch)
+            for row in rows:
+                try:
+                    resp = await self._http.get(f"{self._config.agent_api_url}/agent/broker/order/{row['order_id']}")
+                    if getattr(resp, "status_code", None) != 200:
+                        continue
+                    body = resp.json()
+                    if not isinstance(body, dict) or body.get("status") != "ok":
+                        continue
+                    self._execution_log.record_fill(
+                        row["id"], fill_status=body.get("order_status"),
+                        fill_price=body.get("filled_avg_price"), filled_qty=body.get("filled_qty"),
+                    )
+                except Exception as e:  # noqa: BLE001 -- one order's lookup must not stop the others
+                    LOG.debug("fill lookup failed for order %s: %s", row.get("order_id"), e)
+        except Exception as e:  # noqa: BLE001
+            LOG.debug("fill enrichment failed: %s", e)
+
+    async def _finish_broker_health(self, cycle_id: str, result: dict[str, Any]) -> None:
+        """Loud failure reporting for the broker. Called once at the end of every cycle that reached the broker
+        reads; never raises and never changes what the cycle did."""
+        try:
+            problems = list(dict.fromkeys(self._broker_problems))  # de-duplicated, order kept
+            if problems:
+                self._broker_down_streak += 1
+                result["broker_unreachable"] = problems
+                LOG.error(
+                    "[%s] BROKER PROBLEM (%d consecutive cycle(s)): %s", cycle_id, self._broker_down_streak, "; ".join(problems),
+                )
+                every = max(1, int(self._config.broker_unreachable_renotify_cycles))
+                if self._broker_down_streak == 1 or self._broker_down_streak % every == 0:
+                    await self._notify_broker_health(
+                        "broker_unreachable",
+                        f"{'; '.join(problems)} (cycle {cycle_id}, {self._broker_down_streak} consecutive bad cycle(s))",
+                    )
+            elif self._broker_down_streak > 0:
+                await self._notify_broker_health(
+                    "broker_recovered", f"reachable again after {self._broker_down_streak} bad cycle(s)",
+                )
+                LOG.warning("[%s] Broker reachable again after %d bad cycle(s)", cycle_id, self._broker_down_streak)
+                self._broker_down_streak = 0
+        except Exception as e:  # noqa: BLE001 -- health reporting must never break a cycle
+            LOG.debug("broker health reporting failed: %s", e)
+
+    async def _notify_broker_health(self, action: str, detail: str) -> None:
+        """Best-effort push through the shared notify front door (the same route the drift and stuck-decision alerts use).
+        Goes through the agent API, so if the AGENT API itself is down this cannot be delivered: the ERROR log above is
+        then the only trace."""
+        if not self._config.broker_unreachable_notify_enabled:
+            return
+        try:
+            resp = await self._http.post(
+                f"{self._config.agent_api_url}/notify/reconciliation-drift",
+                json={"symbol": "BROKER", "action": action, "detail": detail},
+            )
+            resp.raise_for_status()
+        except Exception as e:  # noqa: BLE001
+            LOG.warning("could not send the %s notification: %s", action, e)
+
+    def _record_live_decision_entry_prices(self, prices: dict[str, float]) -> None:
+        """logic-audit A3: stamp the price this cycle sizes at onto any open
+        live-decision position that has no entry reference yet (first priced
+        cycle after it opened), so the poller's rule-based stop has something
+        to measure against. Best-effort and write-once; never affects orders.
+        An approximation of the fill price (the last daily close the order is
+        sized on), documented as such."""
+        try:
+            for pos in list_open_positions(self._live_decision_backend):
+                if pos.entry_price is None and prices.get(pos.ticker):
+                    set_entry_price_if_missing(
+                        self._live_decision_backend, pos.id, prices[pos.ticker],
+                    )
+        except Exception as e:  # noqa: BLE001 -- never let this touch order flow
+            LOG.warning("Could not record live-decision entry prices: %s", e)
+
+    async def _apply_entry_guards(
+        self, instructions: list[Any],
+    ) -> tuple[list[Any], list[dict[str, Any]]]:
+        """(kept instructions, blocked records). Off unless
+        `scheduler_entry_guards_enabled`; then drops only instructions that
+        INCREASE exposure when (1) the consecutive-loss cooldown is active,
+        (2) the symbol's newest price bar is older than PRICE_MAX_AGE_HOURS,
+        or (3) its 14-day realized vol trips the turbulence pause -- the same
+        three guards, thresholds and fail-open posture the trade-plan
+        orchestrator applies to its entries. Anything that reduces or closes
+        a position always passes. Any error in here fails open (instructions
+        returned untouched) so a guard bug can never stop an order.
+
+        Known limit: the cooldown reads the trade-plan book's closed
+        positions, and this path does not write its own fills to that book
+        (logic-audit A6), so on this path it reflects plan-path losses only."""
+        if not self._config.scheduler_entry_guards_enabled or not instructions:
+            return instructions, []
+        try:
+            locked, lock_reason = cooldown_active(self._book)
+            kept: list[Any] = []
+            blocked: list[dict[str, Any]] = []
+            for instr in instructions:
+                if not instruction_increases_exposure(instr.side, instr.qty, instr.current_qty):
+                    kept.append(instr)
+                    continue
+                guard, reason = "", ""
+                if locked:
+                    guard, reason = "cooldown", lock_reason
+                if not guard and PRICE_MAX_AGE_HOURS > 0:
+                    age = _price_ts_age_hours(self._last_price_ts.get(instr.symbol))
+                    if age is not None and age > PRICE_MAX_AGE_HOURS:
+                        guard = "stale_data"
+                        reason = f"price data age {age:.1f}h exceeds max {PRICE_MAX_AGE_HOURS:.1f}h"
+                if not guard:
+                    turb, turb_reason = await turbulence_active(self._fetch_recent_closes, instr.symbol)
+                    if turb:
+                        guard, reason = "turbulence", turb_reason
+                if guard:
+                    LOG.warning(
+                        "Entry guard %s -- holding back %s %s %s: %s",
+                        guard, instr.side, instr.qty, instr.symbol, reason,
+                    )
+                    blocked.append({
+                        "symbol": instr.symbol, "side": instr.side, "qty": instr.qty,
+                        "guard": guard, "reason": reason,
+                    })
+                else:
+                    kept.append(instr)
+            return kept, blocked
+        except Exception as e:  # noqa: BLE001 -- a guard bug must never stop an order
+            LOG.warning("Entry guards failed, failing open (instructions untouched): %s", e)
+            return instructions, []
+
+    async def _fetch_recent_closes(self, symbol: str) -> list[float]:
+        """Daily closes for the turbulence check; [] on any problem (the guard
+        then fails open, same as the orchestrator's)."""
+        try:
+            resp = await self._http.get(
+                f"{self._config.stock_price_api_url}/stock/candles/{symbol}",
+                params={"interval": "1d", "days": 30, "adjusted": True},
+            )
+            if resp.status_code == 200:
+                bars = resp.json().get("data", [])
+                return [float(b["close"]) for b in bars if b.get("close")]
+        except Exception as e:  # noqa: BLE001
+            LOG.debug("Could not fetch recent closes for %s: %s", symbol, e)
+        return []
 
     async def _maturity_scaled_limits(self) -> BreakerLimits | None:
         """high-expectations follow-up, point #2 (risk_gatekeeper consults
@@ -227,6 +473,10 @@ class LiveScheduler:
         if not self._config.risk_gatekeeper_maturity_scaling_enabled:
             return None
         status = await fetch_maturity_status(self._http, self._config.research_api_url)
+        record_edge(
+            "maturity.status->live.limits", "missing" if status is None else "received",
+            "fetch_maturity_status returned None" if status is None else "",
+        )
         if status is None:
             self._maturity_consultation_store.record(
                 service="vinu-live", consumer="risk_gatekeeper", tier="unknown",
@@ -242,7 +492,32 @@ class LiveScheduler:
         )
         return scaled
 
-    async def _check_breaker(self, portfolio_value: float) -> tuple[str, str | None]:
+    def _account_daily_pnl(self, equity: float) -> float | None:
+        """logic-audit A6: today's P&L from the account itself -- `equity` minus the first equity this
+        scheduler saw on the current UTC day (persisted in `breaker_day_equity.json` so a restart keeps it).
+        The first sighting of a day returns 0.0. Includes unrealized moves. None on any problem (the
+        caller then keeps the book's realized figure). Limit: the baseline is the first equity this
+        process saw today, not the market-open or prior-close equity."""
+        try:
+            path = self._config.data_root / "breaker_day_equity.json"
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            baseline = None
+            if path.exists():
+                saved = json.loads(path.read_text(encoding="utf-8"))
+                if saved.get("date") == today and saved.get("equity") is not None:
+                    baseline = float(saved["equity"])
+            if baseline is None:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps({"date": today, "equity": float(equity)}), encoding="utf-8")
+                return 0.0
+            return float(equity) - baseline
+        except Exception as e:  # noqa: BLE001 -- must never stop the breaker
+            LOG.warning("Could not compute account-based daily P&L, using realized book P&L: %s", e)
+            return None
+
+    async def _check_breaker(
+        self, portfolio_value: float, broker_positions: dict[str, float] | None = None,
+    ) -> tuple[str, str | None]:
         """Same shape as trade_plan/orchestrator.py's own _check_breaker --
         deliberately not covariance-aware yet (passes covariance_matrix=
         None, same as that method's own <2-symbol fallback): the real
@@ -256,9 +531,22 @@ class LiveScheduler:
         from vinu_live.book.positions import list_open_positions
 
         positions = list_open_positions(self._book)
+        extra: dict[str, Any] = {}
+        daily_pnl = daily_realized_pnl(self._book)
+        if self._config.scheduler_breaker_uses_broker_account:
+            # logic-audit A6: the account the scheduler actually trades, not the plan book.
+            if broker_positions is not None:
+                positions = [
+                    SimpleNamespace(symbol=s, qty=abs(q), side="long" if q > 0 else "short")
+                    for s, q in broker_positions.items() if abs(q) >= 0.001
+                ]
+                extra["positions"] = positions
+            if self._equity_is_real:
+                account_pnl = self._account_daily_pnl(portfolio_value)
+                if account_pnl is not None:
+                    daily_pnl = account_pnl
         symbols = sorted({p.symbol for p in positions})
         prices = await self._fetch_prices([{"symbol": s} for s in symbols]) if symbols else {}
-        daily_pnl = daily_realized_pnl(self._book)
         was_halted = self._breaker_state.halted
         limits = await self._maturity_scaled_limits()
         verdict, reason = check_limits(
@@ -270,7 +558,9 @@ class LiveScheduler:
             cluster_map=None,
             limits=limits,
             state=self._breaker_state,
+            **extra,
         )
+        record_edge("breaker.limits->live.scheduler", "received", f"verdict={verdict}")
         if verdict == BreakerVerdict.HALT and not was_halted:
             # Mirrors orchestrator.py's _engage_real_halt: this process's
             # own in-memory BreakerState flip is invisible to every other
@@ -405,9 +695,22 @@ class LiveScheduler:
         record is left unapplied and retried next cycle instead.
         """
         pending = list_unapplied_executes(self._live_decision_backend)
+        self._precondition_blocked = []
         if pending:
             strategy_cache: dict[str, dict[str, Any] | None] = {}
             for record in pending:
+                if self._config.precondition_enforcing_enabled and record.precondition_held is False:
+                    # v1 A8: the strategy's own precondition did not hold -- no position. Final, so mark applied.
+                    LOG.warning(
+                        "[%s] live-decision EXECUTE on %s/%s refused: precondition_held is False "
+                        "(precondition_enforcing_enabled)", cycle_id, record.ticker, record.strategy_id,
+                    )
+                    self._precondition_blocked.append({
+                        "ticker": record.ticker, "strategy_id": record.strategy_id,
+                        "decision_id": record.id, "bar_ts": record.bar_ts,
+                    })
+                    mark_decision_applied(self._live_decision_backend, record.id)
+                    continue
                 if record.strategy_id not in strategy_cache:
                     strategy_cache[record.strategy_id] = await self._fetch_strategy_config(record.strategy_id)
                 strategy_cfg = strategy_cache[record.strategy_id]
@@ -448,6 +751,7 @@ class LiveScheduler:
                 "symbol": pos.ticker,
                 "target_weight": pos.position_size,
             })
+        record_edge("live_decision.executes->live.scheduler", "received" if weights or pending else "empty")
         return weights
 
     async def _fetch_strategy_config(self, strategy_id: str) -> dict[str, Any] | None:
@@ -456,16 +760,149 @@ class LiveScheduler:
                 f"{self._config.strategy_api_url}/strategy/strategies/{strategy_id}",
             )
             if resp.status_code != 200:
+                record_edge("strategy.config->live.scheduler", "missing", f"strategy {strategy_id}: HTTP {resp.status_code}")
                 return None
+            record_edge("strategy.config->live.scheduler", "received")
             return resp.json()
         except Exception as exc:
             LOG.warning("Could not fetch strategy %s: %s", strategy_id, exc)
+            record_edge("strategy.config->live.scheduler", "missing", f"strategy {strategy_id}: {exc}")
             return None
 
     async def _fetch_portfolio(self) -> dict[str, Any]:
-        resp = await self._http.get(f"{self._config.portfolio_api_url}/portfolio/state")
-        resp.raise_for_status()
-        return resp.json()
+        if self._config.scheduler_use_daily_allocation:
+            allocation = await self._fetch_daily_allocation()
+            if allocation is not None:
+                return allocation
+        edge = "portfolio.state->live.scheduler"
+        try:
+            resp = await self._http.get(f"{self._config.portfolio_api_url}/portfolio/state")
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            record_edge(edge, "missing", f"GET /portfolio/state failed: {e}")
+            raise  # unchanged: a failed portfolio read aborts the cycle
+        empty = not isinstance(data, dict) or data.get("status") == "empty" or not data.get("weights")
+        record_edge(edge, "empty" if empty else "received")
+        return data
+
+    async def _fetch_daily_allocation(self) -> dict[str, Any] | None:
+        """logic-audit A1: the portfolio's tilted, capital-scaled allocation, shaped like
+        /portfolio/state so the rest of the cycle is unchanged. Each weight is multiplied by
+        `deployable_equity / account_equity` (clamped to [0, 1]; 1.0 when either is missing) --
+        the drawdown ladder, maturity ladder and reserve act on TOTAL capital, not on the
+        relative weights, so this is where they finally bound real orders. None on any failure
+        (the caller then reads /portfolio/state, today's behavior, and `allocation_source`
+        says which one was used)."""
+        edge = "portfolio.daily_allocation->live.scheduler"
+        try:
+            resp = await self._http.get(f"{self._config.portfolio_api_url}/portfolio/daily-allocation")
+            resp.raise_for_status()
+            data = resp.json()
+            if not isinstance(data, dict):
+                raise ValueError(f"unexpected daily-allocation shape: {type(data).__name__}")
+        except Exception as e:  # noqa: BLE001 -- fall back to /portfolio/state
+            LOG.warning("daily-allocation unavailable, falling back to /portfolio/state: %s", e)
+            record_edge(edge, "missing", f"GET /portfolio/daily-allocation failed: {e}")
+            return None
+        weights = data.get("weights")
+        if data.get("status") != "ok" or not weights:
+            record_edge(edge, "empty")
+            return {**data, "weights": [], "allocation_source": "daily_allocation"}
+        fraction = 1.0
+        try:
+            equity, deployable = data.get("account_equity"), data.get("deployable_equity")
+            if equity is not None and deployable is not None and float(equity) > 0:
+                fraction = min(1.0, max(0.0, float(deployable) / float(equity)))
+        except (TypeError, ValueError):
+            fraction = 1.0
+        scaled = [{**w, "target_weight": float(w.get("target_weight", 0.0)) * fraction} for w in weights]
+        record_edge(edge, "received")
+        return {**data, "weights": scaled, "allocation_source": "daily_allocation", "deployable_fraction": fraction}
+
+    async def _fetch_trade_plan_symbols(self) -> set[str] | None:
+        """Symbols of ACTIVE trade_plan artifacts (upper-case), or None when they cannot be read."""
+        try:
+            resp = await self._http.get(
+                f"{self._config.research_api_url}/research/artifacts",
+                params={"status": "ACTIVE", "type_": "trade_plan"},
+            )
+            if resp.status_code != 200:
+                return None
+            symbols: set[str] = set()
+            for summary in resp.json():
+                artifact_id = summary.get("artifact_id")
+                if not artifact_id:
+                    continue
+                detail = await self._http.get(f"{self._config.research_api_url}/research/trade-plan/{artifact_id}")
+                if detail.status_code != 200:
+                    return None  # an unreadable plan means ownership is not fully known
+                raw = detail.json().get("trade_plan_data")
+                plan = json.loads(raw) if isinstance(raw, str) else (raw or {})
+                sym = str(plan.get("symbol") or "").upper()
+                if sym:
+                    symbols.add(sym)
+            return symbols
+        except Exception as e:  # noqa: BLE001
+            LOG.warning("Could not read active trade plans for symbol ownership: %s", e)
+            return None
+
+    async def _apply_symbol_ownership(
+        self, target_weights: list[dict[str, Any]], current_positions: dict[str, float],
+    ) -> tuple[list[dict[str, Any]], dict[str, float], dict[str, Any]]:
+        """logic-audit A2 (opt-in): who may this path trade? Three kinds of symbol:
+
+        * orchestrator-owned (open position in the trade-plan book, or an ACTIVE trade_plan artifact): removed
+          from both the targets and the positions the translator sees -- never sized, never closed here.
+        * scheduler-owned and no longer targeted (the order ledger shows the scheduler had a BUY accepted for
+          it, or it is listed in `scheduler_adopted_symbols`): kept, so the translator closes it (a retired
+          strategy's symbol). They are returned as `orphans_to_liquidate` so the cycle can fetch their
+          prices -- a symbol with no price is silently skipped, which is why nothing was ever closed before.
+        * anything else held with no target (a position placed by hand, or by something this path cannot
+          identify): left alone.
+        When the active-plan read fails ownership is unknown, so every held position with no target is left
+        alone. Never raises: a failure here leaves the inputs untouched."""
+        info: dict[str, Any] = {}
+        try:
+            from vinu_live.book.positions import list_open_positions as _book_open_positions
+
+            owned = {p.symbol.upper() for p in _book_open_positions(self._book)}
+            plan_symbols = await self._fetch_trade_plan_symbols()
+            if plan_symbols is not None:
+                owned |= plan_symbols
+            targeted = {str(tw.get("symbol", "")).upper() for tw in target_weights}
+            scheduler_owned = {
+                s.strip().upper() for s in (self._config.scheduler_adopted_symbols or "").split(",") if s.strip()
+            }
+            if self._execution_log is not None:
+                try:
+                    scheduler_owned |= self._execution_log.bought_symbols()
+                except Exception as e:  # noqa: BLE001 -- unknown ownership means "leave alone"
+                    LOG.warning("Could not read the order ledger for scheduler ownership: %s", e)
+            held_untargeted = {s for s in current_positions if s.upper() not in targeted and s.upper() not in owned}
+            if plan_symbols is None:
+                held_unowned_unknown = held_untargeted
+                orphans: set[str] = set()
+            else:
+                orphans = {s for s in held_untargeted if s.upper() in scheduler_owned}
+                held_unowned_unknown = held_untargeted - orphans
+            if orphans:
+                info["orphans_to_liquidate"] = sorted(orphans)
+            skipped_targets = sorted({str(tw.get("symbol", "")).upper() for tw in target_weights} & owned)
+            left_alone = sorted({s for s in current_positions if s.upper() in owned} | held_unowned_unknown)
+            if skipped_targets:
+                target_weights = [tw for tw in target_weights if str(tw.get("symbol", "")).upper() not in owned]
+            current_positions = {s: q for s, q in current_positions.items() if s not in left_alone}
+            if skipped_targets:
+                info["targets_skipped_orchestrator_owned"] = skipped_targets
+            if left_alone:
+                info["positions_left_alone"] = left_alone
+                LOG.warning("Symbol ownership: leaving %s alone (orchestrator-owned, hand-placed or ownership unknown)", left_alone)
+            if plan_symbols is None:
+                info["ownership_unknown"] = True
+        except Exception as e:  # noqa: BLE001 -- must never stop the cycle
+            LOG.warning("Symbol ownership check failed, inputs untouched: %s", e)
+        return target_weights, current_positions, info
 
     async def _fetch_positions(self) -> dict[str, float]:
         """Current broker positions, keyed by symbol.
@@ -480,13 +917,17 @@ class LiveScheduler:
         which is the correct response to "we don't actually know what we
         hold" -- not "assume we hold nothing."
         """
-        resp = await self._http.get(f"{self._config.agent_api_url}/agent/broker/positions")
-        resp.raise_for_status()
-        data = resp.json()
-        if not isinstance(data, list):
-            raise ValueError(
-                f"Unexpected /agent/broker/positions response shape: {type(data).__name__}"
-            )
+        try:
+            resp = await self._http.get(f"{self._config.agent_api_url}/agent/broker/positions")
+            resp.raise_for_status()
+            data = resp.json()
+            if not isinstance(data, list):
+                raise ValueError(
+                    f"Unexpected /agent/broker/positions response shape: {type(data).__name__}"
+                )
+        except Exception as e:
+            self._broker_problems.append(f"broker positions could not be read ({type(e).__name__}: {e})")
+            raise
         return {
             p.get("symbol", ""): float(p.get("qty", 0))
             for p in data if p.get("symbol")
@@ -515,6 +956,13 @@ class LiveScheduler:
                     bars = resp.json().get("data", [])
                     if bars:
                         prices[symbol] = float(bars[-1].get("close", 0.0))
+                        try:
+                            self._last_price_ts[symbol] = float(bars[-1]["bar_ts"])
+                        except (KeyError, TypeError, ValueError):
+                            # no usable timestamp -> drop any old one so the
+                            # freshness guard fails open instead of blocking
+                            # on a lingering stale value.
+                            self._last_price_ts.pop(symbol, None)
             except Exception as e:
                 LOG.warning("Could not fetch price for %s: %s", symbol, e)
         return prices
@@ -531,14 +979,30 @@ class LiveScheduler:
         balance. Now sizing is based on the real account, and the fallback is
         explicit config, logged loudly, not a silent magic number.
         """
+        self._equity_is_real = False
+        read_failed = True  # only an explicit `configured: false` reply clears this
         try:
             resp = await self._http.get(f"{self._config.agent_api_url}/agent/broker/account")
             if resp.status_code == 200:
                 account = resp.json()
                 if account.get("configured") and account.get("equity") is not None:
+                    self._equity_is_real = True
                     return float(account["equity"])
+                read_failed = bool(account.get("configured"))
+            else:
+                LOG.warning("Account equity read returned HTTP %s", resp.status_code)
         except Exception as e:
             LOG.warning("Could not fetch account equity: %s", e)
+
+        if read_failed:
+            self._broker_problems.append("a configured broker's account equity could not be read")
+        if read_failed and self._config.abort_on_equity_read_failure:
+            # logic-audit A7: a broker that IS configured but could not be read
+            # must not be sized from a placeholder or from positions alone.
+            raise RuntimeError(
+                "broker account equity could not be read; aborting the cycle "
+                "rather than sizing on a placeholder (abort_on_equity_read_failure)"
+            )
 
         positions_value = sum(
             qty * prices.get(sym, 0.0) for sym, qty in current_positions.items()
@@ -578,24 +1042,77 @@ class LiveScheduler:
                 LOG.warning("Could not fetch volume profile for %s, using equal weights: %s", symbol, e)
         return weights
 
+    @staticmethod
+    def _order_outcome(resp: Any) -> tuple[str, dict[str, Any]]:
+        """(outcome, ledger details) for the agent API's answer to POST /agent/broker/order.
+
+        The route answers HTTP 200 even when OrderGuard refuses the order or the broker call fails: the real
+        verdict is the JSON `status` (`submitted` / `rejected` / `pending_confirmation` / `error`). This path used
+        to call every HTTP < 400 answer "submitted" without reading the body (the orchestrator does read it), so a
+        refused order was reported as placed. An unreadable or unrecognised body still counts as submitted (the
+        old behavior); only an explicit refusal is reported as one."""
+        http = getattr(resp, "status_code", 0)
+        if not isinstance(http, int) or http >= 400:
+            return "failed", {}
+        try:
+            body = resp.json()
+        except Exception:  # noqa: BLE001
+            body = None
+        if not isinstance(body, dict):
+            return "submitted", {}
+        status = body.get("status")
+        if status in ("rejected", "pending_confirmation", "error"):
+            reason = body.get("reason") or body.get("message") or body.get("error") or ""
+            code = body.get("reason_code")
+            return str(status), {"reason": f"{reason} [{code}]" if code else str(reason)}
+        detail: dict[str, Any] = {}
+        if body.get("order_id"):
+            detail["order_id"] = str(body["order_id"])
+        if body.get("broker_status"):
+            detail["broker_status"] = str(body["broker_status"])
+        return "submitted", detail
+
+    def _log_execution(self, slice_: Any, **fields: Any) -> None:
+        """One ledger row for this slice. Never raises (the ledger itself swallows errors too)."""
+        if self._execution_log is None:
+            return
+        try:
+            self._execution_log.record(
+                cycle_id=self._current_cycle_id, symbol=slice_.symbol, side=slice_.side, qty=slice_.qty,
+                slice_number=slice_.slice_number, total_slices=slice_.total_slices, **fields,
+            )
+        except Exception as e:  # noqa: BLE001
+            LOG.debug("execution ledger row failed: %s", e)
+
     async def _execute_plan(self, plan: Any, prices: dict[str, float] | None = None) -> list[dict]:
         # Checks both the local HALT file AND the agent's cross-process kill
         # switch (see guards.halt_reason's docstring) -- this path used to
         # only check the local file, so a breaker/OOD-engaged remote halt
         # left the TWAP/VWAP loop cycling and failing orders instead of
         # stopping cleanly.
-        _halt = await halt_reason(self._http, self._config.agent_api_url)
+        _halt = await halt_reason(self._http, self._config.agent_api_url, edge_id="halt_flag->live.scheduler")
+        exempt = self._config.scheduler_exits_exempt_from_halts  # logic-audit A5
+        slices = list(plan.slices)
         if _halt:
-            LOG.warning("Trading halted (%s) — skipping all order execution", _halt)
-            return []
+            if exempt:
+                slices = [s for s in slices if s.reduce_only]
+            if not exempt or not slices:
+                LOG.warning("Trading halted (%s) — skipping all order execution", _halt)
+                return []
+            LOG.warning(
+                "Trading halted (%s) -- executing only the %d risk-reducing slice(s)", _halt, len(slices),
+            )
         prices = prices or {}
         submitted = []
         delays = schedule_slice_delays(
-            plan.total_orders, total_window_minutes=60,
+            len(slices), total_window_minutes=60,
         )
         import time as _time
 
-        for i, slice_ in enumerate(plan.slices):
+        for i, slice_ in enumerate(slices):
+            exit_slice = exempt and slice_.reduce_only
+            if exempt and _halt and not slice_.reduce_only:
+                continue  # a halt that appeared mid-plan: drop the increases, keep the exits
             # Execution unification: this path used to fire straight to the
             # broker with no risk gates at all, unlike the signal-driven
             # entry path's spread/event-blackout checks. Same guards, same
@@ -608,7 +1125,7 @@ class LiveScheduler:
             # wrapper) so the same number also drives the order_type
             # decision below -- same "fetch once, reuse for gate + routing"
             # shape orchestrator.py's _maybe_enter already uses.
-            _spread_bps = await fetch_spread_bps(self._http, self._config.stock_price_api_url, slice_.symbol)
+            _spread_bps, _quote_mid = await fetch_quote_snapshot(self._http, self._config.stock_price_api_url, slice_.symbol)
             # A per-instruction max_slippage_pct budget (SignalTranslator's
             # own knob, previously set but never read by anything -- see
             # OrderInstruction.max_slippage_pct's docstring) tightens the
@@ -617,8 +1134,11 @@ class LiveScheduler:
             _spread_ceiling = MAX_SPREAD_BPS
             if slice_.max_slippage_pct > 0:
                 _spread_ceiling = min(MAX_SPREAD_BPS, slice_.max_slippage_pct * 10_000.0)
-            _block_reason = spread_gate_reason_from_bps(_spread_bps, _spread_ceiling) or await event_blackout_reason(
-                self._http, self._config.stock_price_api_url, slice_.symbol, EVENT_BLACKOUT_HOURS,
+            # A5: a risk-reducing slice is never held back by the spread/event gate.
+            _block_reason = None if exit_slice else (
+                spread_gate_reason_from_bps(_spread_bps, _spread_ceiling) or await event_blackout_reason(
+                    self._http, self._config.stock_price_api_url, slice_.symbol, EVENT_BLACKOUT_HOURS,
+                )
             )
             if _block_reason:
                 LOG.warning(
@@ -629,6 +1149,10 @@ class LiveScheduler:
                     "symbol": slice_.symbol, "side": slice_.side, "qty": slice_.qty,
                     "slice": slice_.slice_number, "status": "skipped", "reason": _block_reason,
                 })
+                self._log_execution(
+                    slice_, outcome="skipped", reference_price=prices.get(slice_.symbol), spread_bps=_spread_bps,
+                    quote_mid=_quote_mid, reduce_only=exit_slice, reason=str(_block_reason),
+                )
                 if i < len(delays):
                     await asyncio.sleep(delays[i])
                 continue
@@ -641,7 +1165,8 @@ class LiveScheduler:
             # "limit" but no price is known for this symbol (fail-open --
             # never submit a limit order with a guessed price).
             _slippage_budget = slice_.max_slippage_pct if slice_.max_slippage_pct > 0 else MAX_SLIPPAGE_PCT
-            _order_type = _choose_entry_order_type(_spread_bps, _slippage_budget)
+            # A5: an exit goes as a market order -- a passive limit could rest unfilled and trap the position.
+            _order_type = "market" if exit_slice else _choose_entry_order_type(_spread_bps, _slippage_budget)
             _limit_price: float | None = None
             if _order_type == "limit":
                 _price = prices.get(slice_.symbol)
@@ -665,25 +1190,44 @@ class LiveScheduler:
                 }
                 if _limit_price is not None:
                     _payload["limit_price"] = _limit_price
+                if exit_slice:
+                    _payload["reduce_only"] = True
                 resp = await self._http.post(
                     f"{self._config.agent_api_url}/agent/broker/order",
                     json=_payload,
                 )
+                outcome, detail = self._order_outcome(resp)
                 result = {
                     "symbol": slice_.symbol,
                     "side": slice_.side,
                     "qty": slice_.qty,
                     "slice": slice_.slice_number,
-                    "status": "submitted" if resp.status_code < 400 else "failed",
+                    "status": outcome,
                 }
+                if outcome not in ("submitted", "failed") and detail.get("reason"):
+                    result["reason"] = detail["reason"]
+                if outcome in ("failed", "error"):
+                    self._broker_problems.append(f"order for {slice_.symbol} failed at the broker/API level ({outcome})")
                 submitted.append(result)
-                LOG.info(
-                    "Submitted %s %s %s (slice %d/%d)",
-                    slice_.side, slice_.qty, slice_.symbol,
-                    slice_.slice_number, slice_.total_slices,
+                self._log_execution(
+                    slice_, outcome=outcome, reference_price=prices.get(slice_.symbol), spread_bps=_spread_bps,
+                    quote_mid=_quote_mid, order_type=_order_type, limit_price=_limit_price, reduce_only=exit_slice,
+                    client_order_id=_cid, http_status=resp.status_code, **detail,
                 )
+                if outcome == "submitted":
+                    LOG.info(
+                        "Submitted %s %s %s (slice %d/%d)",
+                        slice_.side, slice_.qty, slice_.symbol,
+                        slice_.slice_number, slice_.total_slices,
+                    )
+                else:
+                    LOG.warning(
+                        "Order for %s %s %s was NOT accepted (%s): %s",
+                        slice_.side, slice_.qty, slice_.symbol, outcome, detail.get("reason", ""),
+                    )
             except Exception as e:
                 LOG.warning("Order submission failed: %s", e)
+                self._broker_problems.append(f"order for {slice_.symbol} could not be sent ({type(e).__name__})")
                 submitted.append({
                     "symbol": slice_.symbol,
                     "side": slice_.side,
@@ -692,11 +1236,19 @@ class LiveScheduler:
                     "status": "error",
                     "error": str(e),
                 })
+                self._log_execution(
+                    slice_, outcome="error", reference_price=prices.get(slice_.symbol), spread_bps=_spread_bps,
+                    quote_mid=_quote_mid, order_type=_order_type, limit_price=_limit_price, reduce_only=exit_slice,
+                    client_order_id=_cid, reason=str(e),
+                )
 
             if i < len(delays):
                 await asyncio.sleep(delays[i])
-                _mid_halt = await halt_reason(self._http, self._config.agent_api_url)
+                _mid_halt = await halt_reason(self._http, self._config.agent_api_url, edge_id="halt_flag->live.scheduler")
                 if _mid_halt:
+                    if exempt:
+                        _halt = _mid_halt  # remaining increases are dropped above; exits still go
+                        continue
                     LOG.warning(
                         "Trading halted mid-plan (%s) — stopping remaining %d slices",
                         _mid_halt, len(plan.slices) - i - 1,

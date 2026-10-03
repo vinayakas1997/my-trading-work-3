@@ -57,6 +57,21 @@ def create_app() -> FastAPI:
     async def get_daily_allocation() -> dict[str, Any]:
         return await _service.compute_daily_allocation()
 
+    @router.get("/allocation-history")
+    async def get_allocation_history(limit: int = 30) -> dict[str, Any]:
+        """Persisted daily allocations, newest first (one summary line each). Read-only."""
+        rows = _service.allocation_history_summaries(limit=limit)
+        return {"count": len(rows), "allocations": rows}
+
+    @router.get("/not-funded")
+    async def get_not_funded() -> dict[str, Any]:
+        """Why candidates were left unfunded in the most recent recorded daily allocation.
+        `status: none` means no allocation has been recorded yet (not an error)."""
+        latest = _service.latest_not_funded()
+        if latest is None:
+            return {"status": "none", "count": 0, "not_funded": []}
+        return {"status": "ok", **latest}
+
     @router.get("/daily-game-plan")
     async def get_daily_game_plan() -> dict[str, Any]:
         return await _service.compute_daily_game_plan()

@@ -1,0 +1,547 @@
+# Pipeline edge manifest -- see pipeline_edges.py and
+# newer-thinking-with-discussed/the-inconsistencies-v2/03-implementation-plan.md (Phase 1).
+#
+# One entry per "this output must be consumed there" connection on the money path.
+#   status: wired  -> consumer source must reference the producer's output (regression check)
+#   status: gap    -> a known missing connection; consumer must NOT reference it yet.
+#                     Wiring it makes the test fail with DRIFT_NOW_WIRED: flip it to `wired`.
+# Paths are relative to vinu-components/. Tokens are matched as plain substrings in
+# non-comment lines; choose call-shaped tokens (a route path or function call).
+# `empty_ok`: true when "producer returned nothing yet" is a legitimate answer
+# (see routes_introspect.py's empty-meaning contract).
+version: 1
+
+edges:
+
+  # ---------------- Layer 4/5 -> 6: what the live executors consume ----------------
+
+  - id: portfolio.state->live.scheduler
+    producer:
+      service: vinu-portfolio
+      files: [vinu-portfolio/vinu_portfolio/server/app.py]
+      defines: ['"/state"']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/scheduler.py]
+      references: ['/portfolio/state']
+      purpose: base risk-parity target weights that the scheduler turns into orders
+    cadence: per scheduler cycle (3600s default)
+    empty_ok: true
+    status: wired
+    instrumented: true
+    stale_after_sec: 8000
+
+  - id: portfolio.daily_allocation->live.scheduler
+    producer:
+      service: vinu-portfolio
+      files: [vinu-portfolio/vinu_portfolio/server/app.py]
+      defines: ['"/daily-allocation"']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/scheduler.py]
+      references: ['/portfolio/daily-allocation', 'compute_daily_allocation(']
+      purpose: tilted weights + deployable_equity (drawdown halve, maturity scaling, reserve)
+    cadence: per scheduler cycle
+    empty_ok: false
+    status: wired
+    instrumented: true
+    stale_after_sec: 8000
+    note: wired 2026-10-03 (logic-audit A1), but read only when scheduler_use_daily_allocation is on (default off); when on, portfolio.state is read only as the fallback
+
+  - id: live_decision.executes->live.scheduler
+    producer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/live_decision/storage.py]
+      defines: ['def list_unapplied_executes']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/scheduler.py]
+      references: ['list_unapplied_executes(']
+      purpose: folds approved live-decision EXECUTE verdicts into target weights
+    cadence: per scheduler cycle
+    empty_ok: true
+    status: wired
+    instrumented: true
+    stale_after_sec: 8000
+
+  - id: strategy.config->live.scheduler
+    producer:
+      service: vinu-strategy
+      files: [vinu-strategy/vinu_strategy/server/routes_read.py]
+      defines: ['"/strategies/{name}"']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/scheduler.py]
+      references: ['/strategy/strategies/']
+      purpose: reads live_decision_position_size to size an EXECUTE
+    cadence: per EXECUTE
+    empty_ok: false
+    status: wired
+    instrumented: true
+
+  - id: research.active_trade_plans->live.orchestrator
+    producer:
+      service: vinu-research
+      files: [vinu-research/vinu_research/server/routes_read.py]
+      defines: ['"/artifacts"']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/trade_plan/orchestrator.py]
+      references: ['"type_": "trade_plan"']
+      purpose: the plans the orchestrator enters, monitors and exits
+    cadence: per orchestrator cycle (~90s)
+    empty_ok: true
+    status: wired
+    instrumented: true
+    stale_after_sec: 1800
+
+  - id: research.created_trade_plans->live.approval_worker
+    producer:
+      service: vinu-research
+      files: [vinu-research/vinu_research/server/routes_trade_plan.py]
+      defines: ['def approve_trade_plan_route']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/trade_plan_approval_worker.py]
+      references: ['/approve']
+      purpose: schedules approval of CREATED plans (the gate itself lives in research)
+    cadence: per approval-worker cycle
+    empty_ok: true
+    status: wired
+
+  # ---------------- risk and halt signals ----------------
+
+  - id: portfolio.risk_status->agent.order_guard
+    producer:
+      service: vinu-portfolio
+      files: [vinu-portfolio/vinu_portfolio/server/app.py]
+      defines: ['"/risk/status"']
+    consumer:
+      service: vinu-agent
+      files: [vinu-agent/vinu_agent/broker/order_guard.py]
+      references: ['/portfolio/risk/status']
+      purpose: risk-budget halt / tier check on every order
+    cadence: per order
+    empty_ok: false
+    status: wired
+
+  - id: portfolio.state->agent.order_guard
+    producer:
+      service: vinu-portfolio
+      files: [vinu-portfolio/vinu_portfolio/server/app.py]
+      defines: ['"/state"']
+    consumer:
+      service: vinu-agent
+      files: [vinu-agent/vinu_agent/broker/order_guard.py]
+      references: ['/portfolio/state']
+      purpose: pairwise-correlation / concentration check on every order
+    cadence: per order
+    empty_ok: true
+    status: wired
+
+  - id: halt_flag->live.scheduler
+    producer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/trade_plan/guards.py]
+      defines: ['async def halt_reason']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/scheduler.py]
+      references: ['halt_reason(']
+      purpose: stop order execution when the local HALT file or remote kill switch is on
+    cadence: per cycle and per slice
+    empty_ok: true
+    status: wired
+    instrumented: true
+
+  - id: halt_flag->live.orchestrator
+    producer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/trade_plan/guards.py]
+      defines: ['async def halt_reason']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/trade_plan/orchestrator.py]
+      references: ['_halt_reason(']
+      purpose: block new entries during a halt (exits stay allowed)
+    cadence: per cycle
+    empty_ok: true
+    status: wired
+    instrumented: true
+
+  - id: breaker.limits->live.scheduler
+    producer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/breaker/engine.py]
+      defines: ['def check_limits']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/scheduler.py]
+      references: ['check_limits(']
+      purpose: daily-loss / VaR / leverage / cluster / position-count halt before orders
+    cadence: per cycle
+    empty_ok: false
+    status: wired
+    instrumented: true
+
+  - id: drawdown_status->portfolio.allocation
+    producer:
+      service: vinu-portfolio
+      files: [vinu-portfolio/vinu_portfolio/storage/drawdown_status.py]
+      defines: ['class DrawdownStatusStore']
+    consumer:
+      service: vinu-portfolio
+      files: [vinu-portfolio/vinu_portfolio/service.py]
+      references: ['DrawdownStatusStore(']
+      purpose: halve/flat/halt multiplier inside compute_daily_allocation
+    cadence: per allocation
+    empty_ok: true
+    status: wired
+    note: wired inside compute_daily_allocation only -- see portfolio.daily_allocation->live.scheduler
+
+  # ---------------- guard parity between the two executors ----------------
+
+  - id: guard.cooldown->live.scheduler
+    producer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/trade_plan/orchestrator.py]
+      defines: ['def cooldown_active']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/scheduler.py]
+      references: ['cooldown_active(']
+      purpose: pause new entries after consecutive losses
+    cadence: per cycle
+    empty_ok: true
+    status: wired
+    note: wired 2026-10-02 (plan 2.2); opt-in via scheduler_entry_guards_enabled / VINU_LIVE_SCHEDULER_ENTRY_GUARDS_ENABLED, default off; entries only
+
+  - id: guard.turbulence->live.scheduler
+    producer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/trade_plan/orchestrator.py]
+      defines: ['async def turbulence_active']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/scheduler.py]
+      references: ['turbulence_active(']
+      purpose: pause new entries when 14-day realized vol is extreme
+    cadence: per cycle
+    empty_ok: true
+    status: wired
+    note: wired 2026-10-02 (plan 2.2); opt-in via scheduler_entry_guards_enabled / VINU_LIVE_SCHEDULER_ENTRY_GUARDS_ENABLED, default off; entries only
+
+  - id: guard.data_freshness->live.scheduler
+    producer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/trade_plan/orchestrator.py]
+      defines: ['PRICE_MAX_AGE_HOURS']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/scheduler.py]
+      references: ['PRICE_MAX_AGE_HOURS', '_price_ts_age_hours(']
+      purpose: do not trade on a price from a stalled feed
+    cadence: per cycle
+    empty_ok: true
+    status: wired
+    note: wired 2026-10-02 (plan 2.2); opt-in via scheduler_entry_guards_enabled / VINU_LIVE_SCHEDULER_ENTRY_GUARDS_ENABLED, default off; entries only
+
+  - id: order.reduce_only->live.scheduler
+    producer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/trade_plan/orchestrator.py]
+      defines: ['reduce_only: bool = False']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/scheduler.py]
+      references: ['reduce_only']
+      purpose: risk-reducing orders pass halts and entry-only gates
+    cadence: per order
+    empty_ok: false
+    status: wired
+    note: wired 2026-10-03 (logic-audit A5), but only when scheduler_exits_exempt_from_halts is on (default off)
+
+  - id: book.writes->live.scheduler
+    producer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/book/positions.py]
+      defines: ['def open_position', 'def close_position']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/scheduler.py]
+      references: ['open_position(self._book', 'close_position(self._book', 'reduce_position(self._book']
+      purpose: scheduler-placed orders recorded in the book the breaker checks
+    cadence: per fill
+    empty_ok: false
+    status: gap
+    gap_ref: logic-audit-2026-10-02 A6
+    note: scheduler reads the book for check_limits() but never writes its own positions to it
+
+  - id: precondition_held->live.scheduler
+    producer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/live_decision/storage.py]
+      defines: ['precondition_held']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/scheduler.py]
+      references: ['precondition_held']
+      purpose: skip an EXECUTE whose strategy precondition did not hold
+    cadence: per EXECUTE
+    empty_ok: false
+    status: wired
+    note: wired 2026-10-03 (inconsistencies v1 A8), but enforced only when precondition_enforcing_enabled is on (default off)
+
+  # ---------------- maturity, reflection and evidence feeding decisions ----------------
+
+  - id: maturity.status->live.limits
+    producer:
+      service: vinu-research
+      files: [vinu-research/vinu_research/server/routes_introspect.py]
+      defines: ['"/maturity/status"']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/scheduler.py]
+      references: ['fetch_maturity_status(']
+      purpose: scale breaker limits by maturity tier (opt-in)
+    cadence: per cycle when enabled
+    empty_ok: true
+    status: wired
+    instrumented: true
+
+  - id: maturity.status->portfolio.capital
+    producer:
+      service: vinu-research
+      files: [vinu-research/vinu_research/maturity_assessor.py]
+      defines: ['def assess']
+    consumer:
+      service: vinu-portfolio
+      files: [vinu-portfolio/vinu_portfolio/service.py]
+      references: ['get_maturity_assessment']
+      purpose: deployable-equity multiplier by tier (opt-in) -- inside compute_daily_allocation
+    cadence: per allocation when enabled
+    empty_ok: true
+    status: wired
+
+  - id: maturity.status->agent.live_decision_context
+    producer:
+      service: vinu-research
+      files: [vinu-research/vinu_research/server/routes_introspect.py]
+      defines: ['"/maturity/status"']
+    consumer:
+      service: vinu-agent
+      files: [vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py]
+      references: ['maturity/status']
+      purpose: shows the reviewer the current tier (opt-in)
+    cadence: per decision
+    empty_ok: true
+    status: wired
+
+  - id: reflection.synthesis->agent.idea_generator
+    producer:
+      service: vinu-reflection
+      files: [vinu-reflection/vinu_reflection/server/routes_synthesis.py]
+      defines: ['synthesis/latest', '"/synthesis/latest"']
+    consumer:
+      service: vinu-agent
+      files: [vinu-agent/vinu_agent/tools/reflection_synthesis_tool.py]
+      references: ['/reflection/synthesis/latest']
+      purpose: advisory system-level synthesis for idea generation
+    cadence: per idea cycle
+    empty_ok: true
+    status: wired
+
+  - id: reflection.notable_beliefs->agent.live_decision_context
+    producer:
+      service: vinu-reflection
+      files: [vinu-reflection/vinu_reflection/server/routes_synthesis.py]
+      defines: ['beliefs/notable']
+    consumer:
+      service: vinu-agent
+      files: [vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py]
+      references: ['beliefs/notable']
+      purpose: advisory reflection notes for the deciding agent
+    cadence: per decision
+    empty_ok: true
+    status: wired
+
+  - id: research.unconfirmed_moves->agent.live_decision_context
+    producer:
+      service: vinu-research
+      files: [vinu-research/vinu_research/server/routes_signal_evidence.py]
+      defines: ['"/unconfirmed-moves"']
+    consumer:
+      service: vinu-agent
+      files: [vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py]
+      references: ['/research/unconfirmed-moves']
+      purpose: Track-2 moves that Track-1 did not confirm
+    cadence: per decision
+    empty_ok: true
+    status: wired
+
+  - id: signal_evidence->hypothesis_registry
+    producer:
+      service: vinu-research
+      files: [vinu-research/vinu_research/signal_evidence_bridge.py]
+      defines: ['def sync_signal_evidence_to_hypotheses']
+    consumer:
+      service: vinu-agent
+      files: [vinu-agent/vinu_agent/agent/scheduler_workers.py]
+      references: ['sync_signal_evidence_to_hypotheses(']
+      purpose: carries Track-1 trigger evidence into the hypothesis evidence trail
+    cadence: scheduled worker
+    empty_ok: true
+    status: wired
+
+  - id: evaluation_status->agent.idea_prompt
+    producer:
+      service: vinu-infra
+      files: [vinu-infra/strategy_evaluation.py]
+      defines: ['class StrategyEvaluationStore']
+    consumer:
+      service: vinu-agent
+      files: [vinu-agent/vinu_agent/agent/scheduler_workers.py]
+      references: ['_strategy_evaluation_context_for_ticker(']
+      purpose: why-isn't-this-trading context for idea generation (advisory)
+    cadence: per idea cycle
+    empty_ok: true
+    status: wired
+
+  - id: screener.top->agent.planner_worker
+    producer:
+      service: vinu-screener
+      files: [vinu-screener/vinu_screener/server/app.py]
+      defines: ['/screener/rankers/{ranker_id}/latest']
+    consumer:
+      service: vinu-agent
+      files: [vinu-agent/vinu_agent/cli.py]
+      references: ['fetch_screener_top_tickers(']
+      purpose: live ticker discovery for the planner-worker (opt-in)
+    cadence: per planner cycle
+    empty_ok: true
+    status: wired
+
+  - id: reconciliation_drift->agent.notify
+    producer:
+      service: vinu-agent
+      files: [vinu-agent/vinu_agent/server/routes_notify.py]
+      defines: ['"/notify/reconciliation-drift"']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/scheduler.py]
+      references: ['/notify/reconciliation-drift']
+      purpose: alert when expected-vs-actual drift persists for 3 cycles
+    cadence: edge-triggered
+    empty_ok: true
+    status: wired
+
+  # ---------------- live-decision position protection (plan 2.3) ----------------
+
+  - id: strategy.stop_rules->live.poller
+    producer:
+      service: vinu-strategy
+      files: [vinu-strategy/vinu_strategy/api.py]
+      defines: ['"live_decision_stop_pct"', '"live_decision_max_hold_bars"']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/live_decision/poller.py]
+      references: ['live_decision_stop_pct', 'live_decision_max_hold_bars']
+      purpose: rule-based stop / max-hold exit for an open live-decision position (0 = off)
+    cadence: per candle close
+    empty_ok: true
+    status: wired
+    note: added 2026-10-02 (plan 2.3, audit A3); both fields default to 0 = off
+
+  - id: live_decision.entry_price<-live.scheduler
+    producer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/live_decision/storage.py]
+      defines: ['def set_entry_price_if_missing']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/scheduler.py]
+      references: ['set_entry_price_if_missing(']
+      purpose: stamps the first priced cycle's price as a position's entry reference for the stop
+    cadence: per scheduler cycle, write-once
+    empty_ok: true
+    status: wired
+    note: added 2026-10-02 (plan 2.3); approximates the fill with the last daily close
+
+  # ---------------- live-decision visibility and recovery (plan 2.4) ----------------
+
+  - id: live_decision.unsized_executes->live.api
+    producer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/live_decision/storage.py]
+      defines: ['def list_needs_sizing']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/server/app.py, vinu-live/vinu_live/scheduler.py]
+      references: ['list_needs_sizing(']
+      purpose: EXECUTE decisions with no configured size, shown at /live/decisions/needs-sizing and counted in the cycle result
+    cadence: on request / per scheduler cycle
+    empty_ok: true
+    status: wired
+    note: added 2026-10-03 (plan 2.4, v1 C2); read-time anti-join, no table
+
+  - id: live_decision.stuck_trigger->agent.notify
+    producer:
+      service: vinu-agent
+      files: [vinu-agent/vinu_agent/server/routes_notify.py]
+      defines: ['"live_decision_stuck"']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/live_decision/poller.py]
+      references: ['live_decision_stuck']
+      purpose: one alert when a ready_to_execute trigger is expired after repeated unresolved agent calls
+    cadence: edge-triggered, once per stuck trigger
+    empty_ok: true
+    status: wired
+    note: added 2026-10-03 (plan 2.4, v1 C1)
+
+  - id: sweep.base_code_hash->research.graveyard
+    producer:
+      service: vinu-research
+      files: [vinu-research/vinu_research/sweep_store.py]
+      defines: ['def find_sweeps_by_base_code_hash']
+    consumer:
+      service: vinu-research
+      files: [vinu-research/vinu_research/candidate_graveyard.py]
+      references: ['find_sweeps_by_base_code_hash(', 'find_by_code_hash(']
+      purpose: joins a generation-time discard to the sweeps that later varied the same code (and back)
+    cadence: on request (GET /research/candidate-graveyard/{symbol})
+    empty_ok: true
+    status: wired
+    note: added 2026-10-03 (plan 2.4c, v1 A4); read-only, not a gate
+
+  # ---------------- run-quality and unfunded-candidate visibility (plan 2.4d) ----------------
+
+  - id: portfolio.not_funded_history->portfolio.api
+    producer:
+      service: vinu-portfolio
+      files: [vinu-portfolio/vinu_portfolio/service.py]
+      defines: ['def latest_not_funded', 'def allocation_history_summaries']
+    consumer:
+      service: vinu-portfolio
+      files: [vinu-portfolio/vinu_portfolio/server/app.py]
+      references: ['latest_not_funded(', 'allocation_history_summaries(']
+      purpose: persisted daily allocations and why candidates were left unfunded, readable over HTTP
+    cadence: on request
+    empty_ok: true
+    status: wired
+    note: added 2026-10-03 (plan 2.4d, v1 C4); the store had readers but no route
+
+  - id: strategy.run_quality->strategy.runs_api
+    producer:
+      service: vinu-strategy
+      files: [vinu-strategy/vinu_strategy/storage/meta.py]
+      defines: ['def _parse_metadata']
+    consumer:
+      service: vinu-strategy
+      files: [vinu-strategy/vinu_strategy/service.py]
+      references: ['"is_degraded": bool(data_quality)', '"sanity_issue_count"']
+      purpose: degraded-run and sanity-issue facts persisted on the run row, returned by GET /strategy/runs
+    cadence: per strategy run
+    empty_ok: false
+    status: wired
+    note: added 2026-10-03 (plan 2.4d, v1 C4)

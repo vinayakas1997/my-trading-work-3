@@ -1747,6 +1747,9 @@ class StrategyResearchLoop:
         # fails; it is not being actively developed further for now.
         if llm_available and previous_code and last_result is not None and last_critique is not None:
             llm_gen = LlmStrategyGenerator(self._llm)
+            # logic-audit B4: opt-in full metric row in the refinement prompt (see config).
+            if self._config.refine_prompt_full_metrics_enabled:
+                story = {**(story or {}), "full_metrics": True}
             candidates = await llm_gen.refine(
                 user_idea=user_idea,
                 symbol=symbol,

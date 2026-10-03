@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from vinu_infra.sqlite import SQLiteBackend
+from vinu_research.generation_candidate_store import code_hash
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sweep_runs (
@@ -61,7 +62,19 @@ CREATE INDEX IF NOT EXISTS idx_sweep_grid_points_sweep_id ON sweep_grid_points(s
 
 class SweepGridStore(SQLiteBackend):
     SCHEMA = _SCHEMA
-    SCHEMA_VERSION = 1
+    # v2 (the-inconsistencies-v2 plan 2.4c, v1 A3 + A4): three nullable columns, all
+    # backfill-safe (NULL = unknown for rows written before they existed).
+    SCHEMA_VERSION = 2
+    MIGRATIONS: list[tuple[str, str]] = [
+        ("ALTER TABLE sweep_runs ADD COLUMN base_code_hash TEXT",
+         "hash of the base code a base-code-mode sweep varied (links to generation_candidates.code_hash)"),
+        ("ALTER TABLE sweep_grid_points ADD COLUMN code_hash TEXT",
+         "hash of the exact code a succeeded point executed"),
+        ("ALTER TABLE sweep_grid_points ADD COLUMN param_diff_json TEXT",
+         "param_diff_from_winner, persisted so why-it-lost is readable later (v1 A3)"),
+        ("CREATE INDEX IF NOT EXISTS idx_sweep_runs_base_code_hash ON sweep_runs(base_code_hash)",
+         "lookup sweeps by the generated candidate they varied"),
+    ]
 
     def __init__(self, path: Path | str | None = None) -> None:
         super().__init__(path if path else ":memory:")
@@ -75,37 +88,56 @@ class SweepGridStore(SQLiteBackend):
         to_date: str,
         result: Any,
         now: float | None = None,
+        base_code: str | None = None,
     ) -> None:
         """`result` is a `sweep_grid.SweepGridResult` -- typed as `Any`
         here to avoid a circular import (`sweep_grid.py` calls this
-        module, not the other way around)."""
+        module, not the other way around).
+
+        `base_code` (base-code-mode sweeps only; None for recipe mode) is
+        hashed with the SAME `code_hash` the generation store uses, so a
+        generated candidate and a later sweep of it can be joined on one
+        identifier (v1 A4). Each loser's `param_diff_from_winner` is stored
+        on its own row (v1 A3) -- both are best-effort-nullable and tolerate
+        results that predate them (a result object without `strategy_code`
+        simply records no per-point hash)."""
+        from vinu_research.sweep_grid import param_diff_from_winner  # late: sweep_grid imports this module
+
+        base_code_hash = code_hash(base_code) if base_code else None
+        winner_params = result.ranked[0].params if result.ranked else None
         now = now if now is not None else time.time()
         conn = self._get_conn()
         conn.execute(
             """INSERT OR REPLACE INTO sweep_runs
                (sweep_id, symbol, from_date, to_date, requested, succeeded,
-                completeness, pbo_json, walk_forward_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                completeness, pbo_json, walk_forward_json, created_at, base_code_hash)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 sweep_id, symbol, from_date, to_date, result.requested, result.succeeded,
                 result.completeness,
                 json.dumps(result.pbo) if result.pbo is not None else None,
                 json.dumps(result.walk_forward) if result.walk_forward is not None else None,
-                now,
+                now, base_code_hash,
             ),
         )
         # rank is 1-indexed (rank 1 = the winner) -- result.ranked is
         # already best-first (comparison.rank_candidates), matching the
         # vocabulary a human reading this table would expect.
         for i, r in enumerate(result.ranked):
+            point_code = getattr(r.sweep_result, "strategy_code", None)
+            diff = (
+                json.dumps(param_diff_from_winner(r.params, winner_params))
+                if i > 0 and winner_params is not None else None
+            )
             conn.execute(
                 """INSERT INTO sweep_grid_points
                    (sweep_id, run_id, rank, score, risk_score, complexity_score,
-                    succeeded, failure_reason, params_json, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, 1, '', ?, ?)""",
+                    succeeded, failure_reason, params_json, created_at, code_hash, param_diff_json)
+                   VALUES (?, ?, ?, ?, ?, ?, 1, '', ?, ?, ?, ?)""",
                 (
                     sweep_id, r.sweep_result.run_id, i + 1, r.score, r.risk_score,
                     r.complexity_score, json.dumps(r.params), now,
+                    code_hash(point_code) if point_code else None, diff,
                 ),
             )
         for o in result.outcomes:
@@ -114,9 +146,13 @@ class SweepGridStore(SQLiteBackend):
             conn.execute(
                 """INSERT INTO sweep_grid_points
                    (sweep_id, run_id, rank, score, risk_score, complexity_score,
-                    succeeded, failure_reason, params_json, created_at)
-                   VALUES (?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?, ?)""",
-                (sweep_id, o.error, json.dumps(o.params), now),
+                    succeeded, failure_reason, params_json, created_at, code_hash, param_diff_json)
+                   VALUES (?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?, ?, NULL, ?)""",
+                (
+                    sweep_id, o.error, json.dumps(o.params), now,
+                    json.dumps(param_diff_from_winner(o.params, winner_params))
+                    if winner_params is not None else None,
+                ),
             )
         conn.commit()
 
@@ -145,6 +181,7 @@ class SweepGridStore(SQLiteBackend):
             "pbo": json.loads(header["pbo_json"]) if header["pbo_json"] else None,
             "walk_forward": json.loads(header["walk_forward_json"]) if header["walk_forward_json"] else None,
             "created_at": header["created_at"],
+            "base_code_hash": header["base_code_hash"],
             "points": [
                 {
                     "run_id": p["run_id"],
@@ -155,6 +192,10 @@ class SweepGridStore(SQLiteBackend):
                     "succeeded": bool(p["succeeded"]),
                     "failure_reason": p["failure_reason"],
                     "params": json.loads(p["params_json"]),
+                    "code_hash": p["code_hash"],
+                    "param_diff_from_winner": (
+                        json.loads(p["param_diff_json"]) if p["param_diff_json"] else None
+                    ),
                 }
                 for p in points
             ],
@@ -181,6 +222,27 @@ class SweepGridStore(SQLiteBackend):
                 "sweep_id": r["sweep_id"], "symbol": r["symbol"], "from_date": r["from_date"],
                 "to_date": r["to_date"], "requested": r["requested"], "succeeded": r["succeeded"],
                 "completeness": r["completeness"], "created_at": r["created_at"],
+                "base_code_hash": r["base_code_hash"],
+            }
+            for r in rows
+        ]
+
+    def find_sweeps_by_base_code_hash(self, hash_: str, *, limit: int = 10) -> list[dict[str, Any]]:
+        """Sweeps that varied the generated candidate with this `code_hash` -- the
+        generation-time -> sweep-time half of v1 A4's join (header rows only).
+        A recipe-mode sweep has no base code, so it can never match."""
+        if not hash_:
+            return []
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM sweep_runs WHERE base_code_hash = ? ORDER BY created_at DESC LIMIT ?",
+            (hash_, limit),
+        ).fetchall()
+        return [
+            {
+                "sweep_id": r["sweep_id"], "symbol": r["symbol"], "requested": r["requested"],
+                "succeeded": r["succeeded"], "completeness": r["completeness"],
+                "created_at": r["created_at"], "base_code_hash": r["base_code_hash"],
             }
             for r in rows
         ]

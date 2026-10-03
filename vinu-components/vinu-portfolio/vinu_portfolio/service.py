@@ -989,6 +989,34 @@ class PortfolioService:
             )
         return records
 
+    def allocation_history_summaries(self, limit: int = 30) -> list[dict[str, Any]]:
+        """Newest-first one-line summaries of every persisted daily allocation. The store
+        had readers but no HTTP route anywhere, so what was allocated (and what was left
+        unfunded) on past days could not be read without the database file."""
+        rows = self._allocation_history.list_allocations()[: max(0, limit)]
+        return [
+            {
+                "allocation_date": a.allocation_date, "created_at": a.created_at,
+                "n_weights": len(a.weights), "n_not_funded": len(a.not_funded),
+                "account_equity": a.account_equity, "deployable_equity": a.deployable_equity,
+            }
+            for a in rows
+        ]
+
+    def latest_not_funded(self) -> dict[str, Any] | None:
+        """The most recent persisted allocation's unfunded candidates, each a
+        `RejectionRecord` dict with its heuristic reason (smallest tilt, or concentration /
+        dilution). None when no allocation has ever been recorded -- distinct from an empty
+        `not_funded` list (an allocation ran and everything was funded)."""
+        rows = self._allocation_history.list_allocations()
+        if not rows:
+            return None
+        latest = rows[0]
+        return {
+            "allocation_date": latest.allocation_date, "created_at": latest.created_at,
+            "count": len(latest.not_funded), "not_funded": latest.not_funded,
+        }
+
     async def compute_daily_allocation(
         self, extra_candidates: list[dict[str, Any]] | None = None
     ) -> dict[str, Any]:

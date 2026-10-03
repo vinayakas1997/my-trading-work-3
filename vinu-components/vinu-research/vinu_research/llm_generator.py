@@ -263,6 +263,7 @@ def _build_refinement_prompt(
     features: dict[str, Any] | None = None,
     memory_context: str = "",
     stock_profile: str = "",
+    full_metrics: bool = False,
 ) -> str:
     m = last_result.metrics
     ind_list = ", ".join(indicators) if indicators else "sma_20, sma_50, rsi_14"
@@ -291,6 +292,19 @@ def _build_refinement_prompt(
         f"- Win Rate: {m.win_rate:.0%}",
         f"- Total Return: {m.total_return:.1%}",
         f"- Trade Count: {last_result.trade_count}",
+    ])
+    if full_metrics:
+        # logic-audit B4: the rest of the row this candidate is ranked on (opt-in).
+        lines.extend([
+            f"- Sortino: {m.sortino_ratio:.2f}",
+            f"- Calmar: {m.calmar_ratio:.2f}",
+            f"- CVaR 95 (daily): {m.cvar_95:.2%}",
+            f"- Profit Factor: {m.profit_factor:.2f}",
+            f"- Win/Loss Ratio: {m.win_loss_ratio:.2f}",
+            f"- Annual Turnover: {m.annual_turnover:.2f}",
+            f"- Sharpe 95% CI: [{m.sharpe_ci_95_low:.2f}, {m.sharpe_ci_95_high:.2f}] (p={m.sharpe_p_value:.3f})",
+        ])
+    lines.extend([
         "",
         f"Critic verdict: {last_critique.verdict}",
         f"Critic reasoning: {last_critique.reasoning}",
@@ -431,13 +445,14 @@ class LlmStrategyGenerator:
         features = (story or {}).get("features")
         memory_context = (story or {}).get("memory_context", "")
         stock_profile = (story or {}).get("stock_profile", "")
+        full_metrics = bool((story or {}).get("full_metrics", False))
         candidates: list[LlmCandidate] = []
         for i in range(n_candidates):
             try:
                 c = await self._refine_one(
                     user_idea, symbol, from_date, to_date, previous_code,
                     last_result, last_critique, indicators, angles, features,
-                    memory_context, stock_profile,
+                    memory_context, stock_profile, full_metrics,
                 )
                 if c is not None:
                     candidates.append(c)
@@ -459,10 +474,12 @@ class LlmStrategyGenerator:
         features: dict[str, Any] | None = None,
         memory_context: str = "",
         stock_profile: str = "",
+        full_metrics: bool = False,
     ) -> LlmCandidate | None:
         prompt = _build_refinement_prompt(
             user_idea, symbol, from_date, to_date, previous_code,
             last_result, last_critique, indicators, angles, features, memory_context, stock_profile,
+            full_metrics=full_metrics,
         )
         response = await self._llm.chat_json(LLM_GEN_SYSTEM_PROMPT, prompt)
         if response is None:

@@ -158,6 +158,11 @@ class LiveDecisionOpenPosition:
     closed_bar_ts: int | None = None
     closed_reason: str = ""
     id: int | None = None
+    # logic-audit A3: the price this position was sized at (the first priced
+    # scheduler cycle after it opened) -- the reference a rule-based stop
+    # measures against. None until that cycle runs; a stop cannot be
+    # evaluated without it (a max-hold rule can).
+    entry_price: float | None = None
 
 
 @dataclass

@@ -284,6 +284,28 @@ async def broker_order(body: OrderRequest) -> dict[str, Any]:
     return json.loads(result_json)
 
 
+@router.get("/broker/order/{order_id}")
+async def broker_order_status(order_id: str) -> dict[str, Any]:
+    """One order's current state at the broker, including `filled_avg_price` once it has filled. Read-only. Lets
+    vinu-live's order ledger turn "the broker accepted it" into "it filled at X", which is what slippage needs.
+    Like /broker/account it reports problems in the body (never a 5xx): `status` is `ok`, `unconfigured` or `error`."""
+    broker = get_live_broker()
+    if not broker.is_configured():
+        return {"configured": False, "status": "unconfigured"}
+    getter = getattr(broker, "get_order", None)
+    if getter is None:
+        return {"configured": True, "status": "error", "error": "this broker cannot look up an order by id"}
+    try:
+        o = await asyncio.to_thread(getter, order_id)
+    except Exception as e:  # noqa: BLE001
+        return {"configured": True, "status": "error", "error": str(e)}
+    return {
+        "configured": True, "status": "ok", "order_id": o.order_id, "symbol": o.symbol, "side": o.side,
+        "order_status": o.status, "qty": o.qty, "filled_qty": o.filled_qty,
+        "filled_avg_price": o.filled_avg_price, "updated_at": o.updated_at,
+    }
+
+
 @router.get("/broker/asset/{symbol}")
 async def broker_asset(symbol: str) -> dict[str, Any]:
     """Borrow check (16): shortable/easy_to_borrow for a symbol.

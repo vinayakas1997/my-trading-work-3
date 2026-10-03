@@ -263,3 +263,47 @@ def test_symbol_conflict_repeat_for_same_symbol_is_suppressed(client) -> None:
 
     assert first.json()["status"] == "ok"
     assert second.json()["status"] == "suppressed"
+
+
+def test_reconciliation_drift_describes_a_stuck_live_decision(client) -> None:
+    """v1 C1 (the-inconsistencies-v2): the poller reuses this route, with
+    action="live_decision_stuck" and a free-text `detail`, when a live-decision
+    trigger never produced a verdict and was expired."""
+    config = AgentConfig(discord_token="dtok", discord_admin_channel_id="999")
+    with patch("vinu_agent.server.routes_notify.load_config", return_value=config):
+        with patch("vinu_agent.agent.notify_channels.HttpDiscordChannel.send_message", new_callable=AsyncMock) as dc_send:
+            resp = client.post(
+                "/notify/reconciliation-drift",
+                json={
+                    "symbol": "AAPL/sma_cross", "action": "live_decision_stuck",
+                    "detail": "trigger t1: gave up after 3 unresolved live-decision attempts",
+                },
+            )
+
+    assert resp.json()["delivered"] == 1
+    sent_text = dc_send.await_args.args[1]
+    assert "AAPL/sma_cross" in sent_text
+    assert "never produced a usable verdict" in sent_text
+    assert "gave up after 3" in sent_text
+    assert "book=None" not in sent_text  # not the generic fallback wording
+
+
+def test_reconciliation_drift_route_describes_broker_outage_and_recovery(client) -> None:
+    """The scheduler reuses this route (symbol="BROKER") to say, loudly, that the broker could not be read, and
+    again when it is reachable. Neither is a drift between two books, so neither gets the 'manual review' footer."""
+    config = AgentConfig(discord_token="dtok", discord_admin_channel_id="999")
+    with patch("vinu_agent.server.routes_notify.load_config", return_value=config):
+        with patch("vinu_agent.agent.notify_channels.HttpDiscordChannel.send_message", new_callable=AsyncMock) as dc_send:
+            down = client.post("/notify/reconciliation-drift", json={
+                "symbol": "BROKER", "action": "broker_unreachable",
+                "detail": "broker positions could not be read (ConnectionError) (cycle c1, 1 consecutive bad cycle(s))",
+            })
+            down_text = dc_send.await_args.args[1]
+            up = client.post("/notify/reconciliation-drift", json={
+                "symbol": "BROKER", "action": "broker_recovered", "detail": "reachable again after 3 bad cycle(s)",
+            })
+            up_text = dc_send.await_args.args[1]
+    assert down.json()["delivered"] == 1 and up.json()["delivered"] == 1
+    assert down_text.startswith("[BROKER UNREACHABLE]") and "positions could not be read" in down_text
+    assert "No orders can be sized or placed" in down_text and "Needs manual review" not in down_text
+    assert up_text.startswith("[Broker recovered]") and "after 3 bad cycle" in up_text and "Needs manual review" not in up_text

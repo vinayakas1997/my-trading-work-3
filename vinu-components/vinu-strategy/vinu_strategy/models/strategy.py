@@ -26,6 +26,9 @@ _KNOWN_TOP_LEVEL_KEYS = frozenset({
     # strategy's must_conditions produces. See the field's own docstring
     # below for why this can't default to anything but 0.0 (unsized/no-op).
     "live_decision_position_size",
+    # logic-audit-2026-10-02 A3: optional rule-based protection for a position
+    # this strategy's live-decision EXECUTE opened (0 = off).
+    "live_decision_stop_pct", "live_decision_max_hold_bars",
 })
 _KNOWN_PIPELINE_KEYS = frozenset({"selection", "allocation", "timing", "risk"})
 _KNOWN_STAGE_KEYS: dict[str, frozenset] = {
@@ -143,6 +146,17 @@ class StrategyConfig:
     # explicitly for an EXECUTE decision to actually produce an order --
     # until then, LiveScheduler logs it clearly and skips.
     live_decision_position_size: float = 0.0
+    # logic-audit-2026-10-02 A3 (the-inconsistencies-v2, plan item 2.3): a
+    # position opened by a live-decision EXECUTE had no per-position protection
+    # -- the only exits were the LLM review every N bars and portfolio-level
+    # halts, unlike a trade-plan position (broker-side backstop stop, invalidation
+    # rules, time stop). Both default to 0 = off, for the same reason
+    # live_decision_position_size defaults to 0.0: there is no safe invented
+    # number, so a strategy author opts in explicitly.
+    # stop_pct: exit when price moves this fraction AGAINST the entry (0.05 = 5%).
+    # max_hold_bars: exit once this many bars have elapsed since the position opened.
+    live_decision_stop_pct: float = 0.0
+    live_decision_max_hold_bars: int = 0
 
     @classmethod
     def from_dict(cls, d: dict, source: str = "") -> StrategyConfig:
@@ -165,6 +179,8 @@ class StrategyConfig:
             grace_window_bars=int(d.get("grace_window_bars", 10)),
             precondition=d.get("precondition", {"description": "", "defined": False}),
             live_decision_position_size=float(d.get("live_decision_position_size", 0.0)),
+            live_decision_stop_pct=float(d.get("live_decision_stop_pct", 0.0) or 0.0),
+            live_decision_max_hold_bars=int(d.get("live_decision_max_hold_bars", 0) or 0),
         )
 
 

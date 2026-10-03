@@ -27,5 +27,10 @@ vinu-models = "vinu_infra.models:main"
 packages = ["vinu_infra"]
 package-dir = {"vinu_infra" = "."}
 
+# The edge manifest ships with the package (the runtime report reads it); editable installs
+# (what every service Dockerfile does) already see it, this covers a regular install.
+[tool.setuptools.package-data]
+vinu_infra = ["pipeline_edges.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

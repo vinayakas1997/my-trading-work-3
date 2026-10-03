@@ -198,3 +198,23 @@ def mark_executed(
     )
     save_stage_state(backend, new_state)
     return new_state
+
+
+def mark_expired(
+    backend: LiveDecisionBackend, ticker: str, strategy_id: str, bar_ts: int,
+    *, reason: str = "decision_attempts_exhausted",
+) -> StageState:
+    """Gives up on a ready_to_execute trigger whose live-decision call never
+    produced a usable verdict (error / unrecognized / EXTEND_GRACE_WINDOW,
+    repeatedly). `expired` is terminal for one trigger's lifecycle, so the pair
+    resets to idle on the next candle close and a later must-condition firing
+    gets a fresh trigger -- without this, a pair whose call kept failing stayed
+    ready_to_execute forever (the tracker never re-evaluates a ready pair)."""
+    state = get_stage_state(backend, ticker, strategy_id)
+    new_state = _transition(
+        backend, state, to_stage="expired", bar_ts=bar_ts,
+        reason=reason, trigger_id=state.trigger_id,
+        live_snapshot=state.last_snapshot,
+    )
+    save_stage_state(backend, new_state)
+    return new_state

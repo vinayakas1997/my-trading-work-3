@@ -130,7 +130,7 @@ class ReconciliationDriftRequest(BaseModel):
     than a server log nobody was necessarily tailing."""
 
     symbol: str
-    action: str  # "alert_phantom_broker_position" | "alert_side_conflict" | "target_weight_drift"
+    action: str  # "alert_phantom_broker_position" | "alert_side_conflict" | "target_weight_drift" | "live_decision_stuck" | "broker_unreachable" | "broker_recovered"
     book_qty: float | None = None
     broker_qty: float | None = None
     # item #24 finding #3 (missing-pieces-of-system/new-theory-of-trading/
@@ -143,9 +143,17 @@ class ReconciliationDriftRequest(BaseModel):
     expected_qty: float | None = None
     actual_qty: float | None = None
     drift_pct: float | None = None
+    # Free-text detail for actions that are not a quantity comparison
+    # (action="live_decision_stuck": a live-decision trigger that never produced a verdict).
+    detail: str | None = None
 
 
 def _format_reconciliation_drift_message(body: ReconciliationDriftRequest) -> str:
+    # Broker health is not a drift between two books: it gets its own header and no "manual review" footer.
+    if body.action == "broker_unreachable":
+        return f"[BROKER UNREACHABLE] {body.detail or 'the broker could not be read'}\nNo orders can be sized or placed until it is reachable."
+    if body.action == "broker_recovered":
+        return f"[Broker recovered] {body.detail or 'the broker is reachable again'}"
     if body.action == "alert_phantom_broker_position":
         detail = (
             f"broker holds {body.broker_qty} but the book has no position for it. "
@@ -163,6 +171,11 @@ def _format_reconciliation_drift_message(body: ReconciliationDriftRequest) -> st
             f"{body.actual_qty}, {body.drift_pct}% drift). Orders are being "
             f"planned but not closing the gap -- may indicate a stuck/failing "
             f"order, an unpriceable symbol, or a halt."
+        )
+    elif body.action == "live_decision_stuck":
+        detail = (
+            f"a live-decision trigger never produced a usable verdict and was expired so the pair "
+            f"can fire again. {body.detail or ''}".strip()
         )
     else:
         detail = f"{body.action} (book={body.book_qty}, broker={body.broker_qty})"

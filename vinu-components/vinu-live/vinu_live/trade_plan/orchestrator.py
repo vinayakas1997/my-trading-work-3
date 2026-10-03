@@ -54,6 +54,7 @@ from vinu_live.trade_plan.live_metrics import compute_live_metrics
 from vinu_live.trade_plan.correlation_monitor_store import CorrelationMonitorStore
 from vinu_live.trade_plan.rebalance_intake import RebalanceRequestQueue
 from vinu_infra.calibration_log import record as record_calibration
+from vinu_infra.pipeline_edge_recorder import record_edge
 from vinu_infra.risk_math import cvar_exceeds as _cvar_exceeds
 from vinu_infra.risk_math import forecast_confidence_scale as _forecast_confidence_scale
 from vinu_infra.risk_math import vol_target_scale as _vol_target_scale
@@ -1082,10 +1083,16 @@ class TradePlanOrchestrator:
                 params={"status": "ACTIVE", "type_": "trade_plan"},
             )
             if resp.status_code != 200:
+                # was indistinguishable from "no active plans" -- now recorded as a missing input
+                record_edge("research.active_trade_plans->live.orchestrator", "missing", f"HTTP {resp.status_code}")
                 return []
             summaries = resp.json()
+            record_edge(
+                "research.active_trade_plans->live.orchestrator", "received" if summaries else "empty",
+            )
         except Exception as e:
             LOG.warning("Failed to list active trade plans: %s", e)
+            record_edge("research.active_trade_plans->live.orchestrator", "missing", f"request failed: {e}")
             return []
 
         plans: list[dict[str, Any]] = []
@@ -2581,7 +2588,9 @@ class TradePlanOrchestrator:
         no order can be placed anyway, the broker-outage guard covers that,
         and a real halt file (local or remote) is simply re-read next
         cycle."""
-        return await _halt_reason(self._http, self._config.agent_api_url) is not None
+        return await _halt_reason(
+            self._http, self._config.agent_api_url, edge_id="halt_flag->live.orchestrator",
+        ) is not None
 
     async def emergency_flatten(self, reason: str = "manual") -> dict[str, Any]:
         """The panic switch (how-to-make-it-live.md #33). Two steps:

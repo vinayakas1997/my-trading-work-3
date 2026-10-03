@@ -171,6 +171,10 @@ class AlpacaBroker:
         data = self._get(f"/v2/orders?status={status}&limit={limit}")
         return [Order.from_api(o) for o in data]
 
+    def get_order(self, order_id: str) -> Order:
+        """One order by its broker id (status, filled quantity and average fill price). Raises on HTTP error."""
+        return Order.from_api(self._get(f"/v2/orders/{order_id}"))
+
     def submit_order(
         self,
         symbol: str,

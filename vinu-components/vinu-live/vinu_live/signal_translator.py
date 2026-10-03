@@ -27,6 +27,11 @@ class OrderInstruction:
     # anything downstream. 0.0 (the execution.py/ExecutionSlice default too)
     # means "no per-order budget", not "zero slippage tolerated".
     max_slippage_pct: float = 0.0
+    # logic-audit-2026-10-02 A5: True when filling this only shrinks or closes
+    # the position. Set by the scheduler (not here) when
+    # `scheduler_exits_exempt_from_halts` is on; default False keeps every
+    # existing instruction behaving as before.
+    reduces_exposure: bool = False
 
 
 class SignalTranslator:

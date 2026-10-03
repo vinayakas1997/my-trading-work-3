@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import threading
@@ -31,6 +32,24 @@ CREATE TABLE IF NOT EXISTS strategy_registry (
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
+
+
+def _parse_metadata(raw: Any) -> dict[str, Any]:
+    """Run metadata as a dict. New rows are JSON; rows written before the
+    json.dumps fix hold a Python repr, read via literal_eval. Anything
+    unreadable is {} -- never an error on a read path."""
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        try:
+            import ast
+
+            parsed = ast.literal_eval(raw)
+        except (ValueError, SyntaxError):
+            return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 class MetaStorage:
@@ -78,7 +97,10 @@ class MetaStorage:
         conn.execute(
             """INSERT INTO strategy_runs (strategy_name, run_id, symbol, timestamp, status, metadata)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (strategy_name, run_id, symbol, datetime.utcnow().isoformat(), status, str(metadata or {})),
+            # JSON, not str(dict): str() wrote a Python repr (single quotes) that no
+            # reader could parse back. Rows written before this fix still hold that
+            # repr -- _parse_metadata reads both.
+            (strategy_name, run_id, symbol, datetime.utcnow().isoformat(), status, json.dumps(metadata or {}, default=str)),
         )
         conn.commit()
 
@@ -86,16 +108,19 @@ class MetaStorage:
         conn = self._get_conn()
         if strategy_name:
             rows = conn.execute(
-                "SELECT strategy_name, run_id, symbol, timestamp, status FROM strategy_runs WHERE strategy_name=? ORDER BY id DESC LIMIT ?",
+                "SELECT strategy_name, run_id, symbol, timestamp, status, metadata FROM strategy_runs WHERE strategy_name=? ORDER BY id DESC LIMIT ?",
                 (strategy_name, limit),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT strategy_name, run_id, symbol, timestamp, status FROM strategy_runs ORDER BY id DESC LIMIT ?",
+                "SELECT strategy_name, run_id, symbol, timestamp, status, metadata FROM strategy_runs ORDER BY id DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [
-            {"strategy_name": r[0], "run_id": r[1], "symbol": r[2], "timestamp": r[3], "status": r[4]}
+            {
+                "strategy_name": r[0], "run_id": r[1], "symbol": r[2], "timestamp": r[3], "status": r[4],
+                "metadata": _parse_metadata(r[5]),
+            }
             for r in rows
         ]
 

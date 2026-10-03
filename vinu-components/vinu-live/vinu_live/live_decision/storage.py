@@ -115,7 +115,7 @@ class LiveDecisionBackend(SQLiteBackend):
         CREATE INDEX IF NOT EXISTS idx_live_snapshots_lookup
             ON {LIVE_SNAPSHOTS_TABLE} (symbol, angle_name, computed_at);
     """
-    SCHEMA_VERSION = 4
+    SCHEMA_VERSION = 5
     # Point 7 option 1 (06-execution-handoff-and-architecture.md): lets
     # LiveScheduler find EXECUTE decisions it hasn't yet folded into a
     # real cycle's target_weights, on a database that may already exist
@@ -153,6 +153,8 @@ class LiveDecisionBackend(SQLiteBackend):
         (f"""CREATE INDEX IF NOT EXISTS idx_live_snapshots_lookup
             ON {LIVE_SNAPSHOTS_TABLE} (symbol, angle_name, computed_at)""",
          "add lookup index to live_snapshots"),
+        (f"ALTER TABLE {LIVE_DECISION_OPEN_POSITIONS_TABLE} ADD COLUMN entry_price REAL",
+         "add entry_price to live_decision_open_positions (rule-based stop reference, audit A3)"),
     ]
 
 
@@ -392,6 +394,61 @@ def list_unapplied_executes(
     ]
 
 
+def _row_to_decision(row: Any) -> LiveDecisionRecord:
+    return LiveDecisionRecord(
+        id=row["id"],
+        ticker=row["ticker"],
+        strategy_id=row["strategy_id"],
+        trigger_id=row["trigger_id"],
+        bar_ts=row["bar_ts"],
+        decision=row["decision"],
+        precondition_held=None if row["precondition_held"] is None else bool(row["precondition_held"]),
+        reasoning=row["reasoning"] or "",
+        raw_content=row["raw_content"] or "",
+        recorded_at=row["recorded_at"],
+        applied=bool(row["applied"]),
+        applied_at=row["applied_at"],
+    )
+
+
+def count_unresolved_decision_attempts(
+    backend: LiveDecisionBackend, ticker: str, strategy_id: str, trigger_id: str | None,
+) -> int:
+    """How many times this trigger's live-decision call produced NO usable
+    verdict (error, unrecognized, EXTEND_GRACE_WINDOW). Read from the existing
+    append-only live_decisions table -- no counter column to keep in sync.
+    EXECUTE / SKIP resolve a trigger, so they never count as unresolved."""
+    conn = backend._get_conn()
+    row = conn.execute(
+        f"""SELECT COUNT(*) AS n FROM {LIVE_DECISIONS_TABLE}
+            WHERE ticker=? AND strategy_id=? AND trigger_id IS ?
+              AND decision NOT IN ('EXECUTE', 'SKIP')""",
+        (ticker, strategy_id, trigger_id),
+    ).fetchone()
+    return int(row["n"])
+
+
+def list_needs_sizing(backend: LiveDecisionBackend, limit: int = 100) -> list[LiveDecisionRecord]:
+    """EXECUTE decisions that were marked applied but never became a position
+    (the strategy has no `live_decision_position_size`) -- the audit's "unsized
+    EXECUTE marked applied and forgotten" gap (v1 C2). A read-time anti-join
+    between the decision and the open-positions table (any status), so there
+    is no new table, no flag to keep in sync, and the list drains by itself
+    once a strategy author sets a size and a later EXECUTE opens a position."""
+    conn = backend._get_conn()
+    rows = conn.execute(
+        f"""SELECT d.* FROM {LIVE_DECISIONS_TABLE} d
+            WHERE d.decision='EXECUTE' AND d.applied=1
+              AND NOT EXISTS (
+                  SELECT 1 FROM {LIVE_DECISION_OPEN_POSITIONS_TABLE} p
+                  WHERE p.ticker=d.ticker AND p.strategy_id=d.strategy_id
+                    AND p.trigger_id IS d.trigger_id)
+            ORDER BY d.id DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    return [_row_to_decision(r) for r in rows]
+
+
 def mark_decision_applied(backend: LiveDecisionBackend, decision_id: int) -> None:
     conn = backend._get_conn()
     conn.execute(
@@ -424,6 +481,7 @@ def _row_to_open_position(row: Any) -> LiveDecisionOpenPosition:
         closed_at=row["closed_at"],
         closed_bar_ts=row["closed_bar_ts"],
         closed_reason=row["closed_reason"] or "",
+        entry_price=row["entry_price"] if "entry_price" in row.keys() else None,
     )
 
 
@@ -468,6 +526,25 @@ def list_open_positions(
         (status,),
     ).fetchall()
     return [_row_to_open_position(row) for row in rows]
+
+
+def set_entry_price_if_missing(
+    backend: LiveDecisionBackend, position_id: int, price: float,
+) -> bool:
+    """Record the reference price a rule-based stop measures against, ONCE.
+    Never overwrites an existing value (the first priced cycle after the
+    position opened is the entry reference; a later price is not the entry).
+    Returns True only when a row was actually updated."""
+    if not (price and price > 0):
+        return False
+    conn = backend._get_conn()
+    cur = conn.execute(
+        f"UPDATE {LIVE_DECISION_OPEN_POSITIONS_TABLE} SET entry_price=? "
+        "WHERE id=? AND entry_price IS NULL AND status='open'",
+        (float(price), position_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def mark_position_reviewed(backend: LiveDecisionBackend, position_id: int, bar_ts: int) -> None:

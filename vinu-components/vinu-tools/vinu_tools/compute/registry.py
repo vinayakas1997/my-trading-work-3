@@ -275,6 +275,21 @@ def _alpha_name_sets() -> tuple[set[str], set[str], set[str]]:
     return _ALPHA158_NAMES, _ALPHA360_NAMES, _ALPHA101_NAMES
 
 
+def _canonical_alpha_names(names: Sequence[str]) -> list[str]:
+    """Restore the catalog's own case for individually-named alpha features.
+
+    `expand_features` lowercases every non-recipe name, but the alpha / Qlib factor names
+    in `_alpha_name_sets()` are UPPERCASE (`ALPHA101_001`, `BETA10`, `CLOSE1`). So a single
+    alpha requested by name used to miss every case-sensitive membership test below and was
+    silently dropped -- `validate_feature_name` called it valid, `apply_indicators` added no
+    column, and `warmup_bars_for_features` said 1 bar instead of 60. Found by the
+    registry-wide bias check (the-inconsistencies-v2 plan Phase 5). Recipe names and every
+    non-alpha indicator pass through unchanged."""
+    a158, a360, a101 = _alpha_name_sets()
+    canon = {n.lower(): n for n in (a158 | a360 | a101)}
+    return [canon.get(n, n) for n in names]
+
+
 def expand_recipe(name: str) -> list[str]:
     return list(recipe_catalog.resolve(name))
 
@@ -328,7 +343,7 @@ def list_known_features() -> list[str]:
 
 
 def warmup_bars_for_features(features: Sequence[str]) -> int:
-    expanded = expand_features(features)
+    expanded = _canonical_alpha_names(expand_features(features))
     need = 1
     a158, a360, a101 = _alpha_name_sets()
     for name in expanded:
@@ -346,7 +361,7 @@ def warmup_bars_for_features(features: Sequence[str]) -> int:
 def apply_indicators(rows: list[dict], names: Sequence[str]) -> list[dict]:
     if not rows or not names:
         return rows
-    expanded = expand_features(names)
+    expanded = _canonical_alpha_names(expand_features(names))
     out = [dict(r) for r in rows]
     a158, a360, a101 = _alpha_name_sets()
 

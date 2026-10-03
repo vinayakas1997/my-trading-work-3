@@ -34,15 +34,18 @@ class TradeScoreVerdict:
     reasons: list[str] = field(default_factory=list)
 
 
-def _confluence_score(forecast: Forecast, config: TradeScoreThresholds) -> float:
+def _confluence_score(
+    forecast: Forecast, config: TradeScoreThresholds, exclude_signals: frozenset[str] = frozenset(),
+) -> float:
     """0..confluence_max from the structured signal ledger (Forecast.signals,
     Phase 2). Fail-open to a neutral half-score when there are no signals at
     all yet (e.g. a plan authored before Phase 2 populated the ledger) --
     absence of evidence isn't evidence of a bad trade."""
-    if not forecast.signals:
+    signals = [s for s in forecast.signals if s.signal not in exclude_signals]
+    if not signals:
         return config.confluence_max / 2.0
-    support = sum(s.strength for s in forecast.signals if s.direction == "supporting")
-    contradict = sum(s.strength for s in forecast.signals if s.direction == "contradicting")
+    support = sum(s.strength for s in signals if s.direction == "supporting")
+    contradict = sum(s.strength for s in signals if s.direction == "contradicting")
     total = support + contradict
     if total <= 0:
         return config.confluence_max / 2.0
@@ -50,7 +53,10 @@ def _confluence_score(forecast: Forecast, config: TradeScoreThresholds) -> float
     return max(0.0, (ratio + 1.0) / 2.0 * config.confluence_max)
 
 
-def _ev_score(forecast: Forecast, risk_band: RiskBand, market_state: Any, config: TradeScoreThresholds) -> float:
+def _ev_score(
+    forecast: Forecast, risk_band: RiskBand, market_state: Any, config: TradeScoreThresholds,
+    confidence: float | None = None,
+) -> float:
     """0..ev_max from expected value net of costs. Costs come from
     market_state.liquidity's cost_bps when available, else config's
     default -- fail-open to the default, never to zero cost. High-
@@ -71,7 +77,9 @@ def _ev_score(forecast: Forecast, risk_band: RiskBand, market_state: Any, config
             iv_uncertainty = float(atm_iv) * config.iv_uncertainty_weight
     cost = float(cost_bps) / 10_000.0 + iv_uncertainty
     expected_loss = risk_band.expected_drawdown or risk_band.cvar_95_limit
-    ev_net = forecast.confidence * forecast.magnitude_pct - (1.0 - forecast.confidence) * expected_loss - cost
+    # logic-audit B1: `confidence` (a calibrated probability) replaces the raw stated one when supplied.
+    p_win = forecast.confidence if confidence is None else confidence
+    ev_net = p_win * forecast.magnitude_pct - (1.0 - p_win) * expected_loss - cost
     # config.ev_full_score_pct is the net-EV level treated as a "full score"
     # trade -- an explicit, documented heuristic, not a fitted threshold.
     scaled = (ev_net / config.ev_full_score_pct) * config.ev_max if config.ev_full_score_pct else 0.0
@@ -131,6 +139,9 @@ def compute_trade_score(
     risk_band: RiskBand,
     market_state: Any,
     config: TradeScoreThresholds | None = None,
+    *,
+    ev_confidence: float | None = None,
+    confluence_exclude_signals: frozenset[str] = frozenset(),
 ) -> TradeScoreResult:
     """Composite 0..(confluence_max+ev_max+risk_max+regime_fit_max) score
     (defaults to 0..135, matching the high-expectations spec's own scale).
@@ -139,8 +150,8 @@ def compute_trade_score(
     valid, fully-supported input (regime_fit_score simply becomes 0)."""
     config = config or TradeScoreThresholds()
 
-    confluence = _confluence_score(forecast, config)
-    ev = _ev_score(forecast, risk_band, market_state, config)
+    confluence = _confluence_score(forecast, config, confluence_exclude_signals)
+    ev = _ev_score(forecast, risk_band, market_state, config, ev_confidence)
     risk = _risk_score(risk_band, config)
     regime_fit = _regime_fit_score(market_state, config)
     total = confluence + ev + risk + regime_fit
@@ -190,6 +201,9 @@ def check_trade_score_gate(
     risk_band: RiskBand,
     market_state: Any,
     config: TradeScoreThresholds | None = None,
+    *,
+    ev_confidence: float | None = None,
+    confluence_exclude_signals: frozenset[str] = frozenset(),
 ) -> TradeScoreVerdict:
     """Fail-closed like CalibrationGate.check(): eligible=False when the
     computed tier is below config.min_tradeable_tier. Deliberately has no
@@ -199,7 +213,10 @@ def check_trade_score_gate(
     inconsistent place to bypass approval from.
     """
     config = config or TradeScoreThresholds()
-    result = compute_trade_score(forecast, risk_band, market_state, config)
+    result = compute_trade_score(
+        forecast, risk_band, market_state, config,
+        ev_confidence=ev_confidence, confluence_exclude_signals=confluence_exclude_signals,
+    )
     eligible = tier_meets_minimum(result.tier, config.min_tradeable_tier)
     reasons = list(result.reasons)
     if not eligible:

@@ -24,6 +24,9 @@ class ExecutionSlice:
     # per-order budget (the caller's global MAX_SPREAD_BPS ceiling applies
     # unchanged).
     max_slippage_pct: float = 0.0
+    # Carried from OrderInstruction.reduces_exposure (logic-audit A5): the slice
+    # only shrinks/closes a position, so a halt or spread/event gate must not trap it.
+    reduce_only: bool = False
 
 
 @dataclass
@@ -52,6 +55,7 @@ def plan_twap(
                 symbol=instr.symbol, side=instr.side, qty=float(total),
                 slice_number=1, total_slices=max(n_slices, 1),
                 max_slippage_pct=instr.max_slippage_pct,
+                reduce_only=instr.reduces_exposure,
             ))
             continue
         per_slice = total / n_slices
@@ -67,6 +71,7 @@ def plan_twap(
                 slice_number=i + 1,
                 total_slices=n_slices,
                 max_slippage_pct=instr.max_slippage_pct,
+                reduce_only=instr.reduces_exposure,
             ))
     return plan
 
@@ -151,6 +156,7 @@ def plan_vwap(
                 slice_number=i + 1,
                 total_slices=n_slices,
                 max_slippage_pct=instr.max_slippage_pct,
+                reduce_only=instr.reduces_exposure,
             ))
     return plan
 

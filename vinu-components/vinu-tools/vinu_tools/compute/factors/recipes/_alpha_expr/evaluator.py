@@ -53,7 +53,11 @@ def _build_env(arrays: dict[str, np.ndarray]) -> dict[str, Any]:
     env = dict(arrays)
     env.update(
         {
-            "ref": lambda field, k: _ref(arrays[field], int(k)),
+            # `_to_python` rewrites `Ref($close, 5)` to `ref(close, 5)`, and `close` then resolves to the
+            # data ARRAY in this env, not the string "close" -- so indexing `arrays[field]` raised
+            # TypeError (unhashable ndarray), which `evaluate` swallowed, leaving every Ref-based
+            # column (354 of 360 alpha360 features, many alpha158/101) silently all-None. Accept both.
+            "ref": lambda field, k: _ref(arrays[field] if isinstance(field, str) else field, int(k)),
             "Mean": _rolling_mean,
             "Std": _rolling_std,
             "Sum": _rolling_sum,

@@ -23,12 +23,14 @@ import httpx
 from vinu_live.config import LiveConfig
 from vinu_live.live_decision import conditions, state_tracker
 from vinu_live.live_decision.bars_client import fetch_recent_bars
-from vinu_live.live_decision.detector import compute_live_snapshot, detect_move, min_warmup_bars
+from vinu_live.live_decision.detector import compute_live_snapshot, detect_move, feature_window_bars
+from vinu_live.live_decision.position_rules import evaluate_position_rules
 from vinu_live.live_decision.schema import LiveDecisionOpenPosition
 from vinu_live.live_decision.storage import (
     LiveDecisionBackend,
     advance_cursor,
     close_position,
+    count_unresolved_decision_attempts,
     get_cursor,
     get_stage_state,
     list_open_positions,
@@ -122,7 +124,7 @@ class CandleClosePoller:
 
             warmup = await fetch_recent_bars(
                 self._http, self._config.stock_price_api_url, ticker, timeframe,
-                limit=min_warmup_bars(),
+                limit=feature_window_bars(self._config.live_decision_feature_window_bars),
             )
             if warmup.empty:
                 continue
@@ -195,8 +197,21 @@ class CandleClosePoller:
                 # already guards against corrupting, but this loop still
                 # needs its own guard against re-calling the agent every
                 # single poll while still awaiting mark_executed.
-                if new_state.stage == "ready_to_execute" and previous_stage != "ready_to_execute":
-                    await self._trigger_live_decision(ticker, strategy_id, latest_bar_ts, new_state.trigger_id)
+                if new_state.stage == "ready_to_execute":
+                    if previous_stage != "ready_to_execute":
+                        await self._trigger_live_decision(ticker, strategy_id, latest_bar_ts, new_state.trigger_id)
+                    else:
+                        # Still ready from an earlier candle, so the earlier
+                        # call did not resolve it (a resolved call moves the
+                        # pair to `executed`). Retry, bounded -- before this a
+                        # failed call left the pair stuck here forever.
+                        await self._retry_or_expire_unresolved(
+                            ticker, strategy_id, latest_bar_ts, new_state.trigger_id,
+                        )
+
+            # logic-audit A3: rule-based stop / max-hold for positions already
+            # open on this pair, checked on every new candle -- no LLM call.
+            self._apply_position_rules(ticker, timeframe, latest_bar_ts, warmup, watching_strategies)
 
             advance_cursor(self._backend, ticker, timeframe, latest_bar_ts)
 
@@ -208,6 +223,55 @@ class CandleClosePoller:
             "candle_close_events": events_fired,
             "positions_reviewed": positions_reviewed,
         }
+
+    def _apply_position_rules(
+        self, ticker: str, timeframe: str, bar_ts: int, bars: Any,
+        watching_strategies: list[dict[str, Any]],
+    ) -> int:
+        """Closes any open position on `ticker` whose strategy configured a
+        stop (`live_decision_stop_pct`) or a max hold (`live_decision_max_hold_bars`)
+        that the newest candle breaches. Same close mechanism as an agent EXIT
+        (`close_position`), so the next scheduler cycle simply omits the weight
+        and the existing not-targeted rule sells it. Recorded as a normal
+        `EXIT` decision so history and the agent's anti-flip-flop context see it.
+        Off for every strategy that sets neither field. Never raises: a rule
+        failure must not stop the poll for other pairs."""
+        closed = 0
+        try:
+            if bars is None or getattr(bars, "empty", True) or "close" not in bars.columns:
+                return 0
+            last_close = float(bars["close"].iloc[-1])
+            by_id = {s["name"]: s for s in watching_strategies}
+            for pos in list_open_positions(self._backend):
+                if pos.ticker != ticker or pos.strategy_id not in by_id:
+                    continue
+                strat = by_id[pos.strategy_id]
+                hit = evaluate_position_rules(
+                    position_size=pos.position_size, entry_price=pos.entry_price,
+                    last_close=last_close, opened_bar_ts=pos.opened_bar_ts, bar_ts=bar_ts,
+                    timeframe_seconds=timeframe_to_seconds(timeframe),
+                    stop_pct=float(strat.get("live_decision_stop_pct", 0.0) or 0.0),
+                    max_hold_bars=int(strat.get("live_decision_max_hold_bars", 0) or 0),
+                )
+                if hit is None:
+                    continue
+                rule, detail = hit
+                reasoning = f"rule_exit:{rule} -- {detail}"
+                from vinu_live.live_decision.schema import LiveDecisionRecord
+                from vinu_live.live_decision.storage import record_live_decision
+
+                record_live_decision(self._backend, LiveDecisionRecord(
+                    ticker=pos.ticker, strategy_id=pos.strategy_id, trigger_id=f"pos_{pos.id}",
+                    bar_ts=bar_ts, decision="EXIT", precondition_held=None,
+                    reasoning=reasoning, raw_content="",
+                ))
+                close_position(self._backend, pos.id, reason=reasoning, bar_ts=bar_ts)
+                LOG.warning("position rule EXIT for %s/%s (position %s): %s",
+                            pos.ticker, pos.strategy_id, pos.id, reasoning)
+                closed += 1
+        except Exception as exc:  # noqa: BLE001 -- must not stop the poll
+            LOG.warning("position rules failed for %s: %s", ticker, exc)
+        return closed
 
     async def _review_open_positions(self, strategy_by_id: dict[str, Any]) -> int:
         """The exit-mechanism fix (missing-pieces-of-system/new-theory-
@@ -323,6 +387,62 @@ class CandleClosePoller:
                 "will retry next cycle", pos.ticker, pos.strategy_id, pos.id, decision,
             )
 
+    async def _retry_or_expire_unresolved(
+        self, ticker: str, strategy_id: str, bar_ts: int, trigger_id: str | None,
+    ) -> None:
+        """A ready_to_execute pair whose live-decision call has not produced a
+        usable verdict. Under the attempt limit: call again (one attempt per
+        candle close is a natural backoff). At the limit: expire the trigger
+        (terminal for this trigger, so the pair resets to idle and can fire
+        again), record why, and notify once. A limit of 0 keeps the old
+        never-retry behavior; a missing trigger_id cannot be counted, so it is left alone."""
+        max_attempts = self._config.live_decision_max_trigger_attempts
+        if max_attempts <= 0 or trigger_id is None:
+            return
+        attempts = count_unresolved_decision_attempts(self._backend, ticker, strategy_id, trigger_id)
+        if attempts < max_attempts:
+            LOG.warning(
+                "live-decision for %s/%s still unresolved after %d attempt(s) -- retrying (limit %d)",
+                ticker, strategy_id, attempts, max_attempts,
+            )
+            await self._trigger_live_decision(ticker, strategy_id, bar_ts, trigger_id)
+            return
+
+        from vinu_live.live_decision.schema import LiveDecisionRecord
+        from vinu_live.live_decision.storage import record_live_decision
+
+        reasoning = (
+            f"gave up after {attempts} unresolved live-decision attempts "
+            f"(limit {max_attempts}); trigger expired so the pair can fire again"
+        )
+        state_tracker.mark_expired(self._backend, ticker, strategy_id, bar_ts)
+        record_live_decision(self._backend, LiveDecisionRecord(
+            ticker=ticker, strategy_id=strategy_id, trigger_id=trigger_id, bar_ts=bar_ts,
+            decision="error", precondition_held=None, reasoning=reasoning, raw_content="",
+        ))
+        LOG.error("live-decision %s/%s: %s", ticker, strategy_id, reasoning)
+        await self._notify_stuck_decision(ticker, strategy_id, trigger_id, reasoning)
+
+    async def _notify_stuck_decision(
+        self, ticker: str, strategy_id: str, trigger_id: str | None, reasoning: str,
+    ) -> None:
+        """Best-effort push through the shared notify front door (same route and
+        reuse-by-action pattern the scheduler's target-weight-drift alert uses).
+        Edge-triggered by construction: the trigger is expired right before this,
+        so it is called once per stuck trigger. A failure never affects the loop."""
+        try:
+            resp = await self._http.post(
+                f"{self._config.agent_api_url}/notify/reconciliation-drift",
+                json={
+                    "symbol": f"{ticker}/{strategy_id}",
+                    "action": "live_decision_stuck",
+                    "detail": f"trigger {trigger_id}: {reasoning}",
+                },
+            )
+            resp.raise_for_status()
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("could not send stuck-decision notification for %s/%s: %s", ticker, strategy_id, exc)
+
     async def _trigger_live_decision(
         self, ticker: str, strategy_id: str, bar_ts: int, trigger_id: str | None,
     ) -> None:
@@ -359,8 +479,9 @@ class CandleClosePoller:
             result = resp.json()
         except Exception as exc:
             LOG.error(
-                "live-decision trigger failed for %s/%s -- pair stays ready_to_execute, "
-                "will retry next cycle: %s", ticker, strategy_id, exc,
+                "live-decision trigger failed for %s/%s -- pair stays ready_to_execute and is "
+                "retried on later candles (bounded by live_decision_max_trigger_attempts): %s",
+                ticker, strategy_id, exc,
             )
             record_live_decision(self._backend, LiveDecisionRecord(
                 ticker=ticker, strategy_id=strategy_id, trigger_id=trigger_id, bar_ts=bar_ts,
@@ -405,7 +526,8 @@ class CandleClosePoller:
         else:
             LOG.error(
                 "live-decision for %s/%s returned an unrecognized decision %r -- "
-                "pair stays ready_to_execute, will retry next cycle", ticker, strategy_id, decision,
+                "pair stays ready_to_execute and is retried on later candles (bounded)",
+                ticker, strategy_id, decision,
             )
 
     async def _record_precondition_check(self, strategy_id: str, precondition_held: bool | None) -> None:

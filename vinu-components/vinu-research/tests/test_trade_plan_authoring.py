@@ -1087,6 +1087,9 @@ class TestFreezeAndApprove:
 
         plan = self._sample_plan()
         plan.trade_score = TradeScoreResult(total_score=75.0, tier="watch")
+        # A scored plan must carry a computed risk band (logic-audit B2 --
+        # see TestApproveRequiresComputedRiskBand); this test is about tiers.
+        plan.risk_bands = RiskBand(expected_drawdown=0.04)
         artifact = freeze_trade_plan(strategy_store, plan)
 
         approved = approve_trade_plan(strategy_store, artifact.artifact_id)
@@ -1139,6 +1142,82 @@ class TestFreezeAndApprove:
         artifact = freeze_trade_plan(strategy_store, self._sample_plan())
         approved = approve_trade_plan(strategy_store, artifact.artifact_id)
         assert approved.status == ArtifactStatus.ACTIVE
+
+
+class TestApproveRequiresComputedRiskBand:
+    """logic-audit-2026-10-02 B2 (the-inconsistencies-v2): a plan that was
+    SCORED on an all-zero RiskBand (risk state unavailable at authoring time)
+    clears the Trade Score gate on inflated EV -- the reward:risk veto is
+    skipped, the risk sub-score goes neutral, EV loses its loss term. Approval
+    must fail closed on it, with `force` as the usual human override."""
+
+    def _scored_plan(self, **risk) -> TradePlan:
+        plan = TradePlan(
+            symbol="AAPL", timeframe="daily", direction="long", position_size_pct=0.05,
+            forecast=Forecast(direction="long", confidence=0.6, magnitude_pct=0.02),
+            invalidation_conditions=[
+                InvalidationCondition(metric="unrealized_pnl_pct", operator="<=", threshold=-0.08, action="exit"),
+            ],
+        )
+        plan.trade_score = TradeScoreResult(total_score=100.0, tier="moderate")
+        plan.risk_bands = RiskBand(**risk)
+        return plan
+
+    def _with_active_strategy(self, store) -> None:
+        strategy = Artifact.create(type_="strategy", name="s1", universe=["AAPL"])
+        strategy.status = ArtifactStatus.ACTIVE
+        store.upsert_artifact(strategy)
+
+    def test_scored_plan_with_zero_risk_band_is_rejected(self, strategy_store) -> None:
+        self._with_active_strategy(strategy_store)
+        artifact = freeze_trade_plan(strategy_store, self._scored_plan())
+        with pytest.raises(TradePlanApprovalError) as exc:
+            approve_trade_plan(strategy_store, artifact.artifact_id)
+        assert any("risk_not_computed" in r for r in exc.value.reasons)
+        assert strategy_store.get_artifact(artifact.artifact_id).status != ArtifactStatus.ACTIVE
+
+    def test_expected_drawdown_alone_is_enough(self, strategy_store) -> None:
+        self._with_active_strategy(strategy_store)
+        artifact = freeze_trade_plan(strategy_store, self._scored_plan(expected_drawdown=0.04))
+        assert approve_trade_plan(strategy_store, artifact.artifact_id).status == ArtifactStatus.ACTIVE
+
+    def test_cvar_alone_is_enough_for_plans_that_predate_expected_drawdown(self, strategy_store) -> None:
+        self._with_active_strategy(strategy_store)
+        artifact = freeze_trade_plan(strategy_store, self._scored_plan(cvar_95_limit=0.03))
+        assert approve_trade_plan(strategy_store, artifact.artifact_id).status == ArtifactStatus.ACTIVE
+
+    def test_plan_without_a_trade_score_stays_fail_open(self, strategy_store) -> None:
+        # A plan frozen before the Trade Score existed was never scored on a
+        # zero band -- same "never backfilled" convention as the tier check.
+        self._with_active_strategy(strategy_store)
+        plan = self._scored_plan()
+        plan.trade_score = None
+        artifact = freeze_trade_plan(strategy_store, plan)
+        assert approve_trade_plan(strategy_store, artifact.artifact_id).status == ArtifactStatus.ACTIVE
+
+    def test_force_with_approver_overrides(self, strategy_store) -> None:
+        self._with_active_strategy(strategy_store)
+        artifact = freeze_trade_plan(strategy_store, self._scored_plan())
+        approved = approve_trade_plan(strategy_store, artifact.artifact_id, force=True, approver="vinay")
+        assert approved.status == ArtifactStatus.ACTIVE
+
+    def test_force_without_approver_is_still_refused(self, strategy_store) -> None:
+        self._with_active_strategy(strategy_store)
+        artifact = freeze_trade_plan(strategy_store, self._scored_plan())
+        with pytest.raises(ValueError, match="approver"):
+            approve_trade_plan(strategy_store, artifact.artifact_id, force=True)
+
+    def test_rejection_is_recorded_in_strategy_evaluation(self, strategy_store, tmp_path, monkeypatch) -> None:
+        from vinu_infra.strategy_evaluation import StrategyEvaluationStore
+
+        monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
+        self._with_active_strategy(strategy_store)
+        artifact = freeze_trade_plan(strategy_store, self._scored_plan())
+        with pytest.raises(TradePlanApprovalError):
+            approve_trade_plan(strategy_store, artifact.artifact_id)
+        history = StrategyEvaluationStore(tmp_path / "strategy_evaluation.db").get_history(artifact.artifact_id)
+        rows = [h for h in history if h["step_name"] == "trade_score_gate" and h["verdict"] == "FAIL"]
+        assert len(rows) == 1 and "risk_not_computed" in rows[0]["reasoning"]
 
 
 class TestStrategyEvaluationWrite:

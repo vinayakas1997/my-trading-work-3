@@ -187,6 +187,7 @@ async def generate_forecast(
     llm_client: Any | None = None,
     summary_context: dict[str, Any] | None = None,
     maturity_context: dict[str, Any] | None = None,
+    extra_context: dict[str, Any] | None = None,
 ) -> Forecast:
     """Produce a direction/magnitude forecast via the research LLM client.
 
@@ -204,6 +205,11 @@ async def generate_forecast(
     since it comes from a different source (real trade/calibration
     history, not the Summary Agent) and `_normalize_summary_context`'s one
     job is normalizing the latter specifically.
+
+    `extra_context` (logic-audit B3): `{"current_regime": str | None, "options": dict | None}`
+    -- the regime and options-implied move the Trade Score and sizing apply right after
+    this call. None (the default, and what `forecast_prompt_extra_context_enabled=False`
+    produces) leaves the prompt byte-identical to before.
     """
     if llm_client is None:
         from vinu_research.llm import ResearchLlmClient
@@ -213,6 +219,7 @@ async def generate_forecast(
     prompt = _build_forecast_prompt(
         symbol, personality_features, risk_state,
         summary_context=summary_context, maturity_context=maturity_context,
+        extra_context=extra_context,
     )
 
     # raise_on_failure=True: an LLM failure here used to be silently
@@ -251,6 +258,7 @@ def _build_forecast_prompt(
     risk: dict[str, Any],
     summary_context: dict[str, Any] | None = None,
     maturity_context: dict[str, Any] | None = None,
+    extra_context: dict[str, Any] | None = None,
 ) -> str:
     lines = [f"Generate a forecast for {symbol}.\n"]
     if isinstance(maturity_context, dict) and maturity_context.get("tier"):
@@ -267,6 +275,33 @@ def _build_forecast_prompt(
             "weight live calibration more heavily at mature."
         )
         lines.append("")
+    if isinstance(extra_context, dict):
+        regime = extra_context.get("current_regime")
+        options = extra_context.get("options")
+        market_lines: list[str] = []
+        if isinstance(regime, str) and regime.strip():
+            market_lines.append(f"  current market regime: {regime.strip()}")
+        if isinstance(options, dict) and options.get("status") == "ok":
+            parts = [
+                f"{k}={options[k]}" for k in ("atm_iv", "days_to_nearest_expiry")
+                if isinstance(options.get(k), (int, float))
+            ]
+            if parts:
+                market_lines.append("  options-implied: " + ", ".join(parts))
+        if market_lines:
+            has_regime = any("current market regime" in m for m in market_lines)
+            has_options = any("options-implied:" in m for m in market_lines)
+            what = (
+                "this regime and options-implied move" if has_regime and has_options
+                else "this regime" if has_regime else "this options-implied move"
+            )
+            lines.append("=== Market Context ===")
+            lines.extend(market_lines)
+            lines.append(
+                f"  The Trade Score and position sizing applied after this forecast already use {what}, "
+                "so account for it in direction and confidence."
+            )
+            lines.append("")
     if isinstance(summary_context, dict) and str(summary_context.get("summary") or "").strip():
         awd = summary_context.get("angles_with_data", "?")
         ac = summary_context.get("angle_count", 28)

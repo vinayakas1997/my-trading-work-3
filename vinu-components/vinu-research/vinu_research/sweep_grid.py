@@ -295,6 +295,7 @@ async def run_sweep_grid(
             resolved_store = sweep_store or SweepGridStore((config or load_config()).data_root / "sweep_grid.db")
             resolved_store.record_sweep(
                 sweep_id, symbol=symbol, from_date=from_date, to_date=to_date, result=result,
+                base_code=base_code,
             )
         except Exception:
             # Persisting the comparison must never fail the sweep itself --

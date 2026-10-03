@@ -90,6 +90,116 @@ class LiveConfig:
     # grace_window_bars' own default (10) and RECON_DRIFT_ALERT_CYCLES (3)
     # -- not independently tuned.
     live_decision_position_review_cadence_bars: int = 5
+    # logic-audit-2026-10-02 A4 (the-inconsistencies-v2): the trade-plan
+    # orchestrator pauses NEW exposure on a consecutive-loss cooldown, a stale
+    # price feed and extreme realized vol; this scheduler path had none of
+    # them. When on, those three guards gate only the instructions that
+    # increase exposure (never a reduce/close). Off by default -- it changes
+    # live order flow, so it ships opt-in like every other behavior change in
+    # this codebase; the orchestrator's own guards stay on regardless.
+    scheduler_entry_guards_enabled: bool = False
+    # logic-audit-2026-10-03 (v1 C1 + a worse bug found while fixing it): a pair
+    # whose live-decision call failed / came back unrecognized stayed
+    # ready_to_execute FOREVER -- the poller only triggers on a fresh transition
+    # INTO that stage and the state tracker deliberately never re-evaluates a
+    # ready pair, so the log's "will retry next cycle" was false. Now: retry on
+    # each later candle, and after this many unresolved attempts (error /
+    # unrecognized / EXTEND_GRACE_WINDOW) expire the trigger, record it, and
+    # notify -- the pair then resets to idle and can fire again. 0 restores the
+    # old never-retry behavior.
+    live_decision_max_trigger_attempts: int = 3
+    # logic-audit-2026-10-02 A7: a FAILED read of a configured broker's equity
+    # (exception, non-200, or a reply without a usable equity) used to fall
+    # through to "positions x price" or fallback_portfolio_value (1,000,000), so
+    # target weights were multiplied by an invented figure. When on, the
+    # scheduler cycle aborts instead (like the positions / portfolio fetches).
+    # `configured: false` (no broker at all) still uses the placeholder. Off by
+    # default (changes live behavior); applies to LiveScheduler only -- the
+    # orchestrator also sizes EXITS from this value, so it keeps its fallback.
+    abort_on_equity_read_failure: bool = False
+    # logic-audit-2026-10-02 A5: in the trade-plan orchestrator exits are
+    # reduce_only and every guard is ENTRIES-ONLY, so a halt never traps a
+    # position. On this scheduler path a breaker HALT, the kill switch, a wide
+    # spread or an earnings blackout blocked sells as well as buys, and orders
+    # carried no reduce_only flag. When on, instructions that only shrink or
+    # close a position are tagged, sent with reduce_only=true, and are exempt
+    # from the breaker-halt skip, the kill-switch skip (the agent-side
+    # OrderGuard still applies its own halt policy), and the spread/event gate
+    # (they go as market orders). Anything that increases exposure is gated
+    # exactly as before. Off by default -- changes live order flow.
+    scheduler_exits_exempt_from_halts: bool = False
+    # When the broker (through the agent API) cannot be read -- positions read fails, a configured broker's equity
+    # cannot be read, or order submissions fail at the HTTP / broker level -- say so LOUDLY: an ERROR log, a
+    # `broker_unreachable` list in the cycle result, and one CRITICAL notification on the first bad cycle, a
+    # reminder every `broker_unreachable_renotify_cycles` consecutive bad cycles, and one "recovered" message.
+    # Notification only: it never changes what the scheduler does. ON by default. Env:
+    # VINU_LIVE_BROKER_UNREACHABLE_NOTIFY_ENABLED, VINU_LIVE_BROKER_UNREACHABLE_RENOTIFY_CYCLES.
+    broker_unreachable_notify_enabled: bool = True
+    broker_unreachable_renotify_cycles: int = 6
+    # Append-only ledger of every order slice the scheduler tried to place (or skipped, with the reason): reference
+    # price it was sized at, spread at decision time, order type, and the broker's submission answer, in
+    # `<data_root>/execution_log.db` (see execution_log.py). Log-only: it never changes an order, and a write
+    # failure is swallowed. ON by default; off = no file is created.
+    execution_log_enabled: bool = True
+    # At the start of each cycle, look up the broker's current state of recent accepted orders and write their
+    # fill price / filled quantity / status and the slippage against the decision-time quote mid into the ledger.
+    # Read-only toward the broker; never changes an order. `batch` bounds the lookups per cycle.
+    # Env: VINU_LIVE_EXECUTION_FILL_ENRICHMENT_ENABLED, VINU_LIVE_EXECUTION_FILL_ENRICHMENT_BATCH.
+    execution_fill_enrichment_enabled: bool = True
+    execution_fill_enrichment_batch: int = 25
+    # inconsistencies v1 A8: the live-decision agent states `precondition_held`
+    # (did the strategy's own falsifiable precondition hold?) with every EXECUTE,
+    # but only the agent's prompt reads it -- an EXECUTE with precondition_held
+    # == false became an order exactly like one with true. When on, the scheduler
+    # does NOT open a position for an EXECUTE whose precondition_held is False
+    # (None / unknown still passes: fail-open). The decision is marked applied
+    # (final information, not retried) and reported as `precondition_blocked` in
+    # the cycle result. Positions already open are untouched. Off by default.
+    precondition_enforcing_enabled: bool = False
+    # logic-audit-2026-10-02 A6: the scheduler's breaker checked the trade-plan
+    # BOOK (positions the orchestrator opened; this path writes nothing to it) and
+    # tested REALIZED loss only, so the positions the scheduler actually trades
+    # and an open drawdown were invisible to it. When on, its position-count /
+    # leverage / cluster checks run over the live BROKER positions, and its daily
+    # loss is (equity now - the first equity this scheduler saw today, UTC), which
+    # includes unrealized moves. Falls back to the book / realized P&L for any
+    # input it cannot get. Off by default -- it can newly HALT trading.
+    scheduler_breaker_uses_broker_account: bool = False
+    # logic-audit-2026-10-02 A1: the hourly scheduler sized orders from
+    # /portfolio/state (raw risk-parity weights). The regime / outcome tilts, the
+    # drawdown ladder (halve / flat / halt), the maturity capital ladder and the
+    # reserve fraction are all computed by /portfolio/daily-allocation and were
+    # discarded. When on, the scheduler reads daily-allocation instead: it takes
+    # its tilted `weights` and scales them by deployable_equity / account_equity
+    # (clamped to [0, 1]) so "halve" really deploys half the capital and "flat" /
+    # "halt" really ask for no positions (exits go through, see
+    # scheduler_exits_exempt_from_halts). If daily-allocation cannot be read the
+    # scheduler falls back to /portfolio/state (today's behavior) and says so in
+    # the cycle result. Live-decision weights are never scaled by this.
+    scheduler_use_daily_allocation: bool = False
+    # logic-audit-2026-10-02 A2: two executors share one broker account and the
+    # scheduler liquidated any broker position it had no target for -- including
+    # positions the trade-plan orchestrator opened. When on, the scheduler treats
+    # a symbol as orchestrator-owned if it has an OPEN position in the trade-plan
+    # book or an ACTIVE trade_plan artifact, and then neither trades it nor
+    # targets it (the orchestrator is the single sizing authority for that symbol).
+    # If ownership cannot be determined (active-plan read failed) it also leaves
+    # every position that has no target this cycle alone, rather than guessing.
+    scheduler_respect_trade_plan_symbols: bool = False
+    # Companion to scheduler_respect_trade_plan_symbols: comma-separated symbols the scheduler opened BEFORE its order
+    # ledger existed (so the ledger cannot know they are its own). Treated as scheduler-owned: if nothing targets them
+    # any more they are closed. Everything not in the ledger and not listed here is left alone. Env:
+    # VINU_LIVE_SCHEDULER_ADOPTED_SYMBOLS.
+    scheduler_adopted_symbols: str = ""
+    # logic-audit-2026-10-02 A8: the live-decision poller computes features on the
+    # minimum warmup window (201 bars). An EMA-200 has not converged in that many
+    # bars (up to ~4% off the backtest value), so a must-condition near an EMA-200
+    # boundary can evaluate differently live than in backtest. When > 0, the
+    # poller fetches max(minimum warmup, this) bars instead (measured: 600 bars
+    # -> ema_200 within ~0.06% of backtest; 800 -> ~0.005%). 0 = old behavior.
+    # Costs a larger bars fetch per new candle. Cumulative indicators (obv,
+    # accumulation_distribution_line, vwap) stay window-dependent regardless.
+    live_decision_feature_window_bars: int = 0
 
     @classmethod
     def from_env(cls) -> LiveConfig:
@@ -129,6 +239,45 @@ class LiveConfig:
             ).lower() in ("1", "true", "yes"),
             live_decision_position_review_cadence_bars=int(
                 os.getenv("VINU_LIVE_DECISION_POSITION_REVIEW_CADENCE_BARS", "5"),
+            ),
+            scheduler_entry_guards_enabled=os.getenv(
+                "VINU_LIVE_SCHEDULER_ENTRY_GUARDS_ENABLED", "false",
+            ).lower() in ("1", "true", "yes"),
+            live_decision_max_trigger_attempts=int(
+                os.getenv("VINU_LIVE_DECISION_MAX_TRIGGER_ATTEMPTS", "3"),
+            ),
+            abort_on_equity_read_failure=os.getenv(
+                "VINU_LIVE_ABORT_ON_EQUITY_READ_FAILURE", "false",
+            ).lower() in ("1", "true", "yes"),
+            scheduler_exits_exempt_from_halts=os.getenv(
+                "VINU_LIVE_SCHEDULER_EXITS_EXEMPT_FROM_HALTS", "false",
+            ).lower() in ("1", "true", "yes"),
+            scheduler_use_daily_allocation=os.getenv(
+                "VINU_LIVE_SCHEDULER_USE_DAILY_ALLOCATION", "false",
+            ).lower() in ("1", "true", "yes"),
+            scheduler_respect_trade_plan_symbols=os.getenv(
+                "VINU_LIVE_SCHEDULER_RESPECT_TRADE_PLAN_SYMBOLS", "false",
+            ).lower() in ("1", "true", "yes"),
+            scheduler_breaker_uses_broker_account=os.getenv(
+                "VINU_LIVE_SCHEDULER_BREAKER_USES_BROKER_ACCOUNT", "false",
+            ).lower() in ("1", "true", "yes"),
+            precondition_enforcing_enabled=os.getenv(
+                "VINU_LIVE_PRECONDITION_ENFORCING_ENABLED", "false",
+            ).lower() in ("1", "true", "yes"),
+            execution_log_enabled=os.getenv(
+                "VINU_LIVE_EXECUTION_LOG_ENABLED", "true",
+            ).lower() in ("1", "true", "yes"),
+            scheduler_adopted_symbols=os.getenv("VINU_LIVE_SCHEDULER_ADOPTED_SYMBOLS", ""),
+            broker_unreachable_notify_enabled=os.getenv(
+                "VINU_LIVE_BROKER_UNREACHABLE_NOTIFY_ENABLED", "true",
+            ).lower() in ("1", "true", "yes"),
+            broker_unreachable_renotify_cycles=int(os.getenv("VINU_LIVE_BROKER_UNREACHABLE_RENOTIFY_CYCLES", "6")),
+            execution_fill_enrichment_enabled=os.getenv(
+                "VINU_LIVE_EXECUTION_FILL_ENRICHMENT_ENABLED", "true",
+            ).lower() in ("1", "true", "yes"),
+            execution_fill_enrichment_batch=int(os.getenv("VINU_LIVE_EXECUTION_FILL_ENRICHMENT_BATCH", "25")),
+            live_decision_feature_window_bars=int(
+                os.getenv("VINU_LIVE_DECISION_FEATURE_WINDOW_BARS", "0"),
             ),
         )
 

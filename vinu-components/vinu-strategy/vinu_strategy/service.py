@@ -182,7 +182,18 @@ class StrategyService:
             strategy_name, weights, signal_values, run_id=actual_run_id,
             metadata={"symbols": universe[:5], "count": len(universe)},
         )
-        self._meta_storage.log_run(strategy_name, actual_run_id, symbol=",".join(universe[:5]))
+        # v1 C4 (the-inconsistencies-v2 plan 2.4d): a degraded run (symbols missing required
+        # upstream data, or weights clamped/zeroed by the sanity gate) used to be visible only
+        # in this call's own response and one log line, then gone. Persist the facts on the run
+        # row so GET /strategy/runs can answer "was this run clean" after the fact.
+        self._meta_storage.log_run(
+            strategy_name, actual_run_id, symbol=",".join(universe[:5]),
+            metadata={
+                "is_degraded": bool(data_quality),
+                "degraded_symbols": sorted(data_quality)[:20],
+                "sanity_issue_count": len(sanity_issues),
+            },
+        )
 
         if data_quality:
             LOG.warning(

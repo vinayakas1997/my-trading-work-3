@@ -42,6 +42,8 @@ class StrategyAPI:
             "confirmation_conditions": cfg.confirmation_conditions,
             "grace_window_bars": cfg.grace_window_bars,
             "live_decision_position_size": cfg.live_decision_position_size,
+            "live_decision_stop_pct": cfg.live_decision_stop_pct,
+            "live_decision_max_hold_bars": cfg.live_decision_max_hold_bars,
             # Point 6's write-back (reverse-engineering/
             # 05-deciding-agent-and-precondition-tracking.md Part C):
             # `tested`/`precondition_held`/`last_checked_at` are overlaid

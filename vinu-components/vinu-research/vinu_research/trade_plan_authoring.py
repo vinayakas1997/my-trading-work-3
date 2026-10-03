@@ -25,6 +25,7 @@ from vinu_tools.compute.risk import (
     kelly_optimal_fraction,
 )
 
+from vinu_research import confidence_calibration
 from vinu_research.calibration import CalibrationGate, CalibrationTracker
 from vinu_research.config import ResearchConfig, TradeScoreThresholds
 from vinu_research.forecast_skill import ForecastSkillConfig, generate_forecast
@@ -189,6 +190,11 @@ async def fetch_personality_features(tools: ResearchTools, symbol: str) -> dict[
 
 
 _REGIME_FAVORS_DIRECTION = {"bull": "long", "bear": "short"}
+
+
+# Sentinel: "the regime was not fetched before the forecast" (distinct from a fetch that
+# succeeded and found no regime row, which is None).
+_REGIME_NOT_PREFETCHED: Any = object()
 
 
 async def fetch_current_regime(tools: ResearchTools, symbol: str) -> str | None:
@@ -902,9 +908,26 @@ async def author_trade_plan(
         except Exception as e:
             logger.debug("[%s %s] MaturityAssessor fetch failed, continuing without it: %s", symbol, timeframe, e)
 
+    # logic-audit B3: with the opt-in flag on, the regime and the options-implied move are
+    # fetched BEFORE the forecast and shown to it (they used to be fetched after, so the
+    # forecast LLM never saw what the Trade Score and sizing apply to it). The regime
+    # result is reused below, so this adds no second call.
+    prefetched_regime: Any = _REGIME_NOT_PREFETCHED
+    forecast_extra_context: dict[str, Any] | None = None
+    if config.forecast_prompt_extra_context_enabled:
+        try:
+            prefetched_regime = await fetch_current_regime(tools, symbol)
+        except Exception as e:
+            logger.debug("[%s %s] pre-forecast fetch_current_regime failed, continuing without it: %s", symbol, timeframe, e)
+        forecast_extra_context = {
+            "current_regime": None if prefetched_regime is _REGIME_NOT_PREFETCHED else prefetched_regime,
+            "options": options_context if options_context.get("status") == "ok" else None,
+        }
+
     forecast = await generate_forecast(
         symbol, personality, risk_state, config, llm_client,
         summary_context=summary_ctx, maturity_context=maturity_context,
+        extra_context=forecast_extra_context,
     )
     logger.info(
         "[%s %s] Forecast: direction=%s magnitude_std=%.4f",
@@ -982,10 +1005,37 @@ async def author_trade_plan(
     # that happens.
     if trade_score_config is None:
         trade_score_config = load_active_thresholds()
+    # logic-audit B1: what has this forecaster's stated confidence actually meant? Learned from closed
+    # trades; log-only unless `calibrated_confidence_in_ev_enabled`. Fail-open on any problem.
+    calibrated_conf: confidence_calibration.CalibratedConfidence | None = None
+    if config.confidence_reliability_log_enabled or config.calibrated_confidence_in_ev_enabled:
+        try:
+            _cal_path = config.data_root / "strategy_store.db"
+            # read-only intent: never create the database just to look for history
+            _entries = SqliteStrategyStore(_cal_path).list_all_calibration_entries() if _cal_path.exists() else []
+            _pairs = confidence_calibration.recover_pairs(_entries)
+            _rmap = confidence_calibration.build_reliability_map(
+                _pairs, min_samples=config.confidence_calibration_min_samples,
+            )
+            calibrated_conf = confidence_calibration.calibrate(forecast.confidence, _rmap)
+        except Exception as e:  # noqa: BLE001 -- never break authoring
+            logger.debug("[%s %s] confidence calibration unavailable, using raw confidence: %s", symbol, timeframe, e)
     trade_score_verdict = check_trade_score_gate(
         forecast, risk_bands, market_state, trade_score_config,
+        ev_confidence=(
+            calibrated_conf.calibrated
+            if calibrated_conf is not None and config.calibrated_confidence_in_ev_enabled else None
+        ),
+        confluence_exclude_signals=(
+            frozenset({"forecast_confidence"}) if config.confluence_excludes_forecast_confidence else frozenset()
+        ),
     )
     trade_score = trade_score_verdict.result
+    if calibrated_conf is not None:
+        trade_score.reasons.append(
+            calibrated_conf.describe()
+            + ("; used in EV" if config.calibrated_confidence_in_ev_enabled else "; log-only, EV uses raw")
+        )
     size_multiplier = TIER_SIZE_MULTIPLIER.get(trade_score.tier, 0.0)
     # Regime router (high-expectations follow-up): a second, direct channel
     # for current_regime to affect this plan beyond its existing single
@@ -993,7 +1043,10 @@ async def author_trade_plan(
     # Fail-open to a neutral 1.0 on any fetch problem, same posture as
     # every other optional data source in this function.
     try:
-        current_regime = await fetch_current_regime(tools, symbol)
+        current_regime = (
+            prefetched_regime if prefetched_regime is not _REGIME_NOT_PREFETCHED
+            else await fetch_current_regime(tools, symbol)
+        )
     except Exception as e:
         logger.debug("[%s %s] fetch_current_regime failed, continuing without it: %s", symbol, timeframe, e)
         current_regime = None
@@ -1183,6 +1236,42 @@ def approve_trade_plan(
                 _write_eval(
                     "trade_score_gate", 8, "PASS", f"tier {tier!r} clears the minimum tradeable tier",
                     {"tier": tier, "total_score": plan_for_score_check.trade_score.total_score},
+                )
+
+            # logic-audit-2026-10-02 B2 (the-inconsistencies-v2): fail closed on a
+            # plan whose risk band was never computed. `_build_risk_band` returns an
+            # all-zero RiskBand when risk_state wasn't "ok"; every Trade Score
+            # sub-check then fails OPEN on that zero (the reward:risk veto is skipped,
+            # the risk sub-score goes neutral, EV loses its loss term), so such a plan
+            # clears the tier gate above on inflated EV and would be approved. It can
+            # never actually enter (the live path skips a plan whose
+            # max_position_size_pct is 0), so the harm was an inert ACTIVE plan that
+            # still holds a portfolio slot -- but the hard reward:risk floor must not
+            # be bypassable by a data hole. Either field being positive is enough
+            # (cvar_95_limit predates expected_drawdown, so older plans carry only
+            # the former). `force` overrides exactly like every other gate here.
+            # Only plans that carry a Trade Score are checked: a plan frozen before
+            # the score existed was never scored on a zero band, and stays fail-open
+            # like every other "never backfilled" field in this file.
+            _rb = plan_for_score_check.risk_bands
+            if (_rb.expected_drawdown or 0.0) <= 0.0 and (_rb.cvar_95_limit or 0.0) <= 0.0:
+                reasons = [
+                    "risk_not_computed: this plan's risk band has no expected_drawdown or "
+                    "cvar_95_limit (risk state was unavailable at authoring time), so the "
+                    "reward:risk floor and risk score could not run -- refusing to approve "
+                    "until it is re-authored with a computed risk band"
+                ]
+                _write_eval(
+                    "trade_score_gate", 8, "FAIL", "; ".join(reasons),
+                    {"check": "risk_band_computed", "expected_drawdown": _rb.expected_drawdown,
+                     "cvar_95_limit": _rb.cvar_95_limit},
+                )
+                if not force:
+                    logger.warning("[%s] Approval REJECTED: %s", artifact_id, "; ".join(reasons))
+                    raise TradePlanApprovalError(reasons)
+                logger.warning(
+                    "[%s] Approval FORCED by %s despite: %s",
+                    artifact_id, approver, "; ".join(reasons),
                 )
 
     tracker = load_calibration_tracker(store, artifact_id, config)

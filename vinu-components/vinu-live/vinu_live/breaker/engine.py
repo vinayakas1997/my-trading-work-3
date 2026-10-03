@@ -145,14 +145,20 @@ def check_limits(
     cluster_map: dict[str, str] | None = None,
     limits: BreakerLimits | None = None,
     state: BreakerState | None = None,
+    positions: list | None = None,
 ) -> tuple[str, str | None]:
+    """`positions`: logic-audit A6 -- an explicit position list (anything with .symbol / .qty / .side)
+    to check instead of the trade-plan book's open positions. None (every existing caller) reads the
+    book exactly as before. `daily_realized_pnl` is simply "today's P&L as a number"; a caller may pass
+    an equity-based figure that includes unrealized moves."""
     limits = limits or DEFAULT_LIMITS
     state = state or BreakerState()
 
     if state.halted:
         return BreakerVerdict.HALT, state.halted_reason
 
-    positions = list_open_positions(backend)
+    if positions is None:
+        positions = list_open_positions(backend)
 
     checks = [
         ("daily_loss", _check_daily_loss(daily_realized_pnl, portfolio_value, limits)),

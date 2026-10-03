@@ -275,3 +275,65 @@ class TestAppendDailyReturnRoute:
         call_kwargs = mock_tool.execute.call_args.kwargs
         assert call_kwargs["take_profit_price"] == 150.0
         assert call_kwargs["stop_loss_price"] == 130.0
+
+
+class TestBrokerOrderLookupRoute:
+    """GET /broker/order/{id}: one order's state at the broker, including its average fill price (the input
+    vinu-live's order ledger needs to compute slippage). Problems are reported in the body, never as a 5xx."""
+
+    def _order(self, **kw):
+        from vinu_agent.broker.alpaca import Order
+
+        base = dict(order_id="ord-1", symbol="AAPL", side="buy", type="market", status="filled", qty=10.0,
+                    filled_qty=10.0, limit_price=None, stop_price=None, created_at="t0", updated_at="t1",
+                    filled_avg_price=187.31)
+        base.update(kw)
+        return Order(**base)
+
+    def test_returns_status_quantity_and_the_average_fill_price(self, client) -> None:
+        broker = MagicMock()
+        broker.is_configured.return_value = True
+        broker.get_order.return_value = self._order()
+        with patch("vinu_agent.server.routes_broker.get_live_broker", return_value=broker):
+            body = client.get("/broker/order/ord-1").json()
+        broker.get_order.assert_called_once_with("ord-1")
+        assert body["status"] == "ok" and body["order_status"] == "filled"
+        assert body["filled_qty"] == 10.0 and body["filled_avg_price"] == 187.31 and body["symbol"] == "AAPL"
+
+    def test_a_working_order_has_no_fill_price_yet(self, client) -> None:
+        broker = MagicMock()
+        broker.is_configured.return_value = True
+        broker.get_order.return_value = self._order(status="accepted", filled_qty=0.0, filled_avg_price=None)
+        with patch("vinu_agent.server.routes_broker.get_live_broker", return_value=broker):
+            body = client.get("/broker/order/ord-1").json()
+        assert body["order_status"] == "accepted" and body["filled_avg_price"] is None
+
+    def test_unconfigured_and_errors_are_reported_in_the_body(self, client) -> None:
+        broker = MagicMock()
+        broker.is_configured.return_value = False
+        with patch("vinu_agent.server.routes_broker.get_live_broker", return_value=broker):
+            r = client.get("/broker/order/x")
+        assert r.status_code == 200 and r.json() == {"configured": False, "status": "unconfigured"}
+        broker.is_configured.return_value = True
+        broker.get_order.side_effect = RuntimeError("alpaca 404")
+        with patch("vinu_agent.server.routes_broker.get_live_broker", return_value=broker):
+            r = client.get("/broker/order/x")
+        assert r.status_code == 200 and r.json()["status"] == "error" and "alpaca 404" in r.json()["error"]
+
+    def test_a_broker_without_order_lookup_says_so(self, client) -> None:
+        broker = MagicMock(spec=["is_configured"])
+        broker.is_configured.return_value = True
+        with patch("vinu_agent.server.routes_broker.get_live_broker", return_value=broker):
+            body = client.get("/broker/order/x").json()
+        assert body["status"] == "error" and "cannot look up" in body["error"]
+
+    def test_the_alpaca_broker_calls_the_order_by_id_endpoint(self) -> None:
+        from vinu_agent.broker.alpaca import AlpacaBroker
+
+        b = AlpacaBroker()
+        b._get = MagicMock(return_value={"id": "o9", "symbol": "MSFT", "side": "sell", "type": "market", "status": "filled",
+                                         "qty": "3", "filled_qty": "3", "filled_avg_price": "400.5",
+                                         "created_at": "a", "updated_at": "b"})
+        o = b.get_order("o9")
+        b._get.assert_called_once_with("/v2/orders/o9")
+        assert o.order_id == "o9" and o.filled_avg_price == 400.5 and o.filled_qty == 3.0

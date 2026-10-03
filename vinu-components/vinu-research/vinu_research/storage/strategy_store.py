@@ -479,6 +479,15 @@ class SqliteStrategyStore:
         ).fetchall()
         return [self._row_to_calibration_entry(r) for r in rows]
 
+    def list_all_calibration_entries(self, limit: int = 5000) -> list[CalibrationEntry]:
+        """Newest `limit` calibration entries across every artifact (logic-audit B1: the reliability
+        map of stated confidence needs the pooled history, not one artifact's)."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM calibration_entries ORDER BY id DESC LIMIT ?", (int(limit),),
+        ).fetchall()
+        return [self._row_to_calibration_entry(r) for r in reversed(rows)]
+
     def append_angle_calibration_entry(self, entry: AngleCalibrationEntry) -> AngleCalibrationEntry:
         conn = self._get_conn()
         conn.execute(
