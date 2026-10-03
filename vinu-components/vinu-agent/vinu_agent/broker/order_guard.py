@@ -17,6 +17,16 @@ from .guard_codes import GuardOutcome, ReasonCode
 from .kill_switch import is_trading_halted
 from .mandate import TradingMandate
 
+def _record_edge(edge_id: str, status: str, detail: str = "") -> None:
+    """Observe-only pipeline-edge recording (vinu_infra.pipeline_edge_recorder); never raises, never affects an order."""
+    try:
+        from vinu_infra.pipeline_edge_recorder import record_edge
+
+        record_edge(edge_id, status, detail)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 logger = logging.getLogger(__name__)
 
 # C17: an order whose value / position size lands in the top
@@ -623,8 +633,10 @@ class OrderGuard:
         except Exception as e:
             logger.warning("Could not fetch risk budget for %s: %s", symbol, e)
             self._risk_budget_cache[symbol] = None
+            _record_edge("portfolio.risk_status->agent.order_guard", "missing", f"{symbol}: {e}")
             return None
         self._risk_budget_cache[symbol] = budget
+        _record_edge("portfolio.risk_status->agent.order_guard", "received" if budget else "empty", symbol)
         return budget
 
     def _risk_budget_multiplier(self, symbol: str) -> float | None:
@@ -749,7 +761,12 @@ class OrderGuard:
             portfolio = resp.json()
         except Exception as e:
             logger.warning("Could not check portfolio concentration for %s: %s", symbol, e)
+            _record_edge("portfolio.state->agent.order_guard", "missing", f"{symbol}: {e}")
             return GuardResult(True)
+        _record_edge(
+            "portfolio.state->agent.order_guard",
+            "received" if isinstance(portfolio, dict) and portfolio.get("weights") else "empty", symbol,
+        )
 
         weights = portfolio.get("weights") or []
 

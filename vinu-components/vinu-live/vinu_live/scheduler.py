@@ -195,6 +195,10 @@ class LiveScheduler:
             # it is visible in the cycle result, not one log line.
             try:
                 n_needs_sizing = len(list_needs_sizing(self._live_decision_backend))
+                record_edge(
+                    "live_decision.unsized_executes->live.api", "received" if n_needs_sizing else "empty",
+                    f"{n_needs_sizing} EXECUTE(s) waiting on a configured size",
+                )
                 if n_needs_sizing:
                     result["needs_sizing"] = n_needs_sizing
             except Exception as e:  # noqa: BLE001 -- visibility only
@@ -385,13 +389,20 @@ class LiveScheduler:
         An approximation of the fill price (the last daily close the order is
         sized on), documented as such."""
         try:
+            stamped = 0
             for pos in list_open_positions(self._live_decision_backend):
                 if pos.entry_price is None and prices.get(pos.ticker):
                     set_entry_price_if_missing(
                         self._live_decision_backend, pos.id, prices[pos.ticker],
                     )
+                    stamped += 1
+            record_edge(
+                "live_decision.entry_price<-live.scheduler", "received" if stamped else "empty",
+                f"stamped {stamped} position(s)",
+            )
         except Exception as e:  # noqa: BLE001 -- never let this touch order flow
             LOG.warning("Could not record live-decision entry prices: %s", e)
+            record_edge("live_decision.entry_price<-live.scheduler", "missing", f"write failed: {e}")
 
     async def _apply_entry_guards(
         self, instructions: list[Any],
@@ -413,6 +424,7 @@ class LiveScheduler:
             return instructions, []
         try:
             locked, lock_reason = cooldown_active(self._book)
+            record_edge("guard.cooldown->live.scheduler", "received", "locked" if locked else "not locked")
             kept: list[Any] = []
             blocked: list[dict[str, Any]] = []
             for instr in instructions:
@@ -428,6 +440,10 @@ class LiveScheduler:
                         guard, reason = "symbol_lockout", sym_reason
                 if not guard and PRICE_MAX_AGE_HOURS > 0:
                     age = _price_ts_age_hours(self._last_price_ts.get(instr.symbol))
+                    record_edge(
+                        "guard.data_freshness->live.scheduler", "received" if age is not None else "missing",
+                        f"{instr.symbol}: " + (f"newest bar {age:.1f}h old" if age is not None else "no bar timestamp recorded"),
+                    )
                     if age is not None and age > PRICE_MAX_AGE_HOURS:
                         guard = "stale_data"
                         reason = f"price data age {age:.1f}h exceeds max {PRICE_MAX_AGE_HOURS:.1f}h"
@@ -461,9 +477,16 @@ class LiveScheduler:
             )
             if resp.status_code == 200:
                 bars = resp.json().get("data", [])
-                return [float(b["close"]) for b in bars if b.get("close")]
+                closes = [float(b["close"]) for b in bars if b.get("close")]
+                record_edge(
+                    "guard.turbulence->live.scheduler", "received" if closes else "missing",
+                    f"{symbol}: {len(closes)} daily close(s)",
+                )
+                return closes
+            record_edge("guard.turbulence->live.scheduler", "missing", f"{symbol}: HTTP {resp.status_code}")
         except Exception as e:  # noqa: BLE001
             LOG.debug("Could not fetch recent closes for %s: %s", symbol, e)
+            record_edge("guard.turbulence->live.scheduler", "missing", f"{symbol}: {e}")
         return []
 
     async def _maturity_scaled_limits(self) -> BreakerLimits | None:
@@ -663,11 +686,15 @@ class LiveScheduler:
                     "Target-weight-drift notification for %s returned http %s",
                     drift.get("symbol"), getattr(resp, "status_code", "?"),
                 )
+                record_edge("reconciliation_drift->agent.notify", "missing", f"{drift.get('symbol')}: HTTP {getattr(resp, 'status_code', '?')}")
+            else:
+                record_edge("reconciliation_drift->agent.notify", "received", f"{drift.get('symbol')}")
         except Exception as e:  # noqa: BLE001
             LOG.warning(
                 "Could not send target-weight-drift notification for %s: %s",
                 drift.get("symbol"), e,
             )
+            record_edge("reconciliation_drift->agent.notify", "missing", f"{drift.get('symbol')}: {e}")
 
     async def _fetch_live_decision_weights(self, cycle_id: str) -> list[dict[str, Any]]:
         """Point 7 option 1, plus the exit-mechanism fix (missing-pieces-
@@ -704,6 +731,10 @@ class LiveScheduler:
         if pending:
             strategy_cache: dict[str, dict[str, Any] | None] = {}
             for record in pending:
+                record_edge(
+                    "precondition_held->live.scheduler", "received" if record.precondition_held is not None else "missing",
+                    f"{record.ticker}/{record.strategy_id}: precondition_held={record.precondition_held}",
+                )
                 if self._config.precondition_enforcing_enabled and record.precondition_held is False:
                     # v1 A8: the strategy's own precondition did not hold -- no position. Final, so mark applied.
                     LOG.warning(
@@ -1202,6 +1233,11 @@ class LiveScheduler:
                     json=_payload,
                 )
                 outcome, detail = self._order_outcome(resp)
+                if exit_slice:
+                    record_edge(
+                        "order.reduce_only->live.scheduler", "received" if outcome == "submitted" else "missing",
+                        f"{slice_.symbol}: reduce-only {slice_.side} -> {outcome}",
+                    )
                 result = {
                     "symbol": slice_.symbol,
                     "side": slice_.side,

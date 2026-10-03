@@ -5,6 +5,8 @@ from typing import Any
 
 import httpx
 
+from vinu_infra.pipeline_edge_recorder import record_edge
+
 LOG = logging.getLogger(__name__)
 
 
@@ -62,9 +64,13 @@ class TradePlanApprovalWorker:
                 params={"status": "CREATED", "type_": "trade_plan"},
             )
             if resp.status_code == 200:
-                return resp.json()
+                plans = resp.json()
+                record_edge("research.created_trade_plans->live.approval_worker", "received" if plans else "empty")
+                return plans
+            record_edge("research.created_trade_plans->live.approval_worker", "missing", f"HTTP {resp.status_code}")
         except Exception as e:
             LOG.warning("Failed to list CREATED trade plans: %s", e)
+            record_edge("research.created_trade_plans->live.approval_worker", "missing", f"request failed: {e}")
         return []
 
     async def _approve_one(self, artifact: dict[str, Any]) -> dict[str, Any]:

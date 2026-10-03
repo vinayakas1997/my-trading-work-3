@@ -28,6 +28,16 @@ from vinu_portfolio.storage.drawdown_status import DrawdownStatusStore
 
 LOG = logging.getLogger(__name__)
 
+
+def _record_edge(edge_id: str, status: str, detail: str = "") -> None:
+    """Observe-only pipeline-edge recording (vinu_infra.pipeline_edge_recorder); never raises, never affects the caller."""
+    try:
+        from vinu_infra.pipeline_edge_recorder import record_edge
+
+        record_edge(edge_id, status, detail)
+    except Exception:  # noqa: BLE001
+        pass
+
 # regime_analysis's own labels (bull/bear/high_vol/sideways, see
 # vinu_portfolio/regime.py) vs. strategy-tags/tags.yaml's labels (trending/
 # ranging/mean_reverting) are two different, unreconciled vocabularies in
@@ -915,7 +925,9 @@ class PortfolioService:
             assessment = await asyncio.to_thread(get_maturity_assessment)
         except Exception as e:
             LOG.warning("Maturity assessment unavailable, deploying at full capital: %s", e)
+            _record_edge("maturity.status->portfolio.capital", "missing", str(e))
             return 1.0
+        _record_edge("maturity.status->portfolio.capital", "received", f"tier={assessment.tier}")
 
         from vinu_research.maturity_assessor import (
             TIER_COLD_START, TIER_EARLY_LIVE, TIER_MATURE, TIER_PAPER_ONLY,
@@ -994,6 +1006,7 @@ class PortfolioService:
         had readers but no HTTP route anywhere, so what was allocated (and what was left
         unfunded) on past days could not be read without the database file."""
         rows = self._allocation_history.list_allocations()[: max(0, limit)]
+        _record_edge("portfolio.not_funded_history->portfolio.api", "received" if rows else "empty", f"{len(rows)} allocation(s) read")
         return [
             {
                 "allocation_date": a.allocation_date, "created_at": a.created_at,
@@ -1009,6 +1022,7 @@ class PortfolioService:
         dilution). None when no allocation has ever been recorded -- distinct from an empty
         `not_funded` list (an allocation ran and everything was funded)."""
         rows = self._allocation_history.list_allocations()
+        _record_edge("portfolio.not_funded_history->portfolio.api", "received" if rows else "empty", f"{len(rows)} allocation(s) on record")
         if not rows:
             return None
         latest = rows[0]
@@ -1082,6 +1096,12 @@ class PortfolioService:
         # exactly this reason (visible in the response, never folded into
         # target_weight/base_weight).
         drawdown_status = self._drawdown_status_store.get()
+        # An empty `updated_at` means the drawdown monitor has never written a status: the ladder is then running on
+        # its default ("ok") and silently doing nothing -- exactly the not-running case worth surfacing.
+        _record_edge(
+            "drawdown_status->portfolio.allocation", "received" if drawdown_status.updated_at else "empty",
+            f"action={drawdown_status.action}" if drawdown_status.updated_at else "the drawdown monitor has never recorded a status",
+        )
         drawdown_mult = self._drawdown_action_multiplier(drawdown_status.action)
         maturity_mult = await self._maturity_capital_multiplier()
 

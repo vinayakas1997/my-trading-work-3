@@ -108,6 +108,8 @@ edges:
     cadence: per approval-worker cycle
     empty_ok: true
     status: wired
+    instrumented: true
+    stale_after_sec: 3000
 
   # ---------------- risk and halt signals ----------------
 
@@ -124,6 +126,7 @@ edges:
     cadence: per order
     empty_ok: false
     status: wired
+    instrumented: true
 
   - id: portfolio.state->agent.order_guard
     producer:
@@ -138,6 +141,7 @@ edges:
     cadence: per order
     empty_ok: true
     status: wired
+    instrumented: true
 
   - id: halt_flag->live.scheduler
     producer:
@@ -197,6 +201,7 @@ edges:
     cadence: per allocation
     empty_ok: true
     status: wired
+    instrumented: true
     note: wired inside compute_daily_allocation only -- see portfolio.daily_allocation->live.scheduler
 
   # ---------------- guard parity between the two executors ----------------
@@ -214,6 +219,7 @@ edges:
     cadence: per cycle
     empty_ok: true
     status: wired
+    instrumented: true
     note: wired 2026-10-02 (plan 2.2); opt-in via scheduler_entry_guards_enabled / VINU_LIVE_SCHEDULER_ENTRY_GUARDS_ENABLED, default off; entries only
 
   - id: guard.turbulence->live.scheduler
@@ -229,6 +235,7 @@ edges:
     cadence: per cycle
     empty_ok: true
     status: wired
+    instrumented: true
     note: wired 2026-10-02 (plan 2.2); opt-in via scheduler_entry_guards_enabled / VINU_LIVE_SCHEDULER_ENTRY_GUARDS_ENABLED, default off; entries only
 
   - id: guard.data_freshness->live.scheduler
@@ -244,6 +251,7 @@ edges:
     cadence: per cycle
     empty_ok: true
     status: wired
+    instrumented: true
     note: wired 2026-10-02 (plan 2.2); opt-in via scheduler_entry_guards_enabled / VINU_LIVE_SCHEDULER_ENTRY_GUARDS_ENABLED, default off; entries only
 
   - id: order.reduce_only->live.scheduler
@@ -259,6 +267,7 @@ edges:
     cadence: per order
     empty_ok: false
     status: wired
+    instrumented: true
     note: wired 2026-10-03 (logic-audit A5), but only when scheduler_exits_exempt_from_halts is on (default off)
 
   - id: book.writes->live.scheduler
@@ -290,6 +299,7 @@ edges:
     cadence: per EXECUTE
     empty_ok: false
     status: wired
+    instrumented: true
     note: wired 2026-10-03 (inconsistencies v1 A8), but enforced only when precondition_enforcing_enabled is on (default off)
 
   # ---------------- maturity, reflection and evidence feeding decisions ----------------
@@ -322,6 +332,7 @@ edges:
     cadence: per allocation when enabled
     empty_ok: true
     status: wired
+    instrumented: true
 
   - id: maturity.status->agent.live_decision_context
     producer:
@@ -336,6 +347,7 @@ edges:
     cadence: per decision
     empty_ok: true
     status: wired
+    instrumented: true
 
   - id: reflection.synthesis->agent.idea_generator
     producer:
@@ -350,6 +362,7 @@ edges:
     cadence: per idea cycle
     empty_ok: true
     status: wired
+    instrumented: true
 
   - id: reflection.notable_beliefs->agent.live_decision_context
     producer:
@@ -364,6 +377,7 @@ edges:
     cadence: per decision
     empty_ok: true
     status: wired
+    instrumented: true
 
   - id: research.unconfirmed_moves->agent.live_decision_context
     producer:
@@ -378,6 +392,7 @@ edges:
     cadence: per decision
     empty_ok: true
     status: wired
+    instrumented: true
 
   - id: signal_evidence->hypothesis_registry
     producer:
@@ -392,6 +407,7 @@ edges:
     cadence: scheduled worker
     empty_ok: true
     status: wired
+    instrumented: true
 
   - id: evaluation_status->agent.idea_prompt
     producer:
@@ -406,6 +422,7 @@ edges:
     cadence: per idea cycle
     empty_ok: true
     status: wired
+    instrumented: true
 
   - id: screener.top->agent.planner_worker
     producer:
@@ -414,12 +431,13 @@ edges:
       defines: ['/screener/rankers/{ranker_id}/latest']
     consumer:
       service: vinu-agent
-      files: [vinu-agent/vinu_agent/cli.py]
+      files: [vinu-agent/vinu_agent/cli.py, vinu-agent/vinu_agent/tools/screener_client.py]
       references: ['fetch_screener_top_tickers(']
       purpose: live ticker discovery for the planner-worker (opt-in)
     cadence: per planner cycle
     empty_ok: true
     status: wired
+    instrumented: true
 
   - id: reconciliation_drift->agent.notify
     producer:
@@ -434,6 +452,7 @@ edges:
     cadence: edge-triggered
     empty_ok: true
     status: wired
+    instrumented: true
 
   # ---------------- live-decision position protection (plan 2.3) ----------------
 
@@ -450,6 +469,7 @@ edges:
     cadence: per candle close
     empty_ok: true
     status: wired
+    instrumented: true
     note: added 2026-10-02 (plan 2.3, audit A3); both fields default to 0 = off
 
   - id: live_decision.entry_price<-live.scheduler
@@ -465,6 +485,7 @@ edges:
     cadence: per scheduler cycle, write-once
     empty_ok: true
     status: wired
+    instrumented: true
     note: added 2026-10-02 (plan 2.3); approximates the fill with the last daily close
 
   # ---------------- live-decision visibility and recovery (plan 2.4) ----------------
@@ -482,6 +503,7 @@ edges:
     cadence: on request / per scheduler cycle
     empty_ok: true
     status: wired
+    instrumented: true
     note: added 2026-10-03 (plan 2.4, v1 C2); read-time anti-join, no table
 
   - id: live_decision.stuck_trigger->agent.notify
@@ -497,6 +519,7 @@ edges:
     cadence: edge-triggered, once per stuck trigger
     empty_ok: true
     status: wired
+    instrumented: true
     note: added 2026-10-03 (plan 2.4, v1 C1)
 
   - id: sweep.base_code_hash->research.graveyard
@@ -512,6 +535,7 @@ edges:
     cadence: on request (GET /research/candidate-graveyard/{symbol})
     empty_ok: true
     status: wired
+    instrumented: true
     note: added 2026-10-03 (plan 2.4c, v1 A4); read-only, not a gate
 
   # ---------------- run-quality and unfunded-candidate visibility (plan 2.4d) ----------------
@@ -523,12 +547,13 @@ edges:
       defines: ['def latest_not_funded', 'def allocation_history_summaries']
     consumer:
       service: vinu-portfolio
-      files: [vinu-portfolio/vinu_portfolio/server/app.py]
+      files: [vinu-portfolio/vinu_portfolio/server/app.py, vinu-portfolio/vinu_portfolio/service.py]
       references: ['latest_not_funded(', 'allocation_history_summaries(']
       purpose: persisted daily allocations and why candidates were left unfunded, readable over HTTP
     cadence: on request
     empty_ok: true
     status: wired
+    instrumented: true
     note: added 2026-10-03 (plan 2.4d, v1 C4); the store had readers but no route
 
   - id: strategy.run_quality->strategy.runs_api
@@ -544,4 +569,5 @@ edges:
     cadence: per strategy run
     empty_ok: false
     status: wired
+    instrumented: true
     note: added 2026-10-03 (plan 2.4d, v1 C4)

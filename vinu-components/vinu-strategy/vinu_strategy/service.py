@@ -194,6 +194,15 @@ class StrategyService:
                 "sanity_issue_count": len(sanity_issues),
             },
         )
+        try:
+            from vinu_infra.pipeline_edge_recorder import record_edge
+
+            record_edge(
+                "strategy.run_quality->strategy.runs_api", "received",
+                f"{strategy_name}: degraded={bool(data_quality)}, sanity_issues={len(sanity_issues)}",
+            )
+        except Exception:  # noqa: BLE001 -- observe-only
+            pass
 
         if data_quality:
             LOG.warning(

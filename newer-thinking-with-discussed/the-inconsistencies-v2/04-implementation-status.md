@@ -1047,3 +1047,50 @@ one name blocked for the longer 72 h once the cooldown has lapsed. Realised P&L 
 symbol's losses fails 3.
 
 - **2026-10-03** — Phase 5.6: per-symbol loss lockout (opt-in). `vinu-live` 803 -> 823. Committed up to 5.5 (39281bd0, 694dbd43); 5.6 not yet.
+
+### Phase 3 extension: every wired edge is now instrumented — DONE 2026-10-03
+
+**What was built:** the runtime recorder (your "expected inputs per step, logged when they do not arrive" idea) now covers **all 34 wired edges** in `pipeline_edges.yaml`
+(it was 9 of 35). Each consumption point records `received` / `empty` / `missing` (and `stale` where a cadence is known). The one remaining edge, `book.writes->live.scheduler`,
+is a declared known gap, so the manifest has no `not_instrumented` edge left. `GET /research/pipeline-edges?only_problems=true` therefore shows, for the first time, every
+connection that is silent, empty where it should not be, or failing -- including the ones that used to fail without a trace.
+
+The 25 edges added, by service (the status each records, and the situation worth noticing):
+- **vinu-live scheduler:** `guard.cooldown` (received), `guard.data_freshness` (**missing** when a symbol has no bar timestamp), `guard.turbulence` (**missing** when the closes fetch fails or is empty),
+  `order.reduce_only` (received when an exit is accepted, **missing** when one is refused), `precondition_held` (**missing** when the agent did not state it), `reconciliation_drift->agent.notify`
+  (**missing** when the notice is not delivered), `live_decision.entry_price<-scheduler` (received / empty), `live_decision.unsized_executes` (received / empty).
+- **vinu-live other:** `research.created_trade_plans->approval_worker` (missing on HTTP error or exception; `stale` after 3,000 s), `strategy.stop_rules->poller` (received only when a stop or max-hold is configured,
+  else empty), `live_decision.stuck_trigger->agent.notify` (received / missing).
+- **vinu-agent:** `portfolio.risk_status` and `portfolio.state` at the order guard (missing on a failed read, which still fails open), `maturity.status`, `reflection.notable_beliefs` and
+  `research.unconfirmed_moves` in the live-decision context tool (its `_fetch_json` could not tell a failed read from an empty answer; it can now), `reflection.synthesis`, `signal_evidence->hypothesis_registry`
+  (**missing** when vinu-research is not importable in that deployment), `evaluation_status->idea_prompt` (**missing** when `VINU_STRATEGY_EVAL_DATA_ROOT` is unset in that service), `screener.top->planner_worker`.
+- **vinu-portfolio:** `drawdown_status->allocation` (**empty** when the drawdown monitor has never written a status: the halve / flat / halt ladder is then silently running on its default),
+  `maturity.status->capital` (when gating is on), `portfolio.not_funded_history->api`.
+- **vinu-strategy:** `strategy.run_quality->runs_api` (received per run, with the degraded / sanity facts in the detail).
+- **vinu-research:** `sweep.base_code_hash->graveyard` (**empty** when the code-hash join links nothing).
+
+**One deployment change:** `docker-compose.yml` gives `portfolio-api` and `quant-core-api` (vinu-strategy + simulator) the same shared mount the other services already use for edge recording
+(`./data/strategy-evaluation:/strategy-eval`, `VINU_STRATEGY_EVAL_DATA_ROOT`). Without it their edges would record nowhere. It is additive; rebuild / recreate those two containers for it to take effect.
+
+**Limits:** recording says an input arrived and when, not that it is correct. Event-driven edges (a refused exit, a stuck trigger) have no cadence, so they never go `stale`; they show `never_seen` until the
+first event. Edges in a service that was not restarted with the mount record nothing and read as `never_seen`. `signal_evidence` and similar worker edges depend on that worker actually running in the agent container.
+
+| File (inside `vinu-components/`) | Action |
+|---|---|
+| `vinu-live/vinu_live/scheduler.py`, `live_decision/poller.py`, `trade_plan_approval_worker.py` | modified: `record_edge` at each site |
+| `vinu-agent/vinu_agent/broker/order_guard.py`, `tools/get_live_decision_context_tool.py`, `tools/reflection_synthesis_tool.py`, `tools/screener_client.py`, `agent/scheduler_workers.py` | modified |
+| `vinu-portfolio/vinu_portfolio/service.py`, `vinu-strategy/vinu_strategy/service.py`, `vinu-research/vinu_research/candidate_graveyard.py` | modified |
+| `vinu-infra/pipeline_edges.yaml` | modified: 25 edges `instrumented: true` (+ `stale_after_sec` on the approval worker; two edges list the sibling file that holds the call) |
+| `docker-compose.yml` | modified: shared edge mount for portfolio-api and quant-core-api |
+| `vinu-live/tests/test_edge_instrumentation_more.py` | **created**, 24 tests |
+| `vinu-agent/tests/test_edge_instrumentation_agent.py` | **created**, 20 tests |
+| `vinu-portfolio/tests/test_edge_instrumentation_portfolio.py` | **created**, 6 tests |
+| `vinu-strategy/tests/test_run_quality_metadata.py`, `vinu-research/tests/test_sweep_code_hash_and_param_diff.py` | modified: +2 and +3 tests |
+| `vinu-research/tests/test_routes_introspect_pipeline_edges.py` | modified: no wired edge can be `not_instrumented` any more |
+
+**Tests:** `vinu-live` 823 -> **847** (+24), `vinu-portfolio` 276 -> **282** (+6), `vinu-strategy` 150 -> **152** (+2; the 10 old env errors unchanged), `vinu-research` 1300 -> **1302** (+2 net; same 1
+pre-existing failure `test_empty_meanings`), `vinu-agent` 1522 passed with the 20 new ones (**16 failed / 2 errors, the same as before this work**), `vinu-infra` 397 (its static check proves every `instrumented` edge has
+its id in a consumer file). Mutation checks (each restored): precondition recording, reduce-only missing, empty-vs-failed in the context tool, the unset evaluation root, the never-written drawdown monitor, a failed risk-budget read, the
+run-quality status -- each failed 1-2 tests.
+
+- **2026-10-03** — Phase 3 extension: all 34 wired edges instrumented (was 9); compose gives portfolio and quant-core the shared edge mount. Nothing uncommitted before this; this work is committed with it.

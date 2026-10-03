@@ -124,11 +124,13 @@ class GetLiveDecisionContextTool(BaseTool):
         research_url = self._services_config.get("vinu_research", "http://localhost:8087")
         unconfirmed = self._fetch_json(
             f"{research_url}/research/unconfirmed-moves?symbol={ticker}&limit=10",
+            edge_id="research.unconfirmed_moves->agent.live_decision_context", non_empty_key="events",
         )
 
         reflection_url = self._services_config.get("vinu_reflection", "http://localhost:8092")
         notable = self._fetch_json(
             f"{reflection_url}/reflection/beliefs/notable?limit=10",
+            edge_id="reflection.notable_beliefs->agent.live_decision_context", non_empty_key="beliefs",
         )
 
         return json.dumps({
@@ -162,7 +164,9 @@ class GetLiveDecisionContextTool(BaseTool):
         if not enabled:
             return {}
         research_url = self._services_config.get("vinu_research", "http://localhost:8087")
-        status = self._fetch_json(f"{research_url}/research/maturity/status")
+        status = self._fetch_json(
+            f"{research_url}/research/maturity/status", edge_id="maturity.status->agent.live_decision_context",
+        )
         store = _get_maturity_consultation_store()
         scope_key = f"{ticker}:{strategy_id}"
         if not status:
@@ -178,17 +182,35 @@ class GetLiveDecisionContextTool(BaseTool):
         return status
 
     @staticmethod
-    def _fetch_json(url: str) -> dict:
+    def _fetch_json(url: str, edge_id: str | None = None, non_empty_key: str | None = None) -> dict:
+        """GET `url` as JSON; {} on any failure (fail-open, as before). With `edge_id`, the outcome is also recorded
+        as a pipeline edge: `received`, `empty` (no body, or `non_empty_key` absent / empty) or `missing` (the request
+        failed) -- the tool itself cannot tell a failed read from an empty answer, the recorder can."""
         import httpx
         try:
             from vinu_infra.auth import internal_auth_headers as _iah
             headers = _iah() or None
         except Exception:
             headers = None
+
+        def _rec(status: str, detail: str = "") -> None:
+            if edge_id is None:
+                return
+            try:
+                from vinu_infra.pipeline_edge_recorder import record_edge
+
+                record_edge(edge_id, status, detail)
+            except Exception:  # noqa: BLE001
+                pass
+
         try:
             resp = httpx.get(url, headers=headers, timeout=30)
             resp.raise_for_status()
-            return resp.json()
+            body = resp.json()
         except Exception as exc:
             LOG.warning("get_live_decision_context: fetch failed for %s: %s", url, exc)
+            _rec("missing", str(exc))
             return {}
+        empty = not body or (non_empty_key is not None and isinstance(body, dict) and not body.get(non_empty_key))
+        _rec("empty" if empty else "received")
+        return body

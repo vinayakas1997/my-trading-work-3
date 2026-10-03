@@ -309,3 +309,44 @@ async def test_recipe_sweep_through_run_sweep_grid_has_no_base_code_hash():
         tools=tools, sweep_store=store,
     )
     assert store.get_sweep(result.sweep_id)["base_code_hash"] is None
+
+
+# --------------------------------------------------------------- runtime edge recording (Phase 3 extension)
+
+@pytest.fixture
+def edge_root(tmp_path, monkeypatch):
+    from vinu_infra import pipeline_edge_recorder as rec
+
+    monkeypatch.delenv("VINU_STRATEGY_EVAL_DATA_ROOT", raising=False)
+    monkeypatch.setenv("VINU_EDGE_DATA_ROOT", str(tmp_path))
+    rec.reset_for_tests()
+    yield rec
+    rec.reset_for_tests()
+
+
+def _edge(rec):
+    return rec.resolve_edge_status_store().get_state("sweep.base_code_hash->research.graveyard")
+
+
+def test_the_graveyard_join_is_recorded_empty_when_nothing_links(gen, store, edge_root):
+    _gen_round(gen, discard_code="class NeverSwept: pass")
+    _record(store, "s1", base_code=None)                       # recipe mode: no hash, nothing can link
+    query_candidate_graveyard("AAPL", generation_store=gen, sweep_store=store)
+    st = _edge(edge_root)
+    assert st["status"] == "empty" and "0 joined" in st["last_detail"]
+
+
+def test_the_graveyard_join_is_recorded_received_when_generation_and_sweep_link(gen, store, edge_root):
+    _gen_round(gen, discard_code=BASE)
+    _record(store, "s1")
+    entries = query_candidate_graveyard("AAPL", generation_store=gen, sweep_store=store)
+    st = _edge(edge_root)
+    assert st["status"] == "received" and f"{len(entries)} entr" in st["last_detail"]
+
+
+def test_recording_does_not_change_the_graveyard_result(gen, store, edge_root, monkeypatch):
+    _gen_round(gen, discard_code=BASE)
+    _record(store, "s1")
+    with_rec = query_candidate_graveyard("AAPL", generation_store=gen, sweep_store=store)
+    monkeypatch.setattr(edge_root, "resolve_edge_status_store", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    assert query_candidate_graveyard("AAPL", generation_store=gen, sweep_store=store) == with_rec

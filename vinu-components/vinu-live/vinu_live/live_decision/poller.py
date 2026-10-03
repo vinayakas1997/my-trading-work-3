@@ -20,6 +20,7 @@ from typing import Any
 
 import httpx
 
+from vinu_infra.pipeline_edge_recorder import record_edge
 from vinu_live.config import LiveConfig
 from vinu_live.live_decision import conditions, state_tracker
 from vinu_live.live_decision.bars_client import fetch_recent_bars
@@ -253,6 +254,11 @@ class CandleClosePoller:
                     stop_pct=float(strat.get("live_decision_stop_pct", 0.0) or 0.0),
                     max_hold_bars=int(strat.get("live_decision_max_hold_bars", 0) or 0),
                 )
+                configured = bool(float(strat.get("live_decision_stop_pct", 0.0) or 0.0) or int(strat.get("live_decision_max_hold_bars", 0) or 0))
+                record_edge(
+                    "strategy.stop_rules->live.poller", "received" if configured else "empty",
+                    f"{pos.ticker}/{pos.strategy_id}: " + ("rules configured" if configured else "no stop / max-hold configured (off)"),
+                )
                 if hit is None:
                     continue
                 rule, detail = hit
@@ -440,8 +446,10 @@ class CandleClosePoller:
                 },
             )
             resp.raise_for_status()
+            record_edge("live_decision.stuck_trigger->agent.notify", "received", f"{ticker}/{strategy_id}")
         except Exception as exc:  # noqa: BLE001
             LOG.warning("could not send stuck-decision notification for %s/%s: %s", ticker, strategy_id, exc)
+            record_edge("live_decision.stuck_trigger->agent.notify", "missing", f"{ticker}/{strategy_id}: {exc}")
 
     async def _trigger_live_decision(
         self, ticker: str, strategy_id: str, bar_ts: int, trigger_id: str | None,

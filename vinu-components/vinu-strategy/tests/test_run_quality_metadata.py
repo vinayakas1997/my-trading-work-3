@@ -125,3 +125,35 @@ def test_the_symbol_list_is_bounded():
     svc._pipeline.run.return_value = ({s: 0.0 for s in symbols}, {"rule_trace": {}})
     svc.evaluate("s", symbols=symbols)
     assert len(_logged_metadata(svc)["degraded_symbols"]) == 20
+
+
+# ------------------------------------------------------------------ runtime edge recording (Phase 3 extension)
+
+@pytest.fixture
+def edge_root(tmp_path, monkeypatch):
+    from vinu_infra import pipeline_edge_recorder as rec
+
+    monkeypatch.delenv("VINU_STRATEGY_EVAL_DATA_ROOT", raising=False)
+    monkeypatch.setenv("VINU_EDGE_DATA_ROOT", str(tmp_path / "edges"))
+    (tmp_path / "edges").mkdir()
+    rec.reset_for_tests()
+    yield rec
+    rec.reset_for_tests()
+
+
+def test_each_run_records_the_run_quality_edge_with_its_facts(edge_root):
+    svc = _service(_cfg(features_required=["rsi_14"]))
+    svc.evaluate("s", symbols=["AAPL", "MSFT"])
+    st = edge_root.resolve_edge_status_store().get_state("strategy.run_quality->strategy.runs_api")
+    assert st["status"] == "received" and "degraded=True" in st["last_detail"] and "s:" in st["last_detail"]
+    svc2 = _service(_cfg())
+    svc2.evaluate("s", symbols=["AAPL"])
+    st = edge_root.resolve_edge_status_store().get_state("strategy.run_quality->strategy.runs_api")
+    assert "degraded=False" in st["last_detail"] and st["n_received"] == 2
+
+
+def test_a_broken_recorder_does_not_change_the_persisted_metadata(edge_root, monkeypatch):
+    monkeypatch.setattr(edge_root, "resolve_edge_status_store", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    svc = _service(_cfg())
+    svc.evaluate("s", symbols=["AAPL"])
+    assert _logged_metadata(svc) == {"is_degraded": False, "degraded_symbols": [], "sanity_issue_count": 0}

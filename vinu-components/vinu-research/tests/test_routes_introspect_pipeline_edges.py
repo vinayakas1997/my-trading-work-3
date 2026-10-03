@@ -39,7 +39,10 @@ def test_known_gaps_and_uninstrumented_edges_are_not_called_broken(client) -> No
     by_id = _by_id(client.get("/research/pipeline-edges").json())
     assert by_id["book.writes->live.scheduler"]["state"] == "known_gap"
     assert by_id["book.writes->live.scheduler"]["gap_ref"]
-    assert by_id["screener.top->agent.planner_worker"]["state"] == "not_instrumented"
+    # every wired edge in the manifest is now instrumented, so none can report `not_instrumented` any more
+    # (that state itself is covered against synthetic edges in vinu-infra's test_pipeline_edge_recorder.py)
+    assert not [e for e in by_id.values() if e["state"] == "not_instrumented"]
+    assert by_id["screener.top->agent.planner_worker"]["state"] == "never_seen"
 
 
 def test_an_instrumented_edge_nothing_ever_recorded_is_never_seen(client) -> None:

@@ -121,5 +121,16 @@ def query_candidate_graveyard(
                 "hypothesis_id": h.hypothesis_id,
             })
 
+    # Observe-only: did the code-hash join link anything between generation discards and sweeps?
+    try:
+        from vinu_infra.pipeline_edge_recorder import record_edge
+
+        joined = sum(1 for e in entries if e.get("swept_in") or e.get("generation_ids"))
+        record_edge(
+            "sweep.base_code_hash->research.graveyard", "received" if joined else "empty",
+            f"{len(entries)} entr(ies), {joined} joined across stores",
+        )
+    except Exception:  # noqa: BLE001
+        pass
     entries.sort(key=lambda e: e["created_at"], reverse=True)
     return entries[:limit]

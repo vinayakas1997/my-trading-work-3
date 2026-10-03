@@ -51,6 +51,14 @@ class GetReflectionSynthesisTool(BaseTool):
     def execute(self, **kwargs) -> str:
         import httpx
 
+        def _record(status: str, detail: str = "") -> None:
+            try:
+                from vinu_infra.pipeline_edge_recorder import record_edge
+
+                record_edge("reflection.synthesis->agent.idea_generator", status, detail)
+            except Exception:  # noqa: BLE001
+                pass
+
         try:
             from vinu_infra.auth import internal_auth_headers as _iah
             _h = _iah() or None
@@ -61,7 +69,10 @@ class GetReflectionSynthesisTool(BaseTool):
         try:
             resp = httpx.get(f"{url}/reflection/synthesis/latest", headers=_h, timeout=30)
             resp.raise_for_status()
-            return json.dumps(resp.json())
+            body = resp.json()
+            _record("received" if body else "empty")
+            return json.dumps(body)
         except Exception as exc:
             LOG.warning("get_reflection_synthesis: request failed: %s", exc)
+            _record("missing", str(exc))
             return json.dumps({"status": "error", "error": str(exc)})

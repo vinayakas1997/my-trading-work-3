@@ -273,6 +273,16 @@ def discover_new_tickers(seed_tickers: list[str], ticker_summary_store: Any) -> 
     return new
 
 
+def _record_edge(edge_id: str, status: str, detail: str = "") -> None:
+    """Observe-only pipeline-edge recording; never raises."""
+    try:
+        from vinu_infra.pipeline_edge_recorder import record_edge
+
+        record_edge(edge_id, status, detail)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def sync_signal_evidence_for_tickers(tickers: list[str]) -> dict[str, list[str]] | None:
     """item #1 (system-wide-audit-and-design/02-open-questions-strategy-
     and-simulation.md): runs once per planner-worker cycle, over the same
@@ -295,18 +305,22 @@ def sync_signal_evidence_for_tickers(tickers: list[str]) -> dict[str, list[str]]
 
         from ..broker.research_link import get_hypothesis_registry, get_signal_evidence_store
     except ImportError:
+        _record_edge("signal_evidence->hypothesis_registry", "missing", "vinu-research is not importable in this deployment")
         return None
     try:
-        return sync_signal_evidence_to_hypotheses(
+        out = sync_signal_evidence_to_hypotheses(
             tickers,
             evidence_store=get_signal_evidence_store(),
             hypothesis_registry=get_hypothesis_registry(),
         )
-    except Exception:
+        _record_edge("signal_evidence->hypothesis_registry", "received", f"{len(tickers)} ticker(s) synced")
+        return out
+    except Exception as exc:
         logging.getLogger("vinu.agent.planner_worker").exception(
             "signal_evidence_bridge sync failed, continuing",
             extra={"vinu_ctx": {"worker": "planner-worker"}},
         )
+        _record_edge("signal_evidence->hypothesis_registry", "missing", f"sync failed: {exc}")
         return None
 
 
@@ -715,11 +729,13 @@ def _strategy_evaluation_context_for_ticker(ticker: str) -> str:
     try:
         root = os.environ.get("VINU_STRATEGY_EVAL_DATA_ROOT", "").strip()
         if not root:
+            _record_edge("evaluation_status->agent.idea_prompt", "missing", "VINU_STRATEGY_EVAL_DATA_ROOT is not set here")
             return ""
         from vinu_infra.strategy_evaluation import StrategyEvaluationStore
 
         store = StrategyEvaluationStore(Path(root) / "strategy_evaluation.db")
         rows = store.list_status_for_ticker(ticker)
+        _record_edge("evaluation_status->agent.idea_prompt", "received" if rows else "empty", f"{ticker}: {len(rows or [])} row(s)")
         if not rows:
             return ""
 

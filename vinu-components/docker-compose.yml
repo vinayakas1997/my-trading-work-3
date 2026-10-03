@@ -235,11 +235,15 @@ services:
       context: .
       dockerfile: vinu-quant-core/Dockerfile
     env_file: .env
+    environment:
+      # Shared pipeline-edge recording (vinu_infra.pipeline_edge_recorder): the same mount research / live / agent use.
+      VINU_STRATEGY_EVAL_DATA_ROOT: /strategy-eval
     ports:
       - "127.0.0.1:8084:8084"
     volumes:
       - ./data/strategy:/data/strategy
       - ./data/simulator:/data/simulator
+      - ./data/strategy-evaluation:/strategy-eval
     cap_drop:
       - ALL
     cap_add:
@@ -283,6 +287,8 @@ services:
       # risk-parity weights need the real ACTIVE + PEND batch; see research-api
       # for why this is unified).
       VINU_RESEARCH_DATA_ROOT: /research-data
+      # Shared pipeline-edge recording (vinu_infra.pipeline_edge_recorder): the same mount research / live / agent use.
+      VINU_STRATEGY_EVAL_DATA_ROOT: /strategy-eval
     secrets:
       - vinu_api_key
     ports:
@@ -291,6 +297,7 @@ services:
       - ./data/portfolio:/data
       - ./data/research:/research-data
       - ./data/shared:/shared
+      - ./data/strategy-evaluation:/strategy-eval
     cap_drop:
       - ALL
     cap_add:
