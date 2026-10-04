@@ -37,7 +37,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+import os
 import requests
+
+# Internal services require "Authorization: Bearer <VINU_API_KEY>" once the key is set (vinu-infra/auth.py).
+# Send it on every request this script makes when VINU_API_KEY is in the environment.
+if os.environ.get("VINU_API_KEY"):
+    _orig_request = requests.sessions.Session.request
+
+    def _request_with_key(self, method, url, **kw):
+        headers = dict(kw.pop("headers", None) or {})
+        headers.setdefault("Authorization", f"Bearer {os.environ['VINU_API_KEY']}")
+        return _orig_request(self, method, url, headers=headers, **kw)
+
+    requests.sessions.Session.request = _request_with_key
 
 ROOT = Path(__file__).resolve().parent
 
