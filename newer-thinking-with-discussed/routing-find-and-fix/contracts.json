@@ -1,0 +1,5971 @@
+{
+ "routes": [
+  {
+   "service": "stock-price",
+   "method": "GET",
+   "path": "/stock/health",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "stock-price",
+   "method": "GET",
+   "path": "/stock/quote/{symbol}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 2
+  },
+  {
+   "service": "stock-price",
+   "method": "GET",
+   "path": "/stock/events/{symbol}",
+   "query": {
+    "within_hours": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "stock-price",
+   "method": "GET",
+   "path": "/stock/catalog",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "stock-price",
+   "method": "GET",
+   "path": "/stock/catalog/fallbacks",
+   "query": {
+    "symbol": false,
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "stock-price",
+   "method": "GET",
+   "path": "/stock/catalog/{symbol}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "stock-price",
+   "method": "GET",
+   "path": "/stock/candles/{symbol}",
+   "query": {
+    "interval": false,
+    "from": false,
+    "to": false,
+    "days": false,
+    "provider": false,
+    "limit": false,
+    "indicators": false,
+    "adjusted": false,
+    "closed_only": false,
+    "as_of": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 21
+  },
+  {
+   "service": "stock-price",
+   "method": "POST",
+   "path": "/stock/candles/batch",
+   "query": {},
+   "body": {
+    "symbols": true,
+    "interval": false,
+    "from": false,
+    "to": false,
+    "days": false,
+    "provider": false,
+    "limit": false,
+    "indicators": false,
+    "adjusted": false
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "stock-price",
+   "method": "GET",
+   "path": "/stock/settings",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "stock-price",
+   "method": "PATCH",
+   "path": "/stock/settings",
+   "query": {},
+   "body": {
+    "poll_interval_sec": false,
+    "default_provider": false,
+    "data_root": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "stock-price",
+   "method": "GET",
+   "path": "/stock/watchlist/tickers",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "stock-price",
+   "method": "POST",
+   "path": "/stock/watchlist/tickers",
+   "query": {},
+   "body": {
+    "tickers": true
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "stock-price",
+   "method": "DELETE",
+   "path": "/stock/watchlist/tickers/{symbol}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "stock-price",
+   "method": "POST",
+   "path": "/stock/watchlist/sync",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "stock-price",
+   "method": "POST",
+   "path": "/stock/backfill/trigger",
+   "query": {},
+   "body": {
+    "symbols": false,
+    "force": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "stock-price",
+   "method": "GET",
+   "path": "/stock/backfill/status/{job_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "stock-price",
+   "method": "GET",
+   "path": "/stock/backfill/runs",
+   "query": {
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "stock-price",
+   "method": "POST",
+   "path": "/stock/ingest/trigger",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "stock-price",
+   "method": "GET",
+   "path": "/v1/stage1/vinu-stock-price/fetch/{ticker}/{granularity}/{time_range}",
+   "query": {
+    "page": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "stock-price",
+   "method": "GET",
+   "path": "/v1/stage1/vinu-stock-price/fetch/{ticker}/{granularity}/{time_range}/{run_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "stock-price",
+   "method": "POST",
+   "path": "/v1/stage1/vinu-stock-price/trigger/{ticker}/{granularity}/{time_range}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/health",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/poll/status",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/latest",
+   "query": {
+    "limit": false,
+    "date": false,
+    "provider": false,
+    "tiers": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/ticker/{symbol}",
+   "query": {
+    "days": false,
+    "limit": false,
+    "from": false,
+    "to": false,
+    "as_of": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/watchlist/news",
+   "query": {
+    "days": false,
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/search",
+   "query": {
+    "q": true,
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 2
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/high-impact",
+   "query": {
+    "hours": false,
+    "sentiment": false,
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/threads/active",
+   "query": {
+    "hours": false,
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/threads/{thread_id}",
+   "query": {
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/threads/{thread_id}/timeline",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/stats/ticker/{symbol}",
+   "query": {
+    "days": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/articles/since",
+   "query": {
+    "ts": true,
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/settings",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "PATCH",
+   "path": "/news/settings",
+   "query": {},
+   "body": {
+    "mode": false,
+    "poll_interval_sec": false,
+    "active_tiers": false,
+    "backfill_start_date": false,
+    "backfill_pause_on_error": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/watchlist/tickers",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "POST",
+   "path": "/news/watchlist/tickers",
+   "query": {},
+   "body": {
+    "tickers": true
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "DELETE",
+   "path": "/news/watchlist/tickers/{symbol}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "POST",
+   "path": "/news/watchlist/sync",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "POST",
+   "path": "/news/ingest/ticker-news",
+   "query": {
+    "days": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/feeds",
+   "query": {
+    "all": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "PATCH",
+   "path": "/news/feeds/{feed_id}",
+   "query": {},
+   "body": {
+    "enabled": true
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/providers",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "PATCH",
+   "path": "/news/providers/{provider_id}",
+   "query": {},
+   "body": {
+    "enabled": true
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/backfill/status",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "POST",
+   "path": "/news/backfill/{ticker}/toggle",
+   "query": {},
+   "body": {
+    "enabled": true
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "POST",
+   "path": "/news/ingest/trigger",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "POST",
+   "path": "/news/backfill/trigger",
+   "query": {
+    "ticker": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/backfill/job/{job_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "POST",
+   "path": "/news/finbert/backfill",
+   "query": {
+    "batch_size": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/news/finbert/job/{job_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "GET",
+   "path": "/v1/stage1/vinu-news/fetch/{ticker}/{granularity}/{time_range}/{method}",
+   "query": {
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "news",
+   "method": "POST",
+   "path": "/v1/stage1/vinu-news/trigger/{ticker}/{granularity}/{time_range}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/analysis/impact/{ticker}",
+   "query": {
+    "from_ts": false,
+    "to_ts": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/analysis/events/{ticker}",
+   "query": {
+    "from_ts": false,
+    "to_ts": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/analysis/correlation/batch",
+   "query": {
+    "symbols": true,
+    "from_ts": false,
+    "to_ts": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/analysis/correlation/{ticker}",
+   "query": {
+    "from_ts": false,
+    "to_ts": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 2
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/analysis/drawdown/{ticker}",
+   "query": {
+    "from_ts": false,
+    "to_ts": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/analysis/story/{ticker}",
+   "query": {
+    "from_ts": false,
+    "to_ts": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/analysis/angles",
+   "query": {
+    "active": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 4
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/analysis/manifest",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/analysis/coverage/{ticker}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/analysis/angle/{angle_name}/{ticker}",
+   "query": {
+    "granularity": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 6
+  },
+  {
+   "service": "initial-analysis",
+   "method": "POST",
+   "path": "/analysis/run/{ticker}",
+   "query": {
+    "from_ts": false,
+    "to_ts": false,
+    "angle_names": false,
+    "background": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 2
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/analysis/run/jobs/{job_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "initial-analysis",
+   "method": "POST",
+   "path": "/analysis/pnl-attribution/{ticker}/record",
+   "query": {},
+   "body": {
+    "closed_positions": true
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/analysis/symbols",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/analysis/health",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/analysis/settings",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/v1/stage1/vinu-initial-analysis/fetch/{ticker}/{granularity}/{time_range}/{method}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/v1/stage1/vinu-initial-analysis/fetch/{ticker}/{granularity}/{time_range}/{method}/{run_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/v1/stage1/vinu-initial-analysis/latest-run/{ticker}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "initial-analysis",
+   "method": "GET",
+   "path": "/v1/stage1/vinu-initial-analysis/factsheet/{ticker}/{method}",
+   "query": {
+    "tier": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "initial-analysis",
+   "method": "POST",
+   "path": "/v1/stage1/vinu-initial-analysis/trigger/{ticker}/{granularity}/{time_range}/{method}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "tools",
+   "method": "GET",
+   "path": "/features/health",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "tools",
+   "method": "GET",
+   "path": "/features/presets",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "tools",
+   "method": "POST",
+   "path": "/features/requests",
+   "query": {},
+   "body": {
+    "title": true,
+    "symbols": true,
+    "from_ts": false,
+    "to_ts": false,
+    "days": false,
+    "interval": false,
+    "preset": false,
+    "features": false,
+    "conditions": false,
+    "ml_model": false,
+    "ml_label": false,
+    "run_immediately": false
+   },
+   "body_open": false,
+   "callers": 2
+  },
+  {
+   "service": "tools",
+   "method": "GET",
+   "path": "/features/requests",
+   "query": {
+    "status": false,
+    "title": false,
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "tools",
+   "method": "GET",
+   "path": "/features/requests/{request_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "tools",
+   "method": "DELETE",
+   "path": "/features/requests/{request_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "tools",
+   "method": "GET",
+   "path": "/features/requests/by-title/{title}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "tools",
+   "method": "GET",
+   "path": "/features/requests/{request_id}/data",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "tools",
+   "method": "POST",
+   "path": "/features/requests/{request_id}/run",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "tools",
+   "method": "GET",
+   "path": "/features/factors",
+   "query": {
+    "group": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "tools",
+   "method": "GET",
+   "path": "/features/factors/search",
+   "query": {
+    "q": true
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "tools",
+   "method": "GET",
+   "path": "/features/factors/{factor_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "tools",
+   "method": "POST",
+   "path": "/features/factors/{factor_id}/bench",
+   "query": {},
+   "body": {},
+   "body_open": true,
+   "callers": 0
+  },
+  {
+   "service": "tools",
+   "method": "GET",
+   "path": "/features/ml/models",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "tools",
+   "method": "GET",
+   "path": "/features/catalog",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "tools",
+   "method": "GET",
+   "path": "/features/{symbol_or_kind}",
+   "query": {
+    "indicators": false,
+    "as_of": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "strategy",
+   "method": "GET",
+   "path": "/strategy/strategies",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 4
+  },
+  {
+   "service": "strategy",
+   "method": "GET",
+   "path": "/strategy/strategies/{name}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 2
+  },
+  {
+   "service": "strategy",
+   "method": "POST",
+   "path": "/strategy/strategies/{name}/precondition-check",
+   "query": {},
+   "body": {
+    "precondition_held": false
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "strategy",
+   "method": "POST",
+   "path": "/strategy/strategies/{name}/evaluate",
+   "query": {
+    "symbols": false,
+    "as_of": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "strategy",
+   "method": "GET",
+   "path": "/strategy/weights",
+   "query": {
+    "strategy": false,
+    "symbol": false,
+    "from_ts": false,
+    "to_ts": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "strategy",
+   "method": "GET",
+   "path": "/strategy/runs",
+   "query": {
+    "strategy": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "strategy",
+   "method": "DELETE",
+   "path": "/strategy/runs",
+   "query": {
+    "strategy": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "strategy",
+   "method": "DELETE",
+   "path": "/strategy/weights/{strategy}",
+   "query": {
+    "symbol": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "strategy",
+   "method": "DELETE",
+   "path": "/strategy/runs/{run_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "strategy",
+   "method": "GET",
+   "path": "/strategy/docs/yaml-reference",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "strategy",
+   "method": "GET",
+   "path": "/strategy/health",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "strategy",
+   "method": "GET",
+   "path": "/strategy/settings",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "simulator",
+   "method": "GET",
+   "path": "/simulator/health",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "simulator",
+   "method": "POST",
+   "path": "/simulator/simulate",
+   "query": {},
+   "body": {
+    "strategy_name": true,
+    "start_date": false,
+    "end_date": false,
+    "initial_capital": false,
+    "transaction_cost_pct": false,
+    "slippage_pct": false,
+    "slippage_model": false,
+    "benchmark_tickers": false,
+    "allow_short": false,
+    "deviation_threshold": false,
+    "dry_run": false,
+    "run_validation": false,
+    "full_metrics": false,
+    "position_sizing_model": false,
+    "target_annual_vol": false,
+    "vol_lookback_days": false,
+    "kelly_fraction": false,
+    "kelly_lookback_days": false,
+    "max_leverage": false,
+    "max_pct_of_volume": false,
+    "execution_reject_prob": false,
+    "random_seed": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "simulator",
+   "method": "POST",
+   "path": "/simulator/simulate/custom",
+   "query": {},
+   "body": {
+    "strategy_code": true,
+    "class_name": true,
+    "symbols": true,
+    "start_date": false,
+    "end_date": false,
+    "initial_capital": false,
+    "transaction_cost_pct": false,
+    "slippage_pct": false,
+    "slippage_model": false,
+    "benchmark_tickers": false,
+    "allow_short": false,
+    "deviation_threshold": false,
+    "interval": false,
+    "indicators": false,
+    "run_validation": false,
+    "full_metrics": false,
+    "position_sizing_model": false,
+    "target_annual_vol": false,
+    "vol_lookback_days": false,
+    "kelly_fraction": false,
+    "kelly_lookback_days": false,
+    "max_leverage": false,
+    "max_pct_of_volume": false,
+    "execution_reject_prob": false,
+    "random_seed": false
+   },
+   "body_open": false,
+   "callers": 2
+  },
+  {
+   "service": "simulator",
+   "method": "GET",
+   "path": "/simulator/results/{run_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 2
+  },
+  {
+   "service": "simulator",
+   "method": "GET",
+   "path": "/simulator/results/{run_id}/metrics",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "simulator",
+   "method": "GET",
+   "path": "/simulator/results/{run_id}/equity",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 2
+  },
+  {
+   "service": "simulator",
+   "method": "GET",
+   "path": "/simulator/results/{run_id}/weights",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "simulator",
+   "method": "GET",
+   "path": "/simulator/results/{run_id}/trades",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "simulator",
+   "method": "GET",
+   "path": "/simulator/runs",
+   "query": {
+    "strategy": false,
+    "symbol": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 2
+  },
+  {
+   "service": "simulator",
+   "method": "DELETE",
+   "path": "/simulator/runs",
+   "query": {
+    "strategy": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "simulator",
+   "method": "DELETE",
+   "path": "/simulator/runs/{run_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "simulator",
+   "method": "GET",
+   "path": "/simulator/settings",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/run",
+   "query": {},
+   "body": {
+    "user_idea": false,
+    "strategy_code": false,
+    "symbol": true,
+    "from_date": true,
+    "to_date": true,
+    "indicators": false,
+    "initial_capital": false,
+    "dry_run": false,
+    "universe": false
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/ensure",
+   "query": {},
+   "body": {
+    "user_idea": false,
+    "strategy_code": false,
+    "symbol": true,
+    "from_date": true,
+    "to_date": true,
+    "indicators": false,
+    "initial_capital": false,
+    "dry_run": false,
+    "universe": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/runs",
+   "query": {
+    "symbol": false,
+    "status": false,
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 3
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/runs/{run_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "DELETE",
+   "path": "/research/runs/{run_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/artifacts",
+   "query": {
+    "status": false,
+    "type_": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 9
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/artifacts/{artifact_id}/promote",
+   "query": {
+    "force": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/artifacts/{artifact_id}/paper-return",
+   "query": {
+    "lookback_days": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/runs/{run_id}/approve",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/health",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/settings",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/trade-plan/{symbol}",
+   "query": {},
+   "body": {
+    "timeframe": false,
+    "summary_context": false
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/trade-plan/{artifact_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 3
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/trade-plan/{artifact_id}/approve",
+   "query": {
+    "force": false,
+    "approver": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 3
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/decay/{artifact_id}/approve",
+   "query": {
+    "approver": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/trade-score-calibration/approve",
+   "query": {
+    "approver": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/trade-plan/{artifact_id}/action",
+   "query": {},
+   "body": {
+    "action": true
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/trade-plan/{artifact_id}/record-outcome",
+   "query": {},
+   "body": {
+    "actual_return_pct": true
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/trade-plan/{artifact_id}/calibration",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 3
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/angle-calibration/{angle_name}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/hypotheses",
+   "query": {
+    "symbol": false,
+    "status": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 4
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/hypotheses",
+   "query": {},
+   "body": {
+    "title": true,
+    "thesis": true,
+    "universe": false,
+    "strategy_type": false
+   },
+   "body_open": false,
+   "callers": 2
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/indicators/pool",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/hypotheses/{hypothesis_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/symbols/{symbol}/state",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/runs/{run_id}/checkpoints",
+   "query": {
+    "latest_only": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/generation-rounds",
+   "query": {
+    "symbol": false,
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/generation-rounds/{generation_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/candidate-graveyard/{symbol}",
+   "query": {
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/maturity/status",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/evaluation-status/{artifact_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/evaluation-status/by-ticker/{ticker}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/evaluation-history/{artifact_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/pipeline-edges",
+   "query": {
+    "only_problems": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/parity-report",
+   "query": {
+    "min_days": false,
+    "min_trades": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/signal-evidence/trigger",
+   "query": {},
+   "body": {
+    "trigger_id": true,
+    "symbol": true,
+    "trigger_time": true,
+    "must_condition": true,
+    "indicators": false,
+    "granularity": false,
+    "policy_version": false
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/signal-evidence/{trigger_id}/outcome",
+   "query": {},
+   "body": {
+    "max_favorable_excursion": true,
+    "max_adverse_excursion": true,
+    "return_at_horizon": true
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/signal-evidence/{trigger_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/signal-evidence",
+   "query": {
+    "symbol": false,
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/move-evidence/{symbol}",
+   "query": {},
+   "body": {
+    "bar_ts": true,
+    "window_seconds": true,
+    "granularity": true,
+    "atr": true,
+    "price_move": true,
+    "move_threshold": true,
+    "direction": true
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/move-evidence",
+   "query": {
+    "symbol": false,
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/unconfirmed-moves",
+   "query": {
+    "symbol": false,
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/track2-aggregate/{symbol}",
+   "query": {
+    "must_condition": true,
+    "as_of": false,
+    "min_sample_size": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/sweep/candidate",
+   "query": {},
+   "body": {
+    "symbol": true,
+    "from_date": true,
+    "to_date": true,
+    "recipe": false,
+    "params": false,
+    "base_code": false,
+    "param_name": false,
+    "param_value": false,
+    "indicators": false,
+    "initial_capital": false
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/sweep/recipes",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/sweep/grid",
+   "query": {},
+   "body": {
+    "symbol": true,
+    "from_date": true,
+    "to_date": true,
+    "param_grid": true,
+    "recipe": false,
+    "base_code": false,
+    "param_name": false,
+    "indicators": false,
+    "initial_capital": false
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/sweep/grid",
+   "query": {
+    "symbol": false,
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "GET",
+   "path": "/research/sweep/grid/{sweep_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/hypotheses/human",
+   "query": {},
+   "body": {
+    "title": true,
+    "thesis": true,
+    "universe": false,
+    "strategy_type": false
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "research",
+   "method": "POST",
+   "path": "/research/hypotheses/{hypothesis_id}/evidence",
+   "query": {},
+   "body": {
+    "run_id": false,
+    "iteration": false,
+    "metric": true,
+    "value": true,
+    "conclusion": true,
+    "reasoning": false,
+    "metrics_snapshot": false,
+    "source": false,
+    "ref_id": false
+   },
+   "body_open": false,
+   "callers": 3
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/sessions",
+   "query": {},
+   "body": {
+    "title": false,
+    "as_of": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/sessions",
+   "query": {
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/sessions/{session_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "DELETE",
+   "path": "/agent/sessions/{session_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/sessions/{session_id}/messages",
+   "query": {},
+   "body": {
+    "content": true,
+    "as_of": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/sessions/{session_id}/messages",
+   "query": {
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/sessions/{session_id}/cancel",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/sessions/{session_id}/events",
+   "query": {
+    "last_event_id": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/swarm/runs",
+   "query": {},
+   "body": {
+    "preset_name": true,
+    "user_vars": true
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/swarm/runs/latest",
+   "query": {
+    "preset_name": true,
+    "symbol": true
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/swarm/runs/ensure-fresh",
+   "query": {
+    "preset_name": true,
+    "symbol": true,
+    "max_age_minutes": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/swarm/runs/{run_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/swarm/runs/{run_id}/cancel",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/swarm/presets",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/health",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/status",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/broker/halt",
+   "query": {},
+   "body": {
+    "scope": false,
+    "reason": false
+   },
+   "body_open": false,
+   "callers": 5
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/broker/resume",
+   "query": {},
+   "body": {
+    "scope": false
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/broker/status",
+   "query": {
+    "scope": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/broker/mandate",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/broker/mandate/renew",
+   "query": {},
+   "body": {
+    "days": false,
+    "until": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/broker/overrides",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "PUT",
+   "path": "/agent/broker/overrides/{symbol}",
+   "query": {},
+   "body": {
+    "state": true,
+    "reason": false,
+    "set_by": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "DELETE",
+   "path": "/agent/broker/overrides/{symbol}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/broker/limits",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/broker/limits/{symbol}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "PUT",
+   "path": "/agent/broker/limits/{symbol}",
+   "query": {},
+   "body": {
+    "max_order_value": false,
+    "max_position_pct": false,
+    "max_capital_utilization_pct": false,
+    "reason": false,
+    "set_by": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "DELETE",
+   "path": "/agent/broker/limits/{symbol}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/broker/limits/{symbol}/history",
+   "query": {
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/broker/safety-ledger",
+   "query": {
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/broker/account",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 5
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/broker/positions",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 5
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/broker/order",
+   "query": {},
+   "body": {
+    "symbol": true,
+    "side": true,
+    "qty": true,
+    "order_type": false,
+    "limit_price": false,
+    "stop_price": false,
+    "time_in_force": false,
+    "take_profit_price": false,
+    "stop_loss_price": false,
+    "stop_loss_limit_price": false,
+    "reduce_only": false,
+    "client_order_id": false
+   },
+   "body_open": false,
+   "callers": 2
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/broker/order/{order_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/broker/asset/{symbol}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/broker/performance/{artifact_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 2
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/broker/performance/{artifact_id}",
+   "query": {},
+   "body": {
+    "daily_returns": true
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/broker/performance/{artifact_id}/append",
+   "query": {},
+   "body": {
+    "daily_return": true,
+    "trade_date": true
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/ticker-ledger/event",
+   "query": {},
+   "body": {
+    "ticker": true,
+    "stage": true,
+    "event_type": true,
+    "text": false,
+    "ref_id": false,
+    "source": false
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/notify/trade-plan-pending",
+   "query": {},
+   "body": {
+    "artifact_id": true,
+    "symbol": true,
+    "reasons": false
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/notify/reconciliation-drift",
+   "query": {},
+   "body": {
+    "symbol": true,
+    "action": true,
+    "book_qty": false,
+    "broker_qty": false,
+    "expected_qty": false,
+    "actual_qty": false,
+    "drift_pct": false,
+    "detail": false
+   },
+   "body_open": false,
+   "callers": 4
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/notify/symbol-conflict",
+   "query": {},
+   "body": {
+    "symbol": true,
+    "contributions": true,
+    "net_weight": true,
+    "gross_weight": true,
+    "severity": true
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/trace/{ref_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/options/{symbol}/snapshot",
+   "query": {
+    "expiration": false,
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/live-decision/run",
+   "query": {},
+   "body": {
+    "ticker": true,
+    "strategy_id": true,
+    "trigger_id": false,
+    "mode": false,
+    "position_context": false,
+    "novelty": false
+   },
+   "body_open": false,
+   "callers": 2
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/admin/settings",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "PATCH",
+   "path": "/agent/admin/settings",
+   "query": {},
+   "body": {},
+   "body_open": true,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "GET",
+   "path": "/agent/admin/settings/schema",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "agent",
+   "method": "POST",
+   "path": "/agent/admin/settings/{name}/reset",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "portfolio",
+   "method": "GET",
+   "path": "/portfolio/health",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "portfolio",
+   "method": "GET",
+   "path": "/portfolio/state",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 4
+  },
+  {
+   "service": "portfolio",
+   "method": "GET",
+   "path": "/portfolio/strategies",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "portfolio",
+   "method": "GET",
+   "path": "/portfolio/weights",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "portfolio",
+   "method": "GET",
+   "path": "/portfolio/daily-allocation",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "portfolio",
+   "method": "GET",
+   "path": "/portfolio/allocation-history",
+   "query": {
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "portfolio",
+   "method": "GET",
+   "path": "/portfolio/not-funded",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "portfolio",
+   "method": "GET",
+   "path": "/portfolio/daily-game-plan",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "portfolio",
+   "method": "GET",
+   "path": "/portfolio/risk/status",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "portfolio",
+   "method": "POST",
+   "path": "/portfolio/evaluate-batch",
+   "query": {},
+   "body": {
+    "candidates": true,
+    "daily_allocation": false
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "live",
+   "method": "GET",
+   "path": "/live/health",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "POST",
+   "path": "/live/cycle",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "POST",
+   "path": "/live/trade-plan/cycle",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "POST",
+   "path": "/live/feedback/cycle",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "POST",
+   "path": "/live/shadow-evaluate",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "POST",
+   "path": "/live/trade-plan/rebalance-request",
+   "query": {},
+   "body": {
+    "symbol": true,
+    "reason": true,
+    "critical": false
+   },
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "live",
+   "method": "POST",
+   "path": "/live/trade-plan/emergency-flatten",
+   "query": {},
+   "body": {
+    "reason": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "POST",
+   "path": "/live/trade-plan/emergency-resume",
+   "query": {},
+   "body": {
+    "reason": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "GET",
+   "path": "/live/trade-plan/emergency-status",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "GET",
+   "path": "/live/status",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "GET",
+   "path": "/live/decision-context/{ticker}/{strategy_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "GET",
+   "path": "/live/decisions/needs-sizing",
+   "query": {
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "GET",
+   "path": "/live/lockouts",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "GET",
+   "path": "/live/executions",
+   "query": {
+    "limit": false,
+    "symbol": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "GET",
+   "path": "/live/decisions/{ticker}/{strategy_id}",
+   "query": {
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "GET",
+   "path": "/live/snapshots/{symbol}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "GET",
+   "path": "/live/snapshots/{symbol}/{angle_name}/history",
+   "query": {
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "GET",
+   "path": "/live/tca/slippage",
+   "query": {
+    "symbol": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "GET",
+   "path": "/live/admin/settings",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "PATCH",
+   "path": "/live/admin/settings",
+   "query": {},
+   "body": {},
+   "body_open": true,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "GET",
+   "path": "/live/admin/settings/schema",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "live",
+   "method": "POST",
+   "path": "/live/admin/settings/{name}/reset",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "GET",
+   "path": "/screener/rules",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "GET",
+   "path": "/screener/rules/{rule_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "PUT",
+   "path": "/screener/rules/{rule_id}",
+   "query": {},
+   "body": {
+    "condition": true,
+    "universe": true,
+    "cooldown_min": false,
+    "coarse_filter": false,
+    "actions": false,
+    "mode": false,
+    "interval_sec": false,
+    "active": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "DELETE",
+   "path": "/screener/rules/{rule_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "POST",
+   "path": "/screener/rules/{rule_id}/enable",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "POST",
+   "path": "/screener/rules/{rule_id}/disable",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "POST",
+   "path": "/screener/rules/{rule_id}/dry-run",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "GET",
+   "path": "/screener/rules/{rule_id}/history",
+   "query": {
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "GET",
+   "path": "/screener/rankers",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "GET",
+   "path": "/screener/rankers/{ranker_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "PUT",
+   "path": "/screener/rankers/{ranker_id}",
+   "query": {},
+   "body": {
+    "universe": true,
+    "factors": true,
+    "top_n": false,
+    "hard_filter": false,
+    "interval_sec": false,
+    "active": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "DELETE",
+   "path": "/screener/rankers/{ranker_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "POST",
+   "path": "/screener/rankers/{ranker_id}/enable",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "POST",
+   "path": "/screener/rankers/{ranker_id}/disable",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "POST",
+   "path": "/screener/rankers/{ranker_id}/rank",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "GET",
+   "path": "/screener/rankers/{ranker_id}/latest",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 3
+  },
+  {
+   "service": "screener",
+   "method": "GET",
+   "path": "/screener/rankers/{ranker_id}/churn",
+   "query": {
+    "symbol": false,
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "GET",
+   "path": "/screener/pairlist/{rule_id}",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "screener",
+   "method": "GET",
+   "path": "/health",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 4
+  },
+  {
+   "service": "reflection",
+   "method": "GET",
+   "path": "/reflection/synthesis/latest",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 1
+  },
+  {
+   "service": "reflection",
+   "method": "GET",
+   "path": "/reflection/synthesis/pending",
+   "query": {
+    "as_of": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "reflection",
+   "method": "GET",
+   "path": "/reflection/beliefs/notable",
+   "query": {
+    "limit": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "models",
+   "method": "GET",
+   "path": "/models/status",
+   "query": {
+    "deep": false
+   },
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "models",
+   "method": "GET",
+   "path": "/models/angles",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "models",
+   "method": "POST",
+   "path": "/models/angle/{angle}/compute",
+   "query": {},
+   "body": {
+    "symbol": true,
+    "bars": false,
+    "news": false,
+    "from_ts": false,
+    "to_ts": false,
+    "time_format": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "models",
+   "method": "POST",
+   "path": "/models/finbert/score",
+   "query": {},
+   "body": {
+    "texts": true,
+    "batch_size": false
+   },
+   "body_open": false,
+   "callers": 0
+  },
+  {
+   "service": "models",
+   "method": "GET",
+   "path": "/models/health",
+   "query": {},
+   "body": null,
+   "body_open": false,
+   "callers": 0
+  }
+ ],
+ "calls": [
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/agent/capital_allocator_hook.py",
+   "line": 160,
+   "method": "POST",
+   "path": "/live/trade-plan/rebalance-request",
+   "raw_path": "/live/trade-plan/rebalance-request",
+   "query": [],
+   "body": [
+    "symbol",
+    "reason"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /live/trade-plan/rebalance-request",
+   "service_served": "live"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/agent/significance_triage.py",
+   "line": 469,
+   "method": "POST",
+   "path": "/research/hypotheses/{}/evidence",
+   "raw_path": "/research/hypotheses/{}/evidence",
+   "query": [],
+   "body": [
+    "metric",
+    "value",
+    "conclusion",
+    "reasoning",
+    "source",
+    "ref_id"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/hypotheses/{hypothesis_id}/evidence",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/agent/ticker_gate.py",
+   "line": 87,
+   "method": "GET",
+   "path": "/v1/stage1/vinu-initial-analysis/latest-run/{}",
+   "raw_path": "/v1/stage1/vinu-initial-analysis/latest-run/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /v1/stage1/vinu-initial-analysis/latest-run/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/agent/trade_plan_calibration.py",
+   "line": 70,
+   "method": "GET",
+   "path": "/research/trade-plan/{}/calibration",
+   "raw_path": "/research/trade-plan/{}/calibration",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/trade-plan/{artifact_id}/calibration",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/audit/freshness.py",
+   "line": 71,
+   "method": "GET",
+   "path": "/analysis/angle/{}/{}",
+   "raw_path": "/analysis/angle/{}/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /analysis/angle/{angle_name}/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/audit/ground_truth.py",
+   "line": 206,
+   "method": "GET",
+   "path": "/research/hypotheses",
+   "raw_path": "/research/hypotheses",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/hypotheses",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/audit/research_digest.py",
+   "line": 108,
+   "method": "GET",
+   "path": "/research/runs",
+   "raw_path": "/research/runs",
+   "query": [
+    "symbol",
+    "limit"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/runs",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/broker/historical_broker.py",
+   "line": 262,
+   "method": "GET",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "interval",
+    "from",
+    "to"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/broker/order_guard.py",
+   "line": 630,
+   "method": "GET",
+   "path": "/portfolio/risk/status",
+   "raw_path": "/portfolio/risk/status",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /portfolio/risk/status",
+   "service_served": "portfolio"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/broker/order_guard.py",
+   "line": 759,
+   "method": "GET",
+   "path": "/portfolio/state",
+   "raw_path": "/portfolio/state",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /portfolio/state",
+   "service_served": "portfolio"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/channels/discord.py",
+   "line": 144,
+   "method": "POST",
+   "path": "/research/trade-plan/{}/approve",
+   "raw_path": "/research/trade-plan/{}/approve",
+   "query": [
+    "force",
+    "approver"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/trade-plan/{artifact_id}/approve",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/channels/telegram.py",
+   "line": 132,
+   "method": "POST",
+   "path": "/research/trade-plan/{}/approve",
+   "raw_path": "/research/trade-plan/{}/approve",
+   "query": [
+    "force",
+    "approver"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/trade-plan/{artifact_id}/approve",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/channels/telegram.py",
+   "line": 181,
+   "method": "GET",
+   "path": "/screener/rankers/{}/latest",
+   "raw_path": "/screener/rankers/{}/latest",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /screener/rankers/{ranker_id}/latest",
+   "service_served": "screener"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/channels/telegram.py",
+   "line": 216,
+   "method": "POST",
+   "path": "/watchlist/tickers",
+   "raw_path": "/watchlist/tickers",
+   "query": [],
+   "body": [
+    "tickers"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /stock/watchlist/tickers",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/memory/sync_service.py",
+   "line": 81,
+   "method": "GET",
+   "path": "/research/runs",
+   "raw_path": "/research/runs",
+   "query": [
+    "limit",
+    "symbol"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/runs",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/memory/sync_service.py",
+   "line": 107,
+   "method": "GET",
+   "path": "/research/artifacts",
+   "raw_path": "/research/artifacts",
+   "query": [
+    "status"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/artifacts",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/memory/sync_service.py",
+   "line": 231,
+   "method": "GET",
+   "path": "/simulator/runs",
+   "raw_path": "/simulator/runs",
+   "query": [
+    "symbol"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /simulator/runs",
+   "service_served": "simulator"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/memory/sync_service.py",
+   "line": 288,
+   "method": "GET",
+   "path": "/candles/{}",
+   "raw_path": "/candles/{}",
+   "query": [
+    "interval",
+    "days",
+    "adjusted"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/memory/sync_service.py",
+   "line": 356,
+   "method": "GET",
+   "path": "/news/search",
+   "raw_path": "/news/search",
+   "query": [
+    "q",
+    "limit"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /news/search",
+   "service_served": "news"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/allocation_tool.py",
+   "line": 127,
+   "method": "POST",
+   "path": "/portfolio/evaluate-batch",
+   "raw_path": "/portfolio/evaluate-batch",
+   "query": [],
+   "body": [
+    "candidates"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /portfolio/evaluate-batch",
+   "service_served": "portfolio"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/angles_tool.py",
+   "line": 86,
+   "method": "GET",
+   "path": "/fetch/{}/{}/{}/{}",
+   "raw_path": "/fetch/{}/{}/{}/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /v1/stage1/vinu-stock-price/fetch/{ticker}/{granularity}/{time_range}/{run_id}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/angles_tool.py",
+   "line": 106,
+   "method": "GET",
+   "path": "/angle/{}/{}",
+   "raw_path": "/angle/{}/{}",
+   "query": [
+    "granularity"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /analysis/angle/{angle_name}/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/angles_tool.py",
+   "line": 188,
+   "method": "GET",
+   "path": "/analysis/angles",
+   "raw_path": "/analysis/angles",
+   "query": [
+    "active"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /analysis/angles",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/angles_tool.py",
+   "line": 236,
+   "method": "GET",
+   "path": "/analysis/angles",
+   "raw_path": "/analysis/angles",
+   "query": [
+    "active"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /analysis/angles",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/angles_tool.py",
+   "line": 333,
+   "method": "GET",
+   "path": "/analysis/angles",
+   "raw_path": "/analysis/angles",
+   "query": [
+    "active"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /analysis/angles",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/angles_tool.py",
+   "line": 471,
+   "method": "GET",
+   "path": "/analysis/angles",
+   "raw_path": "/analysis/angles",
+   "query": [
+    "active"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /analysis/angles",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/backtest_tool.py",
+   "line": 106,
+   "method": "POST",
+   "path": "/simulator/simulate/custom",
+   "raw_path": "/simulator/simulate/custom",
+   "query": [],
+   "body": [
+    "strategy_code",
+    "class_name",
+    "symbols",
+    "start_date",
+    "end_date",
+    "interval",
+    "initial_capital",
+    "indicators",
+    "run_validation"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /simulator/simulate/custom",
+   "service_served": "simulator"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/backtest_validation_tool.py",
+   "line": 42,
+   "method": "GET",
+   "path": "/simulator/results/{}",
+   "raw_path": "/simulator/results/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /simulator/results/{run_id}",
+   "service_served": "simulator"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/correlation_tool.py",
+   "line": 41,
+   "method": "GET",
+   "path": "/analysis/correlation/{}",
+   "raw_path": "/analysis/correlation/{}",
+   "query": [
+    "from_ts",
+    "to_ts"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /analysis/correlation/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/factor_backtest_tool.py",
+   "line": 172,
+   "method": "GET",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "from",
+    "to",
+    "interval"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/features_tool.py",
+   "line": 66,
+   "method": "POST",
+   "path": "/features/requests",
+   "raw_path": "/features/requests",
+   "query": [],
+   "body": [
+    "title",
+    "symbols",
+    "from_ts",
+    "to_ts",
+    "run_immediately",
+    "features",
+    "preset"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /features/requests",
+   "service_served": "tools"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/features_tool.py",
+   "line": 79,
+   "method": "GET",
+   "path": "/features/requests/{}/data",
+   "raw_path": "/features/requests/{}/data",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /features/requests/by-title/{title}",
+   "service_served": "tools"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/find_trade_plan_tool.py",
+   "line": 62,
+   "method": "GET",
+   "path": "/research/artifacts",
+   "raw_path": "/research/artifacts",
+   "query": [
+    "type_"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/artifacts",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/hypothesis_write_tools.py",
+   "line": 82,
+   "method": "POST",
+   "path": "/research/hypotheses",
+   "raw_path": "/research/hypotheses",
+   "query": [],
+   "body": [
+    "title",
+    "thesis",
+    "strategy_type",
+    "universe"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/hypotheses",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/hypothesis_write_tools.py",
+   "line": 155,
+   "method": "POST",
+   "path": "/research/hypotheses/{}/evidence",
+   "raw_path": "/research/hypotheses/{}/evidence",
+   "query": [],
+   "body": [
+    "metric",
+    "value",
+    "conclusion",
+    "iteration",
+    "reasoning",
+    "run_id"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/hypotheses/{hypothesis_id}/evidence",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/list_features_tool.py",
+   "line": 30,
+   "method": "GET",
+   "path": "/features/catalog",
+   "raw_path": "/features/catalog",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /features/catalog",
+   "service_served": "tools"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/list_features_tool.py",
+   "line": 32,
+   "method": "GET",
+   "path": "/features/presets",
+   "raw_path": "/features/presets",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /features/presets",
+   "service_served": "tools"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/list_portfolio_strategies_tool.py",
+   "line": 50,
+   "method": "GET",
+   "path": "/portfolio/strategies",
+   "raw_path": "/portfolio/strategies",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /portfolio/strategies",
+   "service_served": "portfolio"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/list_research_runs_tool.py",
+   "line": 59,
+   "method": "GET",
+   "path": "/research/runs",
+   "raw_path": "/research/runs",
+   "query": [
+    "limit",
+    "status",
+    "symbol"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/runs",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/list_strategies_tool.py",
+   "line": 27,
+   "method": "GET",
+   "path": "/strategy/strategies",
+   "raw_path": "/strategy/strategies",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /strategy/strategies",
+   "service_served": "strategy"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/news_tool.py",
+   "line": 63,
+   "method": "GET",
+   "path": "/news/ticker/{}",
+   "raw_path": "/news/ticker/{}",
+   "query": [
+    "limit",
+    "from",
+    "to"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /news/ticker/{symbol}",
+   "service_served": "news"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/portfolio_comparison_tool.py",
+   "line": 63,
+   "method": "GET",
+   "path": "/portfolio/state",
+   "raw_path": "/portfolio/state",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /portfolio/state",
+   "service_served": "portfolio"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/portfolio_comparison_tool.py",
+   "line": 89,
+   "method": "GET",
+   "path": "/research/artifacts",
+   "raw_path": "/research/artifacts",
+   "query": [
+    "status"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/artifacts",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/portfolio_concentration_tool.py",
+   "line": 73,
+   "method": "GET",
+   "path": "/portfolio/state",
+   "raw_path": "/portfolio/state",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /portfolio/state",
+   "service_served": "portfolio"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/query_hypotheses_tool.py",
+   "line": 73,
+   "method": "GET",
+   "path": "/research/hypotheses",
+   "raw_path": "/research/hypotheses",
+   "query": [
+    "status",
+    "symbol"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/hypotheses",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/reflection_synthesis_tool.py",
+   "line": 70,
+   "method": "GET",
+   "path": "/reflection/synthesis/latest",
+   "raw_path": "/reflection/synthesis/latest",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /reflection/synthesis/latest",
+   "service_served": "reflection"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/research_tool.py",
+   "line": 108,
+   "method": "POST",
+   "path": "/research/run",
+   "raw_path": "/research/run",
+   "query": [],
+   "body": [
+    "user_idea",
+    "symbol",
+    "from_date",
+    "to_date",
+    "dry_run",
+    "indicators",
+    "initial_capital",
+    "universe"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/run",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/run_checkpoints_tool.py",
+   "line": 63,
+   "method": "GET",
+   "path": "/research/runs/{}/checkpoints",
+   "raw_path": "/research/runs/{}/checkpoints",
+   "query": [
+    "latest_only"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/runs/{run_id}/checkpoints",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/run_parameter_sweep_tool.py",
+   "line": 137,
+   "method": "POST",
+   "path": "/research/sweep/grid",
+   "raw_path": "/research/sweep/grid",
+   "query": [],
+   "body": [
+    "symbol",
+    "from_date",
+    "to_date",
+    "param_grid",
+    "base_code",
+    "indicators",
+    "initial_capital",
+    "param_name",
+    "recipe"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/sweep/grid",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/run_sweep_candidate_tool.py",
+   "line": 160,
+   "method": "POST",
+   "path": "/research/sweep/candidate",
+   "raw_path": "/research/sweep/candidate",
+   "query": [],
+   "body": [
+    "symbol",
+    "from_date",
+    "to_date",
+    "base_code",
+    "indicators",
+    "initial_capital",
+    "param_name",
+    "param_value",
+    "params",
+    "recipe"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/sweep/candidate",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/run_sweep_candidate_tool.py",
+   "line": 208,
+   "method": "GET",
+   "path": "/research/sweep/recipes",
+   "raw_path": "/research/sweep/recipes",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/sweep/recipes",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/screener_client.py",
+   "line": 36,
+   "method": "GET",
+   "path": "/screener/rankers/{}/latest",
+   "raw_path": "/screener/rankers/{}/latest",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /screener/rankers/{ranker_id}/latest",
+   "service_served": "screener"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/signal_evidence_tool.py",
+   "line": 84,
+   "method": "GET",
+   "path": "/research/signal-evidence/{}",
+   "raw_path": "/research/signal-evidence/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/signal-evidence/{trigger_id}",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/signal_evidence_tool.py",
+   "line": 93,
+   "method": "GET",
+   "path": "/research/signal-evidence",
+   "raw_path": "/research/signal-evidence",
+   "query": [
+    "limit",
+    "symbol"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/signal-evidence",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/stock_price_tool.py",
+   "line": 69,
+   "method": "GET",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "from",
+    "to",
+    "interval"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/strategy_tool.py",
+   "line": 30,
+   "method": "POST",
+   "path": "/strategy/strategies/{}/evaluate",
+   "raw_path": "/strategy/strategies/{}/evaluate",
+   "query": [
+    "symbols"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /strategy/strategies/{name}/evaluate",
+   "service_served": "strategy"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/submit_thesis_tool.py",
+   "line": 63,
+   "method": "GET",
+   "path": "/research/hypotheses",
+   "raw_path": "/research/hypotheses",
+   "query": [
+    "symbol"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/hypotheses",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/submit_thesis_tool.py",
+   "line": 217,
+   "method": "POST",
+   "path": "/research/hypotheses/human",
+   "raw_path": "/research/hypotheses/human",
+   "query": [],
+   "body": [
+    "title",
+    "thesis",
+    "universe"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/hypotheses/human",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/symbol_research_state_tool.py",
+   "line": 52,
+   "method": "GET",
+   "path": "/research/symbols/{}/state",
+   "raw_path": "/research/symbols/{}/state",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/symbols/{symbol}/state",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/trade_plan_tool.py",
+   "line": 331,
+   "method": "GET",
+   "path": "/analysis/symbols",
+   "raw_path": "/analysis/symbols",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /analysis/symbols",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/trade_plan_tool.py",
+   "line": 350,
+   "method": "GET",
+   "path": "/analysis/angle/{}/{}",
+   "raw_path": "/analysis/angle/{}/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /analysis/angle/{angle_name}/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/trade_plan_tool.py",
+   "line": 371,
+   "method": "POST",
+   "path": "/features/requests",
+   "raw_path": "/features/requests",
+   "query": [],
+   "body": [
+    "title",
+    "symbols",
+    "preset",
+    "days",
+    "interval",
+    "run_immediately"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /features/requests",
+   "service_served": "tools"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/trade_plan_tool.py",
+   "line": 396,
+   "method": "GET",
+   "path": "/simulator/runs",
+   "raw_path": "/simulator/runs",
+   "query": [
+    "symbol"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /simulator/runs",
+   "service_served": "simulator"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/trade_plan_tool.py",
+   "line": 417,
+   "method": "GET",
+   "path": "/simulator/results/{}",
+   "raw_path": "/simulator/results/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /simulator/results/{run_id}",
+   "service_served": "simulator"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/trade_plan_tool.py",
+   "line": 441,
+   "method": "GET",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "interval",
+    "days",
+    "adjusted"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/trade_plan_tool.py",
+   "line": 489,
+   "method": "GET",
+   "path": "/news/search",
+   "raw_path": "/news/search",
+   "query": [
+    "q",
+    "limit"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /news/search",
+   "service_served": "news"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/trade_plan_tool.py",
+   "line": 533,
+   "method": "GET",
+   "path": "/research/artifacts",
+   "raw_path": "/research/artifacts",
+   "query": [
+    "status"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/artifacts",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/trade_plan_tool.py",
+   "line": 582,
+   "method": "POST",
+   "path": "/research/trade-plan/{}",
+   "raw_path": "/research/trade-plan/{}",
+   "query": [],
+   "body": [
+    "timeframe",
+    "summary_context"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/trade-plan/{symbol}",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/trade_plan_tool.py",
+   "line": 1319,
+   "method": "POST",
+   "path": "/research/hypotheses",
+   "raw_path": "/research/hypotheses",
+   "query": [],
+   "body": [
+    "title",
+    "thesis",
+    "universe",
+    "strategy_type"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/hypotheses",
+   "service_served": "research"
+  },
+  {
+   "service": "infra",
+   "file": "vinu-infra/client.py",
+   "line": 255,
+   "method": "GET",
+   "path": "/health",
+   "raw_path": "/health",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /health",
+   "service_served": "screener"
+  },
+  {
+   "service": "initial-analysis",
+   "file": "vinu-initial-analysis/vinu_initial_analysis/cli.py",
+   "line": 76,
+   "method": "GET",
+   "path": "/stock/watchlist/tickers",
+   "raw_path": "/stock/watchlist/tickers",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/watchlist/tickers",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/feedback_loop.py",
+   "line": 127,
+   "method": "POST",
+   "path": "/research/trade-plan/{}/record-outcome",
+   "raw_path": "/research/trade-plan/{}/record-outcome",
+   "query": [],
+   "body": [
+    "actual_return_pct"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/trade-plan/{artifact_id}/record-outcome",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/feedback_loop.py",
+   "line": 154,
+   "method": "POST",
+   "path": "/analysis/pnl-attribution/{}/record",
+   "raw_path": "/analysis/pnl-attribution/{}/record",
+   "query": [],
+   "body": [
+    "closed_positions"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /analysis/pnl-attribution/{ticker}/record",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/feedback_loop.py",
+   "line": 184,
+   "method": "GET",
+   "path": "/research/hypotheses",
+   "raw_path": "/research/hypotheses",
+   "query": [
+    "symbol"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/hypotheses",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/feedback_loop.py",
+   "line": 212,
+   "method": "POST",
+   "path": "/research/hypotheses/{}/evidence",
+   "raw_path": "/research/hypotheses/{}/evidence",
+   "query": [],
+   "body": [
+    "metric",
+    "value",
+    "conclusion",
+    "reasoning"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/hypotheses/{hypothesis_id}/evidence",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/feedback_loop.py",
+   "line": 235,
+   "method": "POST",
+   "path": "/agent/ticker-ledger/event",
+   "raw_path": "/agent/ticker-ledger/event",
+   "query": [],
+   "body": [
+    "ticker",
+    "stage",
+    "event_type",
+    "text",
+    "ref_id",
+    "source"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/ticker-ledger/event",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/feedback_loop.py",
+   "line": 259,
+   "method": "POST",
+   "path": "/analysis/run/{}",
+   "raw_path": "/analysis/run/{}",
+   "query": [
+    "angle_names",
+    "to_ts"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /analysis/run/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/maturity_link.py",
+   "line": 43,
+   "method": "GET",
+   "path": "/research/maturity/status",
+   "raw_path": "/research/maturity/status",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/maturity/status",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/scheduler.py",
+   "line": 328,
+   "method": "GET",
+   "path": "/agent/broker/order/{}",
+   "raw_path": "/agent/broker/order/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/broker/order/{order_id}",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/scheduler.py",
+   "line": 376,
+   "method": "POST",
+   "path": "/agent/notify/reconciliation-drift",
+   "raw_path": "/agent/notify/reconciliation-drift",
+   "query": [],
+   "body": [
+    "symbol",
+    "action",
+    "detail"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/notify/reconciliation-drift",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/scheduler.py",
+   "line": 474,
+   "method": "GET",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "interval",
+    "days",
+    "adjusted"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/scheduler.py",
+   "line": 604,
+   "method": "POST",
+   "path": "/agent/broker/halt",
+   "raw_path": "/agent/broker/halt",
+   "query": [],
+   "body": [
+    "reason"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/broker/halt",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/scheduler.py",
+   "line": 674,
+   "method": "POST",
+   "path": "/agent/notify/reconciliation-drift",
+   "raw_path": "/agent/notify/reconciliation-drift",
+   "query": [],
+   "body": [
+    "symbol",
+    "action",
+    "expected_qty",
+    "actual_qty",
+    "drift_pct"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/notify/reconciliation-drift",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/scheduler.py",
+   "line": 795,
+   "method": "GET",
+   "path": "/strategy/strategies/{}",
+   "raw_path": "/strategy/strategies/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /strategy/strategies/{name}",
+   "service_served": "strategy"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/scheduler.py",
+   "line": 815,
+   "method": "GET",
+   "path": "/portfolio/state",
+   "raw_path": "/portfolio/state",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /portfolio/state",
+   "service_served": "portfolio"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/scheduler.py",
+   "line": 835,
+   "method": "GET",
+   "path": "/portfolio/daily-allocation",
+   "raw_path": "/portfolio/daily-allocation",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /portfolio/daily-allocation",
+   "service_served": "portfolio"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/scheduler.py",
+   "line": 862,
+   "method": "GET",
+   "path": "/research/artifacts",
+   "raw_path": "/research/artifacts",
+   "query": [
+    "status",
+    "type_"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/artifacts",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/scheduler.py",
+   "line": 873,
+   "method": "GET",
+   "path": "/research/trade-plan/{}",
+   "raw_path": "/research/trade-plan/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/trade-plan/{artifact_id}",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/scheduler.py",
+   "line": 957,
+   "method": "GET",
+   "path": "/agent/broker/positions",
+   "raw_path": "/agent/broker/positions",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/broker/positions",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/scheduler.py",
+   "line": 987,
+   "method": "GET",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "interval",
+    "days",
+    "adjusted"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/scheduler.py",
+   "line": 1021,
+   "method": "GET",
+   "path": "/agent/broker/account",
+   "raw_path": "/agent/broker/account",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/broker/account",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/scheduler.py",
+   "line": 1070,
+   "method": "GET",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "interval",
+    "days",
+    "adjusted"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/scheduler.py",
+   "line": 1231,
+   "method": "POST",
+   "path": "/agent/broker/order",
+   "raw_path": "/agent/broker/order",
+   "query": [],
+   "body": [
+    "symbol",
+    "side",
+    "qty",
+    "order_type",
+    "client_order_id",
+    "limit_price",
+    "reduce_only"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/broker/order",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/shadow_evaluator.py",
+   "line": 116,
+   "method": "GET",
+   "path": "/research/artifacts/{}/paper-return",
+   "raw_path": "/research/artifacts/{}/paper-return",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/artifacts/{artifact_id}/paper-return",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/shadow_evaluator.py",
+   "line": 127,
+   "method": "POST",
+   "path": "/agent/broker/performance/{}/append",
+   "raw_path": "/agent/broker/performance/{}/append",
+   "query": [],
+   "body": [
+    "daily_return",
+    "trade_date"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/broker/performance/{artifact_id}/append",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/shadow_evaluator.py",
+   "line": 143,
+   "method": "GET",
+   "path": "/research/artifacts",
+   "raw_path": "/research/artifacts",
+   "query": [
+    "status"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/artifacts",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/shadow_evaluator.py",
+   "line": 251,
+   "method": "GET",
+   "path": "/agent/broker/performance/{}",
+   "raw_path": "/agent/broker/performance/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/broker/performance/{artifact_id}",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/shadow_evaluator.py",
+   "line": 273,
+   "method": "POST",
+   "path": "/research/artifacts/{}/promote",
+   "raw_path": "/research/artifacts/{}/promote",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/artifacts/{artifact_id}/promote",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan_approval_worker.py",
+   "line": 62,
+   "method": "GET",
+   "path": "/research/artifacts",
+   "raw_path": "/research/artifacts",
+   "query": [
+    "status",
+    "type_"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/artifacts",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan_approval_worker.py",
+   "line": 80,
+   "method": "POST",
+   "path": "/research/trade-plan/{}/approve",
+   "raw_path": "/research/trade-plan/{}/approve",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/trade-plan/{artifact_id}/approve",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan_approval_worker.py",
+   "line": 116,
+   "method": "POST",
+   "path": "/agent/notify/trade-plan-pending",
+   "raw_path": "/agent/notify/trade-plan-pending",
+   "query": [],
+   "body": [
+    "artifact_id",
+    "symbol",
+    "reasons"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/notify/trade-plan-pending",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/live_decision/bars_client.py",
+   "line": 37,
+   "method": "GET",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "interval",
+    "limit",
+    "adjusted"
+   ],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/live_decision/poller.py",
+   "line": 83,
+   "method": "GET",
+   "path": "/strategy/strategies",
+   "raw_path": "/strategy/strategies",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /strategy/strategies",
+   "service_served": "strategy"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/live_decision/poller.py",
+   "line": 95,
+   "method": "GET",
+   "path": "/strategy/strategies/{}",
+   "raw_path": "/strategy/strategies/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /strategy/strategies/{name}",
+   "service_served": "strategy"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/live_decision/poller.py",
+   "line": 382,
+   "method": "POST",
+   "path": "/agent/live-decision/run",
+   "raw_path": "/agent/live-decision/run",
+   "query": [],
+   "body": [
+    "ticker",
+    "strategy_id",
+    "mode",
+    "position_context"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/live-decision/run",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/live_decision/poller.py",
+   "line": 475,
+   "method": "POST",
+   "path": "/agent/notify/reconciliation-drift",
+   "raw_path": "/agent/notify/reconciliation-drift",
+   "query": [],
+   "body": [
+    "symbol",
+    "action",
+    "detail"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/notify/reconciliation-drift",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/live_decision/poller.py",
+   "line": 521,
+   "method": "POST",
+   "path": "/agent/live-decision/run",
+   "raw_path": "/agent/live-decision/run",
+   "query": [],
+   "body": [
+    "ticker",
+    "strategy_id",
+    "trigger_id",
+    "novelty"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/live-decision/run",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/live_decision/poller.py",
+   "line": 590,
+   "method": "POST",
+   "path": "/strategy/strategies/{}/precondition-check",
+   "raw_path": "/strategy/strategies/{}/precondition-check",
+   "query": [],
+   "body": [
+    "precondition_held"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /strategy/strategies/{name}/precondition-check",
+   "service_served": "strategy"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/live_decision/poller.py",
+   "line": 615,
+   "method": "POST",
+   "path": "/research/move-evidence/{}",
+   "raw_path": "/research/move-evidence/{}",
+   "query": [],
+   "body": [
+    "bar_ts",
+    "window_seconds",
+    "granularity",
+    "atr",
+    "price_move",
+    "move_threshold",
+    "direction"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/move-evidence/{symbol}",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/live_decision/poller.py",
+   "line": 656,
+   "method": "POST",
+   "path": "/research/signal-evidence/trigger",
+   "raw_path": "/research/signal-evidence/trigger",
+   "query": [],
+   "body": [
+    "trigger_id",
+    "symbol",
+    "trigger_time",
+    "must_condition",
+    "indicators"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/signal-evidence/trigger",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/guards.py",
+   "line": 65,
+   "method": "GET",
+   "path": "/stock/quote/{}",
+   "raw_path": "/stock/quote/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/quote/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/guards.py",
+   "line": 88,
+   "method": "GET",
+   "path": "/stock/quote/{}",
+   "raw_path": "/stock/quote/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/quote/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/guards.py",
+   "line": 130,
+   "method": "GET",
+   "path": "/stock/events/{}",
+   "raw_path": "/stock/events/{}",
+   "query": [
+    "within_hours"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/events/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/guards.py",
+   "line": 262,
+   "method": "GET",
+   "path": "/agent/broker/status",
+   "raw_path": "/agent/broker/status",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/broker/status",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 938,
+   "method": "GET",
+   "path": "/analysis/angle/shock_personality/{}",
+   "raw_path": "/analysis/angle/shock_personality/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /analysis/angle/{angle_name}/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 1083,
+   "method": "GET",
+   "path": "/research/artifacts",
+   "raw_path": "/research/artifacts",
+   "query": [
+    "status",
+    "type_"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/artifacts",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 1106,
+   "method": "GET",
+   "path": "/research/trade-plan/{}",
+   "raw_path": "/research/trade-plan/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/trade-plan/{artifact_id}",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 1339,
+   "method": "GET",
+   "path": "/agent/broker/asset/{}",
+   "raw_path": "/agent/broker/asset/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/broker/asset/{symbol}",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 1527,
+   "method": "GET",
+   "path": "/research/trade-plan/{}/calibration",
+   "raw_path": "/research/trade-plan/{}/calibration",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/trade-plan/{artifact_id}/calibration",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 1594,
+   "method": "POST",
+   "path": "/agent/swarm/runs/ensure-fresh",
+   "raw_path": "/agent/swarm/runs/ensure-fresh",
+   "query": [
+    "preset_name",
+    "symbol",
+    "max_age_minutes"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/swarm/runs/ensure-fresh",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 2046,
+   "method": "POST",
+   "path": "/agent/broker/halt",
+   "raw_path": "/agent/broker/halt",
+   "query": [],
+   "body": [
+    "reason"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/broker/halt",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 2294,
+   "method": "POST",
+   "path": "/agent/broker/halt",
+   "raw_path": "/agent/broker/halt",
+   "query": [],
+   "body": [
+    "reason"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/broker/halt",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 2410,
+   "method": "POST",
+   "path": "/research/trade-plan/{}/action",
+   "raw_path": "/research/trade-plan/{}/action",
+   "query": [],
+   "body": [
+    "action"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/trade-plan/{artifact_id}/action",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 2457,
+   "method": "POST",
+   "path": "/agent/broker/order",
+   "raw_path": "/agent/broker/order",
+   "query": [],
+   "body": [
+    "symbol",
+    "side",
+    "qty",
+    "order_type",
+    "reduce_only",
+    "client_order_id",
+    "limit_price",
+    "stop_loss_price"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/broker/order",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 2478,
+   "method": "GET",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "interval",
+    "days",
+    "adjusted"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 2517,
+   "method": "GET",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "interval",
+    "days",
+    "adjusted"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 2540,
+   "method": "GET",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "interval",
+    "days",
+    "adjusted"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 2553,
+   "method": "GET",
+   "path": "/agent/broker/account",
+   "raw_path": "/agent/broker/account",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/broker/account",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 2568,
+   "method": "GET",
+   "path": "/analysis/angle/shock_clustering/{}",
+   "raw_path": "/analysis/angle/shock_clustering/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /analysis/angle/{angle_name}/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 2614,
+   "method": "POST",
+   "path": "/agent/broker/halt",
+   "raw_path": "/agent/broker/halt",
+   "query": [],
+   "body": [
+    "reason"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/broker/halt",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 2694,
+   "method": "POST",
+   "path": "/agent/broker/resume",
+   "raw_path": "/agent/broker/resume",
+   "query": [],
+   "body": [],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/broker/resume",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 2739,
+   "method": "GET",
+   "path": "/agent/broker/account",
+   "raw_path": "/agent/broker/account",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/broker/account",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 2897,
+   "method": "POST",
+   "path": "/agent/notify/reconciliation-drift",
+   "raw_path": "/agent/notify/reconciliation-drift",
+   "query": [],
+   "body": [
+    "symbol",
+    "action",
+    "book_qty",
+    "broker_qty"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/notify/reconciliation-drift",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 2995,
+   "method": "GET",
+   "path": "/agent/broker/positions",
+   "raw_path": "/agent/broker/positions",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/broker/positions",
+   "service_served": "agent"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/trade_plan/orchestrator.py",
+   "line": 3022,
+   "method": "GET",
+   "path": "/agent/broker/positions",
+   "raw_path": "/agent/broker/positions",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/broker/positions",
+   "service_served": "agent"
+  },
+  {
+   "service": "portfolio",
+   "file": "vinu-portfolio/vinu_portfolio/circuit_breakers.py",
+   "line": 222,
+   "method": "POST",
+   "path": "/agent/broker/halt",
+   "raw_path": "/agent/broker/halt",
+   "query": [],
+   "body": [
+    "reason"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/broker/halt",
+   "service_served": "agent"
+  },
+  {
+   "service": "portfolio",
+   "file": "vinu-portfolio/vinu_portfolio/drawdown_scheduler.py",
+   "line": 48,
+   "method": "GET",
+   "path": "/agent/broker/account",
+   "raw_path": "/agent/broker/account",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/broker/account",
+   "service_served": "agent"
+  },
+  {
+   "service": "portfolio",
+   "file": "vinu-portfolio/vinu_portfolio/historical_simulation.py",
+   "line": 206,
+   "method": "GET",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "interval",
+    "adjusted",
+    "days"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "portfolio",
+   "file": "vinu-portfolio/vinu_portfolio/service.py",
+   "line": 153,
+   "method": "GET",
+   "path": "/strategy/strategies",
+   "raw_path": "/strategy/strategies",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /strategy/strategies",
+   "service_served": "strategy"
+  },
+  {
+   "service": "portfolio",
+   "file": "vinu-portfolio/vinu_portfolio/service.py",
+   "line": 180,
+   "method": "GET",
+   "path": "/research/artifacts",
+   "raw_path": "/research/artifacts",
+   "query": [
+    "status"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/artifacts",
+   "service_served": "research"
+  },
+  {
+   "service": "portfolio",
+   "file": "vinu-portfolio/vinu_portfolio/service.py",
+   "line": 280,
+   "method": "GET",
+   "path": "/simulator/results/{}/equity",
+   "raw_path": "/simulator/results/{}/equity",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /simulator/results/{run_id}/equity",
+   "service_served": "simulator"
+  },
+  {
+   "service": "portfolio",
+   "file": "vinu-portfolio/vinu_portfolio/service.py",
+   "line": 540,
+   "method": "GET",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "interval",
+    "adjusted"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "portfolio",
+   "file": "vinu-portfolio/vinu_portfolio/service.py",
+   "line": 585,
+   "method": "GET",
+   "path": "/research/trade-plan/{}/calibration",
+   "raw_path": "/research/trade-plan/{}/calibration",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/trade-plan/{artifact_id}/calibration",
+   "service_served": "research"
+  },
+  {
+   "service": "portfolio",
+   "file": "vinu-portfolio/vinu_portfolio/service.py",
+   "line": 636,
+   "method": "GET",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "interval",
+    "adjusted"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "portfolio",
+   "file": "vinu-portfolio/vinu_portfolio/service.py",
+   "line": 873,
+   "method": "POST",
+   "path": "/agent/notify/symbol-conflict",
+   "raw_path": "/agent/notify/symbol-conflict",
+   "query": [],
+   "body": [
+    "symbol",
+    "contributions",
+    "net_weight",
+    "gross_weight",
+    "severity"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /agent/notify/symbol-conflict",
+   "service_served": "agent"
+  },
+  {
+   "service": "portfolio",
+   "file": "vinu-portfolio/vinu_portfolio/service.py",
+   "line": 1418,
+   "method": "GET",
+   "path": "/research/trade-plan/{}",
+   "raw_path": "/research/trade-plan/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/trade-plan/{artifact_id}",
+   "service_served": "research"
+  },
+  {
+   "service": "portfolio",
+   "file": "vinu-portfolio/vinu_portfolio/service.py",
+   "line": 1450,
+   "method": "GET",
+   "path": "/agent/broker/account",
+   "raw_path": "/agent/broker/account",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/broker/account",
+   "service_served": "agent"
+  },
+  {
+   "service": "portfolio",
+   "file": "vinu-portfolio/vinu_portfolio/service.py",
+   "line": 1464,
+   "method": "GET",
+   "path": "/agent/broker/positions",
+   "raw_path": "/agent/broker/positions",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/broker/positions",
+   "service_served": "agent"
+  },
+  {
+   "service": "research",
+   "file": "vinu-research/vinu_research/service.py",
+   "line": 753,
+   "method": "GET",
+   "path": "/health",
+   "raw_path": "/health",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /health",
+   "service_served": "screener"
+  },
+  {
+   "service": "research",
+   "file": "vinu-research/vinu_research/tools.py",
+   "line": 88,
+   "method": "GET",
+   "path": "/rankers/{}/latest",
+   "raw_path": "/rankers/{}/latest",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /screener/rankers/{ranker_id}/latest",
+   "service_served": "screener"
+  },
+  {
+   "service": "research",
+   "file": "vinu-research/vinu_research/tools.py",
+   "line": 138,
+   "method": "POST",
+   "path": "/simulate/custom",
+   "raw_path": "/simulate/custom",
+   "query": [],
+   "body": [
+    "strategy_code",
+    "class_name",
+    "symbols",
+    "start_date",
+    "end_date",
+    "allow_short",
+    "run_validation",
+    "indicators",
+    "initial_capital",
+    "interval",
+    "slippage_pct",
+    "transaction_cost_pct"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /simulator/simulate/custom",
+   "service_served": "simulator"
+  },
+  {
+   "service": "research",
+   "file": "vinu-research/vinu_research/tools.py",
+   "line": 204,
+   "method": "GET",
+   "path": "/story/{}",
+   "raw_path": "/story/{}",
+   "query": [
+    "from_ts",
+    "to_ts"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /analysis/story/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "research",
+   "file": "vinu-research/vinu_research/tools.py",
+   "line": 225,
+   "method": "GET",
+   "path": "/drawdown/{}",
+   "raw_path": "/drawdown/{}",
+   "query": [
+    "from_ts",
+    "to_ts"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /analysis/drawdown/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "research",
+   "file": "vinu-research/vinu_research/tools.py",
+   "line": 245,
+   "method": "GET",
+   "path": "/correlation/{}",
+   "raw_path": "/correlation/{}",
+   "query": [
+    "from_ts",
+    "to_ts"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /analysis/correlation/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "research",
+   "file": "vinu-research/vinu_research/tools.py",
+   "line": 256,
+   "method": "GET",
+   "path": "/angle/{}/{}",
+   "raw_path": "/angle/{}/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /analysis/angle/{angle_name}/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "research",
+   "file": "vinu-research/vinu_research/tools.py",
+   "line": 297,
+   "method": "GET",
+   "path": "/features/{}",
+   "raw_path": "/{}",
+   "query": [
+    "indicators"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /features/{symbol_or_kind}",
+   "service_served": "tools"
+  },
+  {
+   "service": "research",
+   "file": "vinu-research/vinu_research/tools.py",
+   "line": 317,
+   "method": "GET",
+   "path": "/candles/{}",
+   "raw_path": "/candles/{}",
+   "query": [
+    "from",
+    "to",
+    "interval",
+    "adjusted"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "research",
+   "file": "vinu-research/vinu_research/tools.py",
+   "line": 349,
+   "method": "GET",
+   "path": "/options/{}/snapshot",
+   "raw_path": "/options/{}/snapshot",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/options/{symbol}/snapshot",
+   "service_served": "agent"
+  },
+  {
+   "service": "research",
+   "file": "vinu-research/vinu_research/tools.py",
+   "line": 368,
+   "method": "GET",
+   "path": "/swarm/runs/latest",
+   "raw_path": "/swarm/runs/latest",
+   "query": [
+    "preset_name",
+    "symbol"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/swarm/runs/latest",
+   "service_served": "agent"
+  },
+  {
+   "service": "research",
+   "file": "vinu-research/vinu_research/tools.py",
+   "line": 381,
+   "method": "GET",
+   "path": "/results/{}/equity",
+   "raw_path": "/results/{}/equity",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /simulator/results/{run_id}/equity",
+   "service_served": "simulator"
+  },
+  {
+   "service": "research",
+   "file": "vinu-research/vinu_research/tools.py",
+   "line": 396,
+   "method": "GET",
+   "path": "/results/{}/weights",
+   "raw_path": "/results/{}/weights",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /simulator/results/{run_id}/weights",
+   "service_served": "simulator"
+  },
+  {
+   "service": "research",
+   "file": "vinu-research/vinu_research/scheduled/executor.py",
+   "line": 361,
+   "method": "POST",
+   "path": "/analysis/run/{}",
+   "raw_path": "/analysis/run/{}",
+   "query": [
+    "angle_names"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /analysis/run/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "research",
+   "file": "vinu-research/vinu_research/server/routes_introspect.py",
+   "line": 376,
+   "method": "GET",
+   "path": "/agent/broker/performance/{}",
+   "raw_path": "/agent/broker/performance/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/broker/performance/{artifact_id}",
+   "service_served": "agent"
+  },
+  {
+   "service": "screener",
+   "file": "vinu-screener/vinu_screener/rankers/holdings_client.py",
+   "line": 26,
+   "method": "GET",
+   "path": "/agent/broker/positions",
+   "raw_path": "/agent/broker/positions",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /agent/broker/positions",
+   "service_served": "agent"
+  },
+  {
+   "service": "screener",
+   "file": "vinu-screener/vinu_screener/scan/data_source.py",
+   "line": 113,
+   "method": "POST",
+   "path": "/candles/batch",
+   "raw_path": "/candles/batch",
+   "query": [],
+   "body": [
+    "symbols",
+    "interval",
+    "days",
+    "adjusted"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /stock/candles/batch",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "screener",
+   "file": "vinu-screener/vinu_screener/scan/data_source.py",
+   "line": 137,
+   "method": "GET",
+   "path": "/candles/{}",
+   "raw_path": "/candles/{}",
+   "query": [
+    "interval",
+    "days",
+    "adjusted"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "simulator",
+   "file": "vinu-simulator/vinu_simulator/clients/features_client.py",
+   "line": 42,
+   "method": "GET",
+   "path": "/indicators/{}",
+   "raw_path": "/indicators/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/indicators/pool",
+   "service_served": "research"
+  },
+  {
+   "service": "simulator",
+   "file": "vinu-simulator/vinu_simulator/clients/price_client.py",
+   "line": 59,
+   "method": "GET",
+   "path": "/candles/{}",
+   "raw_path": "/candles/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "simulator",
+   "file": "vinu-simulator/vinu_simulator/clients/price_client.py",
+   "line": 134,
+   "method": "GET",
+   "path": "/candles/{}",
+   "raw_path": "/candles/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "simulator",
+   "file": "vinu-simulator/vinu_simulator/clients/strategy_client.py",
+   "line": 23,
+   "method": "GET",
+   "path": "/strategy/weights",
+   "raw_path": "/weights",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /strategy/weights",
+   "service_served": "strategy"
+  },
+  {
+   "service": "simulator",
+   "file": "vinu-simulator/vinu_simulator/clients/strategy_client.py",
+   "line": 42,
+   "method": "GET",
+   "path": "/strategy/runs",
+   "raw_path": "/runs",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /strategy/runs",
+   "service_served": "strategy"
+  },
+  {
+   "service": "simulator",
+   "file": "vinu-simulator/vinu_simulator/clients/strategy_client.py",
+   "line": 46,
+   "method": "GET",
+   "path": "/strategy/strategies",
+   "raw_path": "/strategies",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /strategy/strategies",
+   "service_served": "strategy"
+  },
+  {
+   "service": "simulator",
+   "file": "vinu-simulator/vinu_simulator/server/routes_read.py",
+   "line": 34,
+   "method": "GET",
+   "path": "/health",
+   "raw_path": "/health",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /health",
+   "service_served": "screener"
+  },
+  {
+   "service": "strategy",
+   "file": "vinu-strategy/vinu_strategy/server/routes_config.py",
+   "line": 29,
+   "method": "GET",
+   "path": "/health",
+   "raw_path": "/health",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /health",
+   "service_served": "screener"
+  },
+  {
+   "service": "tools",
+   "file": "vinu-tools/vinu_tools/service.py",
+   "line": 275,
+   "method": "GET",
+   "path": "/stock/health",
+   "raw_path": "/stock/health",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/health",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "tools",
+   "file": "vinu-tools/vinu_tools/client/stock_price.py",
+   "line": 63,
+   "method": "GET",
+   "path": "/candles/{}",
+   "raw_path": "/candles/{}",
+   "query": [
+    "interval",
+    "limit",
+    "adjusted",
+    "from",
+    "to"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "tools",
+   "file": "vinu-tools/vinu_tools/server/routes_features.py",
+   "line": 164,
+   "method": "GET",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "days",
+    "as_of",
+    "indicators"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  }
+ ],
+ "findings": [
+  {
+   "level": "ERROR",
+   "kind": "no_route",
+   "route": null,
+   "detail": "no service serves /models",
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/agent/llm.py",
+   "line": 49,
+   "method": "GET",
+   "path": "/models",
+   "raw_path": "/models",
+   "query": [],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false
+  },
+  {
+   "level": "INFO",
+   "kind": "unresolved",
+   "route": null,
+   "detail": "/api/chat starts with no service prefix: an external API or a client with a base path",
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/agent/llm.py",
+   "line": 332,
+   "method": "POST",
+   "path": "/api/chat",
+   "raw_path": "/api/chat",
+   "query": [],
+   "body": [
+    "model",
+    "messages",
+    "stream",
+    "tools"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false
+  },
+  {
+   "level": "INFO",
+   "kind": "unresolved",
+   "route": null,
+   "detail": "/v1beta1/options/snapshots/{} starts with no service prefix: an external API or a client with a base path",
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/options_tool.py",
+   "line": 84,
+   "method": "GET",
+   "path": "/v1beta1/options/snapshots/{}",
+   "raw_path": "/v1beta1/options/snapshots/{}",
+   "query": [
+    "limit",
+    "expiration_gte",
+    "expiration_lte"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false
+  },
+  {
+   "level": "INFO",
+   "kind": "unresolved",
+   "route": null,
+   "detail": "/chat/completions starts with no service prefix: an external API or a client with a base path",
+   "service": "infra",
+   "file": "vinu-infra/llm/client.py",
+   "line": 172,
+   "method": "POST",
+   "path": "/chat/completions",
+   "raw_path": "/chat/completions",
+   "query": [],
+   "body": [
+    "model",
+    "messages",
+    "temperature",
+    "max_tokens",
+    "temperature"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false
+  },
+  {
+   "level": "INFO",
+   "kind": "unresolved",
+   "route": null,
+   "detail": "/chat/completions starts with no service prefix: an external API or a client with a base path",
+   "service": "infra",
+   "file": "vinu-infra/llm/client_async.py",
+   "line": 178,
+   "method": "POST",
+   "path": "/chat/completions",
+   "raw_path": "/chat/completions",
+   "query": [],
+   "body": [
+    "model",
+    "messages",
+    "temperature",
+    "max_tokens",
+    "temperature"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false
+  },
+  {
+   "level": "INFO",
+   "kind": "unresolved",
+   "route": null,
+   "detail": "/v1beta1/news starts with no service prefix: an external API or a client with a base path",
+   "service": "news",
+   "file": "vinu-news/vinu_news/providers/alpaca.py",
+   "line": 62,
+   "method": "GET",
+   "path": "/v1beta1/news",
+   "raw_path": "/v1beta1/news",
+   "query": [
+    "symbols",
+    "start",
+    "end",
+    "limit",
+    "include_content",
+    "exclude_contentless",
+    "page_token"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false
+  }
+ ]
+}

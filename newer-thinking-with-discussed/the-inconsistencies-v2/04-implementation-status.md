@@ -1260,4 +1260,6 @@ Of 130 routes with no code or UI caller most are operator/admin routes (enable/d
 **Tests:** `vinu-live` 860 (same 3 old errors), `vinu-portfolio` 282, `vinu-agent` 1527 passed (+1; same 16 failed / 2 errors as before), `vinu-initial-analysis` +3.
 **Not covered by this check:** request/response field names and types (only that the path exists), calls built from strings the scan cannot see, and anything that only fails with real data.
 
+**Continued 2026-10-04 in `../routing-find-and-fix/`:** the check became a re-runnable contract scan (`vinu-infra/contract_scan.py`) that also compares the query and body fields each caller sends with what the route declares. It found two more real faults, both fixed: six agent calls missing the service prefix (memory sync and portfolio comparison got 404 in separate containers), and research sending `from` / `to` where the analysis routes declare `from_ts` / `to_ts` (the research window was silently ignored). Registry, findings and status live in that folder.
+
 - **2026-10-04** — Phase 1 wiring check: 2 real wiring failures fixed (alerts to the agent never delivered; coverage counted inactive angles).

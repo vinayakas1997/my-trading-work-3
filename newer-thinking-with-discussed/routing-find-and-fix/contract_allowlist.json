@@ -1,0 +1,7 @@
+{
+  "_why": "Findings that are correct to leave. Each needs a reason. The scan exits non-zero for any ERROR not listed here.",
+  "allow": [
+    {"file": "vinu-agent/vinu_agent/agent/llm.py", "kind": "no_route", "detail_contains": "/models",
+     "reason": "GET {llm_base}/models is the LLM provider's own model-list endpoint (Ollama / OpenAI style), not vinu-models. It only looks like a vinu route because the new model service is also mounted under /models."}
+  ]
+}

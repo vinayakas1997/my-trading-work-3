@@ -1,0 +1,9 @@
+{
+  "_why": "Clients that are built with a base URL that already contains the service prefix, so their calls only show the tail. Verified by hand against the constructor. The scan prepends the prefix so these calls are checked like every other.",
+  "clients": [
+    {"file": "vinu-simulator/vinu_simulator/clients/strategy_client.py", "prefix": "/strategy",
+     "verified": "vinu-simulator/vinu_simulator/service.py:68  StrategyClient(f\"{strategy_api_url}/strategy\")"},
+    {"file": "vinu-research/vinu_research/tools.py", "line": 297, "prefix": "/features",
+     "verified": "vinu-research/vinu_research/tools.py:36  ResilientClient(f\"{features_api_url}/features\", ...)"}
+  ]
+}

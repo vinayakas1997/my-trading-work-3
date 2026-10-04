@@ -197,9 +197,9 @@ class ResearchTools:
     ) -> dict[str, Any] | None:
         params: dict[str, Any] = {}
         if from_ts is not None:
-            params["from"] = str(from_ts)
+            params["from_ts"] = str(from_ts)
         if to_ts is not None:
-            params["to"] = str(to_ts)
+            params["to_ts"] = str(to_ts)
         try:
             resp = await self._correlation_client.get(
                 f"/story/{symbol.upper()}",
@@ -218,9 +218,9 @@ class ResearchTools:
     ) -> dict[str, Any] | None:
         params: dict[str, Any] = {}
         if from_ts is not None:
-            params["from"] = str(from_ts)
+            params["from_ts"] = str(from_ts)
         if to_ts is not None:
-            params["to"] = str(to_ts)
+            params["to_ts"] = str(to_ts)
         try:
             return await self._correlation_client.get(
                 f"/drawdown/{symbol.upper()}",
@@ -238,9 +238,9 @@ class ResearchTools:
     ) -> dict[str, Any] | None:
         params: dict[str, Any] = {}
         if from_ts is not None:
-            params["from"] = str(from_ts)
+            params["from_ts"] = str(from_ts)
         if to_ts is not None:
-            params["to"] = str(to_ts)
+            params["to_ts"] = str(to_ts)
         try:
             return await self._correlation_client.get(
                 f"/correlation/{symbol.upper()}",

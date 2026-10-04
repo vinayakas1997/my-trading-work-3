@@ -60,7 +60,7 @@ class PortfolioComparisonTool(BaseTool):
 
     async def _fetch_portfolio(self, client: httpx.AsyncClient, url: str) -> dict[str, Any]:
         try:
-            resp = await client.get(f"{url}/state")
+            resp = await client.get(f"{url}/portfolio/state")
             if resp.status_code == 200:
                 return resp.json()
         except Exception as e:
@@ -87,7 +87,7 @@ class PortfolioComparisonTool(BaseTool):
         try:
             async with httpx.AsyncClient(timeout=15.0, headers=_h()) as client:
                 resp = await client.get(
-                    f"{research_api_url}/artifacts",
+                    f"{research_api_url}/research/artifacts",
                     params={"status": "ACTIVE,MONITORING,BENCHING"},
                 )
                 if resp.status_code == 200:

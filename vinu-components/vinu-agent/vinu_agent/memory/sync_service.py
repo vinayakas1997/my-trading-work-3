@@ -78,7 +78,7 @@ class SyncService:
             params["symbol"] = symbol
         try:
             async with httpx.AsyncClient(timeout=10.0, headers=_h()) as client:
-                resp = await client.get(f"{url}/runs", params=params)
+                resp = await client.get(f"{url}/research/runs", params=params)
                 if resp.status_code != 200:
                     LOG.warning("sync_research: %s returned %d", url, resp.status_code)
                     return None
@@ -105,7 +105,7 @@ class SyncService:
         try:
             async with httpx.AsyncClient(timeout=10.0, headers=_h()) as client:
                 resp = await client.get(
-                    f"{url}/artifacts",
+                    f"{url}/research/artifacts",
                     params={"status": "ACTIVE,MONITORING"},
                 )
                 if resp.status_code != 200:
@@ -228,7 +228,7 @@ class SyncService:
             params["symbol"] = symbol
         try:
             async with httpx.AsyncClient(timeout=10.0, headers=_h()) as client:
-                resp = await client.get(f"{url}/runs", params=params)
+                resp = await client.get(f"{url}/simulator/runs", params=params)
                 if resp.status_code != 200:
                     LOG.warning("sync_simulator: %s returned %d", url, resp.status_code)
                     return 0
@@ -354,7 +354,7 @@ class SyncService:
         try:
             async with httpx.AsyncClient(timeout=15.0, headers=_h()) as client:
                 resp = await client.get(
-                    f"{url}/search",
+                    f"{url}/news/search",
                     params={"q": symbol, "limit": limit},
                 )
                 if resp.status_code != 200:
