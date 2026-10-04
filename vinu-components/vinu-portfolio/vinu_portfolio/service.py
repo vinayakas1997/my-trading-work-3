@@ -310,6 +310,12 @@ class PortfolioService:
 
         Each strategy gets weight proportional to 1/vol. Falls back to
         equal-weight when vol data is unavailable.
+
+        Which of these two runs is `PortfolioConfig.allocation_mode`: the DEFAULT is
+        "hrp" (hierarchical risk parity, correlation-aware; for two assets it splits
+        by inverse VARIANCE, so a strategy with half the volatility gets 4:1, not 2:1);
+        "inverse_vol" is the plain 1/vol rule described above. Both worked out by hand
+        in tests/test_logic_allocation_by_hand.py.
         """
         if not strategies:
             return []

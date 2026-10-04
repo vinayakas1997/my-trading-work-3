@@ -96,13 +96,23 @@ The system notices real moves no strategy was watching (`unconfirmed moves`) and
 | B | turn each repeated unconfirmed move pattern into a candidate must-condition automatically | the vision's full loop, but it needs a matching rule that does not exist yet |
 | C | leave as is | the system finds nothing it was not told to look for |
 
+### D9. Should a buy round down instead of to the nearest share?
+
+Order quantities round to the **nearest** whole share, half up (`vinu-live/book/quantize.py`). A buy can exceed the deployable money by under half a share per symbol: one name at 7,000 per share with a 90,000 allowance orders 13 shares = 91,000 (pinned in `test_logic_money_chain_by_hand.py`). Negligible on cheap shares; visible on an expensive share in a small account.
+
+| Option | What it does | Trade-off |
+|---|---|---|
+| **A (recommended)** | floor (round down) quantities for orders that **increase** exposure; keep nearest-share for reductions and closes, which must match the held quantity | a buy never exceeds the allowance; slightly under-invested |
+| B | leave as is | simplest; small overshoot possible |
+
 ### Flags worth switching on now (not decisions, already documented)
 
 For paper trading with the aim of behaving like real money: `scheduler_exits_exempt_from_halts` (otherwise a halt, the spread gate or the earnings gate can stop a closing sell: see `01` Q1) and `scheduler_breaker_uses_broker_account` (otherwise the 5% daily-loss breaker does not see the scheduler's own positions). Both are listed in `../the-inconsistencies-v2/06-live-behavior-flags.md`.
 
-All eight decisions can wait for paper data; none blocks the other work.
+All nine decisions can wait for paper data; none blocks the other work.
 
 ## Gaps noted, not changed
 
 * The vision's data-error and model-error loss causes have no tag in `loss_classifier.py` (they land in `unclassified`).
+* The default allocator is `hrp`, not inverse-volatility as several docs and the method docstring said (docstring corrected; both modes worked out by hand in `test_logic_allocation_by_hand.py`).
 * Stop and time-stop are off unless a strategy sets them (`live_decision_stop_pct` / `_max_hold_bars` default `0.0`). Deliberate ("no safe invented default"), but it means out of the box the only protection on a live-decision position is the agent's review every 5 bars plus the account-level layers.
