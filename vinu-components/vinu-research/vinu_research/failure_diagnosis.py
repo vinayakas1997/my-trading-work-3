@@ -64,7 +64,7 @@ def diagnose(
     else:
         verdict = "works_after_costs"
         reasons = [
-            f"survives costs: Sharpe {net_sharpe:.2f} after costs against {gross_sharpe:.2f} with free trading "
+            f"Sharpe {net_sharpe:.2f} after costs against {gross_sharpe:.2f} with free trading "
             f"(costs took {gross_return - net_return:.1%} of return)",
         ]
     if thin:
@@ -90,11 +90,16 @@ def diagnose_across(per_symbol: dict[str, Diagnosis], agree: float = 0.8) -> dic
     }
 
 
-def explain(d: Diagnosis) -> str:
-    """Plain-English paragraph for the report and summary; only the numbers in `d`."""
+def explain(d: Diagnosis, rejected_elsewhere: bool = False) -> str:
+    """Plain-English paragraph for the report and summary; only the numbers in `d`. `rejected_elsewhere` says the run was
+    rejected anyway (the caller only asks about runs where nothing passed), so a `works_after_costs` result must point at
+    the validation tests as the reason instead of leaving the reader to wonder."""
     head = {
         "no_edge": "WHY IT FAILED: the idea shows no edge.",
         "edge_eaten_by_costs": "WHY IT FAILED: there is an edge, but trading costs eat it.",
-        "works_after_costs": "WHY IT DID NOT FAIL ON COSTS: the result survives trading costs.",
+        "works_after_costs": "COSTS ARE NOT THE REASON IT WAS REJECTED: the result survives trading costs.",
     }[d.verdict]
-    return head + " " + "; ".join(d.reasons) + "."
+    tail = ""
+    if d.verdict == "works_after_costs" and rejected_elsewhere:
+        tail = " It was rejected by the validation tests (see the findings above), not by costs."
+    return head + " " + "; ".join(d.reasons) + "." + tail

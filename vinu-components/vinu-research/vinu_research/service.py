@@ -379,7 +379,7 @@ class ResearchService:
                 net_return=net.metrics.total_return, gross_return=gross.metrics.total_return,
                 trade_count=net.trade_count,
             )
-            return explain(d)
+            return explain(d, rejected_elsewhere=True)
         except Exception as exc:  # noqa: BLE001
             LOG.warning("failure diagnosis skipped: %s", exc)
             return ""

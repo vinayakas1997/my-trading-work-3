@@ -63,3 +63,11 @@ def test_across_tickers_split_is_reported_as_ticker_specific():
 
 def test_empty_input_is_no_data_not_a_verdict():
     assert diagnose_across({})["consistency"] == "no_data"
+
+
+def test_a_run_that_survives_costs_but_was_rejected_points_at_the_validation_tests():
+    x = d(0.65, 0.74, 0.15, 0.18, 15)
+    assert "validation tests" not in explain(x)                                  # on its own it says nothing about rejection
+    text = explain(x, rejected_elsewhere=True)
+    assert text.startswith("COSTS ARE NOT THE REASON IT WAS REJECTED")
+    assert "rejected by the validation tests" in text and "only 15 trades" in text
