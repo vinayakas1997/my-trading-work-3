@@ -251,13 +251,15 @@ def create_app() -> FastAPI:
         logged, never kept anywhere queryable (LiveDecisionRecord,
         live_decision/storage.py). Read-only, same posture as
         get_signal_evidence: honest raw rows, no computed statistic."""
+        from vinu_live.live_decision.journal import track_record
         from vinu_live.live_decision.storage import list_closed_positions, list_live_decisions
 
         config = load_config()
         backend = LiveDecisionBackend(str(config.data_root / "live_decision.db"))
         try:
             records = list_live_decisions(backend, ticker.upper(), strategy_id, limit=limit)
-            closed = list_closed_positions(backend, ticker.upper(), strategy_id, limit=limit)
+            closed_all = list_closed_positions(backend, ticker.upper(), strategy_id, limit=500)
+            closed = closed_all[:limit]
         finally:
             backend.close()
         return {
@@ -265,6 +267,7 @@ def create_app() -> FastAPI:
             "ticker": ticker.upper(),
             "strategy_id": strategy_id,
             "count": len(records),
+            "track_record": track_record(closed_all),
             # What happened to earlier EXECUTEs: raw facts only, return is the reference return before costs.
             "closed_positions": [
                 {
@@ -289,6 +292,21 @@ def create_app() -> FastAPI:
                 for r in records
             ],
         }
+
+    @router.get("/journal")
+    async def journal(ticker: str | None = None, strategy_id: str | None = None, limit: int = 50) -> dict[str, Any]:
+        """The trade journal (features-logic-checking): every closed live-decision position with its entry decision
+        and reasoning, the reviews while held, the exit, the return and the loss cause, plus a plain-count track
+        record. Read-only; only what the loop already recorded."""
+        from vinu_live.live_decision.journal import build_journal
+
+        config = load_config()
+        backend = LiveDecisionBackend(str(config.data_root / "live_decision.db"))
+        try:
+            body = build_journal(backend, ticker.upper() if ticker else None, strategy_id, limit=limit)
+        finally:
+            backend.close()
+        return {"status": "ok", **body}
 
     @router.get("/snapshots/{symbol}")
     async def snapshots(symbol: str) -> dict[str, Any]:

@@ -130,7 +130,9 @@ class GetLiveDecisionContextTool(BaseTool):
         "reflection beliefs across clusters -- advisory system-health notes, e.g. regime "
         "degrading; [] means all routine or the fetch failed). past_closed_trades lists how "
         "earlier EXECUTEs on this ticker and strategy ended (exit reason, entry and exit "
-        "price, return before costs); a null return means it was not recorded. similar_past_peaks "
+        "price, return before costs); a null return means it was not recorded. strategy_track_record gives plain counts over those "
+        "closed trades (how many, how many with a recorded return, positive and negative, mean return, "
+        "count by loss cause); it is counts, not a win probability. similar_past_peaks "
         "summarises how many earlier peaks looked like the latest one and what followed them "
         "(mean/median/worst drawdown, share that recovered); {} means none on file."
     )
@@ -223,6 +225,7 @@ class GetLiveDecisionContextTool(BaseTool):
             "signal_evidence_summary": signal_evidence_summary,
             "past_live_decisions": past_decisions.get("decisions", []),
             "past_closed_trades": past_decisions.get("closed_positions", []),
+            "strategy_track_record": past_decisions.get("track_record", {}),
             "similar_past_peaks": analogue_summary,
             "maturity_status": maturity_status,
             "unconfirmed_moves": unconfirmed.get("events", []),
