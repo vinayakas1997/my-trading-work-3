@@ -72,9 +72,17 @@ def get_story(ticker: str, from_ts: int | None = Query(None), to_ts: int | None 
 
 
 @router.get("/angles")
-def list_angles():
+def list_angles(active: bool = False):
+    """Every discovered angle. `active=true`: only the angles that will actually run under the current model
+    policy (model-category angles are excluded while VINU_MODELS_ENABLED is false, and the permanently disabled
+    ones always) -- what coverage checks must count, otherwise "every angle has data" can never be true."""
     svc = _get_svc()
-    return {"angles": svc.list_angles()}
+    angles = svc.list_angles()
+    if active:
+        from vinu_infra.system_manifest import resolve_active_angles
+
+        angles = resolve_active_angles(angles)
+    return {"angles": angles}
 
 
 @router.get("/manifest")

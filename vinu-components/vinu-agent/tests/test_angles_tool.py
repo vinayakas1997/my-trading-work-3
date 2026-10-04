@@ -664,3 +664,43 @@ class TestBuildAngleDigest:
     def test_malformed_angles_data_fails_open_to_empty(self) -> None:
         assert build_angle_digest({}) == {}
         assert build_angle_digest({"angles": "not-a-dict"}) == {}
+
+
+class TestCoverageCountsOnlyActiveAngles:
+    """The coverage check must ask for the angles that will actually run (`/angles?active=true`): counting the model angles
+    while models are off, or the permanently disabled ones ever, makes "every angle has data" impossible."""
+
+    def test_full_coverage_requests_active_angles_only(self, monkeypatch) -> None:
+        import httpx
+
+        from vinu_agent.tools import angles_tool
+
+        seen = []
+
+        class FakeResp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"angles": []}
+
+        class FakeClient:
+            def __init__(self, *a, **k):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def get(self, url, **kw):
+                seen.append((url, kw.get("params")))
+                return FakeResp()
+
+        monkeypatch.setattr(httpx, "Client", FakeClient)
+        monkeypatch.setattr(angles_tool, "_fetch_multi_format_results", lambda *a, **k: {})
+        assert angles_tool.fetch_full_angle_coverage("http://ia:8083", "AAPL") == (0, 0)
+        assert seen and seen[0][0].endswith("/analysis/angles") and seen[0][1] == {"active": "true"}

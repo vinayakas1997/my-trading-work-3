@@ -871,7 +871,7 @@ class PortfolioService:
                 continue
             try:
                 await self._http.post(
-                    f"{self._config.agent_api_url}/notify/symbol-conflict",
+                    f"{self._config.agent_api_url}/agent/notify/symbol-conflict",
                     json={
                         "symbol": c["symbol"],
                         "contributions": c["contributions"],

@@ -2895,7 +2895,7 @@ class TradePlanOrchestrator:
         notification failure must never affect reconciliation itself."""
         try:
             resp = await self._http.post(
-                f"{self._config.agent_api_url}/notify/reconciliation-drift",
+                f"{self._config.agent_api_url}/agent/notify/reconciliation-drift",
                 json={
                     "symbol": corr.get("symbol"),
                     "action": corr.get("action"),

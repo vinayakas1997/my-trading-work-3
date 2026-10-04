@@ -53,7 +53,7 @@ class _World:
         return _resp(404)
 
     async def post(self, url, json=None, **kw):
-        if "/notify/reconciliation-drift" in url:
+        if url.endswith("/agent/notify/reconciliation-drift"):
             self.notices.append(json)
             return _resp(200, {"delivered": 1})
         if "/broker/order" in url:
@@ -176,7 +176,7 @@ def test_a_failing_notification_never_breaks_the_cycle(tmp_path):
     original = w.post
 
     async def post(url, json=None, **kw):
-        if "/notify/" in url:
+        if "/agent/notify/" in url:
             raise ConnectionError("notify down")
         return await original(url, json=json, **kw)
 

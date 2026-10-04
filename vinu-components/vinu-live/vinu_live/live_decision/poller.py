@@ -473,7 +473,7 @@ class CandleClosePoller:
         so it is called once per stuck trigger. A failure never affects the loop."""
         try:
             resp = await self._http.post(
-                f"{self._config.agent_api_url}/notify/reconciliation-drift",
+                f"{self._config.agent_api_url}/agent/notify/reconciliation-drift",
                 json={
                     "symbol": f"{ticker}/{strategy_id}",
                     "action": "live_decision_stuck",

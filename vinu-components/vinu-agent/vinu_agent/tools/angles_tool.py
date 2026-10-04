@@ -185,7 +185,7 @@ def fetch_angle_coverage(base_url: str, ticker: str, *, time_format: str = "1D")
     time_range = f"{stage1}T00:00:00Z_2026-07-01T00:00:00Z"
 
     with httpx.Client(timeout=60.0, headers=_h) as client:
-        angles_resp = client.get(f"{url}/angles")
+        angles_resp = client.get(f"{url}/angles", params={"active": "true"})
         angles_resp.raise_for_status()
         all_angles = angles_resp.json().get("angles", [])
         angle_names = [
@@ -233,7 +233,7 @@ def fetch_full_angle_coverage(base_url: str, ticker: str) -> tuple[int, int]:
     time_range = f"{stage1}T00:00:00Z_2026-07-01T00:00:00Z"
 
     with httpx.Client(timeout=60.0, headers=_h) as client:
-        angles_resp = client.get(f"{url}/angles")
+        angles_resp = client.get(f"{url}/angles", params={"active": "true"})
         angles_resp.raise_for_status()
         all_angles = angles_resp.json().get("angles", [])
         nested = _fetch_multi_format_results(
@@ -330,7 +330,7 @@ class GetAllAnglesTool(BaseTool):
         time_range = f"{stage1}T00:00:00Z_2026-07-01T00:00:00Z"
 
         with httpx.Client(timeout=60.0, headers=_h) as client:
-            angles_resp = client.get(f"{url}/angles")
+            angles_resp = client.get(f"{url}/angles", params={"active": "true"})
             angles_resp.raise_for_status()
             all_angles = angles_resp.json().get("angles", [])
             angle_names = [a["name"] for a in all_angles]
@@ -468,7 +468,7 @@ class GetClusterAnglesTool(BaseTool):
 
         with httpx.Client(timeout=60.0, headers=_h) as client:
             if time_format.upper() == _ALL_TIME_FORMATS_SENTINEL:
-                angles_resp = client.get(f"{url}/angles")
+                angles_resp = client.get(f"{url}/angles", params={"active": "true"})
                 angles_resp.raise_for_status()
                 member_metas = [a for a in angles_resp.json().get("angles", []) if a["name"] in members]
                 nested = _fetch_multi_format_results(

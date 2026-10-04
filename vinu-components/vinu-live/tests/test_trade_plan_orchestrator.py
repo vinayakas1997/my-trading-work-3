@@ -1116,7 +1116,7 @@ class TestPartialFillHandling:
         orch = _make_orchestrator(book)
         get_mock, post_mock = _router(
             {"/broker/positions": [{"symbol": "AAPL", "qty": -50.0}]},
-            {"/notify/reconciliation-drift": {"status": "ok", "delivered": 1}},
+            {"/agent/notify/reconciliation-drift": {"status": "ok", "delivered": 1}},
         )
         orch._http.get, orch._http.post = get_mock, post_mock
 
@@ -1126,7 +1126,7 @@ class TestPartialFillHandling:
         assert list_open_positions(book, symbol="AAPL")[0].qty == qty_float(100.0)
         # Never auto-corrected in the book -- but the alert must reach a human,
         # not just a server log (#8).
-        drift_calls = [c for c in post_mock.call_args_list if "/notify/reconciliation-drift" in c.args[0]]
+        drift_calls = [c for c in post_mock.call_args_list if c.args[0].endswith("/agent/notify/reconciliation-drift")]
         assert len(drift_calls) == 1
         assert drift_calls[0].kwargs["json"]["action"] == "alert_side_conflict"
         assert drift_calls[0].kwargs["json"]["symbol"] == "AAPL"
@@ -1136,7 +1136,7 @@ class TestPartialFillHandling:
         orch = _make_orchestrator(book)
         get_mock, post_mock = _router(
             {"/broker/positions": [{"symbol": "AAPL", "qty": 100.0}, {"symbol": "TSLA", "qty": 7.0}]},
-            {"/notify/reconciliation-drift": {"status": "ok", "delivered": 1}},
+            {"/agent/notify/reconciliation-drift": {"status": "ok", "delivered": 1}},
         )
         orch._http.get, orch._http.post = get_mock, post_mock
 
@@ -1144,7 +1144,7 @@ class TestPartialFillHandling:
 
         actions = {c["symbol"]: c["action"] for c in recon["corrections"]}
         assert actions["TSLA"] == "alert_phantom_broker_position"
-        drift_calls = [c for c in post_mock.call_args_list if "/notify/reconciliation-drift" in c.args[0]]
+        drift_calls = [c for c in post_mock.call_args_list if c.args[0].endswith("/agent/notify/reconciliation-drift")]
         assert len(drift_calls) == 1
         assert drift_calls[0].kwargs["json"]["symbol"] == "TSLA"
         assert drift_calls[0].kwargs["json"]["broker_qty"] == 7.0
@@ -1175,14 +1175,14 @@ class TestPartialFillHandling:
         orch = _make_orchestrator(book)
         get_mock, post_mock = _router(
             {"/broker/positions": [{"symbol": "AAPL", "qty": 100.0}, {"symbol": "TSLA", "qty": 7.0}]},
-            {"/notify/reconciliation-drift": {"status": "ok", "delivered": 1}},
+            {"/agent/notify/reconciliation-drift": {"status": "ok", "delivered": 1}},
         )
         orch._http.get, orch._http.post = get_mock, post_mock
 
         for _ in range(3):
             asyncio.run(orch._reconcile_book_with_broker({"AAPL": 150.0, "TSLA": 200.0}))
 
-        drift_calls = [c for c in post_mock.call_args_list if "/notify/reconciliation-drift" in c.args[0]]
+        drift_calls = [c for c in post_mock.call_args_list if c.args[0].endswith("/agent/notify/reconciliation-drift")]
         assert len(drift_calls) == 1
 
     def test_reconcile_drift_notifies_again_after_clearing_and_recurring(self, book) -> None:
@@ -1210,7 +1210,7 @@ class TestPartialFillHandling:
         )[0]
         asyncio.run(orch._reconcile_book_with_broker({"AAPL": 150.0, "TSLA": 200.0}))
 
-        drift_calls = [c for c in post_mock.call_args_list if "/notify/reconciliation-drift" in c.args[0]]
+        drift_calls = [c for c in post_mock.call_args_list if c.args[0].endswith("/agent/notify/reconciliation-drift")]
         assert len(drift_calls) == 2
 
     def test_reconcile_autocorrect_disabled_warns_only(self, book, monkeypatch) -> None:

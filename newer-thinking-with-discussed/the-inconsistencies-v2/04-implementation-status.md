@@ -30,6 +30,8 @@ Everything not listed here is implemented and committed. Most new behaviour is b
 - Attach the uncertainty assessment (5.5) to the evaluation-status view and the audit log, and use it as a sizing scaler: the audit says only after log-only data shows it behaves.
 
 **Not built yet:**
+- Agent tools / consumers for outputs nothing reads (move-evidence, track2-aggregate, candidate-graveyard, news high-impact and threads, tca/slippage ...): list in "Phase 1 wiring check" at the bottom.
+- Request / response field-name check across services (the 2026-10-04 check verified only that each called path exists).
 - Strategy-level look-ahead test: run whole strategies / `simulate_custom` code on truncated data (5.1 covers features only).
 - Trade Score tier cap when input novelty is high (5.4 only logs it and warns the live-decision agent; the score path has no feature vector).
 - Edge `book.writes->live.scheduler`: the scheduler path writes nothing to the plan book, so lockout and cooldown read only the plan book (the one declared wiring gap).
@@ -1227,3 +1229,35 @@ Method: followed each service's output to whoever reads it, and read the wiring 
 **Tests:** `vinu-models` 20 passed; `vinu-infra` 402 -> **411**; `vinu-initial-analysis`: the new and related runner tests pass (18), and the torch-needing test files are now skipped (with a header note) when torch is missing instead of failing collection; the rest of its suite shows only failures that need `statsmodels` / `vinu_stock` (not installed in this local environment) plus the old Windows file-lock error in `test_model_angle_runs_when_models_enabled`; `vinu-news` failing set identical to before (+5 passing); `vinu-research` pipeline-edges route test 7 passed.
 
 - **2026-10-03** — model-serving service built; torch moved out of initial-analysis and news.
+
+## Phase 1 wiring check — does every connection reach what it calls? (2026-10-04)
+
+Phase 1 = code and wiring only (see `../working-rules.md`). Method: built every service's real app (13 apps, about 230 routes), scanned the source for every cross-service URL path (171), and checked each against the real routes; then did the reverse (routes nothing calls).
+
+### Result: 146 of 171 call paths match a real route; 2 real failures found and fixed
+- **Alerts never delivered (fixed).** vinu-live (reconciliation drift in the scheduler, the poller's stuck-decision alert, the trade-plan orchestrator, and the **broker-unreachable alert built on 2026-10-03**) and vinu-portfolio (symbol conflict) posted to `{VINU_AGENT_API_URL}/notify/...`, but the agent serves `/agent/notify/...` and `VINU_AGENT_API_URL` has no `/agent` suffix. Confirmed against the real agent app: `/notify/reconciliation-drift` -> 404, `/agent/notify/reconciliation-drift` -> 200. Every one of these alerts was swallowed as a WARNING. Fixed at the 5 call sites; the tests now require the exact `/agent/notify/...` path (reverting one call site makes 7 tests fail).
+- **Coverage could never reach "every angle has data" (fixed).** `GET /analysis/angles` listed all 31 discovered angles including the 11 model angles and the 3 permanently disabled ones, whatever `VINU_MODELS_ENABLED` said; the agent's angle-coverage gate and `get_all_angles` counted them all. New `GET /analysis/angles?active=true` returns only angles that will actually run (model angles excluded while models are off; moirai, moment, lag_llama always); the four agent call sites use it.
+- The other 6 "no match" were false positives (docstrings; angle names filled into a route template).
+
+### Models off: what holds, what was only read
+- **Holds (run):** 17 non-model angles + signal_evidence stay in initial-analysis and run; the 11 model angles are skipped by policy (`resolve_active_angles`) and, when on, run in the model service.
+- **Holds (read, not run with an LLM):** cluster B of the angle synthesizer (14 forecasting angles) is entirely model angles; its prompt already tells the model to say plainly when most of a cluster has no data. With models off the whole cluster reports "no data" instead of failing.
+
+### Outputs that exist but that nothing reads (Phase 1 gaps; none fixed)
+Of 130 routes with no code or UI caller most are operator/admin routes (enable/disable, settings, triggers). The ones that are **data outputs with no consumer** and could be missing agent tools:
+- research: `move-evidence` (the live-decision agent has no `get_move_evidence` tool, see its `AGENT.md`), `track2-aggregate/{symbol}`, `candidate-graveyard/{symbol}`, `angle-calibration/{angle}`, `hypotheses/{id}`, `evaluation-status/*` over HTTP (the agent reads the same data from the shared database instead), `parity-report`.
+- initial-analysis: `/analysis/coverage/{ticker}`, `/analysis/events/{ticker}`, `/analysis/manifest`.
+- news: `high-impact`, `threads/*`, `stats/ticker/{symbol}`, `articles/since`.
+- simulator: `results/{run_id}/metrics`, `/weights`, `/trades`. strategy: `/strategy/weights`.
+- live: `/live/tca/slippage`, `/live/executions`, `/live/lockouts`, `/live/snapshots/*`. screener: rule history, `churn`, `pairlist/{rule_id}`.
+
+| File (inside `vinu-components/`) | Action |
+|---|---|
+| `vinu-live/vinu_live/scheduler.py`, `live_decision/poller.py`, `trade_plan/orchestrator.py`, `vinu-portfolio/vinu_portfolio/service.py` | modified: `/agent/notify/...` |
+| `vinu-initial-analysis/vinu_initial_analysis/server/routes_read.py`, `vinu-agent/vinu_agent/tools/angles_tool.py` | modified: `active` filter and its four callers |
+| tests: `vinu-initial-analysis/tests/test_angles_active_filter.py` (3, new), `vinu-agent/tests/test_angles_tool.py` (+1), live and portfolio notify tests tightened to the exact path | |
+
+**Tests:** `vinu-live` 860 (same 3 old errors), `vinu-portfolio` 282, `vinu-agent` 1527 passed (+1; same 16 failed / 2 errors as before), `vinu-initial-analysis` +3.
+**Not covered by this check:** request/response field names and types (only that the path exists), calls built from strings the scan cannot see, and anything that only fails with real data.
+
+- **2026-10-04** — Phase 1 wiring check: 2 real wiring failures fixed (alerts to the agent never delivered; coverage counted inactive angles).

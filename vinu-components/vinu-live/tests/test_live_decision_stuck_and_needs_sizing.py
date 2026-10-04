@@ -212,7 +212,7 @@ class _Harness:
                 if step == "fail":
                     return _resp(status_code=500)
                 return _resp(json_body={"status": "ok", "decision": step, "reasoning": f"agent said {step}"})
-            if "/notify/reconciliation-drift" in url:
+            if url.endswith("/agent/notify/reconciliation-drift"):
                 if self.notify_fails:
                     raise RuntimeError("notify down")
                 self.notifications.append(json)

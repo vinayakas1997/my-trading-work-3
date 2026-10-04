@@ -1393,7 +1393,7 @@ class TestDetectSymbolConflicts:
         # 0.6 vs -0.4: gross 1.0, net 0.2, 80% canceled -- above both
         # escalation thresholds, so the severe-conflict notify fires.
         svc._http.post.assert_awaited_once()
-        assert svc._http.post.await_args.args[0].endswith("/notify/symbol-conflict")
+        assert svc._http.post.await_args.args[0].endswith("/agent/notify/symbol-conflict")
 
 
 class TestDetectNotFunded:
@@ -1486,7 +1486,7 @@ class TestNotifySevereSymbolConflicts:
         }]
         asyncio.run(svc._notify_severe_symbol_conflicts(conflicts))
         svc._http.post.assert_awaited_once()
-        assert svc._http.post.await_args.args[0].endswith("/notify/symbol-conflict")
+        assert svc._http.post.await_args.args[0].endswith("/agent/notify/symbol-conflict")
         assert svc._http.post.await_args.kwargs["json"]["symbol"] == "AAPL"
 
     def test_same_direction_conflict_is_never_escalated_regardless_of_size(self) -> None:

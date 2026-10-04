@@ -374,7 +374,7 @@ class LiveScheduler:
             return
         try:
             resp = await self._http.post(
-                f"{self._config.agent_api_url}/notify/reconciliation-drift",
+                f"{self._config.agent_api_url}/agent/notify/reconciliation-drift",
                 json={"symbol": "BROKER", "action": action, "detail": detail},
             )
             resp.raise_for_status()
@@ -672,7 +672,7 @@ class LiveScheduler:
         never affect reconciliation itself."""
         try:
             resp = await self._http.post(
-                f"{self._config.agent_api_url}/notify/reconciliation-drift",
+                f"{self._config.agent_api_url}/agent/notify/reconciliation-drift",
                 json={
                     "symbol": drift.get("symbol"),
                     "action": "target_weight_drift",

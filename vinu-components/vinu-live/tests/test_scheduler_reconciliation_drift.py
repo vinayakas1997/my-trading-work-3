@@ -79,7 +79,7 @@ class TestHandleReconciliationDrift:
 
         assert scheduler._http.post.call_count == 1
         call = scheduler._http.post.call_args
-        assert "/notify/reconciliation-drift" in call.args[0]
+        assert call.args[0].endswith("/agent/notify/reconciliation-drift")
         payload = call.kwargs["json"]
         assert payload == {
             "symbol": "AAPL", "action": "target_weight_drift",
