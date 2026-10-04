@@ -278,7 +278,12 @@ class StrategyService:
             try:
                 import json
                 with open(self._config.shared_watchlist_path) as f:
-                    return json.load(f)
+                    loaded = json.load(f)
+                # vinu-stock-price writes {"tickers": [...], "updated_at": ...}; an older plain list is accepted too.
+                # Returning the dict itself (as before) handed callers the keys "tickers" and "updated_at" as symbols.
+                tickers = loaded.get("tickers") if isinstance(loaded, dict) else loaded
+                if isinstance(tickers, list) and tickers:
+                    return [str(t).upper() for t in tickers]
             except Exception:
                 LOG.warning("Could not load watchlist from %s", self._config.shared_watchlist_path)
         return config.universe.get("inline", ["AAPL", "MSFT", "GOOGL", "AMZN", "META"])
