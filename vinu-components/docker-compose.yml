@@ -223,6 +223,9 @@ services:
   # mount. See newer-thinking-with-discussed/model-serving-service-design.md.
   # =========================================================================
   models-api:
+    # DORMANT BY DESIGN: behind a profile, so `docker compose build` / `up` never build or start it (it pulls torch and
+    # GB of weights). Start it only when the model stage begins:  docker compose --profile models up -d models-api
+    profiles: ["models"]
     build:
       context: .
       dockerfile: vinu-models/Dockerfile
