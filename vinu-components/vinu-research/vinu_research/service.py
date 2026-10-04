@@ -261,6 +261,15 @@ class ResearchService:
                 or (result.stress_test is not None and result.stress_test.passed)
             )
 
+            # When no iteration passed validation the stored best_* stay 0.0 (promotion reads them), but the summary
+            # must describe what was actually tried, not claim there were no profitable trades. Use the best attempt.
+            summary_sharpe, summary_dd = record.best_sharpe, record.best_max_dd
+            if not result.best_result and result.iterations:
+                attempts = [r for r in result.iterations if not str(r.result.run_id).startswith("infra_failure")]
+                if attempts:
+                    top = max(attempts, key=lambda r: r.result.metrics.sharpe_ratio)
+                    summary_sharpe, summary_dd = top.result.metrics.sharpe_ratio, top.result.metrics.max_drawdown
+
             if self._config.llm_enabled:
                 llm = ResearchLlmClient(self._config)
                 try:
@@ -268,7 +277,7 @@ class ResearchService:
                         user_idea=user_idea, symbol=symbol.upper(),
                         from_date=from_date, to_date=to_date,
                         total_iterations=result.total_iterations,
-                        best_sharpe=record.best_sharpe, best_max_dd=record.best_max_dd,
+                        best_sharpe=summary_sharpe, best_max_dd=summary_dd,
                         holdout_passed=record.holdout_passed,
                         stress_test_passed=record.stress_test_passed,
                         promoted=validated,

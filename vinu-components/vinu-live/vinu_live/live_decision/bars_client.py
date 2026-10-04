@@ -19,6 +19,15 @@ import pandas as pd
 
 LOG = logging.getLogger(__name__)
 
+# vinu-stock-price accepts 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1wk. Strategy files say `schedule: daily`, which that service answers
+# with HTTP 422 "Unsupported interval", so a daily strategy never received a single bar. Translate the words, keep the rest.
+_INTERVAL_WORDS = {"daily": "1d", "day": "1d", "hourly": "1h", "weekly": "1wk", "week": "1wk", "1w": "1wk"}
+
+
+def stock_interval(timeframe: str) -> str:
+    key = (timeframe or "").strip().lower()
+    return _INTERVAL_WORDS.get(key, key)
+
 
 async def fetch_recent_bars(
     http: httpx.AsyncClient,
@@ -36,7 +45,7 @@ async def fetch_recent_bars(
     try:
         resp = await http.get(
             f"{stock_price_api_url}/stock/candles/{symbol}",
-            params={"interval": interval, "limit": limit, "adjusted": True, **({"closed_only": True} if closed_only else {})},
+            params={"interval": stock_interval(interval), "limit": limit, "adjusted": True, **({"closed_only": True} if closed_only else {})},
         )
         if resp.status_code != 200:
             LOG.warning("fetch_recent_bars(%s, %s): HTTP %s", symbol, interval, resp.status_code)

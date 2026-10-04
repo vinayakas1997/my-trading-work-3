@@ -481,3 +481,47 @@ class TestRevalidateFeedsDecay:
         monkeypatch.setattr(strategy_store, "append_bench_entry", boom)
         result = await service.revalidate_artifact(a.artifact_id)
         assert result["revalidated"] is True
+
+
+class TestRunSummaryDescribesWhatWasTried:
+    """When no iteration passed validation the stored best_* stay 0.0, but the plain-English summary must report the
+    best attempt's real numbers instead of claiming there were no profitable trades (a Sharpe 0.77 attempt that failed
+    the Monte Carlo gate was summarised as 'Sharpe 0.00, no profitable trades')."""
+
+    @pytest.mark.asyncio
+    async def test_summary_gets_the_best_attempts_numbers_when_nothing_passed(self, tmp_path, monkeypatch):
+        from vinu_research.config import ResearchConfig
+        from vinu_research.llm import ResearchLlmClient
+        from vinu_research.loop import StrategyResearchLoop
+        from vinu_research.models import (
+            BacktestMetrics, BacktestResult, CriticFeedback, IterationRecord, ResearchResult,
+        )
+        from vinu_research.service import ResearchService
+
+        def attempt(i, sharpe, dd):
+            r = BacktestResult(run_id=f"r{i}", strategy_name="UserStrategy",
+                               metrics=BacktestMetrics(sharpe_ratio=sharpe, max_drawdown=dd),
+                               benchmark_metrics={}, trade_count=15, equity_points=300, raw={})
+            return IterationRecord(iteration=i, strategy_code="c", result=r,
+                                   critique=CriticFeedback(verdict="STOP", reasoning="mc gate", suggestions=[]))
+
+        async def fake_run(self, **kw):
+            return ResearchResult(
+                symbol="AAPL", from_date="2025-06-01", to_date="2026-09-30", user_idea="x",
+                iterations=[attempt(1, 0.2, -0.30), attempt(2, 0.77, -0.128)], best_result=None, best_iteration=-1,
+                total_iterations=2, report_md="", outcome_status="no_strategy_found",
+            )
+
+        seen = {}
+
+        async def fake_summary(self, **kw):
+            seen.update(kw)
+            return "ok"
+
+        monkeypatch.setattr(StrategyResearchLoop, "run", fake_run)
+        monkeypatch.setattr(ResearchLlmClient, "summarize_run", fake_summary)
+        svc = ResearchService(config=ResearchConfig(data_root=tmp_path, llm_enabled=True))
+        out = await svc.run_research(user_idea="x", strategy_code=None, symbol="AAPL",
+                                     from_date="2025-06-01", to_date="2026-09-30")
+        assert seen["best_sharpe"] == pytest.approx(0.77) and seen["best_max_dd"] == pytest.approx(-0.128)
+        assert out["best_sharpe"] == 0.0 and out["best_iteration"] == -1   # stored values unchanged: promotion reads them
