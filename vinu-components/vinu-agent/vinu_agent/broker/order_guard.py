@@ -17,12 +17,13 @@ from .guard_codes import GuardOutcome, ReasonCode
 from .kill_switch import is_trading_halted
 from .mandate import TradingMandate
 
-def _record_edge(edge_id: str, status: str, detail: str = "") -> None:
-    """Observe-only pipeline-edge recording (vinu_infra.pipeline_edge_recorder); never raises, never affects an order."""
+def _record_edge(edge_id: str, status: str, detail: str = "", **kw) -> None:
+    """Observe-only pipeline-edge recording (vinu_infra.pipeline_edge_recorder); never raises, never affects an order.
+    `payload=` (the parsed answer) is passed through so a `received` answer is shape-checked against its contract."""
     try:
         from vinu_infra.pipeline_edge_recorder import record_edge
 
-        record_edge(edge_id, status, detail)
+        record_edge(edge_id, status, detail, **kw)
     except Exception:  # noqa: BLE001
         pass
 
@@ -636,7 +637,7 @@ class OrderGuard:
             _record_edge("portfolio.risk_status->agent.order_guard", "missing", f"{symbol}: {e}")
             return None
         self._risk_budget_cache[symbol] = budget
-        _record_edge("portfolio.risk_status->agent.order_guard", "received" if budget else "empty", symbol)
+        _record_edge("portfolio.risk_status->agent.order_guard", "received" if budget else "empty", symbol, payload=budget)
         return budget
 
     def _risk_budget_multiplier(self, symbol: str) -> float | None:
@@ -766,6 +767,7 @@ class OrderGuard:
         _record_edge(
             "portfolio.state->agent.order_guard",
             "received" if isinstance(portfolio, dict) and portfolio.get("weights") else "empty", symbol,
+            payload=portfolio,
         )
 
         weights = portfolio.get("weights") or []

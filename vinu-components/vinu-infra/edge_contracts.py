@@ -60,7 +60,7 @@ def contract_for(*edge_ids: str):
 
 class PortfolioWeight(BaseModel):
     model_config = ConfigDict(extra="allow")
-    name: str
+    name: str = ""
     symbol: str = ""
     target_weight: float
     kind: str = ""
@@ -178,7 +178,7 @@ class StrategyConfig(EdgeContract):
     """GET /strategy/strategies/{name}: one strategy's resolved config. The scheduler reads the live-decision
     position size from it (0.0 means 'no size configured', never an invented default)."""
 
-    name: str
+    name: str = ""
     live_decision_position_size: float = 0.0
     live_decision_stop_pct: float | None = None
     live_decision_max_hold_bars: int | None = None

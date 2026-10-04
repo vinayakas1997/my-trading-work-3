@@ -207,13 +207,13 @@ class GetLiveDecisionContextTool(BaseTool):
         except Exception:
             headers = None
 
-        def _rec(status: str, detail: str = "") -> None:
+        def _rec(status: str, detail: str = "", **kw) -> None:
             if edge_id is None:
                 return
             try:
                 from vinu_infra.pipeline_edge_recorder import record_edge
 
-                record_edge(edge_id, status, detail)
+                record_edge(edge_id, status, detail, **kw)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -226,5 +226,5 @@ class GetLiveDecisionContextTool(BaseTool):
             _rec("missing", str(exc))
             return {}
         empty = not body or (non_empty_key is not None and isinstance(body, dict) and not body.get(non_empty_key))
-        _rec("empty" if empty else "received")
+        _rec("empty" if empty else "received", payload=body)
         return body

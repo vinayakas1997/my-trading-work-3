@@ -6,6 +6,8 @@ consumer *references* its producer. This module records what actually
 happened at runtime, at each instrumented consumption point:
 
     received  -- the input arrived and was usable
+    malformed -- it arrived but its shape does not match the edge's contract (edge_contracts.py): a required
+                 field is missing or a value has the wrong type; the detail names the first problems
     empty     -- it arrived but was legitimately/unexpectedly empty
     stale     -- it arrived but older than the consumer tolerates
     missing   -- it did not arrive (fetch failed, producer not running)
@@ -38,7 +40,7 @@ from vinu_infra.sqlite import SQLiteBackend
 
 LOG = logging.getLogger(__name__)
 
-STATUSES = ("received", "empty", "stale", "missing")
+STATUSES = ("received", "empty", "stale", "missing", "malformed")
 _MAX_EVENTS_PER_EDGE = 200
 
 _SCHEMA = """
@@ -71,7 +73,9 @@ CREATE INDEX IF NOT EXISTS idx_edge_events_edge ON edge_events(edge_id, id);
 
 class EdgeStatusStore(SQLiteBackend):
     SCHEMA = _SCHEMA
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
+    # v2: a `malformed` counter (layer C). Older databases get the column on first open.
+    MIGRATIONS = [("ALTER TABLE edge_state ADD COLUMN n_malformed INTEGER NOT NULL DEFAULT 0", "add n_malformed")]
 
     def __init__(self, path: Path | str | None = None) -> None:
         super().__init__(path if path else ":memory:")
@@ -86,12 +90,12 @@ class EdgeStatusStore(SQLiteBackend):
         if row is None:
             conn.execute(
                 """INSERT INTO edge_state (edge_id, status, first_seen, last_seen, last_ok, last_change,
-                       n_received, n_empty, n_stale, n_missing, last_detail)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       n_received, n_empty, n_stale, n_missing, last_detail, n_malformed)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     edge_id, status, now, now, now if status == "received" else None, now,
                     int(status == "received"), int(status == "empty"),
-                    int(status == "stale"), int(status == "missing"), detail,
+                    int(status == "stale"), int(status == "missing"), detail, int(status == "malformed"),
                 ),
             )
             conn.execute(
@@ -164,13 +168,41 @@ def resolve_edge_status_store(fallback_root: Path | str | None = None) -> EdgeSt
     return store
 
 
-def record_edge(edge_id: str, status: str, detail: str = "", *, store: EdgeStatusStore | None = None) -> None:
+_NO_PAYLOAD = object()
+
+
+def _shape_verdict(edge_id: str, status: str, detail: str, payload: Any) -> tuple[str, str]:
+    """Layer C: when the observation is `received` or `empty` and the caller passed the payload, validate it
+    against the edge's contract (edge_contracts.py). An empty answer must still have the right shape: a renamed
+    key otherwise looks exactly like "nothing there". A mismatch turns the status into `malformed` and puts the
+    first problems in the detail. An edge with no contract, or any failure of the check itself, leaves it
+    unchanged. `missing` and `stale` are never checked (there is no answer to judge)."""
+    if payload is _NO_PAYLOAD or status not in ("received", "empty"):
+        return status, detail
+    try:
+        from vinu_infra.edge_contracts import check_payload
+
+        problems = check_payload(edge_id, payload)
+    except Exception as exc:  # noqa: BLE001 -- the check must never change an observation by failing
+        LOG.debug("shape check for %s failed: %s", edge_id, exc)
+        return status, detail
+    if not problems:
+        return status, detail
+    more = f" (+{len(problems) - 3} more)" if len(problems) > 3 else ""
+    return "malformed", ("; ".join(problems[:3]) + more + (f" | {detail}" if detail else ""))
+
+
+def record_edge(
+    edge_id: str, status: str, detail: str = "", *, store: EdgeStatusStore | None = None, payload: Any = _NO_PAYLOAD,
+) -> None:
     """Record one observation. NEVER raises, never blocks beyond a local SQLite write.
-    An unknown status or any storage failure is swallowed and debug-logged."""
+    An unknown status or any storage failure is swallowed and debug-logged. Pass `payload=` (the parsed answer)
+    with a `received` or `empty` observation to have its shape checked against the edge's contract (layer C)."""
     try:
         target = store if store is not None else resolve_edge_status_store()
         if target is None:
             return
+        status, detail = _shape_verdict(edge_id, status, detail, payload)
         target.record(edge_id, status, detail)
     except Exception as exc:  # noqa: BLE001 -- observe-only; must never touch the caller
         LOG.debug("record_edge(%s, %s) failed: %s", edge_id, status, exc)
@@ -205,6 +237,7 @@ def edges_flow_report(
       empty             last observation was empty on an edge that should not be empty
       stale             the last observation is older than the edge's `stale_after_sec`
       missing           the last observation was a failure to receive
+      malformed         the last observation arrived but did not match the edge's contract
     """
     now = now if now is not None else time.time()
     states = {s["edge_id"]: s for s in (store.list_states() if store is not None else [])}
@@ -229,6 +262,8 @@ def edges_flow_report(
         last = st["status"]
         if last == "missing":
             state = "missing"
+        elif last == "malformed":
+            state = "malformed"
         elif last == "stale" or (stale_after is not None and age > stale_after):
             state = "stale"
         elif last == "empty" and not e.empty_ok:

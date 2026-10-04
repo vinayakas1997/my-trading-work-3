@@ -263,3 +263,22 @@ def test_no_recording_root_means_no_files_and_no_change(tmp_path, monkeypatch):
     _wire(s)
     assert _cycle(s)["status"] == "ok"
     assert not list(tmp_path.rglob("pipeline_edges.db"))
+
+
+# ---- layer C: the shape of what arrived is checked against the edge's contract
+
+def test_a_portfolio_answer_without_weights_is_recorded_malformed_and_the_cycle_is_unchanged(tmp_path):
+    s = _scheduler(tmp_path)
+    _wire(s, portfolio={"status": "ok", "wights": []})  # a renamed key
+    out = _cycle(s)
+    st = _state("portfolio.state->live.scheduler")
+    assert st["status"] == "malformed" and "weights" in st["last_detail"]
+    assert out["status"] == "skipped_no_weights"  # same outcome as an honestly empty portfolio: recording changes nothing
+
+
+def test_a_strategy_config_with_a_wrong_type_is_recorded_malformed_and_still_returned(tmp_path):
+    s = _scheduler(tmp_path)
+    s._http.get = AsyncMock(return_value=_resp(json_body={"live_decision_position_size": "big"}))
+    assert asyncio.run(s._fetch_strategy_config("s1")) == {"live_decision_position_size": "big"}
+    st = _state("strategy.config->live.scheduler")
+    assert st["status"] == "malformed" and "live_decision_position_size" in st["last_detail"]

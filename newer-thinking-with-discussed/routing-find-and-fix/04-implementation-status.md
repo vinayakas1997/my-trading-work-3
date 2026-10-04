@@ -8,10 +8,18 @@ Updated after every piece of work. Last updated: 2026-10-04.
 |---|---|---|
 | 1 | Layer A: static contract scan over all 13 services (`contract_scan.py`), generated registry, every finding fixed or classified | **DONE 2026-10-04** |
 | 2 | Layer B: per-connection contract (pydantic model with example payload) named in `pipeline_edges.yaml`; both sides and the real producers checked against it | **DONE 2026-10-04** (15 of 38 connections have a model; the other 23 carry a written reason) |
-| 3 | Layer C: runtime shape check in the edge recorder (needs data, Phase 2 of the project) | not started |
+| 3 | Layer C: runtime shape check in the edge recorder (`malformed` status) | **wiring DONE 2026-10-04** (12 call sites); what it finds on real payloads waits for paper data |
 | 4 | Run the scan as a permanent check (CI / `docker compose run`), fail on new ERRORs | not started |
 
 (Plan and layers: `01-plan.md`. The project-wide phases are different: see `../working-rules.md`.)
+
+## Layer C: what exists
+
+- `vinu-infra/pipeline_edge_recorder.py`: new status `malformed`, `record_edge(..., payload=)`, `_shape_verdict`, counter `n_malformed` (schema v2 with an idempotent migration), the flow report state `malformed`. 14 tests in `vinu-infra/tests/test_edge_shape_check.py` (matching, missing field, wrong type, many problems summarised, caller's detail kept, empty answers still checked, `missing`/`stale` never checked, no payload / no contract unchanged, a failing check changes nothing, status-change log, report, old database upgraded, hostile payload).
+- 12 consumer call sites pass the payload (list in `01-plan.md`): `vinu-live` `scheduler.py` (4), `live_decision/poller.py` (2), `vinu-agent` `broker/order_guard.py` (2), `tools/get_live_decision_context_tool.py` (`_fetch_json`, covers 3 edges), `tools/reflection_synthesis_tool.py`, `tools/screener_client.py`.
+- Wiring tests: 2 in `vinu-live/tests/test_edge_instrumentation.py`, 2 in `vinu-agent/tests/test_edge_instrumentation_agent.py`; removing `payload=` from the scheduler makes both live tests fail (mutation-checked).
+- Existing tests whose fake answers did not look like the real producer (a synthesis body that was a string, a risk-budget `{}`, a strategy config without a name) were corrected to realistic bodies; the contract also relaxed two fields no consumer depends on (`name`) to optional.
+- Observe-only, as before: nothing reads `malformed` to decide anything.
 
 ## Layer B: what exists
 
@@ -50,13 +58,13 @@ Updated after every piece of work. Last updated: 2026-10-04.
 | layer B | `vinu-infra/tests/test_edge_contracts.py` (24: manifest completeness, examples validate, `check_payload` cases, static check catches a field renamed on either side, optional fields not demanded from consumers) and the 9 producer-side tests listed above |
 | earlier (R1, R2) | live and portfolio notify tests tightened; `test_angles_active_filter.py` (3); `test_angles_tool.py` (+1) |
 
-Suite totals: `vinu-infra` 454, `vinu-strategy` 154 (+ the same 10 environment errors as before), `vinu-agent` 1533 (same 16 failed / 2 errors as before), `vinu-research` 1306 (the old `test_empty_meanings` failure and one flaky SQLite thread-safety test).
+Suite totals: `vinu-infra` 469, `vinu-live` 863 (+ the same 3 errors as before), `vinu-portfolio` 283, `vinu-screener` 453, `vinu-strategy` 154 (+ the same 10 environment errors as before), `vinu-agent` 1536 (same 16 failed / 2 errors as before), `vinu-research` 1308 (the old `test_empty_meanings` failure and one flaky SQLite thread-safety test).
 Mutation checks: R1 (reverting one call site: 7 fail), R3 (all 6 fail), R4 (3 fail), R12 (1 fails). The scanner itself was corrected several times while building it (it first treated route decorators and external API calls as calls, and missed helper calls); the unit tests lock those in.
 
 ## Still open
 
 - D1-D4 in `03-findings.md`: four decisions (use news impact? expose calibration and graveyard to an agent? keep the older analysis events view? which stage-1 API is canonical?). None is a bug.
-- Layer C (run the contract on real payloads through the edge recorder; needs data), the 23 connections with no model, and running the scan automatically (phases 3-4 above).
+- Layer C on real payloads (the wiring is built; what it reports needs paper data), the 23 connections with no model, the two models edges (not passed to the recorder), and running the scan automatically (phase 4 above).
 - R13 in `03-findings.md`: the order guard cannot tell an empty portfolio from a symbol with no position.
 - R9-R11, the known limits of the scan.
 - The scan needs every service's dependencies; here it was run with a temporary environment for the agent app (`--python agent=...`).

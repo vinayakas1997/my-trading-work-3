@@ -263,6 +263,7 @@ class CandleClosePoller:
                 record_edge(
                     "strategy.stop_rules->live.poller", "received" if configured else "empty",
                     f"{pos.ticker}/{pos.strategy_id}: " + ("rules configured" if configured else "no stop / max-hold configured (off)"),
+                    payload=strat,
                 )
                 if hit is None:
                     continue
@@ -305,7 +306,7 @@ class CandleClosePoller:
             if result["status"] != "ok":
                 record_edge("live_decision.input_novelty->live.poller", "empty", f"{ticker}: {result.get('reason')}")
                 return
-            record_edge("live_decision.input_novelty->live.poller", "received", f"{ticker}: ratio {result['ratio']:.2f}")
+            record_edge("live_decision.input_novelty->live.poller", "received", f"{ticker}: ratio {result['ratio']:.2f}", payload=result)
             if result["novelty_high"]:
                 LOG.warning("input novelty HIGH for %s: ratio %.2f >= %.2f over %d snapshots -- this feature vector is "
                             "unlike its recent history", ticker, result["ratio"],

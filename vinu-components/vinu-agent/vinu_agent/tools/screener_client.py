@@ -13,12 +13,12 @@ import logging
 LOG = logging.getLogger(__name__)
 
 
-def _record(status: str, detail: str = "") -> None:
+def _record(status: str, detail: str = "", **kw) -> None:
     """Observe-only pipeline-edge recording (edge `screener.top->agent.planner_worker`); never raises."""
     try:
         from vinu_infra.pipeline_edge_recorder import record_edge
 
-        record_edge("screener.top->agent.planner_worker", status, detail)
+        record_edge("screener.top->agent.planner_worker", status, detail, **kw)
     except Exception:  # noqa: BLE001
         pass
 
@@ -46,7 +46,7 @@ def fetch_screener_top_tickers(base_url: str, ranker_id: str, *, limit: int = 20
         data = resp.json()
         top = data.get("top", []) if isinstance(data, dict) else []
         symbols = [entry["symbol"] for entry in top if isinstance(entry, dict) and entry.get("symbol")]
-        _record("received" if symbols else "empty", f"ranker {ranker_id}: {len(symbols)} symbol(s)")
+        _record("received" if symbols else "empty", f"ranker {ranker_id}: {len(symbols)} symbol(s)", payload=data)
         return symbols[:limit]
     except Exception as exc:
         LOG.exception("fetching screener top tickers for ranker %s failed, continuing", ranker_id)

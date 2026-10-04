@@ -504,6 +504,7 @@ class LiveScheduler:
         record_edge(
             "maturity.status->live.limits", "missing" if status is None else "received",
             "fetch_maturity_status returned None" if status is None else "",
+            payload=status,
         )
         if status is None:
             self._maturity_consultation_store.record(
@@ -798,8 +799,9 @@ class LiveScheduler:
             if resp.status_code != 200:
                 record_edge("strategy.config->live.scheduler", "missing", f"strategy {strategy_id}: HTTP {resp.status_code}")
                 return None
-            record_edge("strategy.config->live.scheduler", "received")
-            return resp.json()
+            body = resp.json()
+            record_edge("strategy.config->live.scheduler", "received", payload=body)
+            return body
         except Exception as exc:
             LOG.warning("Could not fetch strategy %s: %s", strategy_id, exc)
             record_edge("strategy.config->live.scheduler", "missing", f"strategy {strategy_id}: {exc}")
@@ -819,7 +821,7 @@ class LiveScheduler:
             record_edge(edge, "missing", f"GET /portfolio/state failed: {e}")
             raise  # unchanged: a failed portfolio read aborts the cycle
         empty = not isinstance(data, dict) or data.get("status") == "empty" or not data.get("weights")
-        record_edge(edge, "empty" if empty else "received")
+        record_edge(edge, "empty" if empty else "received", payload=data)
         return data
 
     async def _fetch_daily_allocation(self) -> dict[str, Any] | None:
@@ -853,7 +855,7 @@ class LiveScheduler:
         except (TypeError, ValueError):
             fraction = 1.0
         scaled = [{**w, "target_weight": float(w.get("target_weight", 0.0)) * fraction} for w in weights]
-        record_edge(edge, "received")
+        record_edge(edge, "received", payload=data)
         return {**data, "weights": scaled, "allocation_source": "daily_allocation", "deployable_fraction": fraction}
 
     async def _fetch_trade_plan_symbols(self) -> set[str] | None:

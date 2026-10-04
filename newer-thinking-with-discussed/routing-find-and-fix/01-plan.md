@@ -10,7 +10,7 @@ How real systems keep services from drifting apart: every producer states exactl
 |---|---|---|---|
 | **A. Static contract scan** | Every HTTP call in the source reaches a real route (path and method), sends the required fields, and does not send fields the route drops; routes nobody calls are classified. | No | **Built** (`vinu-infra/contract_scan.py`, 19 tests) |
 | **B. Contract in the edge manifest** | Per data connection (`pipeline_edges.yaml`): a pydantic model (`vinu-infra/edge_contracts.py`) of the fields it carries, with an example payload, or a written reason why the connection has no JSON payload. Both sides of the connection are checked against it. | No | **Built** (15 of 38 connections have a model, the other 23 a written reason; 24 tests) |
-| **C. Runtime shape check** | The edge recorder compares the shape of a real payload with the contract and logs a mismatch (missing field, wrong type, empty where it should not be). | Yes (Phase 2) | Not built |
+| **C. Runtime shape check** | The edge recorder compares the shape of a real payload with the contract and records `malformed` with the reason (missing field, wrong type). | The wiring needs no data; what it finds does | **Wiring built** (12 call sites, 14 + 4 tests); nothing has run on real payloads yet |
 
 Layer A is the foundation: it generates `contracts.json`, the machine-readable contract that B and C reuse.
 
@@ -37,7 +37,15 @@ Producer-side tests: each service validates its **real** answer against the mode
 3. **Compare:** path or method with no route (ERROR), required field not sent (ERROR, the route would answer 422), field sent that the route does not declare (WARN, silently dropped).
 4. **Keep it honest:** calls that cannot be fully read are marked `dynamic` and never produce a "missing field" error; external APIs are INFO, not errors; clients whose base URL carries the service prefix are listed by hand in `client_prefixes.json` (each verified against its constructor); a finding that is correct to leave goes in `contract_allowlist.json` with a reason.
 
-## Known limits (layers A and B)
+## How layer C works
+
+`record_edge(edge_id, status, detail, payload=<the parsed answer>)`. When the observation is `received` or `empty` and the edge has a contract, the payload is validated; a mismatch is recorded as the new status **`malformed`** with the first three problems in the detail (`weights: Field required`, `weights.0.target_weight: Input should be a valid number`). An empty answer is checked too, because a renamed key otherwise looks exactly like "nothing there" (the live scheduler records a portfolio answer with no `weights` as `empty`). `missing` and `stale` are never checked.
+
+It stays observe-only: the check runs inside the recorder's never-raises wrapper, a failure of the check itself leaves the observation unchanged, an edge with no contract or a caller that passes no payload behaves as before, and nothing reads `malformed` to make a trading decision. The "what is not flowing" report (`GET /research/pipeline-edges`) lists a malformed edge as not healthy, with a `malformed` counter. Old recorder databases get the new counter column on first open (migration).
+
+Wired call sites (the consumer passes what it received): live scheduler (portfolio state, daily allocation, strategy config, maturity status), live poller (novelty, stop rules), agent order guard (risk status, portfolio state), agent live-decision context tool (maturity, notable beliefs, unconfirmed moves, through `_fetch_json`), reflection synthesis tool, screener client. Not wired: the two models edges (`model_client.py` already refuses a wrong-shaped answer and raises `bad_response`, recorded as `missing`).
+
+## Known limits (layers A, B and C)
 
 - Layer A checks that fields exist, not their types or values, and not the response a caller reads (layer B adds the response shape for 15 connections).
 - Layer B finds field names by quoted-literal search, so a dynamically built key is invisible to it, and a name used for something else in the same file can satisfy it by accident. It checks names and shapes, not that a value is right.

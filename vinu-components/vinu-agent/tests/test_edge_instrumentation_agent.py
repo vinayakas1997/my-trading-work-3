@@ -109,8 +109,8 @@ def test_fetch_json_without_an_edge_records_nothing_and_behaves_as_before():
 
 
 @pytest.mark.parametrize("body,key,expected", [
-    ({"events": [{"e": 1}]}, "events", "received"), ({"events": []}, "events", "empty"), ({}, "events", "empty"),
-    ({"tier": "mature"}, None, "received"),
+    ({"events": [{"e": 1}]}, "events", "received"), ({"events": []}, "events", "empty"), ({}, "events", "malformed"),
+    ({"events": [{"e": 2}], "tier": "mature"}, None, "received"),
 ])
 def test_fetch_json_records_received_or_empty(body, key, expected):
     with patch("httpx.get", return_value=_resp(body)):
@@ -161,7 +161,7 @@ def _syn_tool():
     return t
 
 
-@pytest.mark.parametrize("body,expected", [({"status": "ok", "synthesis": "x"}, "received"), ({}, "empty")])
+@pytest.mark.parametrize("body,expected", [({"status": "ok", "synthesis": {"id": "x"}}, "received"), ({"status": "none"}, "received"), ({}, "malformed")])
 def test_synthesis_read_is_recorded_and_returned_unchanged(body, expected):
     with patch("httpx.get", return_value=_resp(body)):
         assert json.loads(_syn_tool().execute()) == body
@@ -244,3 +244,19 @@ def test_evaluation_context_records_missing_when_the_shared_root_is_unset_and_em
     _strategy_evaluation_context_for_ticker("AAPL")
     st = rec.resolve_edge_status_store().get_state("evaluation_status->agent.idea_prompt")
     assert st["status"] == "received" and "1 row" in st["last_detail"]
+
+
+# ---- layer C: the shape of what arrived is checked against the edge's contract
+
+def test_a_risk_budget_with_a_wrong_shape_is_recorded_malformed_and_still_used():
+    bad = {"symbols": "AAPL"}  # should be a list of per-symbol rows
+    with patch("vinu_agent.broker.order_guard.requests.get", return_value=_resp(bad)):
+        assert _guard()._fetch_risk_budget("AAPL") == bad
+    assert _status(E_RISK) == "malformed" and "symbols" in _detail(E_RISK)
+
+
+def test_a_notable_beliefs_answer_that_lost_its_key_is_recorded_malformed():
+    edge = "reflection.notable_beliefs->agent.live_decision_context"
+    with patch("httpx.get", return_value=_resp({"items": [1]})):
+        assert GetLiveDecisionContextTool._fetch_json("http://x", edge_id=edge, non_empty_key="beliefs") == {"items": [1]}
+    assert _status(edge) == "malformed" and "beliefs" in _detail(edge)
