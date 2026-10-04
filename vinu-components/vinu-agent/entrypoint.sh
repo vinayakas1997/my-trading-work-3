@@ -54,9 +54,11 @@ max_daily_orders: 20
 max_daily_orders_portfolio: 50
 max_daily_trade_volume: 200000.0
 max_capital_utilization_pct: 1.0
-# Paper trading: the live-decision loop trades strategy YAMLs, which have no research artifact, so this guard
-# would reject every one of its buys (features-logic-checking D5). Set back to true before real money.
-require_active_artifact: false
+# ON. Only a strategy that passed research and simulation (an ACTIVE artifact) may trade. It was switched off for paper
+# trading so unvalidated live-decision strategies could trade, which let 15-minute and 1-hour versions through that the
+# simulator shows have no edge. A live-decision strategy earns an artifact by passing the validation gate, not by
+# turning this guard off.
+require_active_artifact: true
 require_market_open: false
 max_symbol_concentration_pct: 1.0
 max_pairwise_correlation: 1.0

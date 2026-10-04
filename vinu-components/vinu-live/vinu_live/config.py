@@ -220,6 +220,10 @@ class LiveConfig:
     # An agent run is several LLM calls plus tool reads, so it takes far longer than the 30 s the poller's HTTP client
     # allows other calls. With the old 30 s a slow (local) model made every decision call fail with an empty message.
     live_decision_agent_timeout_sec: float = 300.0
+    # A live-decision strategy may open positions only after research validated its exact rules (and only on the tickers
+    # that passed). ON by default; it was effectively off before, which let unvalidated 15-minute and 1-hour strategies
+    # go live. Switching it off is a deliberate act that a test guards.
+    live_decision_require_validated_strategy: bool = True
 
     live_decision_novelty_enabled: bool = False
     live_decision_novelty_ratio: float = 2.0
@@ -312,6 +316,9 @@ class LiveConfig:
             ).lower() in ("1", "true", "yes"),
             live_decision_signal_horizon_bars=int(os.getenv("VINU_LIVE_DECISION_SIGNAL_HORIZON_BARS", "20")),
             live_decision_agent_timeout_sec=float(os.getenv("VINU_LIVE_DECISION_AGENT_TIMEOUT_SEC", "300")),
+            live_decision_require_validated_strategy=os.getenv(
+                "VINU_LIVE_DECISION_REQUIRE_VALIDATED_STRATEGY", "true",
+            ).lower() in ("1", "true", "yes"),
             live_decision_novelty_enabled=os.getenv(
                 "VINU_LIVE_DECISION_NOVELTY_ENABLED", "false",
             ).lower() in ("1", "true", "yes"),

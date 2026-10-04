@@ -149,3 +149,26 @@ def test_every_service_url_the_agent_defaults_to_localhost_is_set_in_the_env_exa
 def test_the_reflection_container_serves_its_api_as_well_as_running_the_worker():
     script = (ROOT / "vinu-reflection" / "entrypoint.sh").read_text(encoding="utf-8")
     assert "vinu-reflection serve" in script and "vinu-reflection worker" in script
+
+
+# --------------------------------------------------------- only validated strategies may trade (do not switch this off)
+
+def test_the_seeded_mandate_requires_an_active_artifact():
+    """`require_active_artifact` is the gate that only lets a strategy trade after research and simulation passed it. It was
+    once switched off for paper trading and unvalidated 15-minute/1-hour strategies went live. It must stay on."""
+    script = (ROOT / "vinu-agent" / "entrypoint.sh").read_text(encoding="utf-8")
+    assert re.search(r"^require_active_artifact:\s*true\s*$", script, re.M)
+    assert not re.search(r"^require_active_artifact:\s*false", script, re.M)
+
+
+def test_the_live_decision_validation_gate_is_never_switched_off_in_deployment_files():
+    """A strategy may open positions only after research validated its exact rules. Setting this to false in compose or an
+    env file is how unvalidated 15-minute/1-hour strategies went live; a deliberate local override belongs in a shell."""
+    flag = "VINU_LIVE_DECISION_REQUIRE_VALIDATED_STRATEGY"
+    for name in (".env-example", ".env", "docker-compose.yml"):
+        path = ROOT / name
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if flag in line and not line.lstrip().startswith("#"):
+                assert not re.search(r"(false|0|no)\s*[\"']?\s*$", line.split(flag, 1)[1], re.I), f"{name}: {line.strip()}"

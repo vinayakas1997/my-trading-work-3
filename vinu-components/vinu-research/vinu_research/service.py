@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
@@ -74,6 +76,9 @@ class ResearchService:
         self._generation_candidate_store = generation_candidate_store or GenerationCandidateStore(
             self._config.data_root / "generation_candidates.db"
         )
+        from vinu_research.strategy_validation import StrategyValidationStore
+
+        self._strategy_validation_store = StrategyValidationStore(self._config.data_root / "strategy_validations.db")
         self._owns_move_evidence_store = move_evidence_store is None
         # item #10: Track 2's own side, deliberately its own db file for
         # the same reason signal_evidence_store is (a fast-growing
@@ -87,6 +92,10 @@ class ResearchService:
         except Exception:
             _headers = None
         self._http = httpx.AsyncClient(timeout=5.0, headers=_headers)
+
+    @property
+    def strategy_validation_store(self):
+        return self._strategy_validation_store
 
     @property
     def strategy_store(self) -> SqliteStrategyStore:
@@ -127,6 +136,8 @@ class ResearchService:
         dry_run: bool = False,
         universe: list[str] | None = None,
         goal: Goal | None = None,
+        interval: str | None = None,
+        max_iterations: int | None = None,
     ) -> dict[str, Any]:
         # `RunResearchRequest.user_idea` (the /research/run request model) is
         # documented as "If None, auto-proposed from angle context" -- that
@@ -192,11 +203,19 @@ class ResearchService:
         await self._run_in_thread(self._storage.update_run, record)
 
         try:
-            tools = ResearchTools(self._config)
+            # One run can test a different bar size than the service default (a strategy meant for 15-minute bars must
+            # be judged on 15-minute bars). The shared config is copied, never changed.
+            overrides: dict[str, Any] = {}
+            if interval:
+                overrides["interval"] = interval
+            if max_iterations:
+                overrides["max_iterations"] = max_iterations      # 1 = test the rules exactly as written, no refinement
+            run_config = replace(self._config, **overrides) if overrides else self._config
+            tools = ResearchTools(run_config)
             hypothesis_registry = HypothesisRegistry()
             loop = StrategyResearchLoop(
                 tools=tools,
-                config=self._config,
+                config=run_config,
                 hypothesis_registry=hypothesis_registry,
                 storage=self._storage,
                 generation_candidate_store=self._generation_candidate_store,
@@ -275,7 +294,7 @@ class ResearchService:
             if not result.best_result and result.iterations:
                 diagnosis_text = await self._explain_failure(
                     tools, result, symbol.upper(), from_date, to_date, indicators,
-                    initial_capital or self._config.initial_capital, universe,
+                    initial_capital or self._config.initial_capital, universe, run_config.interval,
                 )
                 if diagnosis_text:
                     record.report_md = (record.report_md + "\n\n" + diagnosis_text).strip()
@@ -350,6 +369,7 @@ class ResearchService:
 
     async def _explain_failure(
         self, tools, result, symbol: str, from_date: str, to_date: str, indicators, initial_capital, universe,
+        interval: str | None = None,
     ) -> str:
         """Re-run the best attempt twice over the same window, with the simulator's trading costs and with none, and
         explain the failure from the difference (see failure_diagnosis). Best-effort: any problem returns "" and never
@@ -367,7 +387,7 @@ class ResearchService:
                 return await tools.run_backtest(
                     strategy_code=top.strategy_code, strategy_class_name="UserStrategy", symbols=symbols,
                     from_date=from_date, to_date=to_date, indicators=indicators, initial_capital=initial_capital,
-                    interval=self._config.interval, run_validation=False, **costs,
+                    interval=interval or self._config.interval, run_validation=False, **costs,
                 )
 
             net = await run()

@@ -38,7 +38,7 @@ def poller():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
     backend = LiveDecisionBackend(db_path)
-    config = LiveConfig()
+    config = LiveConfig(live_decision_require_validated_strategy=False)   # these tests are about the poller, not the gate
     p = CandleClosePoller(config, backend=backend)
     p._http = MagicMock()
     yield p

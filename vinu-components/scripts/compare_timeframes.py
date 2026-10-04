@@ -40,7 +40,7 @@ class PullbackSetup(BaseStrategy):
         mdi = 100 * pd.Series(minus, index=close.index).ewm(alpha=1 / 14, adjust=False).mean() / atr
         adx = (100 * (pdi - mdi).abs() / (pdi + mdi)).ewm(alpha=1 / 14, adjust=False).mean()
         setup = ((close > sma50) & (close < sma5) & (adx > 20)).astype(float)
-        return setup.shift(1).rolling(self.HOLD).max().fillna(0.0)
+        return setup.shift(1).rolling(self.HOLD, min_periods=1).max().fillna(0.0)
 '''
 
 

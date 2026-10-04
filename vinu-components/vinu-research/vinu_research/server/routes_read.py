@@ -31,6 +31,11 @@ class RunResearchRequest(BaseModel):
     indicators: list[str] | None = None
     initial_capital: float | None = None
     dry_run: bool = False
+    interval: str | None = Field(
+        default=None, pattern=r"^(1m|5m|15m|30m|1h|4h|1d|1wk)$",
+        description="Bar size for this run only (default: the service's own). A strategy meant for 15-minute bars must be "
+                    "judged on 15-minute bars.",
+    )
 
     @field_validator("strategy_code")
     @classmethod
@@ -76,6 +81,7 @@ async def run_research(body: RunResearchRequest) -> dict[str, Any]:
             initial_capital=body.initial_capital,
             dry_run=body.dry_run,
             universe=body.universe,
+            interval=body.interval,
         )
         return result
     except Exception as e:
@@ -330,3 +336,48 @@ async def approve_run(run_id: int) -> dict[str, Any]:
     if result is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found or not in done status")
     return result
+
+
+# ------------------------------------------------------------------------------ live-decision strategy validation
+
+class StrategyValidationRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    schedule: str | None = None
+    universe: list[str] = Field(default_factory=list)
+    must_conditions: list[dict[str, Any]] = Field(default_factory=list)
+    live_decision_max_hold_bars: int = 0
+    from_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    to_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+_validation_tasks: set = set()
+
+
+@router.post("/strategy-validations")
+async def start_strategy_validation(body: StrategyValidationRequest) -> dict[str, Any]:
+    """Send a live-decision strategy through the research and simulation gates (strategy_validation.py). Runs in the
+    background (minutes: one research run per ticker); poll GET /research/strategy-validations for the verdict."""
+    import asyncio
+    from datetime import date, timedelta
+
+    from vinu_research.strategy_validation import validate_strategy
+
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    end = body.to_date or date.today().isoformat()
+    start = body.from_date or (date.today() - timedelta(days=4 * 365 + 30)).isoformat()
+    definition = body.model_dump()
+    task = asyncio.create_task(validate_strategy(_service, definition, start, end))
+    _validation_tasks.add(task)
+    task.add_done_callback(_validation_tasks.discard)
+    return {"status": "started", "strategy_id": body.name, "window": [start, end]}
+
+
+@router.get("/strategy-validations")
+async def list_strategy_validations() -> dict[str, Any]:
+    """Every live-decision strategy's validation verdict: validated, rejected, unvalidatable or running. The live loop
+    reads this and only evaluates strategies (and tickers) that are validated for their exact current rules."""
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    rows = _service.strategy_validation_store.list()
+    return {"validations": rows, "count": len(rows)}

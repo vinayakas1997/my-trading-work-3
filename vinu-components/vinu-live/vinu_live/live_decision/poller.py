@@ -102,9 +102,54 @@ class CandleClosePoller:
                 LOG.warning("Could not fetch strategy %s: %s", s.get("name"), exc)
         return strategies
 
+    async def _validated_tickers(self, strategies: list[dict[str, Any]]) -> dict[str, set[str]] | None:
+        """The gate: which tickers each strategy may open positions on. None = the gate is switched off.
+
+        A live-decision strategy (one with must_conditions) is evaluated for new entries only when research validated its
+        EXACT current rules (conditions, bar size, hold length) and only on the tickers that passed. Everything else is
+        blocked and logged with the reason: never validated, rules changed since, rejected, unvalidatable, still running.
+        If the verdicts cannot be read at all nothing new enters (fail closed); open positions are unaffected because
+        reviews and exits use the full strategy list, never this one."""
+        from vinu_infra.strategy_fingerprint import fingerprint
+
+        if not self._config.live_decision_require_validated_strategy:
+            return None
+        edge = "research.strategy_validations->live.poller"
+        try:
+            resp = await self._http.get(f"{self._config.research_api_url}/research/strategy-validations")
+            resp.raise_for_status()
+            body = resp.json()
+        except Exception as exc:  # noqa: BLE001
+            LOG.error("strategy validations unreadable -- no new entries this cycle (fail closed): %s", exc)
+            record_edge(edge, "missing", f"{type(exc).__name__}: {exc}")
+            return {}
+        record_edge(edge, "received" if body.get("validations") else "empty",
+                    f"{body.get('count', 0)} validation record(s)", payload=body)
+        by_id = {r.get("strategy_id"): r for r in body.get("validations", [])}
+        allowed: dict[str, set[str]] = {}
+        for strat in strategies:
+            conditions = strat.get("must_conditions") or []
+            if not conditions:
+                continue                                   # no trigger conditions: nothing here can open a position
+            name = strat["name"]
+            row = by_id.get(name)
+            fp = fingerprint(conditions, strat.get("schedule"), strat.get("live_decision_max_hold_bars"))
+            if row is None:
+                reason = "never validated"
+            elif row.get("fingerprint") != fp:
+                reason = "its rules changed since it was validated"
+            elif row.get("status") != "validated":
+                reason = f"validation status is {row.get('status')}"
+            else:
+                allowed[name] = {str(t).upper() for t in (row.get("detail") or {}).get("eligible_tickers", [])}
+                continue
+            LOG.info("strategy %s blocked from new entries: %s", name, reason)
+        return allowed
+
     async def cycle(self) -> dict[str, Any]:
         strategies = await self._fetch_active_strategies()
-        strategy_by_id = {s["name"]: s for s in strategies}
+        strategy_by_id = {s["name"]: s for s in strategies}     # everything: reviews and exits never depend on validation
+        allowed = await self._validated_tickers(strategies)
 
         # Group by (ticker, timeframe) so every strategy sharing a pair
         # gets exactly one bar fetch this cycle, not one per strategy.
@@ -112,6 +157,9 @@ class CandleClosePoller:
         for strat in strategies:
             timeframe = strat.get("schedule", "1d")
             for ticker in strat.get("universe", []):
+                if allowed is not None and strat.get("must_conditions"):
+                    if str(ticker).upper() not in allowed.get(strat["name"], set()):
+                        continue                              # not validated for this ticker: no entry evaluation
                 groups.setdefault((ticker, timeframe), []).append(strat)
 
         events_fired = 0

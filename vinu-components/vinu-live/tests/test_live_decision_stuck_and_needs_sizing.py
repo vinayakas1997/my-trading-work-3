@@ -185,7 +185,7 @@ class _Harness:
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             self.db_path = f.name
         self.backend = LiveDecisionBackend(self.db_path)
-        self.poller = CandleClosePoller(config or LiveConfig(), backend=self.backend)
+        self.poller = CandleClosePoller(config or LiveConfig(live_decision_require_validated_strategy=False), backend=self.backend)
         self.poller._http = MagicMock()
         self.clock = {"start": 1_700_000_000}
         self.script = list(agent_script)
@@ -288,7 +288,7 @@ def test_extend_grace_window_and_unrecognized_also_count_as_unresolved(harness_f
 
 
 def test_limit_zero_restores_the_old_never_retry_behaviour(harness_factory):
-    h = harness_factory(["fail"], config=LiveConfig(live_decision_max_trigger_attempts=0))
+    h = harness_factory(["fail"], config=LiveConfig(live_decision_max_trigger_attempts=0, live_decision_require_validated_strategy=False))
     for _ in range(4):
         h.cycle()
     assert h.agent_calls == 1 and h.stage() == "ready_to_execute" and h.notifications == []

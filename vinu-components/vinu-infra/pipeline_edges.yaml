@@ -425,6 +425,22 @@ edges:
     contract: AngleRows
     instrumented: true
 
+  - id: research.strategy_validations->live.poller
+    producer:
+      service: vinu-research
+      files: [vinu-research/vinu_research/server/routes_read.py]
+      defines: ['"/strategy-validations"', '"validations"', '"count"']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/live_decision/poller.py]
+      references: ['/research/strategy-validations', '"validations"']
+      purpose: which live-decision strategies (and tickers) passed research and simulation; only those may open positions
+    cadence: every live-decision cycle
+    empty_ok: false
+    status: wired
+    contract: StrategyValidations
+    instrumented: true
+
   - id: research.unconfirmed_moves->agent.live_decision_context
     producer:
       service: vinu-research

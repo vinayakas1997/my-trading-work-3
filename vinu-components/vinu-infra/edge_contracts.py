@@ -248,6 +248,20 @@ class AngleRows(EdgeContract):
     )
 
 
+@contract_for("research.strategy_validations->live.poller")
+class StrategyValidations(EdgeContract):
+    """GET /research/strategy-validations: one row per live-decision strategy: its verdict and the exact rules it covers."""
+
+    validations: list[dict[str, Any]]
+    count: int = 0
+
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={"examples": [{"validations": [{"strategy_id": "s", "status": "validated", "fingerprint": "abc",
+                                                          "detail": {"eligible_tickers": ["AAPL"]}}], "count": 1}]},
+    )
+
+
 @contract_for("research.unconfirmed_moves->agent.live_decision_context")
 class UnconfirmedMoves(EdgeContract):
     """GET /research/unconfirmed-moves: real moves with no matching trigger on file."""
