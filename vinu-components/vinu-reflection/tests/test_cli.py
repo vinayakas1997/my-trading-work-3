@@ -63,3 +63,34 @@ class TestRunCycle:
         reflection_store = ReflectionStore(tmp_path / "reflection.db")
         written = run_cycle(reflection_store, {"vinu_agent": tmp_path})
         assert written == 0  # failure isolated, no crash out of run_cycle
+
+
+def test_a_store_that_is_not_available_yet_is_one_warning_and_the_cycle_continues(caplog, monkeypatch):
+    """An analyst reading another service's store before that service created it must not abort the cycle or log a
+    stack trace; a real error (anything but sqlite OperationalError) still goes through LOG.exception."""
+    import logging
+    import sqlite3
+
+    from vinu_reflection import cli
+
+    calls = []
+
+    def waits(paths, clients):
+        raise sqlite3.OperationalError("unable to open database file")
+
+    def real_bug(paths, clients):
+        raise ValueError("a genuine defect")
+
+    def fine(paths, clients):
+        calls.append("fine")
+        return []
+
+    waits.__module__, real_bug.__module__, fine.__module__ = "an.waiting.analyst", "a.broken.analyst", "a.fine.analyst"
+    monkeypatch.setattr(cli, "ANALYSTS", [waits, real_bug, fine])
+    with caplog.at_level(logging.WARNING):
+        written = cli.run_cycle(object(), {})
+    assert written == 0 and calls == ["fine"]                       # the cycle went on past both failures
+    waiting = [r for r in caplog.records if "an.waiting.analyst" in r.getMessage()]
+    assert len(waiting) == 1 and waiting[0].levelno == logging.WARNING and waiting[0].exc_info is None
+    broken = [r for r in caplog.records if "a.broken.analyst" in r.getMessage()]
+    assert len(broken) == 1 and broken[0].levelno == logging.ERROR and broken[0].exc_info is not None

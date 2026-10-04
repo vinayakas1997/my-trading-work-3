@@ -7,6 +7,7 @@ worker in this codebase uses (`vinu-agent/vinu_agent/cli.py`'s
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import logging
 import time
 from pathlib import Path
@@ -212,6 +213,11 @@ def run_cycle(
         try:
             findings = analyst_fn(data_root_paths, service_clients or {})
             written += len(write_findings(reflection_store, findings))
+        except sqlite3.OperationalError as exc:
+            # A store another service writes (read-only mount here) that does not exist yet, or that the owner has not
+            # migrated yet: nothing to analyse until that service has run. One line, not a stack trace, so a real fault
+            # (anything that is not this) stays loud.
+            LOG.warning("[reflection-worker] %s skipped: a store it reads is not available yet (%s)", analyst_fn.__module__, exc)
         except Exception:
             LOG.exception("[reflection-worker] %s failed, skipping", analyst_fn.__module__)
     return written

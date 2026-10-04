@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+import ast
+
+from pydantic import BaseModel, Field, field_validator
 
 from vinu_research.models import ArtifactStatus
 from vinu_research.promotion import meets_promotion_bar
@@ -29,6 +31,22 @@ class RunResearchRequest(BaseModel):
     indicators: list[str] | None = None
     initial_capital: float | None = None
     dry_run: bool = False
+
+    @field_validator("strategy_code")
+    @classmethod
+    def _seed_code_must_define_user_strategy(cls, value: str | None) -> str | None:
+        """The research loop always asks the simulator for a class named `UserStrategy`. A seed that defines another
+        name used to be accepted and then died minutes later as an "infrastructure failure" (HTTP 422 from the
+        simulator) after the LLM calls had already been paid for. Reject it up front, with the reason."""
+        if value is None:
+            return value
+        try:
+            tree = ast.parse(value)
+        except SyntaxError as exc:
+            raise ValueError(f"strategy_code is not valid Python: {exc.msg} (line {exc.lineno})") from exc
+        if not any(isinstance(n, ast.ClassDef) and n.name == "UserStrategy" for n in ast.walk(tree)):
+            raise ValueError("strategy_code must define a class named UserStrategy (the research loop runs that name)")
+        return value
     universe: list[str] | None = Field(
         default=None,
         description="Optional list of tickers to backtest as a portfolio alongside "

@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Generator, Optional
 
 from vinu_infra.llm.retry import build_retry
+from vinu_infra.llm.thinking import thinking_extra
 
 from ..config import AgentConfig, LLMConfig
 
@@ -153,6 +154,9 @@ class OpenAIChatLLM(ChatLLM):
         if tools:
             params["tools"] = tools
             params["tool_choice"] = "auto"
+        extra = thinking_extra()
+        if extra:
+            params["extra_body"] = extra
 
         attempts = {"n": 0}
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from vinu_infra.llm.thinking import thinking_extra
+
 import hashlib
 import json
 import logging
@@ -159,6 +161,7 @@ class AsyncLlmClient:
         }
         if self._caps and self._caps.temperature_override is not None:
             payload["temperature"] = self._caps.temperature_override
+        payload.update(thinking_extra())
 
         headers = {"Content-Type": "application/json"}
         if self._config.api_key:

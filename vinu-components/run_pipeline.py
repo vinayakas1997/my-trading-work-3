@@ -421,6 +421,10 @@ class SmaCrossover(BaseStrategy):
 """
 
 
+# The research loop runs a class named exactly "UserStrategy" (the simulator step above names its own class).
+_RESEARCH_SEED_CODE = _CUSTOM_STRATEGY_CODE.replace("SmaCrossover", "UserStrategy")
+
+
 def step_simulator(ticker: str, from_date: str, to_date: str, timeframe: str = "1d") -> dict:
     base = SERVICES["simulator"]["base_url"]
     body = {
@@ -528,7 +532,7 @@ def main() -> None:
     if prev_ok():
         steps.append(run_step(
             "vinu-research", "research", "/health",
-            lambda: step_research(ticker, args.from_date, args.to_date, model=args.model, strategy_code=_CUSTOM_STRATEGY_CODE),
+            lambda: step_research(ticker, args.from_date, args.to_date, model=args.model, strategy_code=_RESEARCH_SEED_CODE),
         ))
     else:
         steps.append(StepResult(name="vinu-research", status="skipped"))
