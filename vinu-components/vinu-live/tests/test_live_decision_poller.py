@@ -819,3 +819,41 @@ class TestPositionFactsForTheReviewingAgent:
     def test_unknown_facts_are_left_out_not_zeroed(self, poller):
         facts = poller._position_facts(self._pos(entry=None), 1000 + 3600, None, None)
         assert set(facts) == {"opened_at", "opened_bar_ts", "position_size"}
+
+
+class TestAgentRunsGetTheirOwnTimeout:
+    """An agent run is several LLM calls; with the poller's 30 s client default a slow local model made every decision
+    call fail with an EMPTY error message (a timeout carries none)."""
+
+    def test_the_entry_call_carries_the_agent_timeout(self, poller):
+        seen = {}
+
+        async def _post(url, json=None, **kwargs):
+            seen.update(kwargs)
+            return _resp(json_body={"status": "ok", "decision": "SKIP", "reasoning": "r", "precondition_held": None})
+
+        poller._http.post = AsyncMock(side_effect=_post)
+        asyncio.run(poller._trigger_live_decision("AAPL", "s", 1, "t"))
+        assert seen["timeout"] == 300.0
+
+    def test_the_review_call_carries_it_too(self, poller):
+        seen = {}
+
+        async def _post(url, json=None, **kwargs):
+            seen.update(kwargs)
+            return _resp(json_body={"status": "ok", "decision": "HOLD", "reasoning": "r"})
+
+        poller._http.post = AsyncMock(side_effect=_post)
+        from vinu_live.live_decision.storage import open_position
+        pos = open_position(poller._backend, ticker="AAPL", strategy_id="s", position_size=0.05, opened_bar_ts=1)
+        asyncio.run(poller._trigger_position_review(pos, 100))
+        assert seen["timeout"] == 300.0
+
+    def test_a_timeout_is_recorded_with_its_type_not_an_empty_message(self, poller):
+        import httpx
+        from vinu_live.live_decision.storage import list_live_decisions
+
+        poller._http.post = AsyncMock(side_effect=httpx.ReadTimeout(""))
+        asyncio.run(poller._trigger_live_decision("AAPL", "s", 1, "t"))
+        d = list_live_decisions(poller._backend, "AAPL", "s")[0]
+        assert d.decision == "error" and "ReadTimeout" in d.reasoning

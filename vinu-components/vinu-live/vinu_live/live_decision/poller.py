@@ -427,6 +427,7 @@ class CandleClosePoller:
                     "mode": "review",
                     "position_context": self._position_facts(pos, bar_ts, exit_price, timeframe),
                 },
+                timeout=self._config.live_decision_agent_timeout_sec,
             )
             resp.raise_for_status()
             result = resp.json()
@@ -438,7 +439,7 @@ class CandleClosePoller:
             record_live_decision(self._backend, LiveDecisionRecord(
                 ticker=pos.ticker, strategy_id=pos.strategy_id, trigger_id=trigger_id, bar_ts=bar_ts,
                 decision="error", precondition_held=None,
-                reasoning=f"HTTP call to /agent/live-decision/run (review) failed: {exc}",
+                reasoning=f"HTTP call to /agent/live-decision/run (review) failed: {type(exc).__name__}: {exc}",
                 raw_content="",
             ))
             return
@@ -558,6 +559,7 @@ class CandleClosePoller:
             resp = await self._http.post(
                 f"{self._config.agent_api_url}/agent/live-decision/run",
                 json=payload,
+                timeout=self._config.live_decision_agent_timeout_sec,
             )
             resp.raise_for_status()
             result = resp.json()
@@ -570,7 +572,7 @@ class CandleClosePoller:
             record_live_decision(self._backend, LiveDecisionRecord(
                 ticker=ticker, strategy_id=strategy_id, trigger_id=trigger_id, bar_ts=bar_ts,
                 decision="error", precondition_held=None,
-                reasoning=f"HTTP call to /agent/live-decision/run failed: {exc}",
+                reasoning=f"HTTP call to /agent/live-decision/run failed: {type(exc).__name__}: {exc}",
                 raw_content="",
             ))
             return

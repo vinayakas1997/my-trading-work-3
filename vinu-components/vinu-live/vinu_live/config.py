@@ -217,6 +217,9 @@ class LiveConfig:
     # reads for a live strategy's own must-condition gains outcomes. Recording only; never affects an order.
     live_decision_signal_outcomes_enabled: bool = True
     live_decision_signal_horizon_bars: int = 20
+    # An agent run is several LLM calls plus tool reads, so it takes far longer than the 30 s the poller's HTTP client
+    # allows other calls. With the old 30 s a slow (local) model made every decision call fail with an empty message.
+    live_decision_agent_timeout_sec: float = 300.0
 
     live_decision_novelty_enabled: bool = False
     live_decision_novelty_ratio: float = 2.0
@@ -308,6 +311,7 @@ class LiveConfig:
                 "VINU_LIVE_DECISION_SIGNAL_OUTCOMES_ENABLED", "true",
             ).lower() in ("1", "true", "yes"),
             live_decision_signal_horizon_bars=int(os.getenv("VINU_LIVE_DECISION_SIGNAL_HORIZON_BARS", "20")),
+            live_decision_agent_timeout_sec=float(os.getenv("VINU_LIVE_DECISION_AGENT_TIMEOUT_SEC", "300")),
             live_decision_novelty_enabled=os.getenv(
                 "VINU_LIVE_DECISION_NOVELTY_ENABLED", "false",
             ).lower() in ("1", "true", "yes"),
