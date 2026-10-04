@@ -270,6 +270,16 @@ class ResearchService:
                     top = max(attempts, key=lambda r: r.result.metrics.sharpe_ratio)
                     summary_sharpe, summary_dd = top.result.metrics.sharpe_ratio, top.result.metrics.max_drawdown
 
+            # Nothing passed: say WHY, from numbers (a zero-cost twin of the best attempt), not just that it failed.
+            diagnosis_text = ""
+            if not result.best_result and result.iterations:
+                diagnosis_text = await self._explain_failure(
+                    tools, result, symbol.upper(), from_date, to_date, indicators,
+                    initial_capital or self._config.initial_capital, universe,
+                )
+                if diagnosis_text:
+                    record.report_md = (record.report_md + "\n\n" + diagnosis_text).strip()
+
             if self._config.llm_enabled:
                 llm = ResearchLlmClient(self._config)
                 try:
@@ -284,6 +294,8 @@ class ResearchService:
                     )
                 finally:
                     await llm.close()
+            if diagnosis_text:
+                record.summary_text = (record.summary_text + "\n\n" + diagnosis_text).strip()
 
             await self._run_in_thread(self._storage.update_run, record)
 
@@ -316,8 +328,9 @@ class ResearchService:
                 "deflated_sharpe": record.deflated_sharpe,
                 "holdout_passed": record.holdout_passed,
                 "stress_test_passed": record.stress_test_passed,
-                "report_md": result.report_md,
+                "report_md": record.report_md,
                 "summary_text": record.summary_text,
+                "diagnosis": diagnosis_text,
             }
             if result.portfolio is not None:
                 response["portfolio"] = {
@@ -334,6 +347,42 @@ class ResearchService:
             record.error_message = str(e)
             await self._run_in_thread(self._storage.update_run, record)
             raise
+
+    async def _explain_failure(
+        self, tools, result, symbol: str, from_date: str, to_date: str, indicators, initial_capital, universe,
+    ) -> str:
+        """Re-run the best attempt twice over the same window, with the simulator's trading costs and with none, and
+        explain the failure from the difference (see failure_diagnosis). Best-effort: any problem returns "" and never
+        fails the run."""
+        try:
+            from vinu_research.failure_diagnosis import diagnose, explain
+
+            attempts = [r for r in result.iterations if not str(r.result.run_id).startswith("infra_failure")]
+            if not attempts:
+                return ""
+            top = max(attempts, key=lambda r: r.result.metrics.sharpe_ratio)
+            symbols = list(dict.fromkeys([symbol, *[u.upper() for u in (universe or [])]]))
+
+            async def run(**costs):
+                return await tools.run_backtest(
+                    strategy_code=top.strategy_code, strategy_class_name="UserStrategy", symbols=symbols,
+                    from_date=from_date, to_date=to_date, indicators=indicators, initial_capital=initial_capital,
+                    interval=self._config.interval, run_validation=False, **costs,
+                )
+
+            net = await run()
+            gross = await run(transaction_cost_pct=0.0, slippage_pct=0.0)
+            if net is None or gross is None:
+                return ""
+            d = diagnose(
+                net_sharpe=net.metrics.sharpe_ratio, gross_sharpe=gross.metrics.sharpe_ratio,
+                net_return=net.metrics.total_return, gross_return=gross.metrics.total_return,
+                trade_count=net.trade_count,
+            )
+            return explain(d)
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("failure diagnosis skipped: %s", exc)
+            return ""
 
     async def list_runs(
         self,

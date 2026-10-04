@@ -44,9 +44,10 @@ class PullbackSetup(BaseStrategy):
 '''
 
 
-def run_one(base: str, headers: dict, symbol: str, interval: str, start: str, end: str, hold: int) -> dict:
+def run_one(base: str, headers: dict, symbol: str, interval: str, start: str, end: str, hold: int,
+            costs: dict | None = None) -> dict:
     body = {"symbols": [symbol], "strategy_code": CODE.format(hold=hold), "class_name": "PullbackSetup",
-            "start_date": start, "end_date": end, "interval": interval}
+            "start_date": start, "end_date": end, "interval": interval, **(costs or {})}
     try:
         r = requests.post(f"{base}/simulator/simulate/custom", json=body, headers=headers, timeout=900)
         if r.status_code != 200:
@@ -69,11 +70,16 @@ def main() -> int:
     ap.add_argument("--hold", type=int, default=20)
     ap.add_argument("--base", default="http://127.0.0.1:8084")
     ap.add_argument("--out", default="logs/timeframe_comparison.json")
+    ap.add_argument("--cost-pct", type=float, default=None, help="override commission per trade (0.001 = 0.1%%); the simulator default is 0.1%%")
+    ap.add_argument("--slippage-pct", type=float, default=None, help="override slippage per trade (the default is 0.05%%)")
     a = ap.parse_args()
     headers = {"Authorization": f"Bearer {os.environ['VINU_API_KEY']}"} if os.environ.get("VINU_API_KEY") else {}
+    costs = {}
+    if a.cost_pct is not None or a.slippage_pct is not None:
+        costs = {"transaction_cost_pct": a.cost_pct or 0.0, "slippage_pct": a.slippage_pct or 0.0, "slippage_model": "flat"}
     jobs = [(s, i) for i in a.intervals.split(",") for s in a.symbols.split(",")]
     with ThreadPoolExecutor(max_workers=3) as pool:
-        rows = list(pool.map(lambda j: run_one(a.base, headers, j[0], j[1], a.start, a.end, a.hold), jobs))
+        rows = list(pool.map(lambda j: run_one(a.base, headers, j[0], j[1], a.start, a.end, a.hold, costs), jobs))
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(rows, f, indent=2)
     print(f"{'bar':5}{'symbol':8}{'trades':>7}{'sharpe':>8}{'return':>9}{'maxDD':>8}{'win%':>6}{'PF':>6}")
