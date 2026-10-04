@@ -76,11 +76,31 @@ The review prompt says the agent has no unrealized P&L and must judge only the t
 | B | add a hard rule: exit when the return since entry falls below a limit the strategy configures | that is the existing `live_decision_stop_pct`; just needs to be set per strategy |
 | C | leave as designed | the thesis-only judgement stays pure; slow losses are caught only by account-level layers |
 
+### D7. Should the analogue output become the vision's summary?
+
+The vision's market memory is an aggregate over many matches ("37 situations: 23 up, 14 down, average +1.3%, worst −2.8%"). The code returns the 5 nearest peaks with their individual drawdown and recovery time, no up/down count and no average return, and the live-decision context does not include them.
+
+| Option | What it does | Trade-off |
+|---|---|---|
+| **A (recommended)** | add a summary over the matches (count, share that recovered within N bars, mean and median drawdown) as a new read-only field in the angle row and in the live-decision context | no change to the persisted library; honest raw counts, no invented win rate |
+| B | also store the forward return after each peak and summarise that | closer to the vision; needs a new stored field and a migration decision for the library |
+| C | leave as is | analogues stay visible only through stored angle rows |
+
+### D8. Should unconfirmed moves feed the idea generator?
+
+The system notices real moves no strategy was watching (`unconfirmed moves`) and shows them to the deciding agent, but never to the research loop, so "something moved and none of my conditions saw it" cannot become a new idea.
+
+| Option | What it does | Trade-off |
+|---|---|---|
+| **A (recommended later)** | give the idea generator the last N unconfirmed moves (ticker, direction, size in ATR, regime) as read-only context | cheap; only useful once enough moves are recorded, so it waits for paper data |
+| B | turn each repeated unconfirmed move pattern into a candidate must-condition automatically | the vision's full loop, but it needs a matching rule that does not exist yet |
+| C | leave as is | the system finds nothing it was not told to look for |
+
 ### Flags worth switching on now (not decisions, already documented)
 
 For paper trading with the aim of behaving like real money: `scheduler_exits_exempt_from_halts` (otherwise a halt, the spread gate or the earnings gate can stop a closing sell: see `01` Q1) and `scheduler_breaker_uses_broker_account` (otherwise the 5% daily-loss breaker does not see the scheduler's own positions). Both are listed in `../the-inconsistencies-v2/06-live-behavior-flags.md`.
 
-All six decisions can wait for paper data; none blocks the other work.
+All eight decisions can wait for paper data; none blocks the other work.
 
 ## Gaps noted, not changed
 
