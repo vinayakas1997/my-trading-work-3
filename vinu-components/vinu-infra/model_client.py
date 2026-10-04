@@ -83,21 +83,27 @@ def _frame_to_records(df: pd.DataFrame | None) -> list[dict[str, Any]]:
 
 def compute_angle(
     angle: str, *, symbol: str, bars: pd.DataFrame | None, news: list[dict] | None,
-    from_ts: int | None, to_ts: int | None, time_format: str | None,
+    from_ts: int | None, to_ts: int | None, time_format: str | None, raw_sink: list | None = None,
 ) -> pd.DataFrame:
-    """Run one model-category angle's `compute()` inside the model service and return its DataFrame."""
+    """Run one model-category angle's `compute()` inside the model service and return its DataFrame.
+    `raw_sink`: when a list is passed, the service's parsed answer is appended to it so the caller can record
+    its shape against the edge contract (the DataFrame alone no longer shows what arrived)."""
     out = _post(f"/models/angle/{angle}/compute", {
         "symbol": symbol, "bars": _frame_to_records(bars), "news": news or [],
         "from_ts": from_ts, "to_ts": to_ts, "time_format": time_format,
     })
+    if raw_sink is not None:
+        raw_sink.append(out)
     rows = out.get("rows")
     if not isinstance(rows, list):
         raise ModelServiceError(f"model service result for {angle} has no 'rows' list", reason="bad_response")
     return pd.DataFrame(rows)
 
 
-def score_finbert(texts: list[str], batch_size: int = 16) -> list[dict]:
+def score_finbert(texts: list[str], batch_size: int = 16, raw_sink: list | None = None) -> list[dict]:
     out = _post("/models/finbert/score", {"texts": texts, "batch_size": batch_size})
+    if raw_sink is not None:
+        raw_sink.append(out)
     results = out.get("results")
     if not isinstance(results, list) or len(results) != len(texts):
         raise ModelServiceError("model service FinBERT result does not match the request", reason="bad_response")

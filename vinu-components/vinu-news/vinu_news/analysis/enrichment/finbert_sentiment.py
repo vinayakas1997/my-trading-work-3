@@ -32,12 +32,13 @@ def score_finbert_batch(texts: list[str], batch_size: int = 16) -> list[dict]:
         from vinu_infra.pipeline_edge_recorder import record_edge
 
         edge = "models.finbert_score->news.backfill"
+        raw: list = []
         try:
-            results = model_client.score_finbert(texts, batch_size)
+            results = model_client.score_finbert(texts, batch_size, raw_sink=raw)
         except model_client.ModelServiceError as exc:
             record_edge(edge, "missing", str(exc))
             raise
-        record_edge(edge, "received", f"{len(results)} text(s) scored")
+        record_edge(edge, "received", f"{len(results)} text(s) scored", **({"payload": raw[0]} if raw else {}))
         return results
     from vinu_infra.finbert_scoring import score_finbert_batch as _local
 

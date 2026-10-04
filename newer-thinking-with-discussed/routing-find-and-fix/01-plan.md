@@ -10,7 +10,7 @@ How real systems keep services from drifting apart: every producer states exactl
 |---|---|---|---|
 | **A. Static contract scan** | Every HTTP call in the source reaches a real route (path and method), sends the required fields, and does not send fields the route drops; routes nobody calls are classified. | No | **Built** (`vinu-infra/contract_scan.py`, 19 tests) |
 | **B. Contract in the edge manifest** | Per data connection (`pipeline_edges.yaml`): a pydantic model (`vinu-infra/edge_contracts.py`) of the fields it carries, with an example payload, or a written reason why the connection has no JSON payload. Both sides of the connection are checked against it. | No | **Built** (15 of 38 connections have a model, the other 23 a written reason; 24 tests) |
-| **C. Runtime shape check** | The edge recorder compares the shape of a real payload with the contract and records `malformed` with the reason (missing field, wrong type). | The wiring needs no data; what it finds does | **Wiring built** (12 call sites, 14 + 4 tests); nothing has run on real payloads yet |
+| **C. Runtime shape check** | The edge recorder compares the shape of a real payload with the contract and records `malformed` with the reason (missing field, wrong type). | The wiring needs no data; what it finds does | **Wiring built** (all 15 contracted connections: 14 call sites, 14 + 7 tests); nothing has run on real payloads yet |
 
 Layer A is the foundation: it generates `contracts.json`, the machine-readable contract that B and C reuse.
 
@@ -43,7 +43,7 @@ Producer-side tests: each service validates its **real** answer against the mode
 
 It stays observe-only: the check runs inside the recorder's never-raises wrapper, a failure of the check itself leaves the observation unchanged, an edge with no contract or a caller that passes no payload behaves as before, and nothing reads `malformed` to make a trading decision. The "what is not flowing" report (`GET /research/pipeline-edges`) lists a malformed edge as not healthy, with a `malformed` counter. Old recorder databases get the new counter column on first open (migration).
 
-Wired call sites (the consumer passes what it received): live scheduler (portfolio state, daily allocation, strategy config, maturity status), live poller (novelty, stop rules), agent order guard (risk status, portfolio state), agent live-decision context tool (maturity, notable beliefs, unconfirmed moves, through `_fetch_json`), reflection synthesis tool, screener client. Not wired: the two models edges (`model_client.py` already refuses a wrong-shaped answer and raises `bad_response`, recorded as `missing`).
+Wired call sites (the consumer passes what it received): live scheduler (portfolio state, daily allocation, strategy config, maturity status), live poller (novelty, stop rules), agent order guard (risk status, portfolio state), agent live-decision context tool (maturity, notable beliefs, unconfirmed moves, through `_fetch_json`), reflection synthesis tool, screener client. The two models edges pass the service's parsed answer through `model_client`'s `raw_sink` argument (the DataFrame or list the caller gets back no longer shows what arrived); `model_client` still refuses an answer with no `rows` / wrong `results` length and raises `bad_response`, recorded as `missing`, so `malformed` there means a deeper field problem (for example a renamed `finbert_label`).
 
 ## Known limits (layers A, B and C)
 

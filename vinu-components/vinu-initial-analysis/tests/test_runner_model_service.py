@@ -118,3 +118,25 @@ def test_the_weights_store_can_be_imported_without_torch():
     if importlib.util.find_spec("torch") is None:
         with pytest.raises(ImportError):
             weights.WeightsStore(Path(".")).load("x/y.pt")
+
+
+def test_the_service_answer_shape_is_recorded_against_the_contract(tmp_path, monkeypatch):
+    """Layer C: a wrong-shaped answer is recorded `malformed`; the run itself is unchanged."""
+    monkeypatch.setenv("VINU_MODEL_SERVICE_URL", "http://models-api:8096")
+
+    def answer(body):
+        def fake(angle, raw_sink=None, **kw):
+            if raw_sink is not None:
+                raw_sink.append(body)
+            return pd.DataFrame([{"symbol": kw["symbol"]}])
+
+        monkeypatch.setattr(model_client, "compute_angle", fake)
+
+    r = _runner(tmp_path, "model")
+    answer({"angle": "fakemodel", "row_count": 1, "rows": [{"symbol": "AAPL"}], "backends": {"chronos": 1}})
+    out = r.run("AAPL", angle_names=["fakemodel"])
+    assert out["fakemodel"]["status"] == "completed" and _edge()["status"] == "received"
+    answer({"angle": "fakemodel", "row_count": 1, "data": [{"symbol": "AAPL"}]})  # `rows` renamed
+    out = r.run("MSFT", angle_names=["fakemodel"])
+    assert out["fakemodel"]["status"] == "completed"  # recording never changes the run
+    assert _edge()["status"] == "malformed" and "rows" in _edge()["last_detail"]

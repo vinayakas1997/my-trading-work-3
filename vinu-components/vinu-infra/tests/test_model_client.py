@@ -102,3 +102,17 @@ def test_finbert_round_trip_and_length_check():
     with patch("requests.post", return_value=_resp(200, {"results": [{"finbert_score": 0.1}]})):
         with pytest.raises(ModelServiceError):
             model_client.score_finbert(["a", "b"])
+
+
+def test_raw_sink_receives_the_parsed_answer_for_shape_recording():
+    body = {"rows": [{"a": 1}], "angle": "chronos", "row_count": 1}
+    sink: list = []
+    with patch("requests.post", return_value=_resp(200, body)):
+        df = model_client.compute_angle("chronos", symbol="AAPL", bars=None, news=None, from_ts=None, to_ts=None,
+                                        time_format="1D", raw_sink=sink)
+    assert sink == [body] and len(df) == 1
+    fb: list = []
+    fbody = {"count": 1, "results": [{"finbert_label": "neutral", "finbert_score": 0.0}]}
+    with patch("requests.post", return_value=_resp(200, fbody)):
+        model_client.score_finbert(["x"], raw_sink=fb)
+    assert fb == [fbody]

@@ -351,14 +351,19 @@ class AngleRunner:
         from vinu_infra.pipeline_edge_recorder import record_edge
 
         edge = "models.angle_compute->initial_analysis.runner"
+        raw: list = []
         try:
             df = model_client.compute_angle(
                 angle_name, symbol=symbol, bars=bars, news=news, from_ts=from_ts, to_ts=to_ts, time_format=time_format,
+                raw_sink=raw,
             )
         except model_client.ModelServiceError as exc:
             record_edge(edge, "missing", f"{angle_name}: {exc}")
             raise
-        record_edge(edge, "received" if len(df) else "empty", f"{angle_name}/{symbol}: {len(df)} row(s)")
+        record_edge(
+            edge, "received" if len(df) else "empty", f"{angle_name}/{symbol}: {len(df)} row(s)",
+            **({"payload": raw[0]} if raw else {}),
+        )
         return df
 
     def _fetch_bars(
