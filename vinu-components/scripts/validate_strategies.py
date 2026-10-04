@@ -65,7 +65,10 @@ def main() -> int:
               f"{', '.join(d.get('eligible_tickers', [])) or '-'}")
         for t, td in (d.get("per_ticker") or {}).items():
             if not td.get("eligible"):
-                print(f"{'':28}   {t}: {(td.get('reasons') or ['?'])[0][:110]}")
+                at = td.get("attempt") or {}
+                nums = (f"Sharpe {at['sharpe']:.2f}, maxDD {at['max_drawdown_pct']:.0f}%, win {at['win_rate_pct']}%  "
+                        if "sharpe" in at else "")
+                print(f"{'':28}   {t}: {nums}{(td.get('reasons') or ['?'])[0][:90]}")
         for r in d.get("reasons", []):
             print(f"{'':28}   {r}")
     return 0

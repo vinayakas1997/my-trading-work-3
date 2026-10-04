@@ -199,3 +199,52 @@ async def test_some_skipped_and_the_rest_failing_is_a_rejection_of_what_was_test
     svc = FakeService(tmp_path, {"AAPL": {"skipped": True}, "MSFT": BAD, "GOOGL": BAD, "AMZN": BAD, "META": BAD})
     out = await validate_strategy(svc, DEFINITION, "2022-01-03", "2026-10-02")
     assert out["status"] == "rejected"
+
+
+DAILY_REPORT = """=== FINAL RESEARCH REPORT ===
+Iteration History:
+  Iter   Sharpe     MaxDD      WinRate    Verdict
+  --------------------------------------------------
+  1      0.70       -16.0%     30%        STOP
+
+Key Findings:
+  1. Bootstrap Sharpe CI lower bound -0.3458 <= 0 (FAIL)
+  2. Price-path resample p-value 0.5130 >= 0.1 (FAIL)
+  7. Walk-forward consistency 0.80 >= 0.60 (PASS)
+"""
+M15_REPORT = """Iteration History:
+  Iter   Sharpe     MaxDD      WinRate    Verdict
+  --------------------------------------------------
+  1      -3.11      -45.4%     26%        STOP
+
+Key Findings:
+  6. Walk-forward consistency 0.00 < 0.60 (FAIL)
+  3. Trade-permutation p-value 0.0000 < 0.05 (PASS)
+"""
+
+
+def test_the_real_attempt_is_read_from_the_run_report_not_the_placeholder_zeros():
+    from vinu_research.strategy_validation import attempt_from_report
+    a = attempt_from_report(DAILY_REPORT)
+    assert (a["sharpe"], a["max_drawdown_pct"], a["win_rate_pct"]) == (0.70, -16.0, 30)
+    assert a["failed_checks"] == ["Bootstrap Sharpe CI lower bound -0.3458 <= 0 (FAIL)",
+                                  "Price-path resample p-value 0.5130 >= 0.1 (FAIL)"]          # the PASS line is not a failure
+    b = attempt_from_report(M15_REPORT)
+    assert (b["sharpe"], b["max_drawdown_pct"]) == (-3.11, -45.4) and b["failed_checks"] == ["Walk-forward consistency 0.00 < 0.60 (FAIL)"]
+    assert attempt_from_report("") == {"failed_checks": []}
+
+
+@pytest.mark.asyncio
+async def test_a_rejection_reports_the_failed_checks_and_the_real_numbers(tmp_path):
+    svc = FakeService(tmp_path, {t: BAD for t in DEFINITION["universe"]})
+    orig = svc.run_research
+
+    async def with_report(**kw):
+        out = await orig(**kw)
+        out["report_md"] = DAILY_REPORT
+        return out
+
+    svc.run_research = with_report
+    out = await validate_strategy(svc, DEFINITION, "2022-01-03", "2026-10-02")
+    t = out["detail"]["per_ticker"]["AAPL"]
+    assert t["attempt"]["sharpe"] == 0.70 and t["reasons"][0].startswith("Bootstrap Sharpe CI lower bound")

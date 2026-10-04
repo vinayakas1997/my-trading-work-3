@@ -100,6 +100,22 @@ def conditions_to_code(must_conditions: list[dict[str, Any]], hold: int) -> tupl
     return code, indicators, []
 
 
+# -------------------------------------------------------------------------------------- what the research run found
+
+_ITER_ROW = re.compile(r"^\s*1\s+(-?\d+\.\d+)\s+(-?\d+(?:\.\d+)?)%\s+(\d+)%", re.M)
+_FAILED_CHECK = re.compile(r"^\s*\d+\.\s+(.*\(FAIL\))\s*$", re.M)
+
+
+def attempt_from_report(report_md: str) -> dict[str, Any]:
+    """The first iteration's real numbers and the checks that failed, read from the run's own report. A run that finds no
+    passing strategy stores best_sharpe 0.0 as a placeholder; this is what was actually measured."""
+    out: dict[str, Any] = {"failed_checks": _FAILED_CHECK.findall(report_md or "")}
+    m = _ITER_ROW.search(report_md or "")
+    if m:
+        out.update({"sharpe": float(m.group(1)), "max_drawdown_pct": float(m.group(2)), "win_rate_pct": int(m.group(3))})
+    return out
+
+
 # ------------------------------------------------------------------------------------------------------- the store
 
 class StrategyValidationStore(SQLiteBackend):
@@ -191,8 +207,12 @@ async def validate_strategy(service: Any, definition: dict[str, Any], from_date:
             eligible, reasons = _eligible(record, service.config) if record is not None else (False, ["run record missing"])
             if run.get("outcome_status") != "passed" and eligible:
                 eligible, reasons = False, ["the research loop did not pass it"]
+            attempt = attempt_from_report(run.get("report_md", ""))
+            if run.get("outcome_status") != "passed" and attempt["failed_checks"]:
+                reasons = attempt["failed_checks"]       # the real findings, not the placeholder-zero promotion reasons
             per_ticker[ticker] = {
-                "eligible": bool(eligible), "tested": True, "reasons": reasons, "outcome": run.get("outcome_status"),
+                "eligible": bool(eligible), "tested": True, "reasons": reasons, "attempt": attempt,
+                "outcome": run.get("outcome_status"),
                 "sharpe": run.get("best_sharpe"), "deflated_sharpe": run.get("deflated_sharpe"),
                 "holdout_passed": run.get("holdout_passed"), "stress_test_passed": run.get("stress_test_passed"),
                 "diagnosis": run.get("diagnosis", ""), "run_id": run.get("id"),
