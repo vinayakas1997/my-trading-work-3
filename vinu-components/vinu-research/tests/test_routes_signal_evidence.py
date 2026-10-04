@@ -216,3 +216,20 @@ class TestUnconfirmedMovesContract:
         assert check_payload(edge, client.get("/research/unconfirmed-moves", params={"symbol": "AAPL"}).json()) == []
         client.post("/research/move-evidence/AAPL", json=_MOVE_PAYLOAD)
         assert check_payload(edge, client.get("/research/unconfirmed-moves", params={"symbol": "AAPL"}).json()) == []
+
+
+class TestSignalEvidenceListContract:
+    def test_the_list_answer_matches_the_edge_contract(self, client):
+        """Layer B (producer side) for the live poller's outcome resolver."""
+        from vinu_infra.edge_contracts import check_payload
+
+        edge = "research.unresolved_triggers->live.poller"
+        assert check_payload(edge, client.get("/research/signal-evidence", params={"symbol": "AAPL"}).json()) == []
+        client.post("/research/signal-evidence/trigger", json={
+            "trigger_id": "t-contract", "symbol": "AAPL", "trigger_time": "2026-10-04T14:00:00+00:00",
+            "must_condition": ["live_indicators.adx_14_gt_20"], "indicators": {"adx_14": 25.0}, "granularity": "15m",
+        })
+        body = client.get("/research/signal-evidence", params={"symbol": "AAPL"}).json()
+        assert body["count"] == 1 and body["triggers"][0]["granularity"] == "15m"
+        assert body["triggers"][0]["outcome_recorded_at"] is None
+        assert check_payload(edge, body) == []

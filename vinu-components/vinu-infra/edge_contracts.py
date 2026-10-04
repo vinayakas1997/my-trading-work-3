@@ -248,6 +248,24 @@ class UnconfirmedMoves(EdgeContract):
     )
 
 
+@contract_for("research.unresolved_triggers->live.poller")
+class SignalEvidenceList(EdgeContract):
+    """GET /research/signal-evidence: recorded must-condition triggers for a symbol, newest first; a row has no
+    `outcome_recorded_at` until its horizon has been resolved."""
+
+    triggers: list[dict[str, Any]]
+    count: int = 0
+
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={"examples": [{
+            "count": 1,
+            "triggers": [{"trigger_id": "t1", "symbol": "AAPL", "trigger_time": "2026-10-04T14:00:00+00:00",
+                          "granularity": "15m", "outcome_recorded_at": None}],
+        }]},
+    )
+
+
 class RankedCandidate(BaseModel):
     model_config = ConfigDict(extra="allow")
     symbol: str

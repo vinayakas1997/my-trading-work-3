@@ -209,6 +209,13 @@ class LiveConfig:
     # ticker's own recorded snapshot history (novelty.py); the result is logged, recorded as a `live_novelty`
     # snapshot row, written to the `live_decision.input_novelty` edge, and -- when high -- passed to the
     # live-decision agent as a caution. Never blocks anything by itself (log-only first, enforce later).
+    # features-logic-checking F4: resolve the outcome of every live-fired signal trigger once its horizon has
+    # elapsed (forward return / best / worst excursion over `live_decision_signal_horizon_bars` closed bars,
+    # the same 20-bar horizon and formulas as the signal_evidence angle), so the evidence the deciding agent
+    # reads for a live strategy's own must-condition gains outcomes. Recording only; never affects an order.
+    live_decision_signal_outcomes_enabled: bool = True
+    live_decision_signal_horizon_bars: int = 20
+
     live_decision_novelty_enabled: bool = False
     live_decision_novelty_ratio: float = 2.0
     live_decision_novelty_min_reference: int = 30
@@ -295,6 +302,10 @@ class LiveConfig:
             live_decision_closed_bars_only=os.getenv(
                 "VINU_LIVE_DECISION_CLOSED_BARS_ONLY", "false",
             ).lower() in ("1", "true", "yes"),
+            live_decision_signal_outcomes_enabled=os.getenv(
+                "VINU_LIVE_DECISION_SIGNAL_OUTCOMES_ENABLED", "true",
+            ).lower() in ("1", "true", "yes"),
+            live_decision_signal_horizon_bars=int(os.getenv("VINU_LIVE_DECISION_SIGNAL_HORIZON_BARS", "20")),
             live_decision_novelty_enabled=os.getenv(
                 "VINU_LIVE_DECISION_NOVELTY_ENABLED", "false",
             ).lower() in ("1", "true", "yes"),

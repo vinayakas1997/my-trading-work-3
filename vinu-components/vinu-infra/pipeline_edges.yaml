@@ -666,3 +666,20 @@ edges:
     contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (fields built inside the same service)"
     instrumented: true
     note: added 2026-10-03 (plan 2.4d, v1 C4)
+
+  - id: research.unresolved_triggers->live.poller
+    producer:
+      service: vinu-research
+      files: [vinu-research/vinu_research/server/routes_signal_evidence.py]
+      defines: ['"/signal-evidence"']
+    consumer:
+      service: vinu-live
+      files: [vinu-live/vinu_live/live_decision/poller.py]
+      references: ['/research/signal-evidence"']
+      purpose: live-fired signal triggers whose horizon has elapsed get their forward-return outcome filled in, so the evidence the deciding agent reads gains outcomes (features-logic-checking F4)
+    cadence: per new candle per (ticker, timeframe)
+    empty_ok: true
+    status: wired
+    contract: SignalEvidenceList
+    instrumented: true
+    note: added 2026-10-04 (features-logic-checking F4); before this nothing ever resolved a live trigger's outcome

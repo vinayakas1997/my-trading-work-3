@@ -295,3 +295,21 @@ class TestApproveTradeScoreCalibrationMain:
         except SystemExit as e:
             assert e.code == 1
         assert "Error" in capsys.readouterr().out
+
+
+def test_worked_example_how_the_weights_move_toward_what_predicted_wins():
+    """features-logic-checking: defaults 40/35/30/30 (sum 135). Correlations with realized return: confluence 0.6,
+    ev 0.3, risk -0.2 (counts as 0), regime-fit 0.0. Only positive strength counts -> shares 2/3 and 1/3.
+    Targets: confluence 135 * 2/3 = 90, ev 135 * 1/3 = 45, risk 0, regime-fit 0. Each move is clamped to +-20% of
+    its current value: confluence 40 -> 48 (not 90), ev 35 -> 42 (not 45), risk 30 -> 24, regime-fit 30 -> 24.
+    Tier cutoffs never move."""
+    from vinu_research.config import TradeScoreThresholds
+    from vinu_research.trade_score_calibration import propose_calibrated_thresholds
+
+    current = TradeScoreThresholds()
+    metrics = {"status": "ok", "correlations": {
+        "confluence_score": 0.6, "ev_score": 0.3, "risk_score": -0.2, "regime_fit_score": 0.0}}
+    new = propose_calibrated_thresholds(current, metrics)
+    assert (new.confluence_max, new.ev_max, new.risk_max, new.regime_fit_max) == (48.0, 42.0, 24.0, 24.0)
+    assert (new.strong_threshold, new.moderate_threshold, new.watch_threshold) == (
+        current.strong_threshold, current.moderate_threshold, current.watch_threshold)

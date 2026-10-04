@@ -1654,7 +1654,7 @@
     "return_at_horizon": true
    },
    "body_open": false,
-   "callers": 1
+   "callers": 2
   },
   {
    "service": "research",
@@ -1675,7 +1675,7 @@
    },
    "body": null,
    "body_open": false,
-   "callers": 1
+   "callers": 2
   },
   {
    "service": "research",
@@ -3100,7 +3100,7 @@
   {
    "service": "agent",
    "file": "vinu-agent/vinu_agent/broker/order_guard.py",
-   "line": 630,
+   "line": 631,
    "method": "GET",
    "path": "/portfolio/risk/status",
    "raw_path": "/portfolio/risk/status",
@@ -3114,7 +3114,7 @@
   {
    "service": "agent",
    "file": "vinu-agent/vinu_agent/broker/order_guard.py",
-   "line": 759,
+   "line": 760,
    "method": "GET",
    "path": "/portfolio/state",
    "raw_path": "/portfolio/state",
@@ -4216,7 +4216,7 @@
   {
    "service": "infra",
    "file": "vinu-infra/model_client.py",
-   "line": 89,
+   "line": 91,
    "method": "ANY",
    "path": "/models/angle/{}/compute",
    "raw_path": "/models/angle/{}/compute",
@@ -4230,7 +4230,7 @@
   {
    "service": "infra",
    "file": "vinu-infra/model_client.py",
-   "line": 100,
+   "line": 104,
    "method": "ANY",
    "path": "/models/finbert/score",
    "raw_path": "/models/finbert/score",
@@ -4489,7 +4489,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/scheduler.py",
-   "line": 604,
+   "line": 605,
    "method": "POST",
    "path": "/agent/broker/halt",
    "raw_path": "/agent/broker/halt",
@@ -4505,7 +4505,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/scheduler.py",
-   "line": 674,
+   "line": 675,
    "method": "POST",
    "path": "/agent/notify/reconciliation-drift",
    "raw_path": "/agent/notify/reconciliation-drift",
@@ -4525,7 +4525,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/scheduler.py",
-   "line": 795,
+   "line": 796,
    "method": "GET",
    "path": "/strategy/strategies/{}",
    "raw_path": "/strategy/strategies/{}",
@@ -4539,7 +4539,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/scheduler.py",
-   "line": 815,
+   "line": 817,
    "method": "GET",
    "path": "/portfolio/state",
    "raw_path": "/portfolio/state",
@@ -4553,7 +4553,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/scheduler.py",
-   "line": 835,
+   "line": 837,
    "method": "GET",
    "path": "/portfolio/daily-allocation",
    "raw_path": "/portfolio/daily-allocation",
@@ -4567,7 +4567,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/scheduler.py",
-   "line": 862,
+   "line": 864,
    "method": "GET",
    "path": "/research/artifacts",
    "raw_path": "/research/artifacts",
@@ -4584,7 +4584,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/scheduler.py",
-   "line": 873,
+   "line": 875,
    "method": "GET",
    "path": "/research/trade-plan/{}",
    "raw_path": "/research/trade-plan/{}",
@@ -4598,7 +4598,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/scheduler.py",
-   "line": 957,
+   "line": 959,
    "method": "GET",
    "path": "/agent/broker/positions",
    "raw_path": "/agent/broker/positions",
@@ -4612,7 +4612,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/scheduler.py",
-   "line": 987,
+   "line": 989,
    "method": "GET",
    "path": "/stock/candles/{}",
    "raw_path": "/stock/candles/{}",
@@ -4630,7 +4630,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/scheduler.py",
-   "line": 1021,
+   "line": 1023,
    "method": "GET",
    "path": "/agent/broker/account",
    "raw_path": "/agent/broker/account",
@@ -4644,7 +4644,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/scheduler.py",
-   "line": 1070,
+   "line": 1072,
    "method": "GET",
    "path": "/stock/candles/{}",
    "raw_path": "/stock/candles/{}",
@@ -4662,7 +4662,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/scheduler.py",
-   "line": 1231,
+   "line": 1233,
    "method": "POST",
    "path": "/agent/broker/order",
    "raw_path": "/agent/broker/order",
@@ -4826,7 +4826,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 83,
+   "line": 84,
    "method": "GET",
    "path": "/strategy/strategies",
    "raw_path": "/strategy/strategies",
@@ -4840,7 +4840,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 95,
+   "line": 96,
    "method": "GET",
    "path": "/strategy/strategies/{}",
    "raw_path": "/strategy/strategies/{}",
@@ -4854,7 +4854,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 382,
+   "line": 398,
    "method": "POST",
    "path": "/agent/live-decision/run",
    "raw_path": "/agent/live-decision/run",
@@ -4873,7 +4873,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 475,
+   "line": 491,
    "method": "POST",
    "path": "/agent/notify/reconciliation-drift",
    "raw_path": "/agent/notify/reconciliation-drift",
@@ -4891,7 +4891,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 521,
+   "line": 537,
    "method": "POST",
    "path": "/agent/live-decision/run",
    "raw_path": "/agent/live-decision/run",
@@ -4910,7 +4910,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 590,
+   "line": 606,
    "method": "POST",
    "path": "/strategy/strategies/{}/precondition-check",
    "raw_path": "/strategy/strategies/{}/precondition-check",
@@ -4926,7 +4926,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 615,
+   "line": 631,
    "method": "POST",
    "path": "/research/move-evidence/{}",
    "raw_path": "/research/move-evidence/{}",
@@ -4948,7 +4948,42 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 656,
+   "line": 665,
+   "method": "GET",
+   "path": "/research/signal-evidence",
+   "raw_path": "/research/signal-evidence",
+   "query": [
+    "symbol",
+    "limit"
+   ],
+   "body": null,
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "GET /research/signal-evidence",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/live_decision/poller.py",
+   "line": 688,
+   "method": "POST",
+   "path": "/research/signal-evidence/{}/outcome",
+   "raw_path": "/research/signal-evidence/{}/outcome",
+   "query": [],
+   "body": [
+    "max_favorable_excursion",
+    "max_adverse_excursion",
+    "return_at_horizon"
+   ],
+   "dynamic_query": false,
+   "dynamic_body": false,
+   "route": "POST /research/signal-evidence/{trigger_id}/outcome",
+   "service_served": "research"
+  },
+  {
+   "service": "live",
+   "file": "vinu-live/vinu_live/live_decision/poller.py",
+   "line": 730,
    "method": "POST",
    "path": "/research/signal-evidence/trigger",
    "raw_path": "/research/signal-evidence/trigger",
@@ -4961,7 +4996,7 @@
     "indicators"
    ],
    "dynamic_query": false,
-   "dynamic_body": false,
+   "dynamic_body": true,
    "route": "POST /research/signal-evidence/trigger",
    "service_served": "research"
   },
@@ -5581,7 +5616,7 @@
   {
    "service": "research",
    "file": "vinu-research/vinu_research/service.py",
-   "line": 753,
+   "line": 770,
    "method": "GET",
    "path": "/health",
    "raw_path": "/health",

@@ -135,6 +135,7 @@ class CandleClosePoller:
             if warmup.empty:
                 continue
             self._remember_last_close(ticker, timeframe, warmup)
+            await self._resolve_signal_outcomes(ticker, timeframe, warmup)
             snapshot = compute_live_snapshot(warmup)
             self._check_novelty(ticker, timeframe, snapshot)   # before recording, so the reference excludes this row
 
@@ -194,7 +195,7 @@ class CandleClosePoller:
                 # 5" comment), which would otherwise skip this guard.
                 if new_state.trigger_id is not None and new_state.trigger_id != previous_state.trigger_id:
                     await self._record_signal_evidence_trigger(
-                        ticker, must_conditions, new_state.trigger_id, latest_bar_ts, snapshot,
+                        ticker, must_conditions, new_state.trigger_id, latest_bar_ts, snapshot, timeframe=timeframe,
                     )
 
                 # Point 5's trigger: only on the exact cycle a pair
@@ -643,6 +644,63 @@ class CandleClosePoller:
         except Exception as exc:
             LOG.warning("could not record move event for %s/%s: %s", ticker, timeframe, exc)
 
+    async def _resolve_signal_outcomes(self, ticker: str, timeframe: str, bars: Any) -> int:
+        """features-logic-checking F4: fill in the outcome of live-fired signal triggers for this (ticker, timeframe)
+        once `live_decision_signal_horizon_bars` CLOSED bars have passed since the trigger bar. Until now a live
+        trigger was recorded with its outcome empty and nothing ever resolved it (the store's own docstring:
+        "whatever job ends up computing outcomes (not built yet)"), so the evidence the deciding agent reads for a
+        live strategy's own must-condition never gained a single outcome.
+
+        Same formulas as the signal_evidence angle (entry = close of the trigger bar; best / worst / last of the
+        next H closes, as fractions of entry). A trigger whose bar is not in `bars` (older than the fetched window,
+        or another timeframe) or whose horizon is incomplete is left for a later cycle. Never raises: it records
+        evidence, nothing the trading loop depends on reads it back."""
+        if not self._config.live_decision_signal_outcomes_enabled:
+            return 0
+        edge = "research.unresolved_triggers->live.poller"
+        try:
+            horizon = int(self._config.live_decision_signal_horizon_bars)
+            if horizon < 1 or bars is None or getattr(bars, "empty", True) or "close" not in bars.columns or "bar_ts" not in bars.columns:
+                return 0
+            resp = await self._http.get(
+                f"{self._config.research_api_url}/research/signal-evidence", params={"symbol": ticker, "limit": 200},
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            record_edge(edge, "received" if body.get("triggers") else "empty", f"{ticker}/{timeframe}", payload=body)
+            closes = [float(c) for c in bars["close"]]
+            index_by_ts = {int(ts): i for i, ts in enumerate(bars["bar_ts"])}
+            resolved = 0
+            for trig in body.get("triggers", []):
+                if trig.get("outcome_recorded_at") or trig.get("granularity") != timeframe:
+                    continue
+                try:
+                    trigger_ts = int(datetime.fromisoformat(str(trig["trigger_time"])).timestamp())
+                except (KeyError, TypeError, ValueError):
+                    continue
+                i = index_by_ts.get(trigger_ts)
+                if i is None or i + horizon > len(closes) - 1:
+                    continue
+                entry = closes[i]
+                forward = closes[i + 1: i + 1 + horizon]
+                if not (entry > 0) or entry != entry or len(forward) < horizon:
+                    continue
+                out = await self._http.post(
+                    f"{self._config.research_api_url}/research/signal-evidence/{trig['trigger_id']}/outcome",
+                    json={
+                        "max_favorable_excursion": (max(forward) - entry) / entry,
+                        "max_adverse_excursion": (min(forward) - entry) / entry,
+                        "return_at_horizon": (forward[-1] - entry) / entry,
+                    },
+                )
+                out.raise_for_status()
+                resolved += 1
+            return resolved
+        except Exception as exc:  # noqa: BLE001 -- observe-only: must never disturb the poll cycle
+            LOG.warning("signal-outcome resolution failed for %s/%s: %s", ticker, timeframe, exc)
+            record_edge(edge, "missing", f"{ticker}/{timeframe}: {exc}")
+            return 0
+
     async def _record_signal_evidence_trigger(
         self,
         ticker: str,
@@ -650,6 +708,7 @@ class CandleClosePoller:
         trigger_id: str,
         bar_ts: int,
         snapshot: dict[str, Any],
+        timeframe: str | None = None,
     ) -> None:
         """The SignalEvidenceStore writer gap: `SignalEvidenceStore` (Phase
         2, vinu-research) has always had its store and route, but nothing
@@ -676,6 +735,9 @@ class CandleClosePoller:
                     "trigger_time": trigger_time,
                     "must_condition": condition_names,
                     "indicators": snapshot,
+                    # the store defaults to "15min" -- a 1d strategy's trigger was being labelled 15min, and the
+                    # outcome resolver below matches on this field
+                    **({"granularity": timeframe} if timeframe else {}),
                 },
             )
             resp.raise_for_status()

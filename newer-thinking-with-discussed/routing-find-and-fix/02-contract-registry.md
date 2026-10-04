@@ -5,7 +5,7 @@ HTTP call found in the source. Re-run it after any route or caller change; `cont
 machine-readable copy.
 
 - Services read: 13 of 13
-- Routes: 272; HTTP calls found in source: 203; calls matched to a route: 197
+- Routes: 272; HTTP calls found in source: 205; calls matched to a route: 199
 - Findings: 1 ERROR, 0 WARN (see `03-findings.md` for what each means and its fix status)
 - Routes nothing in the code calls: 165 (candidate-gap: 10, covered: 2, file-read: 3, human-view: 85, operator-action: 65); each is classified in the last column.
 
@@ -223,10 +223,10 @@ Legend: `*` = required. Body `(open)` = untyped object, any key accepted. Caller
 | `POST /research/runs/{run_id}/approve` | - | - | **nobody** — operator-action: state-changing route; called by an operator, the UI or a scheduler outside the code scanned, never by another service |
 | `GET /research/runs/{run_id}/checkpoints` | latest_only | - | agent |
 | `GET /research/settings` | - | - | **nobody** — human-view: service settings: read by a person or the UI |
-| `GET /research/signal-evidence` | limit, symbol | - | agent |
+| `GET /research/signal-evidence` | limit, symbol | - | agent; live |
 | `POST /research/signal-evidence/trigger` | - | trigger_id*, symbol*, trigger_time*, must_condition*, indicators, granularity, policy_version | initial-analysis; live |
 | `GET /research/signal-evidence/{trigger_id}` | - | - | agent |
-| `POST /research/signal-evidence/{trigger_id}/outcome` | - | max_favorable_excursion*, max_adverse_excursion*, return_at_horizon* | initial-analysis |
+| `POST /research/signal-evidence/{trigger_id}/outcome` | - | max_favorable_excursion*, max_adverse_excursion*, return_at_horizon* | initial-analysis; live |
 | `POST /research/sweep/candidate` | - | symbol*, from_date*, to_date*, recipe, params, base_code, param_name, param_value, indicators, initial_capital | agent |
 | `GET /research/sweep/grid` | limit, symbol | - | **nobody** — human-view: introspection and report routes for an operator (pipeline-edge report, parity report, generation rounds, sweeps, hypotheses) |
 | `POST /research/sweep/grid` | - | symbol*, from_date*, to_date*, param_grid*, recipe, base_code, param_name, indicators, initial_capital | agent |

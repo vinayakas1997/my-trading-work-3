@@ -10,6 +10,8 @@ Everything this folder's checks found. `FIXED` = code changed, test added, mutat
 | F2 | `01` Q2 | **A losing strategy could read as healthy.** The ratio `rolling Sharpe ÷ baseline Sharpe` turns positive when both are negative: approved at 1.5, then −0.5 every time → ratio 3.75 → HEALTHY. | an average re-backtest Sharpe ≤ the existing `sharpe_critical` floor (0.0) is `CRITICAL` | `vinu-research/tests/test_decay.py::TestStrategyDecayLogicByHand` |
 | F3 | `01` Q3 | **A closed live-decision position recorded no outcome.** Only `closed_reason` and the bar; no exit price, no return. `trade_audit_log` is written only by the trade-plan orchestrator, so the live-decision path (the loop the vision describes) left no loss to learn from, and the consecutive-loss cooldown only ever saw plan-path losses. | closed positions record `exit_price` and `return_pct` (reference price = close of the newest processed candle; before costs; `None` rather than a guess) for both exit routes. Schema migration v6, old databases upgrade. | `vinu-live/tests/test_live_decision_position_rules.py` (13 new; mutation-checked) |
 
+| F4 | `02` Q2 | **Live signal triggers never got an outcome.** The poller records each firing of a strategy's own must-condition with the outcome empty; no job anywhere resolved it (`get_unresolved_triggers` had no caller; the store's docstring says "not built yet"). Only the hard-coded SMA5/50 angle produced outcomes, so for any other condition the evidence "last-N → decision" had none, ever. Also: the poller did not send the timeframe, so a 1d trigger was stored as `15min`. | poller resolves open triggers once 20 closed bars have passed (same formulas and horizon as the angle), triggers carry their timeframe; new connection `research.unresolved_triggers->live.poller` with a contract; on by default, recording only, never raises | `vinu-live/tests/test_live_decision_signal_outcomes.py` (13; mutation-checked), `vinu-research/tests/test_routes_signal_evidence.py` (producer side) |
+
 ## Decisions for you
 
 ### D1. How fast should strategy decay be noticed?
@@ -32,7 +34,27 @@ Today (pinned by a test): baseline = first 5 re-backtest Sharpes, rolling = mean
 | B | feed live-decision losses to the consecutive-loss cooldown (`scheduler._apply_entry_guards`) | closes the gap the code itself names; changes entry behaviour (when the guard flag is on) |
 | C | let reflection's `loss_attribution` read the live-decision database too | one learning loop for both paths; a bigger change |
 
-Both decisions can wait for paper data; neither blocks the other work.
+### D3. How should a closed live-decision trade count toward the maturity tier?
+
+The tier (cold_start → mature) counts a "real trade" only as a calibration entry, which exists only for a position linked to a research **artifact**. The live-decision loop trades strategy YAMLs, so none of its trades counts and the tier cannot advance from it (capital multiplier stays at the cold-start 0.1 if capital gating is on).
+
+| Option | What it does | Trade-off |
+|---|---|---|
+| **A (recommended)** | `assess()` also counts closed live-decision positions (read from vinu-live over a new read route), a trade "correct" when `return_pct > 0`; regime coverage unknown for them, so the tier caps at `early_live` until regimes are tagged | uses the number F3 now records; cannot reach `mature` on this path alone |
+| B | register each live-decision strategy as a research artifact so the existing path counts it | one mechanism, but a larger structural change |
+| C | leave it; capital scaling stays opt-in and manual for this loop | nothing to build; the loop never "earns" trust automatically |
+
+### D4. Should the agent's evidence be filtered to the strategy's own must-condition?
+
+`get_signal_evidence` returns every trigger for the symbol, whatever its condition, and the `outcomes_recorded` count behind the uncertainty flag `no_recorded_outcomes` is symbol-wide. A strategy with no outcomes of its own can look evidenced because the SMA angle backfilled other rows for the ticker. The angle's names (`sma5_cross_sma50`) and the live names (`live_indicators.adx_14_gt_20`) differ.
+
+| Option | What it does | Trade-off |
+|---|---|---|
+| **A (recommended)** | the context tool filters to rows whose `must_condition` list matches the strategy's own condition names (exact match), and counts outcomes on that subset | small and read-only; angle-backfilled SMA rows stop counting for strategies that use other conditions |
+| B | add a name mapping so angle rows count for the equivalent live condition | keeps the backfill useful, but a mapping table to maintain |
+| C | leave as is | the uncertainty flag can under-report missing evidence |
+
+All four decisions can wait for paper data; none blocks the other work.
 
 ## Gaps noted, not changed
 
