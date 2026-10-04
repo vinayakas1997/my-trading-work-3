@@ -113,9 +113,9 @@ def condition_name(condition: dict[str, Any]) -> str:
     Not the same as `03-strategy-definition-full-schema.md`'s still-
     design-only `condition: "sma5_cross_sma50"` field -- that would be a
     human-authored label on a not-yet-built schema; this is a mechanical
-    derivation from what's actually implemented today."""
-    source = condition.get("source", "live_indicators")
-    key = condition.get("key", "?")
-    operator = condition.get("operator", "gt")
-    value = condition.get("value")
-    return f"{source}.{key}_{operator}_{value}"
+    derivation from what's actually implemented today.
+
+    The rule itself lives in `vinu_infra.condition_names` so the agent's evidence filter uses the very same one."""
+    from vinu_infra.condition_names import condition_name as _shared
+
+    return _shared(condition)

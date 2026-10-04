@@ -62,6 +62,38 @@ def _get_maturity_consultation_store() -> Any:
     return _maturity_consultation_store
 
 
+def _filter_to_strategy_conditions(summary: dict, must_conditions: Any) -> dict:
+    """Keep only the trigger rows recorded under THIS strategy's own must-conditions (exact names, via the shared
+    `condition_names` rule the live poller records under), and recount outcomes on that subset. Otherwise rows
+    for other conditions on the same ticker (e.g. the SMA5/50 backfill) make a strategy with no evidence of its
+    own look evidenced (features-logic-checking D4). Without a known condition list nothing is filtered, and the
+    summary says so; the original counts stay visible as `all_conditions_count`."""
+    if summary.get("status") != "ok" or "triggers" not in summary:
+        return summary
+    if not isinstance(must_conditions, list) or not must_conditions:
+        return {**summary, "filtered_to_strategy": False}
+    from vinu_infra.condition_names import condition_name
+
+    own = {condition_name(c) for c in must_conditions if isinstance(c, dict)}
+    if not own:
+        return {**summary, "filtered_to_strategy": False}
+    kept = []
+    for t in summary["triggers"]:
+        names = t.get("must_condition")
+        names = {names} if isinstance(names, str) else set(names or [])
+        if own <= names:
+            kept.append(t)
+    return {
+        **summary,
+        "filtered_to_strategy": True,
+        "strategy_conditions": sorted(own),
+        "all_conditions_count": summary.get("count", len(summary["triggers"])),
+        "count": len(kept),
+        "outcomes_recorded": sum(1 for t in kept if t.get("outcome_recorded_at")),
+        "triggers": kept,
+    }
+
+
 class GetLiveDecisionContextTool(BaseTool):
     name = "get_live_decision_context"
     description = (
@@ -80,7 +112,9 @@ class GetLiveDecisionContextTool(BaseTool):
         "Track 2 saw something your strategy missed before EXECUTE; [] means none on file "
         "or the fetch failed) and reflection_notes (currently notable/significant "
         "reflection beliefs across clusters -- advisory system-health notes, e.g. regime "
-        "degrading; [] means all routine or the fetch failed)."
+        "degrading; [] means all routine or the fetch failed). past_closed_trades lists how "
+        "earlier EXECUTEs on this ticker and strategy ended (exit reason, entry and exit "
+        "price, return before costs); a null return means it was not recorded."
     )
     parameters = {
         "type": "object",
@@ -118,6 +152,9 @@ class GetLiveDecisionContextTool(BaseTool):
         evidence_tool = GetSignalEvidenceTool()
         evidence_tool._services_config = self._services_config
         signal_evidence_summary = json.loads(evidence_tool.execute(symbol=ticker, limit=50))
+        signal_evidence_summary = _filter_to_strategy_conditions(
+            signal_evidence_summary, strategy_config.get("must_conditions"),
+        )
 
         maturity_status = self._maturity_status_if_enabled(ticker, strategy_id)
 
@@ -159,6 +196,7 @@ class GetLiveDecisionContextTool(BaseTool):
             "precondition": strategy_config.get("precondition", {"description": "", "defined": False, "tested": False}),
             "signal_evidence_summary": signal_evidence_summary,
             "past_live_decisions": past_decisions.get("decisions", []),
+            "past_closed_trades": past_decisions.get("closed_positions", []),
             "maturity_status": maturity_status,
             "unconfirmed_moves": unconfirmed.get("events", []),
             "reflection_notes": notable.get("beliefs", []),

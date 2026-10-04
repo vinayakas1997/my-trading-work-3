@@ -14,9 +14,14 @@ Everything this folder's checks found. `FIXED` = code changed, test added, mutat
 
 | F5 | `03` Q1 | **The regime had no effect on allocation in the Docker deployment.** The regime-alignment tilt and the sleeve split read `vinu-agent/skills/strategy-tags/tags.yaml`; `portfolio-api` neither copied nor mounted it (only `agent-api` did), so tags loaded empty, every regime multiplier was 1.0 and every sleeve `untagged`. | read-only mount of `vinu-agent/skills` into `portfolio-api` in `docker-compose.yml` | `vinu-infra/tests/test_compose_wiring.py` (2), `vinu-portfolio/tests/test_logic_allocation_by_hand.py` (2, includes the fault in miniature). Not run in Docker (Docker was not running) |
 
+| F6 | D1 | **Decay was slow and blind to partial decay.** Baseline = mean of the first 5 re-backtests, rolling = mean of all, so a collapse 1.5 → 0.0 read healthy until 7 entries and 1.5 → 0.4 was never flagged. | ratio = **latest re-backtest Sharpe ÷ approval Sharpe** (first bench entry), existing bands 0.7 / 0.5 / 0.3 and the 0 floor; the 3-consecutive-readings rule still stops one noisy backtest from demoting | `vinu-research/tests/test_decay.py::TestStrategyDecayLogicByHand` (1.5→1.2 healthy, →1.0 warning, →0.6 decayed, →0.4 critical, →0.0 critical, recovery →1.4 healthy) |
+| F7 | D9 | **A buy could exceed the deployable money** (nearest-share rounding, up to half a share per symbol). | a buy that grows a long position rounds **down**; sells, closes and covers keep nearest-share so they match the held quantity | `vinu-live/tests/test_logic_money_chain_by_hand.py` (7,000 share: 12 shares = 84,000, was 13 = 91,000; reduction 12.4 → 12; close sells exactly the held 17) |
+| F8 | D2 (option A) | **A live-decision trade's outcome reached nobody.** | `GET /live/decisions/{ticker}/{strategy}` now also returns `closed_positions` (exit reason, entry and exit price, return before costs); the agent's context tool passes them on as `past_closed_trades` | `vinu-live/tests/test_decision_context_route.py` (return −6% for 100 → 94; open and other-ticker rows excluded) |
+| F9 | D4 (option A) | **Evidence of other conditions made a strategy look evidenced.** | the context tool keeps only triggers recorded under the strategy's own must-condition names and recounts outcomes (`filtered_to_strategy`, `all_conditions_count` shown); one shared name rule, `vinu_infra/condition_names.py`, used by the poller and the filter | `vinu-agent/tests/test_get_live_decision_context_tool.py::TestEvidenceFilteredToTheStrategysOwnCondition` (5) |
+
 ## Decisions for you
 
-### D1. How fast should strategy decay be noticed?
+### D1. How fast should strategy decay be noticed?  — **DONE (option A, see F6)**
 
 Today (pinned by a test): baseline = first 5 re-backtest Sharpes, rolling = mean of **all** of them, so the baseline is diluted by the decay it should catch. Approved at 1.5, then 0.0 forever: HEALTHY until 7 entries, WARNING at 8, DECAYED at 11, and then 3 consecutive bad readings before the status changes. A drop from 1.5 to 0.4 is never flagged.
 
@@ -26,7 +31,7 @@ Today (pinned by a test): baseline = first 5 re-backtest Sharpes, rolling = mean
 | B | baseline = approval Sharpe, rolling = mean of the last K re-backtests | smoother than A, but K is a new number to guess |
 | C | leave as is (plus the F2 floor) | slow and blind to partial decay |
 
-### D2. Who should read a live-decision trade's return?
+### D2. Who should read a live-decision trade's return?  — **DONE (option A, see F8)**
 
 `return_pct` now exists (F3) but nothing reads it.
 
@@ -46,7 +51,7 @@ The tier (cold_start → mature) counts a "real trade" only as a calibration ent
 | B | register each live-decision strategy as a research artifact so the existing path counts it | one mechanism, but a larger structural change |
 | C | leave it; capital scaling stays opt-in and manual for this loop | nothing to build; the loop never "earns" trust automatically |
 
-### D4. Should the agent's evidence be filtered to the strategy's own must-condition?
+### D4. Should the agent's evidence be filtered to the strategy's own must-condition?  — **DONE (option A, see F9)**
 
 `get_signal_evidence` returns every trigger for the symbol, whatever its condition, and the `outcomes_recorded` count behind the uncertainty flag `no_recorded_outcomes` is symbol-wide. A strategy with no outcomes of its own can look evidenced because the SMA angle backfilled other rows for the ticker. The angle's names (`sma5_cross_sma50`) and the live names (`live_indicators.adx_14_gt_20`) differ.
 
@@ -96,7 +101,7 @@ The system notices real moves no strategy was watching (`unconfirmed moves`) and
 | B | turn each repeated unconfirmed move pattern into a candidate must-condition automatically | the vision's full loop, but it needs a matching rule that does not exist yet |
 | C | leave as is | the system finds nothing it was not told to look for |
 
-### D9. Should a buy round down instead of to the nearest share?
+### D9. Should a buy round down instead of to the nearest share?  — **DONE (option A, see F7)**
 
 Order quantities round to the **nearest** whole share, half up (`vinu-live/book/quantize.py`). A buy can exceed the deployable money by under half a share per symbol: one name at 7,000 per share with a 90,000 allowance orders 13 shares = 91,000 (pinned in `test_logic_money_chain_by_hand.py`). Negligible on cheap shares; visible on an expensive share in a small account.
 

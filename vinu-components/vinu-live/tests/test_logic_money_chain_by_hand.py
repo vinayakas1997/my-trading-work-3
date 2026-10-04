@@ -9,7 +9,7 @@ order into TWAP slices.
 
   normal  fraction 0.90: AAPL 0.6867 x 0.90 = 0.61803 -> 61,803 / 200 = 309.015 -> 309 shares
                          MSFT 0.3133 x 0.90 = 0.28197 -> 28,197 / 400 =  70.49  ->  70 shares   (89,800 deployed <= 90,000)
-  halve   fraction 0.45: AAPL 0.309015 -> 30,901.5 / 200 = 154.5075 -> 155 shares;  MSFT 0.140985 -> 14,098.5 / 400 = 35.25 -> 35
+  halve   fraction 0.45: AAPL 0.309015 -> 30,901.5 / 200 = 154.5075 -> 154 shares (buys round down);  MSFT 0.140985 -> 14,098.5 / 400 = 35.25 -> 35
   flat    fraction 0.00: both weights 0 -> nothing to buy, and anything already held is sold
 """
 
@@ -66,7 +66,7 @@ def test_normal_day_buys_309_and_70_shares(tmp_path):
 def test_after_a_drawdown_halve_only_half_the_capital_is_deployed(tmp_path):
     p = _portfolio(tmp_path, 45_000.0)
     assert p["deployable_fraction"] == pytest.approx(0.45)
-    assert _orders(p) == {"AAPL": ("buy", 155.0), "MSFT": ("buy", 35.0)}
+    assert _orders(p) == {"AAPL": ("buy", 154.0), "MSFT": ("buy", 35.0)}   # buys round down (D9)
 
 
 def test_after_a_flat_nothing_is_bought_and_what_is_held_is_sold(tmp_path):
@@ -93,12 +93,26 @@ def test_netting_opposite_strategies_on_one_symbol_orders_only_the_net():
     assert [(i.symbol, i.side, i.qty) for i in out] == [("AAPL", "buy", 5.0)]
 
 
-def test_known_limit_rounding_to_the_nearest_share_can_overshoot_the_deployable_money():
-    """Pins today's rule (decision D9 in features-logic-checking/00): one name with the whole 0.9 fraction on a 7,000
-    share: 90,000 / 7,000 = 12.857 -> 13 shares = 91,000, which is 1,000 above the deployable 90,000. The overshoot is
-    always under half a share per symbol, which matters on a small account holding expensive shares."""
+def test_a_buy_never_spends_more_than_the_deployable_money():
+    """D9: one name with the whole 0.9 fraction on a 7,000 share: 90,000 / 7,000 = 12.857 -> 12 shares = 84,000
+    (nearest-share used to order 13 = 91,000, 1,000 above the deployable 90,000)."""
     out = SignalTranslator().translate(
         [{"name": "s", "symbol": "BIG", "target_weight": 0.9}], {}, EQUITY, {"BIG": 7_000.0},
     )
-    assert [(i.symbol, i.side, i.qty) for i in out] == [("BIG", "buy", 13.0)]
-    assert out[0].qty * 7_000.0 - 0.9 * EQUITY == pytest.approx(1_000.0)
+    assert [(i.symbol, i.side, i.qty) for i in out] == [("BIG", "buy", 12.0)]
+    assert out[0].qty * 7_000.0 <= 0.9 * EQUITY
+
+
+def test_a_reduction_still_rounds_to_the_nearest_share():
+    """Holding 20, target 7.6 shares: sell 12.4 -> 12 (nearest), so the position lands next to the target."""
+    out = SignalTranslator().translate(
+        [{"name": "s", "symbol": "BIG", "target_weight": 0.076}], {"BIG": 20.0}, EQUITY, {"BIG": 1_000.0},
+    )
+    assert [(i.symbol, i.side, i.qty) for i in out] == [("BIG", "sell", 12.0)]
+
+
+def test_closing_to_zero_sells_exactly_the_held_quantity():
+    out = SignalTranslator().translate(
+        [{"name": "s", "symbol": "BIG", "target_weight": 0.0}], {"BIG": 17.0}, EQUITY, {"BIG": 100.0},
+    )
+    assert [(i.symbol, i.side, i.qty) for i in out] == [("BIG", "sell", 17.0)]

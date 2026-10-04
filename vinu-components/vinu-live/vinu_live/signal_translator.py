@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from vinu_live.book.quantize import (
+    floor_qty,
     money_float,
     quantize_money,
     quantize_qty,
@@ -181,7 +182,14 @@ class SignalTranslator:
         # Quantize the order quantity to the instrument's tradeable
         # increment (whole shares by default) -- never emit a fractional
         # share count computed from float division (task 12).
-        abs_qty = quantize_qty(abs(delta))
+        #
+        # A buy that grows a long position rounds DOWN, so it can never spend more than the target allows
+        # (nearest-share could overshoot by under half a share per symbol: decision D9). Reductions, closes and
+        # covers keep nearest-share so they still match the held quantity.
+        if delta > 0 and target_qty > 0:
+            abs_qty = floor_qty(delta)
+        else:
+            abs_qty = quantize_qty(abs(delta))
         if abs_qty <= 0:
             return None
 

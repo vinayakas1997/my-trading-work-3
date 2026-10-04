@@ -251,12 +251,13 @@ def create_app() -> FastAPI:
         logged, never kept anywhere queryable (LiveDecisionRecord,
         live_decision/storage.py). Read-only, same posture as
         get_signal_evidence: honest raw rows, no computed statistic."""
-        from vinu_live.live_decision.storage import list_live_decisions
+        from vinu_live.live_decision.storage import list_closed_positions, list_live_decisions
 
         config = load_config()
         backend = LiveDecisionBackend(str(config.data_root / "live_decision.db"))
         try:
             records = list_live_decisions(backend, ticker.upper(), strategy_id, limit=limit)
+            closed = list_closed_positions(backend, ticker.upper(), strategy_id, limit=limit)
         finally:
             backend.close()
         return {
@@ -264,6 +265,18 @@ def create_app() -> FastAPI:
             "ticker": ticker.upper(),
             "strategy_id": strategy_id,
             "count": len(records),
+            # What happened to earlier EXECUTEs: raw facts only, return is the reference return before costs.
+            "closed_positions": [
+                {
+                    "opened_bar_ts": p.opened_bar_ts,
+                    "closed_bar_ts": p.closed_bar_ts,
+                    "closed_reason": p.closed_reason,
+                    "entry_price": p.entry_price,
+                    "exit_price": p.exit_price,
+                    "return_pct": p.return_pct,
+                }
+                for p in closed
+            ],
             "decisions": [
                 {
                     "trigger_id": r.trigger_id,

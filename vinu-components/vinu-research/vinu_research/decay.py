@@ -122,9 +122,13 @@ def compute_strategy_decay_metrics(
     if len(bench_history) < 2:
         return {"sharpe_ratio": 0.0, "rolling_sharpe": 0.0, "n_entries": len(bench_history)}
 
-    baseline = bench_history[:5] if len(bench_history) >= 5 else bench_history[:]
-    baseline_sharpe = statistics.mean(e.sharpe for e in baseline) if baseline else 0.0
-    rolling_sharpe = statistics.mean(e.sharpe for e in bench_history)
+    # Baseline = the Sharpe it was approved with (the first entry); current = the latest re-backtest. The old
+    # "mean of the first 5 vs the mean of all" diluted the baseline with the very decay it should catch (approved
+    # 1.5, then 0.0 forever: not flagged until 8 entries). One noisy re-backtest still cannot demote on its own:
+    # transition_status needs 3 consecutive bad readings. `rolling_sharpe` keeps its name (stored column) but is
+    # now the latest re-backtest Sharpe.
+    baseline_sharpe = bench_history[0].sharpe
+    rolling_sharpe = bench_history[-1].sharpe
     sharpe_ratio = (
         rolling_sharpe / baseline_sharpe if abs(baseline_sharpe) > 1e-10 else 0.0
     )

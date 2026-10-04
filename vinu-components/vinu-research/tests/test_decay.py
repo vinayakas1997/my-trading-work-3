@@ -599,15 +599,17 @@ class TestStrategyDecayLogicByHand:
         assert self._health([1.5, -0.5, -0.5, -0.5]) == "CRITICAL"
         assert self._health([1.5] + [-0.5] * 10) == "CRITICAL"
 
-    def test_a_strategy_that_stays_positive_is_judged_by_the_ratio_as_before(self):
-        # 1.5 then 0.4 for 14 re-backtests: ratio 0.76 >= 0.7 -> HEALTHY (a large drop that the ratio tolerates).
-        assert self._health([1.5] + [0.4] * 14) == "HEALTHY"
+    def test_latest_re_backtest_is_judged_against_the_approval_sharpe(self):
+        # D1 option A: ratio = latest / approved (1.5), bands 0.7 / 0.5 / 0.3.
+        assert self._health([1.5, 1.2]) == "HEALTHY"    # 0.80
+        assert self._health([1.5, 1.0]) == "WARNING"    # 0.67
+        assert self._health([1.5, 0.6]) == "DECAYED"    # 0.40
+        assert self._health([1.5, 0.4]) == "CRITICAL"   # 0.27 (was never flagged before D1)
 
-    def test_known_lag_a_collapse_to_zero_is_only_noticed_on_the_8th_and_11th_entry(self):
-        # Pins today's behaviour so a change to the metric is deliberate (decision D-DECAY-2 in
-        # features-logic-checking/): baseline = first 5 entries, rolling = mean of ALL entries, so the baseline
-        # is diluted by the very decay it should detect.
-        assert self._health([1.5] + [0.0] * 6) == "HEALTHY"   # 7 entries, ratio 0.71
-        assert self._health([1.5] + [0.0] * 7) == "WARNING"   # 8 entries, ratio 0.62
-        assert self._health([1.5] + [0.0] * 9) == "WARNING"   # 10 entries, ratio 0.50
-        assert self._health([1.5] + [0.0] * 10) == "DECAYED"  # 11 entries, ratio 0.45
+    def test_a_collapse_to_zero_is_noticed_on_the_very_next_re_backtest(self):
+        # was: HEALTHY until 7 entries, WARNING at 8, DECAYED at 11. The 3-consecutive-readings rule in
+        # transition_status still keeps one noisy backtest from demoting a strategy.
+        assert self._health([1.5, 0.0]) == "CRITICAL"
+
+    def test_a_recovery_reads_healthy_again(self):
+        assert self._health([1.5, 0.0, 1.4]) == "HEALTHY"   # 1.4 / 1.5 = 0.93

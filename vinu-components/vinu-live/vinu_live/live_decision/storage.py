@@ -534,6 +534,21 @@ def list_open_positions(
     return [_row_to_open_position(row) for row in rows]
 
 
+def list_closed_positions(
+    backend: LiveDecisionBackend, ticker: str, strategy_id: str, limit: int = 20,
+) -> list[LiveDecisionOpenPosition]:
+    """Newest-first closed positions for one (ticker, strategy): what happened to earlier EXECUTEs
+    (exit reason, reference return). Read by the decisions route so the deciding agent sees its own past
+    outcomes (features-logic-checking D2)."""
+    conn = backend._get_conn()
+    rows = conn.execute(
+        f"SELECT * FROM {LIVE_DECISION_OPEN_POSITIONS_TABLE} WHERE status='closed' AND ticker=? AND strategy_id=? "
+        "ORDER BY id DESC LIMIT ?",
+        (ticker, strategy_id, int(limit)),
+    ).fetchall()
+    return [_row_to_open_position(row) for row in rows]
+
+
 def set_entry_price_if_missing(
     backend: LiveDecisionBackend, position_id: int, price: float,
 ) -> bool:

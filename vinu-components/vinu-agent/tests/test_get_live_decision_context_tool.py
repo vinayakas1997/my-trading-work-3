@@ -58,7 +58,11 @@ class TestGetLiveDecisionContextTool:
         with patch("httpx.get", side_effect=_get), \
               patch(
                   "vinu_agent.tools.get_live_decision_context_tool.GetSignalEvidenceTool.execute",
-                  return_value=json.dumps({"status": "ok", "symbol": "AAPL", "count": 3, "outcomes_recorded": 2, "triggers": []}),
+                  return_value=json.dumps({"status": "ok", "symbol": "AAPL", "count": 3, "outcomes_recorded": 2, "triggers": [
+                      {"must_condition": ["live_indicators.sma_5_gt_sma_50_eq_True"], "outcome_recorded_at": "t"},
+                      {"must_condition": ["live_indicators.sma_5_gt_sma_50_eq_True"], "outcome_recorded_at": "t"},
+                      {"must_condition": ["live_indicators.sma_5_gt_sma_50_eq_True"], "outcome_recorded_at": None},
+                  ]}),
               ):
             result = json.loads(tool.execute(ticker="aapl", strategy_id="sma_cross"))
 
@@ -318,3 +322,46 @@ class TestUncertaintyInContext:
     def test_missing_snapshot_and_unavailable_evidence_are_named(self) -> None:
         out = self._run({}, {"status": "error"})
         assert {"live_snapshot", "signal_evidence"} <= set(out["uncertainty"]["missing_inputs"])
+
+
+class TestEvidenceFilteredToTheStrategysOwnCondition:
+    """features-logic-checking D4: rows recorded for other conditions on the same ticker must not count."""
+
+    OWN = [{"source": "live_indicators", "key": "adx_14", "operator": "gt", "value": 20}]
+    OWN_NAME = "live_indicators.adx_14_gt_20"
+
+    def _summary(self):
+        return {"status": "ok", "symbol": "AAPL", "count": 4, "outcomes_recorded": 3, "triggers": [
+            {"must_condition": [self.OWN_NAME], "outcome_recorded_at": "t"},
+            {"must_condition": [self.OWN_NAME], "outcome_recorded_at": None},
+            {"must_condition": "sma5_cross_sma50", "outcome_recorded_at": "t"},     # the angle backfill, another condition
+            {"must_condition": ["sma5_cross_sma50"], "outcome_recorded_at": "t"},
+        ]}
+
+    def test_only_rows_with_the_strategys_own_name_are_kept_and_recounted(self):
+        from vinu_agent.tools.get_live_decision_context_tool import _filter_to_strategy_conditions
+        out = _filter_to_strategy_conditions(self._summary(), self.OWN)
+        assert out["count"] == 2 and out["outcomes_recorded"] == 1
+        assert out["all_conditions_count"] == 4 and out["filtered_to_strategy"] is True
+        assert out["strategy_conditions"] == [self.OWN_NAME]
+
+    def test_a_strategy_with_no_evidence_of_its_own_now_shows_zero_outcomes(self):
+        from vinu_agent.tools.get_live_decision_context_tool import _filter_to_strategy_conditions
+        other = [{"source": "live_indicators", "key": "rsi_14", "operator": "lt", "value": 30}]
+        out = _filter_to_strategy_conditions(self._summary(), other)
+        assert out["count"] == 0 and out["outcomes_recorded"] == 0
+
+    def test_without_a_known_condition_list_nothing_is_filtered_and_it_says_so(self):
+        from vinu_agent.tools.get_live_decision_context_tool import _filter_to_strategy_conditions
+        for unknown in (None, [], "x"):
+            out = _filter_to_strategy_conditions(self._summary(), unknown)
+            assert out["count"] == 4 and out["filtered_to_strategy"] is False
+
+    def test_an_error_summary_passes_through_untouched(self):
+        from vinu_agent.tools.get_live_decision_context_tool import _filter_to_strategy_conditions
+        s = {"status": "error", "error": "x"}
+        assert _filter_to_strategy_conditions(s, self.OWN) == s
+
+    def test_the_name_rule_is_the_one_the_live_poller_records_under(self):
+        from vinu_infra.condition_names import condition_name
+        assert condition_name(self.OWN[0]) == self.OWN_NAME

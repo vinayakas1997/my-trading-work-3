@@ -106,3 +106,32 @@ class TestDecisionContextNovelty:
                              snapshot_data={"status": "ok", "ratio": 3.0, "novelty_high": True})
         backend.close()
         assert test_client.get("/live/decision-context/AAPL/s").json()["novelty"]["novelty_high"] is True
+
+
+class TestDecisionsRouteShowsHowEarlierTradesEnded:
+    """features-logic-checking D2: the deciding agent sees what became of earlier EXECUTEs."""
+
+    def test_closed_positions_carry_exit_reason_and_return_and_exclude_others(self, client) -> None:
+        from vinu_live.live_decision.storage import close_position, open_position, set_entry_price_if_missing
+
+        test_client, config = client
+        backend = LiveDecisionBackend(str(config.data_root / "live_decision.db"))
+        try:
+            lost = open_position(backend, ticker="AAPL", strategy_id="s", position_size=0.05, opened_bar_ts=1000)
+            set_entry_price_if_missing(backend, lost.id, 100.0)
+            close_position(backend, lost.id, reason="stop_loss", bar_ts=2000, exit_price=94.0)
+            still_open = open_position(backend, ticker="AAPL", strategy_id="s", position_size=0.05, opened_bar_ts=3000)
+            other = open_position(backend, ticker="MSFT", strategy_id="s", position_size=0.05, opened_bar_ts=1000)
+            close_position(backend, other.id, reason="agent_exit", bar_ts=2000)
+        finally:
+            backend.close()
+
+        body = test_client.get("/live/decisions/AAPL/s").json()
+        assert len(body["closed_positions"]) == 1                      # not the open one, not MSFT's
+        p = body["closed_positions"][0]
+        assert (p["entry_price"], p["exit_price"], p["closed_reason"]) == (100.0, 94.0, "stop_loss")
+        assert p["return_pct"] == pytest.approx(-0.06)                 # (94 - 100) / 100
+
+    def test_no_closed_trades_is_an_empty_list(self, client) -> None:
+        test_client, _ = client
+        assert test_client.get("/live/decisions/AAPL/s").json()["closed_positions"] == []
