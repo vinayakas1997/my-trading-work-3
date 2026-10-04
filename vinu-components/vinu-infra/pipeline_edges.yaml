@@ -409,6 +409,22 @@ edges:
     contract: NotableBeliefs
     instrumented: true
 
+  - id: initial_analysis.trend_lifecycle_rows->agent.live_decision_context
+    producer:
+      service: vinu-initial-analysis
+      files: [vinu-initial-analysis/vinu_initial_analysis/server/routes_read.py]
+      defines: ['"/angle/{angle_name}/{ticker}"', '"row_count"', '"data"']
+    consumer:
+      service: vinu-agent
+      files: [vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py]
+      references: ['/analysis/angle/trend_lifecycle/', '"data"']
+      purpose: what followed the earlier peaks that look like today's (market memory summary)
+    cadence: per decision
+    empty_ok: true
+    status: wired
+    contract: AngleRows
+    instrumented: true
+
   - id: research.unconfirmed_moves->agent.live_decision_context
     producer:
       service: vinu-research

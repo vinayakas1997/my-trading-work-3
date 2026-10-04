@@ -235,6 +235,19 @@ class NotableBeliefs(EdgeContract):
     )
 
 
+@contract_for("initial_analysis.trend_lifecycle_rows->agent.live_decision_context")
+class AngleRows(EdgeContract):
+    """GET /analysis/angle/{angle}/{ticker}: the stored rows of one angle, oldest first; `data` is empty until the angle has run."""
+
+    data: list[dict[str, Any]]
+    row_count: int = 0
+
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={"examples": [{"data": [{"type": "summary", "analogue_n": 5}], "row_count": 1}]},
+    )
+
+
 @contract_for("research.unconfirmed_moves->agent.live_decision_context")
 class UnconfirmedMoves(EdgeContract):
     """GET /research/unconfirmed-moves: real moves with no matching trigger on file."""

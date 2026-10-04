@@ -62,6 +62,22 @@ def _get_maturity_consultation_store() -> Any:
     return _maturity_consultation_store
 
 
+_ANGLE_GRANULARITY = {"1m": "1min", "5m": "5min", "15m": "15min", "1h": "1H", "4h": "4H", "1d": "1D"}
+
+
+def _latest_analogue_summary(rows: Any) -> dict:
+    """The market-memory summary (features-logic-checking D7) from the newest trend_lifecycle summary row:
+    how many earlier peaks looked like the latest one and what followed them. {} when there is no such row
+    or it carries no analogue fields; nothing is computed here."""
+    if not isinstance(rows, list):
+        return {}
+    summaries = [r for r in rows if isinstance(r, dict) and r.get("type") == "summary" and r.get("analogue_n") is not None]
+    if not summaries:
+        return {}
+    latest = max(summaries, key=lambda r: str(r.get("analysis_at") or ""))
+    return {k: v for k, v in latest.items() if k.startswith("analogue_")}
+
+
 def _filter_to_strategy_conditions(summary: dict, must_conditions: Any) -> dict:
     """Keep only the trigger rows recorded under THIS strategy's own must-conditions (exact names, via the shared
     `condition_names` rule the live poller records under), and recount outcomes on that subset. Otherwise rows
@@ -114,7 +130,9 @@ class GetLiveDecisionContextTool(BaseTool):
         "reflection beliefs across clusters -- advisory system-health notes, e.g. regime "
         "degrading; [] means all routine or the fetch failed). past_closed_trades lists how "
         "earlier EXECUTEs on this ticker and strategy ended (exit reason, entry and exit "
-        "price, return before costs); a null return means it was not recorded."
+        "price, return before costs); a null return means it was not recorded. similar_past_peaks "
+        "summarises how many earlier peaks looked like the latest one and what followed them "
+        "(mean/median/worst drawdown, share that recovered); {} means none on file."
     )
     parameters = {
         "type": "object",
@@ -158,6 +176,14 @@ class GetLiveDecisionContextTool(BaseTool):
 
         maturity_status = self._maturity_status_if_enabled(ticker, strategy_id)
 
+        analysis_url = self._services_config.get("vinu_initial_analysis", "http://localhost:8083").rstrip("/")
+        granularity = _ANGLE_GRANULARITY.get(str(strategy_config.get("schedule", "1d")).lower(), "1D")
+        lifecycle = self._fetch_json(
+            f"{analysis_url}/analysis/angle/trend_lifecycle/{ticker}?granularity={granularity}",
+            edge_id="initial_analysis.trend_lifecycle_rows->agent.live_decision_context", non_empty_key="data",
+        )
+        analogue_summary = _latest_analogue_summary(lifecycle.get("data"))
+
         research_url = self._services_config.get("vinu_research", "http://localhost:8087")
         unconfirmed = self._fetch_json(
             f"{research_url}/research/unconfirmed-moves?symbol={ticker}&limit=10",
@@ -197,6 +223,7 @@ class GetLiveDecisionContextTool(BaseTool):
             "signal_evidence_summary": signal_evidence_summary,
             "past_live_decisions": past_decisions.get("decisions", []),
             "past_closed_trades": past_decisions.get("closed_positions", []),
+            "similar_past_peaks": analogue_summary,
             "maturity_status": maturity_status,
             "unconfirmed_moves": unconfirmed.get("events", []),
             "reflection_notes": notable.get("beliefs", []),

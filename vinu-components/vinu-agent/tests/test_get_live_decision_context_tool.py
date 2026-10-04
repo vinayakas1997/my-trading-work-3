@@ -365,3 +365,55 @@ class TestEvidenceFilteredToTheStrategysOwnCondition:
     def test_the_name_rule_is_the_one_the_live_poller_records_under(self):
         from vinu_infra.condition_names import condition_name
         assert condition_name(self.OWN[0]) == self.OWN_NAME
+
+
+class TestSimilarPastPeaksSummary:
+    """features-logic-checking D7: the market-memory summary reaches the deciding agent."""
+
+    ROWS = [
+        {"type": "match", "analogue_n": None},
+        {"type": "summary", "analysis_at": "2026-10-01", "analogue_n": 2, "analogue_worst_drawdown_pct": -0.04, "total_peaks": 9},
+        {"type": "summary", "analysis_at": "2026-10-03", "analogue_n": 5, "analogue_worst_drawdown_pct": -0.10,
+         "analogue_share_recovered": 0.6, "total_peaks": 11},
+    ]
+
+    def test_newest_summary_row_and_only_its_analogue_fields(self):
+        from vinu_agent.tools.get_live_decision_context_tool import _latest_analogue_summary
+        assert _latest_analogue_summary(self.ROWS) == {
+            "analogue_n": 5, "analogue_worst_drawdown_pct": -0.10, "analogue_share_recovered": 0.6,
+        }
+
+    def test_no_rows_or_no_analogue_fields_gives_empty(self):
+        from vinu_agent.tools.get_live_decision_context_tool import _latest_analogue_summary
+        assert _latest_analogue_summary([]) == {} and _latest_analogue_summary(None) == {}
+        assert _latest_analogue_summary([{"type": "summary", "total_peaks": 3}]) == {}
+
+    def test_the_tool_returns_it_and_asks_for_the_strategys_own_timeframe(self):
+        tool = _tool()
+        seen = []
+
+        def _get(url, **kwargs):
+            seen.append(url)
+            if "/analysis/angle/trend_lifecycle/" in url:
+                return _resp({"symbol": "AAPL", "angle": "trend_lifecycle", "row_count": 3, "data": self.ROWS})
+            if "/strategy/strategies/" in url:
+                return _resp({"name": "s", "schedule": "1h", "must_conditions": []})
+            return _resp({})
+
+        with patch("httpx.get", side_effect=_get), patch(
+            "vinu_agent.tools.get_live_decision_context_tool.GetSignalEvidenceTool.execute",
+            return_value=json.dumps({"status": "ok", "symbol": "AAPL", "count": 0, "outcomes_recorded": 0, "triggers": []}),
+        ):
+            result = json.loads(tool.execute(ticker="aapl", strategy_id="s"))
+
+        assert result["similar_past_peaks"]["analogue_n"] == 5
+        assert any(u.endswith("/analysis/angle/trend_lifecycle/AAPL?granularity=1H") for u in seen)
+
+    def test_a_failed_fetch_leaves_the_field_empty_not_missing(self):
+        tool = _tool()
+        with patch("httpx.get", side_effect=RuntimeError("down")), patch(
+            "vinu_agent.tools.get_live_decision_context_tool.GetSignalEvidenceTool.execute",
+            return_value=json.dumps({"status": "ok", "symbol": "AAPL", "count": 0, "outcomes_recorded": 0, "triggers": []}),
+        ):
+            result = json.loads(tool.execute(ticker="aapl", strategy_id="s"))
+        assert result["similar_past_peaks"] == {}

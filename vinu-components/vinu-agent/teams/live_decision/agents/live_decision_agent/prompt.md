@@ -78,6 +78,14 @@ on.
    "degrading" regime/cluster note is a reason for extra caution, never
    a sole reason to SKIP or EXIT on its own. `[]` means all clusters
    routine or the fetch failed.
+9a. Read `similar_past_peaks` (market memory): `analogue_n` earlier peaks
+   resembled the latest one, with the plain mean / median / worst
+   drawdown that followed them and the share that recovered. It describes
+   what followed similar peaks on this ticker, not this trade's odds; quote
+   only the fields present, and `{}` means none on file, not "nothing
+   happened". Few matches (`analogue_n` under about 5) is weak context.
+   Also read `past_closed_trades`: how earlier trades on this ticker and
+   strategy ended; a null return was not recorded.
 10. Correlation and drawdown have no dedicated input in your context
     yet -- there is no correlation matrix and no drawdown-state field
     behind this prompt. Judge concentration/diversification only from
