@@ -6,15 +6,16 @@ Vision: *"exit on invalidation; never let one trade hurt the portfolio; risk lit
 
 ## Q1. A position starts losing. What stops it, in order?
 
-Five independent layers. Each one can end the trade on its own; none depends on the model being right.
+Five independent layers. Each one can end the trade on its own; none depends on the model being right. **Every layer's logic WORKS (hand examples below); whether it is active on a fresh install is a separate column, because several are opt-in flags** (`../the-inconsistencies-v2/06-live-behavior-flags.md`).
 
-| # | Layer | Fires when | Verdict |
-|---|---|---|---|
-| 1 | **Rule stop** (`position_rules.evaluate_position_rules`) | newest close ≤ entry × (1 − stop%) (a short: ≥ entry × (1 + stop%)) | **WORKS, WITH A LIMIT:** off unless the strategy sets `live_decision_stop_pct` (default `0.0` = no stop, by design: no invented default) |
-| 2 | **Time stop** (same function) | bars held ≥ `live_decision_max_hold_bars` | **WORKS, WITH A LIMIT:** also off by default |
-| 3 | **Agent thesis review** (`poller._review_open_positions`) | every `review_cadence_bars` (5) the same deciding agent is asked HOLD or EXIT | mechanism **WORKS**; whether the agent judges well **waits for data** |
-| 4 | **Per-symbol daily loss tiers** (`portfolio/risk_budget.py`, enforced in `order_guard._check_risk_budget`) | symbol's day P&L ≤ −1% / −2% / −3% of equity | **WORKS** |
-| 5 | **Account-level breakers** (daily-loss breaker in `live/breaker/engine.py`, drawdown ladder in `portfolio/circuit_breakers.py`) | day loss > 5%, or drawdown from peak −10% / −15% / −20% | **WORKS** |
+| # | Layer | Fires when | Logic | On a fresh install |
+|---|---|---|---|---|
+| 1 | **Rule stop** (`position_rules.evaluate_position_rules`) | newest close ≤ entry × (1 − stop%) (a short: ≥ entry × (1 + stop%)) | **WORKS** | **off** until the strategy sets `live_decision_stop_pct` (default `0.0`: no invented default) |
+| 2 | **Time stop** (same function) | bars held ≥ `live_decision_max_hold_bars` | **WORKS** | **off** until the strategy sets it |
+| 3 | **Agent thesis review** (`poller._review_open_positions`) | every 5 bars the deciding agent is asked HOLD or EXIT | mechanism **WORKS**; judgement quality **waits for data** | **on**, but see Q1b: the agent is told not to use the position's P&L |
+| 4 | **Per-symbol daily loss tiers** (`portfolio/risk_budget.py`, enforced in `order_guard._check_risk_budget`) | symbol's day P&L ≤ −1% / −2% / −3% of equity | **WORKS** | **on** (new/increasing orders only) |
+| 5a | **Daily-loss breaker** (`live/breaker/engine.py`, 5% of equity) | day loss > 5% | **WORKS** | **partly blind**: it measures realized loss in the trade-plan book, which the scheduler and live-decision loop never write to; sees the broker's real equity only with `scheduler_breaker_uses_broker_account` |
+| 5b | **Drawdown ladder** (`portfolio/circuit_breakers.py`) | drawdown from peak −10% halve, −15% flat, −20% halt | **WORKS** | the **−20% halt** (real kill switch) is on whenever the drawdown monitor runs; **halve / flat only reach orders with `scheduler_use_daily_allocation`** |
 
 ### 1. Rule stop: worked example
 
@@ -33,7 +34,9 @@ Tests: `vinu-live/tests/test_live_decision_position_rules.py` (rule function, po
 
 ### What happens after the exit is decided (verified chain)
 
-`close_position` marks the row `closed` → the next scheduler cycle no longer emits that position's weight → `SignalTranslator`'s existing "held but not targeted → close to 0" rule sells it (`live_decision/storage.py close_position`, `vinu-live/vinu_live/scheduler.py`). No special sell code. Exits are never blocked by halts: `reduce_only` orders bypass the halted-symbol check (`order_guard`, `test_reduce_only_bypasses_halted_symbol`; `test_scheduler_exits_exempt.py`), which is the right logic: a risk limit must never trap you in a losing position.
+`close_position` marks the row `closed` → the next scheduler cycle no longer emits that position's weight → `SignalTranslator`'s existing "held but not targeted → close to 0" rule sells it (`live_decision/storage.py close_position`, `vinu-live/vinu_live/scheduler.py`). No special sell code.
+
+**Can a halt trap the position? Yes, on a fresh install.** The order guard lets a `reduce_only` order through a kill-switch halt (policy `entries_only`, the default; `test_reduce_only_bypasses_halted_symbol`), and the per-symbol risk tiers never block a reduce-only order. But the scheduler only tags its closing orders `reduce_only` when `scheduler_exits_exempt_from_halts` is on (default **off**; `test_scheduler_exits_exempt.py` covers the flag-on behaviour). With it off, a breaker halt makes the scheduler skip its whole cycle, the −20% drawdown halt makes the order guard reject the closing sell, and the per-slice spread and earnings gates can also skip a closing sell. This is the documented A5 flag, listed in `06-live-behavior-flags.md` as "before real money". In paper trading the cost is a position that cannot be closed during a halt; with real money it is exactly what the vision says must never happen. Recommendation: turn it on now, together with `scheduler_breaker_uses_broker_account`.
 
 ### 4. Per-symbol tiers: worked example (equity 100,000)
 
@@ -59,6 +62,12 @@ Tests: `vinu-portfolio/tests/test_risk_budget.py` (tier thresholds, regime compo
 Tests: `vinu-portfolio/tests/test_circuit_breakers.py` lines 201-223 assert exactly these numbers. With reserve 10% and a halve, deployable equity is 100,000 × 0.9 × 0.5 = **45,000** (`service.py _drawdown_action_multiplier`).
 
 **Waits for data:** whether −1%/−2%/−3%, −10%/−15%/−20% and the review cadence of 5 bars are the right numbers. They are guessed defaults; Phase 2 paper data is what tunes them.
+
+---
+
+## Q1b. Does the reviewing agent know the position is losing?
+
+**Verdict: GAP by deliberate deferral (DECISION D6).** The review prompt says: *"There is still no computed win-rate, expectancy, unrealized P&L, or confidence score available to you ... You are judging whether the original qualitative case still stands, not scoring the trade's current profitability."* The task it receives carries only `opened_at`, `opened_bar_ts` and `position_size`. So HOLD/EXIT is decided from the thesis (precondition, evidence, regime), never from "this is down 6%". The vision lists this as deferred until a bucket table exists (`../vision-trding-system.md` B13). It is a design choice, not a defect, but it means that in a slow bleed that never touches a configured stop, **no layer except the account-level ones ever sees the loss**. The facts the agent would need (entry price, last close, return since entry, bars held) are all known to the poller now (entry price since the A3 fix, last close from the cycle). See D6 in `00`.
 
 ---
 

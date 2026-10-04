@@ -348,6 +348,10 @@ services:
       - ./data/research:/research-data
       - ./data/shared:/shared
       - ./data/strategy-evaluation:/strategy-eval
+      # The regime-alignment tilt and the sleeve (style) split read vinu-agent/skills/strategy-tags/tags.yaml at
+      # <package root>/vinu-agent/skills/... . Without this mount the file is absent in the container, tags load as
+      # empty, and the regime tilt is a permanent no-op (features-logic-checking F5).
+      - ./vinu-agent/skills:/app/vinu-agent/skills:ro
     cap_drop:
       - ALL
     cap_add:
