@@ -403,7 +403,8 @@ class StrategyResearchLoop:
 
         # Check if this symbol has been exhausted (too many consecutive
         # validation failures or lifetime trials without a passing strategy).
-        if self._storage is not None and self._storage.is_symbol_exhausted(symbol):
+        if (self._storage is not None and not self._config.ignore_symbol_exhaustion
+                and self._storage.is_symbol_exhausted(symbol)):
             LOG.warning("Symbol %s is exhausted — returning early", symbol)
             return ResearchResult(
                 symbol=symbol,

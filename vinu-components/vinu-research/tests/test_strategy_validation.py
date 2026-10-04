@@ -105,9 +105,12 @@ class FakeService:
         if isinstance(a, Exception):
             raise a
         rid = len(self.calls)
+        if a.get("skipped"):
+            return {"id": rid, "outcome_status": "no_strategy_found", "total_iterations": 0, "best_sharpe": 0.0,
+                    "report_md": "## Symbol " + kw["symbol"] + " is exhausted\n\nSkipping."}
         self.records[rid] = SimpleNamespace(symbol=kw["symbol"], best_sharpe=a["sharpe"], deflated_sharpe=a["dsr"],
                                             holdout_passed=a["holdout"], stress_test_passed=a["stress"], pbo=a["pbo"])
-        return {"id": rid, "outcome_status": a.get("outcome", "passed"), "best_sharpe": a["sharpe"],
+        return {"id": rid, "total_iterations": 1, "outcome_status": a.get("outcome", "passed"), "best_sharpe": a["sharpe"],
                 "deflated_sharpe": a["dsr"], "holdout_passed": a["holdout"], "stress_test_passed": a["stress"], "diagnosis": ""}
 
 
@@ -171,3 +174,28 @@ async def test_the_fingerprint_changes_when_the_rules_change(tmp_path):
     changed = {**DEFINITION, "must_conditions": [{**PULLBACK[2], "value": 25}] + PULLBACK[:2]}
     b = await validate_strategy(svc, changed, "2022-01-03", "2026-10-02")
     assert a["fingerprint"] != b["fingerprint"]
+
+
+@pytest.mark.asyncio
+async def test_validation_runs_are_flagged_so_research_ignores_the_exhausted_flag(tmp_path):
+    svc = FakeService(tmp_path, {t: GOOD for t in DEFINITION["universe"]})
+    await validate_strategy(svc, DEFINITION, "2022-01-03", "2026-10-02")
+    assert svc.calls and all(c["validation"] is True for c in svc.calls)
+
+
+@pytest.mark.asyncio
+async def test_a_ticker_research_skipped_is_not_tested_never_rejected(tmp_path):
+    """Research answered 'symbol is exhausted, skipping' for every ticker: nothing was tested, so the verdict is
+    'not_tested' (still blocked), not 'rejected' (which would claim the strategy was judged and failed)."""
+    svc = FakeService(tmp_path, {t: {"skipped": True} for t in DEFINITION["universe"]})
+    out = await validate_strategy(svc, DEFINITION, "2022-01-03", "2026-10-02")
+    assert out["status"] == "not_tested" and out["detail"]["eligible_tickers"] == []
+    first = out["detail"]["per_ticker"]["AAPL"]
+    assert first["tested"] is False and "research did not run it" in first["reasons"][0] and "exhausted" in first["reasons"][0]
+
+
+@pytest.mark.asyncio
+async def test_some_skipped_and_the_rest_failing_is_a_rejection_of_what_was_tested(tmp_path):
+    svc = FakeService(tmp_path, {"AAPL": {"skipped": True}, "MSFT": BAD, "GOOGL": BAD, "AMZN": BAD, "META": BAD})
+    out = await validate_strategy(svc, DEFINITION, "2022-01-03", "2026-10-02")
+    assert out["status"] == "rejected"

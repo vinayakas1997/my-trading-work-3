@@ -179,22 +179,33 @@ async def validate_strategy(service: Any, definition: dict[str, Any], from_date:
             run = await service.run_research(
                 user_idea=f"validate live-decision strategy {name} ({interval}) on {ticker}", symbol=ticker,
                 from_date=from_date, to_date=to_date, strategy_code=code, indicators=indicators,
-                interval=interval, max_iterations=1,
+                interval=interval, max_iterations=1, validation=True,
             )
+            if not run.get("total_iterations"):
+                # Research did not run it at all (skipped). That is "not tested", never "rejected".
+                first_line = (run.get("report_md") or "").strip().splitlines()[0] if run.get("report_md") else "no report"
+                per_ticker[ticker] = {"eligible": False, "tested": False, "outcome": "not_run",
+                                      "reasons": [f"research did not run it: {first_line}"], "run_id": run.get("id")}
+                continue
             record = await service._run_in_thread(service._storage.get_run, run["id"])
             eligible, reasons = _eligible(record, service.config) if record is not None else (False, ["run record missing"])
             if run.get("outcome_status") != "passed" and eligible:
                 eligible, reasons = False, ["the research loop did not pass it"]
             per_ticker[ticker] = {
-                "eligible": bool(eligible), "reasons": reasons, "outcome": run.get("outcome_status"),
+                "eligible": bool(eligible), "tested": True, "reasons": reasons, "outcome": run.get("outcome_status"),
                 "sharpe": run.get("best_sharpe"), "deflated_sharpe": run.get("deflated_sharpe"),
                 "holdout_passed": run.get("holdout_passed"), "stress_test_passed": run.get("stress_test_passed"),
                 "diagnosis": run.get("diagnosis", ""), "run_id": run.get("id"),
             }
         except Exception as exc:  # noqa: BLE001 -- one ticker failing must not hide the others
-            per_ticker[ticker] = {"eligible": False, "reasons": [f"{type(exc).__name__}: {exc}"], "outcome": "error"}
+            per_ticker[ticker] = {"eligible": False, "tested": False, "reasons": [f"{type(exc).__name__}: {exc}"], "outcome": "error"}
     passed = sorted(t for t, d in per_ticker.items() if d["eligible"])
+    tested = [t for t, d in per_ticker.items() if d.get("tested")]
     share = len(passed) / len(tickers)
-    status = "validated" if share >= MIN_PASS_SHARE else "rejected"
+    if not tested:
+        # nothing was actually tested (all skipped or errored): that is not a rejection, it is unknown. Still blocked.
+        status = "not_tested"
+    else:
+        status = "validated" if share >= MIN_PASS_SHARE else "rejected"
     return finish(status, {"eligible_tickers": passed, "pass_share": share, "required_share": MIN_PASS_SHARE,
                            "per_ticker": per_ticker, "window": [from_date, to_date], "hold_bars": hold})

@@ -70,6 +70,9 @@ class ResearchConfig:
     # Bar granularity fed to the simulator ("1m","5m","15m","30m","1h","4h","1d").
     # Daily by default; matches vinu-simulator's CustomSimulateRequest.interval.
     interval: str = "1d"
+    # A run that tests fixed rules (strategy validation) is not idea generation: it must not be skipped because the ticker is
+    # "exhausted" by earlier idea runs, and it does not count toward exhausting it. Set per run, never from the environment.
+    ignore_symbol_exhaustion: bool = False
     data_root: Path = DEFAULT_DATA_ROOT
     max_drawdown_threshold: float = -0.25
     llm_enabled: bool = False

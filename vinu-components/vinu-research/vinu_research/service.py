@@ -138,6 +138,7 @@ class ResearchService:
         goal: Goal | None = None,
         interval: str | None = None,
         max_iterations: int | None = None,
+        validation: bool = False,
     ) -> dict[str, Any]:
         # `RunResearchRequest.user_idea` (the /research/run request model) is
         # documented as "If None, auto-proposed from angle context" -- that
@@ -210,6 +211,8 @@ class ResearchService:
                 overrides["interval"] = interval
             if max_iterations:
                 overrides["max_iterations"] = max_iterations      # 1 = test the rules exactly as written, no refinement
+            if validation:
+                overrides["ignore_symbol_exhaustion"] = True      # testing fixed rules is not idea generation
             run_config = replace(self._config, **overrides) if overrides else self._config
             tools = ResearchTools(run_config)
             hypothesis_registry = HypothesisRegistry()
@@ -319,13 +322,14 @@ class ResearchService:
             await self._run_in_thread(self._storage.update_run, record)
 
             total_trials = prior_trials + result.total_iterations
-            await self._run_in_thread(
-                self._storage.update_catalog_after_run,
-                symbol, record.id or 0, total_trials,
-                record.best_sharpe, validated=validated,
-            )
+            if not validation:      # a validation run must not push a ticker toward "exhausted" for the idea generator
+                await self._run_in_thread(
+                    self._storage.update_catalog_after_run,
+                    symbol, record.id or 0, total_trials,
+                    record.best_sharpe, validated=validated,
+                )
 
-            if self._storage.is_symbol_exhausted(symbol):
+            if not validation and self._storage.is_symbol_exhausted(symbol):
                 LOG.warning("Symbol %s is now exhausted after this run", symbol)
 
             response = {
