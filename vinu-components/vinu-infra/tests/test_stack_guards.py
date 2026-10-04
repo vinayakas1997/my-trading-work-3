@@ -130,3 +130,22 @@ def test_quant_core_seeds_the_strategy_volume_from_the_image():
     script = (ROOT / "vinu-quant-core" / "entrypoint.sh").read_text(encoding="utf-8")
     assert "cp -n /app/vinu-strategy/strategies/*.yaml" in script          # never overwrites an edited strategy
     assert list((ROOT / "vinu-strategy" / "strategies").glob("*.yaml")), "no shipped strategies to seed"
+
+
+# ------------------------------------------------------------- every service the agent calls has an address in Docker
+
+def test_every_service_url_the_agent_defaults_to_localhost_is_set_in_the_env_example():
+    """vinu-agent/config.py reads VINU_<X>_API_URL with a `http://localhost:<port>` fallback. Inside Docker localhost is the
+    container itself, so a missing entry in .env-example silently breaks every call to that service (the reflection API
+    had none: every reflection read in the agent failed with 'connection refused')."""
+    config_text = (ROOT / "vinu-agent" / "vinu_agent" / "config.py").read_text(encoding="utf-8")
+    pairs = re.findall(r'os\.environ\.get\("(VINU_[A-Z_]+_API_URL)",\s*"http://localhost:\d+"\)', config_text)
+    assert len(pairs) >= 8, "the scan found too few service URLs; the pattern needs updating"
+    example = (ROOT / ".env-example").read_text(encoding="utf-8")
+    missing = [var for var in pairs if not re.search(rf"^{var}=http://", example, re.M)]
+    assert not missing, f".env-example has no address for: {missing}"
+
+
+def test_the_reflection_container_serves_its_api_as_well_as_running_the_worker():
+    script = (ROOT / "vinu-reflection" / "entrypoint.sh").read_text(encoding="utf-8")
+    assert "vinu-reflection serve" in script and "vinu-reflection worker" in script
