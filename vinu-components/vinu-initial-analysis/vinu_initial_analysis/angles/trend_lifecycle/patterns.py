@@ -171,6 +171,30 @@ def find_similar(
     return matches
 
 
+def summarize_matches(matches: list[dict]) -> dict:
+    """One honest summary over the matched earlier peaks (features-logic-checking D7), the vision's "this looks like N
+    past situations, ..." line. Raw counts and the plain mean / median / worst of what the library recorded after
+    each matched peak; no win rate or return that was never stored. A peak with no recorded drawdown or recovery is
+    left out of that statistic (unknown, not zero). Empty input gives n=0 and no statistics."""
+    drawdowns = sorted(float(m["matched_drawdown_pct"]) for m in matches if m.get("matched_drawdown_pct") is not None)
+    recoveries = sorted(int(m["matched_recovery_bars"]) for m in matches if m.get("matched_recovery_bars") is not None)
+
+    def _median(values: list[float]) -> float | None:
+        if not values:
+            return None
+        mid = len(values) // 2
+        return float(values[mid]) if len(values) % 2 else (values[mid - 1] + values[mid]) / 2.0
+
+    return {
+        "analogue_n": len(matches),
+        "analogue_mean_drawdown_pct": round(sum(drawdowns) / len(drawdowns), 4) if drawdowns else None,
+        "analogue_median_drawdown_pct": round(_median(drawdowns), 4) if drawdowns else None,
+        "analogue_worst_drawdown_pct": min(drawdowns) if drawdowns else None,   # drawdowns are stored negative
+        "analogue_share_recovered": round(len(recoveries) / len(matches), 4) if matches else None,
+        "analogue_median_recovery_bars": _median(recoveries),
+    }
+
+
 def get_library_stats(library_df: pd.DataFrame) -> dict:
     """Get summary stats about the pattern library."""
     if library_df.empty:

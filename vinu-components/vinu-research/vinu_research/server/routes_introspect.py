@@ -260,6 +260,7 @@ async def get_maturity_status() -> dict[str, Any]:
     assessment = assess_maturity(
         _service.strategy_store, config.agent_data_root,
         mature_min_trades=config.trade_score_calibration_min_sample,
+        live_data_root=config.live_data_root,
     )
     return assessment.as_prompt_dict()
 

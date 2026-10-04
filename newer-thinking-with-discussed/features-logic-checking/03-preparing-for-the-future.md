@@ -1,5 +1,7 @@
 # How does the system get ready for what comes next?
 
+> **Update 2026-10-04:** `scheduler_exits_exempt_from_halts` and `scheduler_breaker_uses_broker_account` are now ON by default (see `00`, F10). Where this page says they are off, that was the state before this change.
+
 Vision: *"regime-first; WAIT-first; right to say 'I don't know'; event-driven → suspend; risk little when uncertain; learn which regimes the edge holds in"* (`../vision-trding-system.md` A1, A5, A6, A18). Four kinds of "next": the market changes character, the system does not know enough, a known risky event is coming, or a strategy stops working. Each answer says what is on by default and what needs a flag (`../the-inconsistencies-v2/06-live-behavior-flags.md`).
 
 ---

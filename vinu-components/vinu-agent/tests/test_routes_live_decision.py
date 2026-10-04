@@ -136,6 +136,27 @@ class TestReviewMode:
         assert "0.05" in task
         assert "2026-09-01T00:00:00+00:00" in task
 
+    def test_review_task_carries_the_real_position_numbers_only_when_present(self, client) -> None:
+        test_client, _app = client
+        fake_svc, session_service = _fake_service({
+            "status": "completed",
+            "content": "```json\n" + '{"decision": "HOLD"}' + "\n```",
+        })
+        routes_live_decision._get_service = lambda: fake_svc
+        test_client.post("/agent/live-decision/run", json={
+            "ticker": "aapl", "strategy_id": "s", "mode": "review",
+            "position_context": {"opened_at": "t", "opened_bar_ts": 1, "position_size": 0.05,
+                                 "entry_price": 100.0, "last_close": 94.0, "return_since_entry": -0.06, "bars_held": 10},
+        })
+        task = session_service.run_team_once.call_args[0][1]
+        assert "entry_price=100.0, last_close=94.0, return_since_entry=-0.06, bars_held=10" in task
+
+        test_client.post("/agent/live-decision/run", json={
+            "ticker": "aapl", "strategy_id": "s", "mode": "review",
+            "position_context": {"opened_at": "t", "opened_bar_ts": 1, "position_size": 0.05},
+        })
+        assert "Position so far" not in session_service.run_team_once.call_args[0][1]   # absent means unknown
+
     def test_entry_mode_default_has_no_review_context(self, client) -> None:
         test_client, _app = client
         fake_svc, _session_service = _fake_service(

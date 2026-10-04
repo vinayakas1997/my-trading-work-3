@@ -1,5 +1,7 @@
 # How does the system handle a failure or a loss in a trade?
 
+> **Update 2026-10-04:** `scheduler_exits_exempt_from_halts` and `scheduler_breaker_uses_broker_account` are now ON by default (see `00`, F10). Where this page says they are off, that was the state before this change.
+
 Vision: *"exit on invalidation; never let one trade hurt the portfolio; risk little when uncertain; know why we lost"* (`../vision-trding-system.md` A6, A9, A12, A15, A16). Followed here as one chain: the position goes against us, then the stop and review layers, then the account-level layers, then what is recorded, then what is learned. Running example: AAPL, long `0.05` of the book, entry `100.00`.
 
 ---

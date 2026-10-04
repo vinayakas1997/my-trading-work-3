@@ -120,6 +120,56 @@ def _build_eval_status_context(symbol: str, data_root) -> str:
         return ""
 
 
+def _build_unconfirmed_moves_context(symbol: str, data_root, limit: int = 5) -> str:
+    """D8: real price moves on this ticker that none of the recorded strategy conditions saw, as read-only context for
+    the idea generator ("something moved and nothing I watch noticed"). Read-only and best-effort, same posture as
+    `_build_eval_status_context`: "" when there is nothing (no database yet, no moves, any failure) so the prompt is
+    byte-identical to before, and it never creates a database file. Only plain recorded facts: direction, size in
+    ATR and when. It suggests no strategy and claims no edge."""
+    try:
+        from pathlib import Path
+
+        from vinu_research.storage.move_evidence_store import MoveEvidenceStore
+        from vinu_research.storage.signal_evidence_store import SignalEvidenceStore
+        from vinu_research.track2_reconciliation import list_unconfirmed_moves
+
+        if not symbol or not data_root:
+            return ""
+        root = Path(data_root)
+        if not (root / "move_evidence.db").exists():
+            return ""
+        moves = MoveEvidenceStore(root / "move_evidence.db")
+
+        class _NoTriggers:   # no trigger database yet = no condition has ever fired, and none is created here
+            @staticmethod
+            def list_triggers(symbol=None, limit=50):
+                return []
+
+        signals = (SignalEvidenceStore(root / "signal_evidence.db") if (root / "signal_evidence.db").exists()
+                   else _NoTriggers())
+        try:
+            events = list_unconfirmed_moves(
+                move_evidence_store=moves, signal_evidence_store=signals, symbol=symbol.upper(), limit=limit,
+            )
+        finally:
+            for st in (moves, signals):
+                close = getattr(st, "close", None)
+                if callable(close):
+                    close()
+        if not events:
+            return ""
+        lines = [f"Recent real moves in {symbol.upper()} that no recorded strategy condition fired on (newest first):"]
+        for e in events:
+            atr = float(e.get("atr") or 0.0)
+            size = f"{abs(float(e['price_move'])) / atr:.1f} ATR" if atr > 0 else "size unknown"
+            lines.append(f"- {e.get('direction', '?')} {size} on {e.get('granularity', '?')} at {e.get('window_time', '?')}")
+        lines.append("These are observations only: a hint about what the current conditions miss, not a signal.")
+        return "\n".join(lines)
+    except Exception:
+        LOG.debug("unconfirmed-moves prompt context unavailable for %s, continuing without it", symbol)
+        return ""
+
+
 def _classify_outcome_status(history: list[IterationRecord], best_result: BacktestResult | None) -> str:
     """`"infra_failure" | "no_strategy_found" | "passed"` -- the exact
     3-state classification item #17 finding #2 asks for, computed at the
@@ -1707,6 +1757,11 @@ class StrategyResearchLoop:
             if story is None:
                 story = {}
             story["memory_context"] = (story.get("memory_context", "") + "\n\n" + eval_context).strip()
+        moves_context = _build_unconfirmed_moves_context(symbol, getattr(self._config, "data_root", None))
+        if moves_context:
+            if story is None:
+                story = {}
+            story["memory_context"] = (story.get("memory_context", "") + "\n\n" + moves_context).strip()
 
         if iteration == 1:
             llm_code: str | None = None

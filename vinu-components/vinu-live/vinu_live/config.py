@@ -126,8 +126,9 @@ class LiveConfig:
     # from the breaker-halt skip, the kill-switch skip (the agent-side
     # OrderGuard still applies its own halt policy), and the spread/event gate
     # (they go as market orders). Anything that increases exposure is gated
-    # exactly as before. Off by default -- changes live order flow.
-    scheduler_exits_exempt_from_halts: bool = False
+    # exactly as before. ON by default (2026-10-04, features-logic-checking): a halt must never trap a closing
+    # sell. Env VINU_LIVE_SCHEDULER_EXITS_EXEMPT_FROM_HALTS=false turns it off.
+    scheduler_exits_exempt_from_halts: bool = True
     # When the broker (through the agent API) cannot be read -- positions read fails, a configured broker's equity
     # cannot be read, or order submissions fail at the HTTP / broker level -- say so LOUDLY: an ERROR log, a
     # `broker_unreachable` list in the cycle result, and one CRITICAL notification on the first bad cycle, a
@@ -163,8 +164,9 @@ class LiveConfig:
     # leverage / cluster checks run over the live BROKER positions, and its daily
     # loss is (equity now - the first equity this scheduler saw today, UTC), which
     # includes unrealized moves. Falls back to the book / realized P&L for any
-    # input it cannot get. Off by default -- it can newly HALT trading.
-    scheduler_breaker_uses_broker_account: bool = False
+    # input it cannot get. ON by default (2026-10-04, features-logic-checking): the 5% daily-loss breaker must see
+    # the positions the scheduler really trades. Env VINU_LIVE_SCHEDULER_BREAKER_USES_BROKER_ACCOUNT=false turns it off.
+    scheduler_breaker_uses_broker_account: bool = True
     # logic-audit-2026-10-02 A1: the hourly scheduler sized orders from
     # /portfolio/state (raw risk-parity weights). The regime / outcome tilts, the
     # drawdown ladder (halve / flat / halt), the maturity capital ladder and the
@@ -270,7 +272,7 @@ class LiveConfig:
                 "VINU_LIVE_ABORT_ON_EQUITY_READ_FAILURE", "false",
             ).lower() in ("1", "true", "yes"),
             scheduler_exits_exempt_from_halts=os.getenv(
-                "VINU_LIVE_SCHEDULER_EXITS_EXEMPT_FROM_HALTS", "false",
+                "VINU_LIVE_SCHEDULER_EXITS_EXEMPT_FROM_HALTS", "true",
             ).lower() in ("1", "true", "yes"),
             scheduler_use_daily_allocation=os.getenv(
                 "VINU_LIVE_SCHEDULER_USE_DAILY_ALLOCATION", "false",
@@ -279,7 +281,7 @@ class LiveConfig:
                 "VINU_LIVE_SCHEDULER_RESPECT_TRADE_PLAN_SYMBOLS", "false",
             ).lower() in ("1", "true", "yes"),
             scheduler_breaker_uses_broker_account=os.getenv(
-                "VINU_LIVE_SCHEDULER_BREAKER_USES_BROKER_ACCOUNT", "false",
+                "VINU_LIVE_SCHEDULER_BREAKER_USES_BROKER_ACCOUNT", "true",
             ).lower() in ("1", "true", "yes"),
             precondition_enforcing_enabled=os.getenv(
                 "VINU_LIVE_PRECONDITION_ENFORCING_ENABLED", "false",

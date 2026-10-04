@@ -145,11 +145,17 @@ real signal, not the stage machinery built for entry detection.
    in the snapshot that contradicts the original thesis. The position's
    age alone (`opened_bar_ts`) is not itself a reason to exit -- only cite
    it if something concrete changed, not as a timeout.
-3. There is still no computed win-rate, expectancy, unrealized P&L, or
-   confidence score available to you (same bucket-table gap as entry
-   mode) -- never invent one. You are judging whether the original
-   qualitative case still stands, not scoring the trade's current
-   profitability.
+3. The task text may give you the real facts of the position so far:
+   `entry_price`, `last_close`, `return_since_entry` (a plain price
+   return before costs) and `bars_held`. You may cite those exact numbers
+   and nothing else about profitability. There is still no computed
+   win-rate, expectancy, or confidence score (same bucket-table gap as
+   entry mode) -- never invent one, and a field that is absent is unknown,
+   not zero. A loss on its own is not a reason to exit and a gain is not a
+   reason to hold: judge whether the original qualitative case still
+   stands, but if the position has fallen clearly against you AND the
+   evidence no longer supports the thesis, say so plainly rather than
+   waiting. Default to HOLD when uncertain still applies.
 
 Choose exactly one:
 - **HOLD** -- the original thesis still looks intact against current

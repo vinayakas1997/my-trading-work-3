@@ -127,3 +127,54 @@ class TestAssessPromptDict:
         assert d["n_real_trades"] == 2
         assert d["directional_accuracy"] == pytest.approx(0.5)
         assert d["regime_coverage"] == ["trend"]
+
+
+def _write_live_decision_db(root: Path, positions: list[tuple[str, float | None]]) -> None:
+    """(status, return_pct) rows in the same table vinu-live writes (only the columns the assessor reads)."""
+    conn = sqlite3.connect(root / "live_decision.db")
+    conn.execute("CREATE TABLE live_decision_open_positions (id INTEGER PRIMARY KEY, status TEXT, return_pct REAL)")
+    for status, ret in positions:
+        conn.execute("INSERT INTO live_decision_open_positions (status, return_pct) VALUES (?, ?)", (status, ret))
+    conn.commit()
+    conn.close()
+
+
+class TestLiveDecisionTradesCountTowardMaturity:
+    """features-logic-checking D3."""
+
+    def test_closed_positions_with_a_recorded_return_are_real_trades(self, strategy_store, tmp_path):
+        # closed +2%, -1%, +5% count (2 of 3 correct); a closed one with no return and an open one do not.
+        _write_live_decision_db(tmp_path, [("closed", 0.02), ("closed", -0.01), ("closed", 0.05),
+                                           ("closed", None), ("open", None)])
+        a = ma.assess(strategy_store, None, live_data_root=tmp_path)
+        assert a.n_real_trades == 3
+        assert a.directional_accuracy == pytest.approx(2 / 3)
+        assert a.tier == ma.TIER_EARLY_LIVE          # was cold_start: none of these trades used to count
+
+    def test_without_a_live_root_nothing_changes(self, strategy_store):
+        a = ma.assess(strategy_store, None)
+        assert (a.n_real_trades, a.tier) == (0, ma.TIER_COLD_START)
+
+    def test_many_live_trades_alone_never_reach_mature(self, strategy_store, tmp_path):
+        # 40 winning live trades, no tagged artifact -> no regime coverage -> early_live, not mature.
+        _write_live_decision_db(tmp_path, [("closed", 0.01)] * 40)
+        a = ma.assess(strategy_store, None, mature_min_trades=30, live_data_root=tmp_path)
+        assert a.n_real_trades == 40 and a.tier == ma.TIER_EARLY_LIVE
+
+    def test_they_add_to_artifact_trades_and_both_can_make_it_mature(self, strategy_store, tmp_path):
+        _add_artifact(strategy_store, "a1", "trend")
+        _add_artifact(strategy_store, "a2", "range")
+        for _ in range(10):
+            _add_entry(strategy_store, "a1", correct=True)
+        for _ in range(10):
+            _add_entry(strategy_store, "a2", correct=False)
+        _write_live_decision_db(tmp_path, [("closed", 0.03)] * 10)
+        a = ma.assess(strategy_store, None, mature_min_trades=30, live_data_root=tmp_path)
+        assert a.n_real_trades == 30
+        assert a.directional_accuracy == pytest.approx(20 / 30)
+        assert a.tier == ma.TIER_MATURE              # 30 trades and 2 regimes
+
+    def test_missing_or_unreadable_database_fails_open(self, strategy_store, tmp_path):
+        assert ma.assess(strategy_store, None, live_data_root=tmp_path).n_real_trades == 0   # no file
+        (tmp_path / "live_decision.db").write_text("not a database")
+        assert ma.assess(strategy_store, None, live_data_root=tmp_path).n_real_trades == 0

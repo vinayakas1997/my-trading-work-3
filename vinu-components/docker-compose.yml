@@ -415,6 +415,8 @@ services:
       # See maturity_assessor.py's own docstring; agent-api below (the
       # real primary path) sees the full picture.
       VINU_RESEARCH_MATURITY_TIER_ENABLED: "true"
+      # D3: closed live-decision trades count toward the maturity tier (read-only view of live-api's data).
+      VINU_RESEARCH_LIVE_DATA_ROOT: /live-data
     secrets:
       - vinu_llm_api_key
     ports:
@@ -424,6 +426,7 @@ services:
       - ./data/strategy-evaluation:/strategy-eval
       - ./data/research:/research-data
       - ./data/shared:/shared
+      - ./data/live:/live-data:ro
     cap_drop:
       - ALL
     cap_add:
@@ -563,6 +566,7 @@ services:
       # data root (paper_performance.db lives there).
       VINU_RESEARCH_MATURITY_TIER_ENABLED: "true"
       VINU_RESEARCH_AGENT_DATA_ROOT: /data
+      VINU_RESEARCH_LIVE_DATA_ROOT: /live-data
       VINU_STRATEGY_EVAL_DATA_ROOT: /strategy-eval
     secrets:
       - vinu_api_key
@@ -578,6 +582,7 @@ services:
       - ./data/strategy-evaluation:/strategy-eval
       - ./data/research:/research-data
       - ./data/shared:/shared
+      - ./data/live:/live-data:ro
       - ./vinu-agent/skills:/app/vinu-agent/skills:ro
     cap_drop:
       - ALL

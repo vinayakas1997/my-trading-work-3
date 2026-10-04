@@ -903,6 +903,7 @@ async def author_trade_plan(
             assessment = maturity_assessor.assess(
                 strategy_store, config.agent_data_root,
                 mature_min_trades=config.trade_score_calibration_min_sample,
+                live_data_root=config.live_data_root,
             )
             maturity_context = assessment.as_prompt_dict()
         except Exception as e:

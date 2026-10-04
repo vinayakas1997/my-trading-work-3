@@ -795,3 +795,27 @@ class TestPositionReview:
         reviewed = asyncio.run(poller._review_open_positions({}))
 
         assert reviewed == 0
+
+
+class TestPositionFactsForTheReviewingAgent:
+    """features-logic-checking D6: the agent may cite real numbers about the position so far."""
+
+    def _pos(self, size=0.05, entry=100.0):
+        from vinu_live.live_decision.schema import LiveDecisionOpenPosition
+        return LiveDecisionOpenPosition(
+            ticker="AAPL", strategy_id="s", position_size=size, opened_bar_ts=1000, opened_at="t", entry_price=entry,
+        )
+
+    def test_long_down_six_percent_after_ten_hourly_bars(self, poller):
+        facts = poller._position_facts(self._pos(), 1000 + 10 * 3600, 94.0, "1h")
+        assert facts["entry_price"] == 100.0 and facts["last_close"] == 94.0
+        assert facts["return_since_entry"] == pytest.approx(-0.06)      # (94 - 100) / 100
+        assert facts["bars_held"] == 10
+
+    def test_short_gains_when_price_falls(self, poller):
+        facts = poller._position_facts(self._pos(size=-0.05), 1000, 90.0, "1h")
+        assert facts["return_since_entry"] == pytest.approx(0.10)       # sign flipped for a short
+
+    def test_unknown_facts_are_left_out_not_zeroed(self, poller):
+        facts = poller._position_facts(self._pos(entry=None), 1000 + 3600, None, None)
+        assert set(facts) == {"opened_at", "opened_bar_ts", "position_size"}

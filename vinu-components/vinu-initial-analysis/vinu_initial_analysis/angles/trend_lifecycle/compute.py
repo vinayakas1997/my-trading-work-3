@@ -16,7 +16,7 @@ from vinu_initial_analysis.config import load_config
 from vinu_initial_analysis.storage.parquet import AngleStorage
 from .peaks import detect_peaks, detect_troughs, merge_inflections, filter_alternating_inflections
 from .snapshots import capture_all_peaks, capture_all_troughs, compute_indicators
-from .patterns import load_pattern_library, build_feature_matrix, find_similar, get_library_stats
+from .patterns import load_pattern_library, build_feature_matrix, find_similar, get_library_stats, summarize_matches
 from .lifecycle import classify
 from .signals import generate_signals
 
@@ -254,6 +254,8 @@ def compute(
         "current_stage": lifecycle_result.get("stage"),
         "current_risk": lifecycle_result.get("risk"),
         "dominant_signal": dominant_signal,
+        # what followed the matched earlier peaks for the latest peak (D7); read-only, nothing downstream depends on it
+        **summarize_matches(recent_matches),
     })
 
     return pd.DataFrame(rows) if rows else pd.DataFrame()

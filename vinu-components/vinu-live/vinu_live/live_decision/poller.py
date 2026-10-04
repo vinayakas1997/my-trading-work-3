@@ -359,6 +359,7 @@ class CandleClosePoller:
                 continue
             await self._trigger_position_review(
                 pos, cursor.last_processed_bar_ts, exit_price=self._last_close.get((pos.ticker, timeframe)),
+                timeframe=timeframe,
             )
             reviewed += 1
         return reviewed
@@ -373,8 +374,32 @@ class CandleClosePoller:
         except Exception:  # noqa: BLE001
             pass
 
+    def _position_facts(
+        self, pos: LiveDecisionOpenPosition, bar_ts: int, last_close: float | None, timeframe: str | None = None,
+    ) -> dict[str, Any]:
+        """What the reviewing agent may cite about the position so far (features-logic-checking D6): entry price, the
+        newest closed bar's close, the plain return between them (before costs, sign-flipped for a short) and the
+        bars held. A fact we do not have is left out rather than guessed, and the agent is told absent means unknown."""
+        from vinu_live.live_decision.storage import _reference_return
+
+        facts: dict[str, Any] = {
+            "opened_at": pos.opened_at, "opened_bar_ts": pos.opened_bar_ts, "position_size": pos.position_size,
+        }
+        if pos.entry_price is not None:
+            facts["entry_price"] = pos.entry_price
+        if last_close is not None:
+            facts["last_close"] = last_close
+        ret = _reference_return(pos.position_size, pos.entry_price, last_close) if (
+            pos.entry_price is not None and last_close is not None) else None
+        if ret is not None:
+            facts["return_since_entry"] = round(ret, 6)
+        if timeframe:
+            facts["bars_held"] = max(0, int((bar_ts - pos.opened_bar_ts) // timeframe_to_seconds(timeframe)))
+        return facts
+
     async def _trigger_position_review(
         self, pos: LiveDecisionOpenPosition, bar_ts: int, exit_price: float | None = None,
+        timeframe: str | None = None,
     ) -> None:
         """Calls the same `/agent/live-decision/run` route the entry
         trigger uses, with mode="review" so live_decision_agent's prompt
@@ -400,11 +425,7 @@ class CandleClosePoller:
                 json={
                     "ticker": pos.ticker, "strategy_id": pos.strategy_id,
                     "mode": "review",
-                    "position_context": {
-                        "opened_at": pos.opened_at,
-                        "opened_bar_ts": pos.opened_bar_ts,
-                        "position_size": pos.position_size,
-                    },
+                    "position_context": self._position_facts(pos, bar_ts, exit_price, timeframe),
                 },
             )
             resp.raise_for_status()

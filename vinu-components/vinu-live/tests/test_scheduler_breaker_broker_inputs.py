@@ -46,10 +46,13 @@ def _check(s, equity=100_000.0, positions=None, real=True):
 
 # ------------------------------------------------------------------ engine
 
-def test_flag_defaults_off_and_reads_env(monkeypatch):
-    assert LiveConfig().scheduler_breaker_uses_broker_account is False
-    monkeypatch.setenv("VINU_LIVE_SCHEDULER_BREAKER_USES_BROKER_ACCOUNT", "true")
+def test_flag_defaults_on_and_env_can_turn_it_off(monkeypatch):
+    # ON by default since 2026-10-04 (features-logic-checking): paper trading should behave like real money.
+    assert LiveConfig().scheduler_breaker_uses_broker_account is True
+    monkeypatch.delenv("VINU_LIVE_SCHEDULER_BREAKER_USES_BROKER_ACCOUNT", raising=False)
     assert LiveConfig.from_env().scheduler_breaker_uses_broker_account is True
+    monkeypatch.setenv("VINU_LIVE_SCHEDULER_BREAKER_USES_BROKER_ACCOUNT", "false")
+    assert LiveConfig.from_env().scheduler_breaker_uses_broker_account is False
 
 
 def test_check_limits_uses_the_explicit_positions_instead_of_the_book(tmp_path):

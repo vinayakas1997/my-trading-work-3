@@ -83,6 +83,11 @@ async def run_live_decision(body: LiveDecisionRequest) -> dict[str, Any]:
             f"opened_bar_ts={ctx.get('opened_bar_ts', 'unknown')}, "
             f"position_size={ctx.get('position_size', 'unknown')}"
         )
+        # Real facts only (features-logic-checking D6); a missing field is unknown, never zero.
+        facts = [f"{k}={ctx[k]}" for k in ("entry_price", "last_close", "return_since_entry", "bars_held")
+                 if ctx.get(k) is not None]
+        if facts:
+            task += "\nPosition so far (plain numbers, before costs): " + ", ".join(facts)
 
     result = svc.session_service.run_team_once(
         "live_decision", task, tag=f"{ticker}-{body.strategy_id}",

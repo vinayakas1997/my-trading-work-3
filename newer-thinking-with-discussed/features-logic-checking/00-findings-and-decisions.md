@@ -19,6 +19,12 @@ Everything this folder's checks found. `FIXED` = code changed, test added, mutat
 | F8 | D2 (option A) | **A live-decision trade's outcome reached nobody.** | `GET /live/decisions/{ticker}/{strategy}` now also returns `closed_positions` (exit reason, entry and exit price, return before costs); the agent's context tool passes them on as `past_closed_trades` | `vinu-live/tests/test_decision_context_route.py` (return −6% for 100 → 94; open and other-ticker rows excluded) |
 | F9 | D4 (option A) | **Evidence of other conditions made a strategy look evidenced.** | the context tool keeps only triggers recorded under the strategy's own must-condition names and recounts outcomes (`filtered_to_strategy`, `all_conditions_count` shown); one shared name rule, `vinu_infra/condition_names.py`, used by the poller and the filter | `vinu-agent/tests/test_get_live_decision_context_tool.py::TestEvidenceFilteredToTheStrategysOwnCondition` (5) |
 
+| F10 | D5 + safety flags | **A fresh install could trap a closing sell and the live-decision loop could not buy.** | `scheduler_exits_exempt_from_halts` and `scheduler_breaker_uses_broker_account` now default **on** (env `=false` turns each off); the seeded paper mandate in `vinu-agent/entrypoint.sh` sets `require_active_artifact: false` (**set it back to true before real money**) | `vinu-live/tests/test_scheduler_exits_exempt.py`, `test_scheduler_breaker_broker_inputs.py` (defaults on, env can turn off) |
+| F11 | D6 | **The reviewing agent was blind to the position's P&L**, so a slow bleed was seen only by account-level layers. | the review task now carries `entry_price`, `last_close`, `return_since_entry` (before costs, sign-flipped for a short) and `bars_held`; unknown facts are left out, never zeroed; prompt step 3 lets the agent cite those numbers and nothing invented | `vinu-live/tests/test_live_decision_poller.py::TestPositionFactsForTheReviewingAgent` (long 100→94 = −6% after 10 bars; short +10%), `vinu-agent/tests/test_routes_live_decision.py` |
+| F12 | D3 | **Live-decision trades could never advance the maturity tier.** | `assess()` also counts closed live-decision positions with a recorded return (read-only view of live-api's database, `VINU_RESEARCH_LIVE_DATA_ROOT=/live-data`); correct = return above 0; they carry no regime so they can lift the tier to `early_live` but never to `mature` on their own | `vinu-research/tests/test_maturity_assessor.py::TestLiveDecisionTradesCountTowardMaturity` (5), `vinu-infra/tests/test_compose_wiring.py` |
+| F13 | D7 | **Market memory returned 5 raw matches, no summary line.** | the angle's summary row now also carries `analogue_n`, mean / median / worst drawdown, share recovered and median recovery bars over the latest peak's matches (unknown left out, not zero). **Not included in the live-decision context yet** | `vinu-initial-analysis/tests/test_logic_analogues_by_hand.py::TestAnalogueSummary` |
+| F14 | D8 | **Unconfirmed moves never reached the idea generator.** | the generation prompt gets the last 5 real moves on that ticker that no recorded condition fired on (direction, size in ATR, time) as observations only; empty when none, never creates a database | `vinu-research/tests/test_unconfirmed_moves_prompt_context.py` (5) |
+
 ## Decisions for you
 
 ### D1. How fast should strategy decay be noticed?  — **DONE (option A, see F6)**
@@ -41,7 +47,7 @@ Today (pinned by a test): baseline = first 5 re-backtest Sharpes, rolling = mean
 | B | feed live-decision losses to the consecutive-loss cooldown (`scheduler._apply_entry_guards`) | closes the gap the code itself names; changes entry behaviour (when the guard flag is on) |
 | C | let reflection's `loss_attribution` read the live-decision database too | one learning loop for both paths; a bigger change |
 
-### D3. How should a closed live-decision trade count toward the maturity tier?
+### D3. How should a closed live-decision trade count toward the maturity tier?  — **DONE (option A, see F12)**
 
 The tier (cold_start → mature) counts a "real trade" only as a calibration entry, which exists only for a position linked to a research **artifact**. The live-decision loop trades strategy YAMLs, so none of its trades counts and the tier cannot advance from it (capital multiplier stays at the cold-start 0.1 if capital gating is on).
 
@@ -61,7 +67,7 @@ The tier (cold_start → mature) counts a "real trade" only as a calibration ent
 | B | add a name mapping so angle rows count for the equivalent live condition | keeps the backfill useful, but a mapping table to maintain |
 | C | leave as is | the uncertainty flag can under-report missing evidence |
 
-### D5. Should a live-decision order need an ACTIVE research artifact for its ticker?
+### D5. Should a live-decision order need an ACTIVE research artifact for its ticker?  — **DONE (option A, see F10)**
 
 The order guard's `require_active_artifact` defaults to **true**: a buy for a ticker with no ACTIVE research artifact is rejected (`test_order_guard.py::test_rejects_when_no_active_artifact_for_symbol`). The live-decision loop trades strategy YAMLs, not artifacts, so with default settings its EXECUTE on AAPL is rejected unless AAPL happens to have an ACTIVE artifact from the research loop. The rejection is visible (reason text, execution ledger) but the loop cannot trade by itself out of the box.
 
@@ -71,7 +77,7 @@ The order guard's `require_active_artifact` defaults to **true**: a buy for a ti
 | B | exempt orders that come from a live-decision position (a flag on the order) | keeps the guard for everything else; needs a new order field and a trust decision |
 | C | leave it, and only trade tickers that have an ACTIVE artifact | strictest; the live-decision loop then depends on the research loop |
 
-### D6. Should the reviewing agent be told the position's P&L?
+### D6. Should the reviewing agent be told the position's P&L?  — **DONE (option A, see F11)**
 
 The review prompt says the agent has no unrealized P&L and must judge only the thesis (a deliberate deferral until a bucket table exists). In a slow bleed that never reaches a configured stop, no layer except the account-level ones ever sees the loss.
 
@@ -81,7 +87,7 @@ The review prompt says the agent has no unrealized P&L and must judge only the t
 | B | add a hard rule: exit when the return since entry falls below a limit the strategy configures | that is the existing `live_decision_stop_pct`; just needs to be set per strategy |
 | C | leave as designed | the thesis-only judgement stays pure; slow losses are caught only by account-level layers |
 
-### D7. Should the analogue output become the vision's summary?
+### D7. Should the analogue output become the vision's summary?  — **DONE (option A, see F13)**
 
 The vision's market memory is an aggregate over many matches ("37 situations: 23 up, 14 down, average +1.3%, worst −2.8%"). The code returns the 5 nearest peaks with their individual drawdown and recovery time, no up/down count and no average return, and the live-decision context does not include them.
 
@@ -91,7 +97,7 @@ The vision's market memory is an aggregate over many matches ("37 situations: 23
 | B | also store the forward return after each peak and summarise that | closer to the vision; needs a new stored field and a migration decision for the library |
 | C | leave as is | analogues stay visible only through stored angle rows |
 
-### D8. Should unconfirmed moves feed the idea generator?
+### D8. Should unconfirmed moves feed the idea generator?  — **DONE (option A, see F14)**
 
 The system notices real moves no strategy was watching (`unconfirmed moves`) and shows them to the deciding agent, but never to the research loop, so "something moved and none of my conditions saw it" cannot become a new idea.
 
@@ -110,11 +116,11 @@ Order quantities round to the **nearest** whole share, half up (`vinu-live/book/
 | **A (recommended)** | floor (round down) quantities for orders that **increase** exposure; keep nearest-share for reductions and closes, which must match the held quantity | a buy never exceeds the allowance; slightly under-invested |
 | B | leave as is | simplest; small overshoot possible |
 
-### Flags worth switching on now (not decisions, already documented)
+### Flags (done, F10)
 
-For paper trading with the aim of behaving like real money: `scheduler_exits_exempt_from_halts` (otherwise a halt, the spread gate or the earnings gate can stop a closing sell: see `01` Q1) and `scheduler_breaker_uses_broker_account` (otherwise the 5% daily-loss breaker does not see the scheduler's own positions). Both are listed in `../the-inconsistencies-v2/06-live-behavior-flags.md`.
+`scheduler_exits_exempt_from_halts` and `scheduler_breaker_uses_broker_account` are now **on by default**, so a halt, the spread gate or the earnings gate no longer stops a closing sell and the 5% daily-loss breaker sees the scheduler's own positions. Answers in `01` and `03` that say "off by default / needs a flag" describe the situation before 2026-10-04.
 
-All nine decisions can wait for paper data; none blocks the other work.
+All nine decisions are now built (option A each). What still needs paper data is whether any threshold is right.
 
 ## Gaps noted, not changed
 

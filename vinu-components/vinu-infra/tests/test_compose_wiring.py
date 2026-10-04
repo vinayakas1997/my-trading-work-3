@@ -33,3 +33,12 @@ def test_the_default_tags_path_lands_inside_that_mount():
     tags = package_file.parents[2] / "vinu-agent" / "skills" / "strategy-tags" / "tags.yaml"
     assert str(tags).startswith("/app/vinu-agent/skills/")
     assert (COMPOSE.parent / "vinu-agent" / "skills" / "strategy-tags" / "tags.yaml").is_file()
+
+
+@pytest.mark.parametrize("service", ["research-api", "agent-api"])
+def test_services_that_assess_maturity_can_read_the_live_decision_database(service):
+    """D3: the maturity tier counts closed live-decision trades, read from live-api's data through a read-only mount
+    at /live-data, and the env var points the assessor at that mount."""
+    assert any(v.endswith(":/live-data:ro") and v.startswith("./data/live") for v in _volumes(service))
+    doc = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    assert doc["services"][service]["environment"]["VINU_RESEARCH_LIVE_DATA_ROOT"] == "/live-data"

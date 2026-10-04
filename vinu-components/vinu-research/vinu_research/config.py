@@ -245,6 +245,10 @@ class ResearchConfig:
     # VINU_RESEARCH_AGENT_DATA_ROOT.
     maturity_tier_enabled: bool = False
     agent_data_root: Path | None = None
+    # features-logic-checking D3: read-only mount of vinu-live's data root. When set, the maturity tier also counts the
+    # closed live-decision positions that recorded a return (a trade is "correct" when its return is above 0). Env:
+    # VINU_RESEARCH_LIVE_DATA_ROOT. Unset = only artifact-linked trades count, as before.
+    live_data_root: Path | None = None
     # logic-audit B3 (the-inconsistencies-v2 plan 2.4e): the forecast LLM never saw the
     # current market regime or the options-implied move, although the Trade Score and
     # the size multipliers apply both seconds later -- so a forecast that ignored them
@@ -528,6 +532,11 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         agent_data_root=(
             Path(os.environ["VINU_RESEARCH_AGENT_DATA_ROOT"])
             if os.environ.get("VINU_RESEARCH_AGENT_DATA_ROOT")
+            else None
+        ),
+        live_data_root=(
+            Path(os.environ["VINU_RESEARCH_LIVE_DATA_ROOT"])
+            if os.environ.get("VINU_RESEARCH_LIVE_DATA_ROOT")
             else None
         ),
         regime_size_tilt_bound=float(os.environ.get("VINU_RESEARCH_REGIME_SIZE_TILT_BOUND", "0.3")),

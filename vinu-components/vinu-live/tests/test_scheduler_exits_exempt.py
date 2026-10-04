@@ -50,10 +50,13 @@ def _posts(s):
 
 # ------------------------------------------------------------------ plumbing
 
-def test_flag_defaults_off_and_reads_env(monkeypatch):
-    assert LiveConfig().scheduler_exits_exempt_from_halts is False
-    monkeypatch.setenv("VINU_LIVE_SCHEDULER_EXITS_EXEMPT_FROM_HALTS", "true")
+def test_flag_defaults_on_and_env_can_turn_it_off(monkeypatch):
+    # ON by default since 2026-10-04 (features-logic-checking): paper trading should behave like real money.
+    assert LiveConfig().scheduler_exits_exempt_from_halts is True
+    monkeypatch.delenv("VINU_LIVE_SCHEDULER_EXITS_EXEMPT_FROM_HALTS", raising=False)
     assert LiveConfig.from_env().scheduler_exits_exempt_from_halts is True
+    monkeypatch.setenv("VINU_LIVE_SCHEDULER_EXITS_EXEMPT_FROM_HALTS", "false")
+    assert LiveConfig.from_env().scheduler_exits_exempt_from_halts is False
 
 
 @pytest.mark.parametrize("planner", [plan_twap, plan_vwap])

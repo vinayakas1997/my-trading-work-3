@@ -134,16 +134,45 @@ def _paper_history(agent_data_root: Optional[Path]) -> tuple[int, int]:
     return total_days, n_with_history
 
 
+def _live_decision_trades(live_data_root: Optional[Path]) -> tuple[int, int]:
+    """(closed live-decision positions that recorded a return, how many of those returned above 0).
+
+    features-logic-checking D3: the live-decision loop trades strategy YAMLs, which have no research artifact, so
+    none of its trades ever produced a calibration entry and the tier could not advance from them. This reads
+    vinu-live's own `live_decision.db` through a read-only raw sqlite query (same reason as `_paper_history`: no
+    import of the other service). A position whose return was not recorded is not counted -- unknown is not a
+    trade result. Fails open to (0, 0)."""
+    if live_data_root is None:
+        return 0, 0
+    db_path = Path(live_data_root) / "live_decision.db"
+    if not db_path.exists():
+        return 0, 0
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT return_pct FROM live_decision_open_positions WHERE status='closed' AND return_pct IS NOT NULL"
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return 0, 0
+    returns = [r[0] for r in rows if isinstance(r[0], (int, float)) and r[0] == r[0]]
+    return len(returns), sum(1 for r in returns if r > 0)
+
+
 def assess(
     strategy_store: SqliteStrategyStore,
     agent_data_root: Optional[Path],
     *,
     mature_min_trades: int = DEFAULT_MATURE_MIN_TRADES,
+    live_data_root: Optional[Path] = None,
 ) -> MaturityAssessment:
     n_paper_trading_days, n_artifacts_with_paper_history = _paper_history(agent_data_root)
 
-    n_real_trades = 0
-    directional_correct_count = 0
+    # Live-decision trades count as real trades, but carry no regime tag, so they can lift the tier to early_live
+    # and never to mature on their own: mature still needs regime coverage from tagged artifacts.
+    n_real_trades, directional_correct_count = _live_decision_trades(live_data_root)
     regimes: set[str] = set()
     for artifact in strategy_store.list_artifacts():
         entries = strategy_store.get_calibration_entries(artifact.artifact_id)

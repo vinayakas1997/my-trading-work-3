@@ -81,3 +81,29 @@ def test_an_empty_library_gives_no_analogues():
     assert load_pattern_library(pd.DataFrame()).empty
     X, idx, params = build_feature_matrix(pd.DataFrame({"rsi_14": [float("nan")]}))
     assert find_similar(TODAY, pd.DataFrame(), X, idx, k=3, norm_params=params) == []
+
+
+class TestAnalogueSummary:
+    """D7: one honest summary line over the matched earlier peaks."""
+
+    def test_by_hand(self):
+        from vinu_initial_analysis.angles.trend_lifecycle.patterns import summarize_matches
+        matches = [
+            {"matched_drawdown_pct": -0.075, "matched_recovery_bars": 15},
+            {"matched_drawdown_pct": -0.025, "matched_recovery_bars": 5},
+            {"matched_drawdown_pct": -0.10, "matched_recovery_bars": None},     # never recovered within the lookahead
+            {"matched_drawdown_pct": None, "matched_recovery_bars": None},      # outcome not recorded
+        ]
+        s = summarize_matches(matches)
+        assert s["analogue_n"] == 4
+        assert s["analogue_mean_drawdown_pct"] == pytest.approx(-0.0667, abs=1e-4)   # (-0.075 - 0.025 - 0.10) / 3, stored to 4 places
+        assert s["analogue_median_drawdown_pct"] == pytest.approx(-0.075)
+        assert s["analogue_worst_drawdown_pct"] == pytest.approx(-0.10)
+        assert s["analogue_share_recovered"] == pytest.approx(2 / 4)       # 2 of the 4 matches recovered
+        assert s["analogue_median_recovery_bars"] == pytest.approx(10.0)   # median of 5 and 15
+
+    def test_no_matches_gives_no_statistics_not_zeros(self):
+        from vinu_initial_analysis.angles.trend_lifecycle.patterns import summarize_matches
+        s = summarize_matches([])
+        assert s["analogue_n"] == 0
+        assert s["analogue_mean_drawdown_pct"] is None and s["analogue_share_recovered"] is None
