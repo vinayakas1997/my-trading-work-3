@@ -5,7 +5,7 @@ HTTP call found in the source. Re-run it after any route or caller change; `cont
 machine-readable copy.
 
 - Services read: 13 of 13
-- Routes: 272; HTTP calls found in source: 205; calls matched to a route: 199
+- Routes: 272; HTTP calls found in source: 206; calls matched to a route: 200
 - Findings: 1 ERROR, 0 WARN (see `03-findings.md` for what each means and its fix status)
 - Routes nothing in the code calls: 165 (candidate-gap: 10, covered: 2, file-read: 3, human-view: 85, operator-action: 65); each is classified in the last column.
 

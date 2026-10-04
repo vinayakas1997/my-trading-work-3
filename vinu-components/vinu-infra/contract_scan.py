@@ -142,7 +142,7 @@ def dump_openapi(root: Path, services: dict[str, tuple[str, str]], python_for: d
     sibling = os.pathsep.join(str(root / d) for d in os.listdir(root) if d.startswith("vinu-") and (root / d).is_dir())
     for name, (d, mod) in services.items():
         tmp = tempfile.mkdtemp()
-        env = {**os.environ, "PYTHONPATH": sibling, "PYTHONIOENCODING": "utf-8", "VINU_DATA_ROOT": tmp}
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join(x for x in (sibling, os.environ.get("PYTHONPATH", "")) if x), "PYTHONIOENCODING": "utf-8", "VINU_DATA_ROOT": tmp}
         for var in ("STOCK", "NEWS", "INITIAL_ANALYSIS", "RESEARCH", "AGENT", "PORTFOLIO", "LIVE", "SCREENER",
                     "REFLECTION", "STRATEGY", "TOOLS", "SIMULATOR", "STOCK_PRICE"):
             env[f"VINU_{var}_DATA_ROOT"] = tmp

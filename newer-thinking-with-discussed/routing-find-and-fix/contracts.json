@@ -682,7 +682,7 @@
    },
    "body": null,
    "body_open": false,
-   "callers": 7
+   "callers": 8
   },
   {
    "service": "initial-analysis",
@@ -3511,7 +3511,7 @@
   {
    "service": "agent",
    "file": "vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py",
-   "line": 108,
+   "line": 160,
    "method": "ANY",
    "path": "/live/decision-context/{}/{}",
    "raw_path": "/live/decision-context/{}/{}",
@@ -3525,7 +3525,7 @@
   {
    "service": "agent",
    "file": "vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py",
-   "line": 111,
+   "line": 163,
    "method": "ANY",
    "path": "/strategy/strategies/{}",
    "raw_path": "/strategy/strategies/{}",
@@ -3539,7 +3539,7 @@
   {
    "service": "agent",
    "file": "vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py",
-   "line": 114,
+   "line": 166,
    "method": "ANY",
    "path": "/live/decisions/{}/{}",
    "raw_path": "/live/decisions/{}/{}",
@@ -3553,7 +3553,23 @@
   {
    "service": "agent",
    "file": "vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py",
-   "line": 125,
+   "line": 181,
+   "method": "ANY",
+   "path": "/analysis/angle/trend_lifecycle/{}",
+   "raw_path": "/analysis/angle/trend_lifecycle/{}?granularity={}",
+   "query": [
+    "granularity"
+   ],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /analysis/angle/{angle_name}/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py",
+   "line": 188,
    "method": "ANY",
    "path": "/research/unconfirmed-moves",
    "raw_path": "/research/unconfirmed-moves?symbol={}&limit=10",
@@ -3570,7 +3586,7 @@
   {
    "service": "agent",
    "file": "vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py",
-   "line": 131,
+   "line": 194,
    "method": "ANY",
    "path": "/reflection/beliefs/notable",
    "raw_path": "/reflection/beliefs/notable?limit=10",
@@ -3586,7 +3602,7 @@
   {
    "service": "agent",
    "file": "vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py",
-   "line": 181,
+   "line": 246,
    "method": "ANY",
    "path": "/research/maturity/status",
    "raw_path": "/research/maturity/status",
@@ -4854,7 +4870,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 398,
+   "line": 423,
    "method": "POST",
    "path": "/agent/live-decision/run",
    "raw_path": "/agent/live-decision/run",
@@ -4873,7 +4889,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 491,
+   "line": 512,
    "method": "POST",
    "path": "/agent/notify/reconciliation-drift",
    "raw_path": "/agent/notify/reconciliation-drift",
@@ -4891,7 +4907,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 537,
+   "line": 558,
    "method": "POST",
    "path": "/agent/live-decision/run",
    "raw_path": "/agent/live-decision/run",
@@ -4910,7 +4926,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 606,
+   "line": 627,
    "method": "POST",
    "path": "/strategy/strategies/{}/precondition-check",
    "raw_path": "/strategy/strategies/{}/precondition-check",
@@ -4926,7 +4942,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 631,
+   "line": 652,
    "method": "POST",
    "path": "/research/move-evidence/{}",
    "raw_path": "/research/move-evidence/{}",
@@ -4948,7 +4964,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 665,
+   "line": 686,
    "method": "GET",
    "path": "/research/signal-evidence",
    "raw_path": "/research/signal-evidence",
@@ -4965,7 +4981,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 688,
+   "line": 709,
    "method": "POST",
    "path": "/research/signal-evidence/{}/outcome",
    "raw_path": "/research/signal-evidence/{}/outcome",
@@ -4983,7 +4999,7 @@
   {
    "service": "live",
    "file": "vinu-live/vinu_live/live_decision/poller.py",
-   "line": 730,
+   "line": 751,
    "method": "POST",
    "path": "/research/signal-evidence/trigger",
    "raw_path": "/research/signal-evidence/trigger",
@@ -5506,7 +5522,7 @@
   {
    "service": "portfolio",
    "file": "vinu-portfolio/vinu_portfolio/service.py",
-   "line": 540,
+   "line": 546,
    "method": "GET",
    "path": "/stock/candles/{}",
    "raw_path": "/stock/candles/{}",
@@ -5523,7 +5539,7 @@
   {
    "service": "portfolio",
    "file": "vinu-portfolio/vinu_portfolio/service.py",
-   "line": 585,
+   "line": 591,
    "method": "GET",
    "path": "/research/trade-plan/{}/calibration",
    "raw_path": "/research/trade-plan/{}/calibration",
@@ -5537,7 +5553,7 @@
   {
    "service": "portfolio",
    "file": "vinu-portfolio/vinu_portfolio/service.py",
-   "line": 636,
+   "line": 642,
    "method": "GET",
    "path": "/stock/candles/{}",
    "raw_path": "/stock/candles/{}",
@@ -5554,7 +5570,7 @@
   {
    "service": "portfolio",
    "file": "vinu-portfolio/vinu_portfolio/service.py",
-   "line": 873,
+   "line": 879,
    "method": "POST",
    "path": "/agent/notify/symbol-conflict",
    "raw_path": "/agent/notify/symbol-conflict",
@@ -5574,7 +5590,7 @@
   {
    "service": "portfolio",
    "file": "vinu-portfolio/vinu_portfolio/service.py",
-   "line": 1418,
+   "line": 1424,
    "method": "GET",
    "path": "/research/trade-plan/{}",
    "raw_path": "/research/trade-plan/{}",
@@ -5588,7 +5604,7 @@
   {
    "service": "portfolio",
    "file": "vinu-portfolio/vinu_portfolio/service.py",
-   "line": 1450,
+   "line": 1456,
    "method": "GET",
    "path": "/agent/broker/account",
    "raw_path": "/agent/broker/account",
@@ -5602,7 +5618,7 @@
   {
    "service": "portfolio",
    "file": "vinu-portfolio/vinu_portfolio/service.py",
-   "line": 1464,
+   "line": 1470,
    "method": "GET",
    "path": "/agent/broker/positions",
    "raw_path": "/agent/broker/positions",
@@ -5846,7 +5862,7 @@
   {
    "service": "research",
    "file": "vinu-research/vinu_research/server/routes_introspect.py",
-   "line": 376,
+   "line": 377,
    "method": "GET",
    "path": "/agent/broker/performance/{}",
    "raw_path": "/agent/broker/performance/{}",
