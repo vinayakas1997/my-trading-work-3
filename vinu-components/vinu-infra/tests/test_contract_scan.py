@@ -196,3 +196,54 @@ def test_allowlist_suppresses_only_the_listed_finding(tmp_path):
     f1, _ = cs.compare([_call("GET", "/svc/nothing")], ROUTES)
     f2, _ = cs.compare([_call("GET", "/svc/other")], ROUTES)
     assert cs.is_allowed(f1[0], allow) and not cs.is_allowed(f2[0], allow)
+
+
+# ------------------------------------------------------------------ helper calls and route notes
+
+def test_helper_calls_taking_the_url_are_seen_but_log_messages_are_not(tmp_path):
+    calls = _scan(tmp_path, '''
+async def go(base, client, LOG):
+    a = await _fetch_json(f"{base}/svc/items/1", edge_id="e")
+    b = await _post(client, "/svc/free", json={"x": 1})
+    LOG.warning("/svc/items failed for %s", base)
+    c = SomeClient(f"{base}/svc")
+''')
+    got = sorted((c.method, c.path) for c in calls)
+    assert got == [("ANY", "/svc/free"), ("ANY", "/svc/items/1")]
+    assert all(c.dynamic_query and c.dynamic_body for c in calls if c.path == "/svc/items/1")
+
+
+def test_a_helper_call_matches_any_method_and_never_reports_missing_fields():
+    findings, matched = cs.compare([_call("ANY", "/svc/items", dq=True, db=True)], ROUTES)
+    assert findings == [] and len(matched) == 1
+
+
+NOTES = [
+    {"pattern": "^POST /svc/", "class": "operator-action", "reason": "by a person"},
+    {"pattern": "^GET /svc/", "class": "human-view", "reason": "a view"},
+]
+
+
+def _fresh_routes():
+    import copy
+
+    routes = copy.deepcopy(ROUTES)
+    for r in routes:
+        r.callers = 0
+    return routes
+
+
+def test_unread_routes_are_classified_by_the_first_matching_note_else_unclassified():
+    unread = {(r.method, r.path): (cls, why) for r, cls, why in cs.unread_routes(_fresh_routes(), NOTES)}
+    assert unread[("POST", "/svc/items")][0] == "operator-action"
+    assert unread[("GET", "/svc/items/{item_id}")][0] == "human-view"
+    assert unread[("GET", "/analysis/angle/{angle_name}/{ticker}")][0] == "UNCLASSIFIED"
+    assert ("GET", "/svc/health") not in unread                      # health routes are never reported
+
+
+def test_a_called_route_is_not_unread_and_the_registry_shows_the_class():
+    routes = _fresh_routes()
+    findings, matched = cs.compare([_call("GET", "/svc/items/{}", ["limit"])], routes)
+    assert ("GET", "/svc/items/{item_id}") not in {(r.method, r.path) for r, _, _ in cs.unread_routes(routes, NOTES)}
+    md = cs.registry_markdown(routes, matched, findings, {}, 1, NOTES)
+    assert "**nobody** — operator-action: by a person" in md and "UNCLASSIFIED: 1" in md

@@ -1,0 +1,43 @@
+{
+  "_why": "Classification of routes that no code calls. Patterns are regexes matched against 'METHOD /path'; the first match wins. Classes: operator-action (state-changing, used by an operator or the UI), human-view (read-only view for a person or the UI), file-read (the consumer reads the same store directly, not over HTTP), covered (another route or tool already gives the consumer this data), candidate-gap (data that no code reads and that a pipeline step or agent might need: a decision, not a bug). A route that matches nothing is UNCLASSIFIED and is listed in the registry header.",
+  "notes": [
+    {"pattern": "^(POST|PUT|PATCH|DELETE) ", "class": "operator-action",
+     "reason": "state-changing route; called by an operator, the UI or a scheduler outside the code scanned, never by another service"},
+
+    {"pattern": "^GET /research/evaluation-(status|history)", "class": "file-read",
+     "reason": "the agent and reflection read the same strategy-evaluation database directly (edge evaluation_status->agent.idea_prompt), not over HTTP"},
+    {"pattern": "^GET /research/(move-evidence|track2-aggregate)", "class": "covered",
+     "reason": "the live-decision agent gets Track-2 moves through `unconfirmed_moves[]` in get_live_decision_context (see its AGENT.md); no dedicated tool by decision"},
+
+    {"pattern": "^GET /news/(high-impact|stats/ticker)", "class": "candidate-gap",
+     "reason": "news impact / threat classification is stored and shown but no gate or agent reads it (see 04 status, Open: News)"},
+    {"pattern": "^GET /research/(angle-calibration|candidate-graveyard)", "class": "candidate-gap",
+     "reason": "calibration and graveyard are written and used in-process; nothing reads these views, check whether an agent should"},
+    {"pattern": "^GET /analysis/(events|impact|correlation/batch)", "class": "candidate-gap",
+     "reason": "older analysis views; research and strategy read story / drawdown / correlation / angle instead, check whether these are still needed"},
+
+    {"pattern": "^GET /agent/(sessions|status|swarm/presets|trace|broker/safety-ledger|broker/limits|broker/overrides|broker/mandate|admin|swarm/runs|options)", "class": "human-view",
+     "reason": "agent sessions, swarm runs, broker limits and overrides, safety ledger, settings: read by a person or the UI"},
+    {"pattern": "^GET /(analysis|live|research|news|stock|strategy|simulator|features|portfolio|screener|reflection|models)/(settings|admin)", "class": "human-view",
+     "reason": "service settings: read by a person or the UI"},
+    {"pattern": "^GET /models/", "class": "human-view", "reason": "model service status and angle list for an operator"},
+    {"pattern": "^GET /live/(status|executions|lockouts|snapshots|tca|decisions/needs-sizing)", "class": "human-view",
+     "reason": "visibility routes (order ledger, lockouts, slippage, snapshots, decisions needing a size) for an operator; reflection reads the live data files"},
+    {"pattern": "^GET /portfolio/", "class": "human-view", "reason": "allocation history, not-funded, game plan, weights: operator views"},
+    {"pattern": "^GET /research/(pipeline-edges|parity-report|generation-rounds|sweep/grid|hypotheses|runs|settings|artifacts/)", "class": "human-view",
+     "reason": "introspection and report routes for an operator (pipeline-edge report, parity report, generation rounds, sweeps, hypotheses)"},
+    {"pattern": "^GET /news/(poll|finbert|watchlist|latest|threads|articles|backfill|feeds|providers|settings)", "class": "human-view",
+     "reason": "news ingestion status, feeds, providers, threads and article lists for an operator or the UI"},
+    {"pattern": "^GET /screener/", "class": "human-view", "reason": "rules, rankers, pairlist, churn, history: operator views (the agent reads rankers through /latest)"},
+    {"pattern": "^GET /simulator/results/", "class": "human-view", "reason": "backtest result detail for an operator (the agent reads equity and weights)"},
+    {"pattern": "^GET /stock/(catalog|backfill|settings)", "class": "human-view", "reason": "data catalog and backfill status for an operator"},
+    {"pattern": "^GET /features/(factors|ml|requests)", "class": "human-view", "reason": "factor and model catalog, feature requests: operator and UI views"},
+    {"pattern": "^GET /analysis/(coverage|manifest|settings)", "class": "human-view", "reason": "coverage and manifest views for an operator (the agent computes coverage itself from /angles)"},
+    {"pattern": "^GET /strategy/(docs|settings)", "class": "human-view", "reason": "strategy YAML reference and settings for a person"},
+    {"pattern": "^GET /reflection/synthesis/pending", "class": "human-view", "reason": "pending synthesis list for an operator; the worker reads its own store"},
+    {"pattern": "^GET /analysis/run/jobs", "class": "human-view", "reason": "job status poll for a person who triggered a run"},
+    {"pattern": "^GET /live/trade-plan/emergency-status", "class": "human-view", "reason": "emergency flatten / halt status for an operator"},
+    {"pattern": "^GET /v1/stage1/", "class": "candidate-gap",
+     "reason": "the positional stage-1 API (fetch / factsheet) exists beside the older /analysis, /stock and /news routes, but the pipeline still reads the older ones (only latest-run is used); decide which API is the canonical one"}
+  ]
+}

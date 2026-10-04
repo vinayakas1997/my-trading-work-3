@@ -5,12 +5,13 @@ Checks that every connection between services is wired correctly (Phase 1, code 
 | File | What it is |
 |---|---|
 | `01-plan.md` | The approach and what each layer covers. Read this first. |
-| `02-contract-registry.md` | **Generated.** Every route with its query and body fields, and who calls it. |
+| `02-contract-registry.md` | **Generated.** Every route with its query and body fields, who calls it, and the class of every route nobody calls. |
 | `contracts.json` | **Generated.** The same, machine-readable (routes, matched calls, findings). |
 | `03-findings.md` | What was found, what it means, fix status. |
 | `04-implementation-status.md` | What is built, files touched, tests, what is still open. |
 | `contract_allowlist.json` | Findings that are correct to leave, each with a reason. |
 | `client_prefixes.json` | Clients whose base URL carries the service prefix (hand-verified). |
+| `route_notes.json` | Classification of routes nothing calls (human-view, operator-action, file-read, covered, candidate-gap). |
 
 Re-run after any route or caller change (from `vinu-components/`):
 
@@ -18,7 +19,8 @@ Re-run after any route or caller change (from `vinu-components/`):
 python -m vinu_infra.contract_scan --root . \
   --out ../newer-thinking-with-discussed/routing-find-and-fix \
   --allowlist ../newer-thinking-with-discussed/routing-find-and-fix/contract_allowlist.json \
-  --client-prefixes ../newer-thinking-with-discussed/routing-find-and-fix/client_prefixes.json
+  --client-prefixes ../newer-thinking-with-discussed/routing-find-and-fix/client_prefixes.json \
+  --route-notes ../newer-thinking-with-discussed/routing-find-and-fix/route_notes.json
 ```
 
-It builds every service's real app, so it needs all service dependencies (run it where the services run, or pass `--python agent=<interpreter>` for one service). It exits 1 if there is any ERROR not in the allowlist.
+It builds every service's real app, so it needs all service dependencies (run it where the services run, or pass `--python agent=<interpreter>` for one service). It exits 1 if there is any ERROR not in the allowlist. A route nobody calls and no note covers shows as `UNCLASSIFIED` and is counted in the registry header.

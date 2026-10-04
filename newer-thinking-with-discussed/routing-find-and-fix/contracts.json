@@ -77,7 +77,7 @@
    },
    "body": null,
    "body_open": false,
-   "callers": 21
+   "callers": 25
   },
   {
    "service": "stock-price",
@@ -127,7 +127,7 @@
    "query": {},
    "body": null,
    "body_open": false,
-   "callers": 1
+   "callers": 2
   },
   {
    "service": "stock-price",
@@ -581,7 +581,7 @@
    },
    "body": null,
    "body_open": false,
-   "callers": 0
+   "callers": 1
   },
   {
    "service": "initial-analysis",
@@ -606,7 +606,7 @@
    },
    "body": null,
    "body_open": false,
-   "callers": 0
+   "callers": 1
   },
   {
    "service": "initial-analysis",
@@ -630,7 +630,7 @@
    },
    "body": null,
    "body_open": false,
-   "callers": 1
+   "callers": 2
   },
   {
    "service": "initial-analysis",
@@ -682,7 +682,7 @@
    },
    "body": null,
    "body_open": false,
-   "callers": 6
+   "callers": 7
   },
   {
    "service": "initial-analysis",
@@ -958,7 +958,7 @@
    },
    "body": null,
    "body_open": false,
-   "callers": 1
+   "callers": 2
   },
   {
    "service": "strategy",
@@ -976,7 +976,7 @@
    "query": {},
    "body": null,
    "body_open": false,
-   "callers": 2
+   "callers": 3
   },
   {
    "service": "strategy",
@@ -1574,7 +1574,7 @@
    "query": {},
    "body": null,
    "body_open": false,
-   "callers": 1
+   "callers": 2
   },
   {
    "service": "research",
@@ -1641,7 +1641,7 @@
     "policy_version": false
    },
    "body_open": false,
-   "callers": 1
+   "callers": 2
   },
   {
    "service": "research",
@@ -1654,7 +1654,7 @@
     "return_at_horizon": true
    },
    "body_open": false,
-   "callers": 0
+   "callers": 1
   },
   {
    "service": "research",
@@ -1716,7 +1716,7 @@
    },
    "body": null,
    "body_open": false,
-   "callers": 0
+   "callers": 1
   },
   {
    "service": "research",
@@ -2574,7 +2574,7 @@
    "query": {},
    "body": null,
    "body_open": false,
-   "callers": 0
+   "callers": 1
   },
   {
    "service": "live",
@@ -2617,7 +2617,7 @@
    },
    "body": null,
    "body_open": false,
-   "callers": 0
+   "callers": 1
   },
   {
    "service": "live",
@@ -2907,7 +2907,7 @@
    },
    "body": null,
    "body_open": false,
-   "callers": 0
+   "callers": 1
   },
   {
    "service": "models",
@@ -2943,7 +2943,7 @@
     "time_format": false
    },
    "body_open": false,
-   "callers": 0
+   "callers": 1
   },
   {
    "service": "models",
@@ -2955,7 +2955,7 @@
     "batch_size": false
    },
    "body_open": false,
-   "callers": 0
+   "callers": 1
   },
   {
    "service": "models",
@@ -3506,6 +3506,95 @@
    "dynamic_query": false,
    "dynamic_body": false,
    "route": "GET /research/artifacts",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py",
+   "line": 108,
+   "method": "ANY",
+   "path": "/live/decision-context/{}/{}",
+   "raw_path": "/live/decision-context/{}/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /live/decision-context/{ticker}/{strategy_id}",
+   "service_served": "live"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py",
+   "line": 111,
+   "method": "ANY",
+   "path": "/strategy/strategies/{}",
+   "raw_path": "/strategy/strategies/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /strategy/strategies/{name}",
+   "service_served": "strategy"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py",
+   "line": 114,
+   "method": "ANY",
+   "path": "/live/decisions/{}/{}",
+   "raw_path": "/live/decisions/{}/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /live/decisions/{ticker}/{strategy_id}",
+   "service_served": "live"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py",
+   "line": 125,
+   "method": "ANY",
+   "path": "/research/unconfirmed-moves",
+   "raw_path": "/research/unconfirmed-moves?symbol={}&limit=10",
+   "query": [
+    "symbol",
+    "limit"
+   ],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /research/unconfirmed-moves",
+   "service_served": "research"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py",
+   "line": 131,
+   "method": "ANY",
+   "path": "/reflection/beliefs/notable",
+   "raw_path": "/reflection/beliefs/notable?limit=10",
+   "query": [
+    "limit"
+   ],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /reflection/beliefs/notable",
+   "service_served": "reflection"
+  },
+  {
+   "service": "agent",
+   "file": "vinu-agent/vinu_agent/tools/get_live_decision_context_tool.py",
+   "line": 181,
+   "method": "ANY",
+   "path": "/research/maturity/status",
+   "raw_path": "/research/maturity/status",
+   "query": [],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /research/maturity/status",
    "service_served": "research"
   },
   {
@@ -4125,6 +4214,34 @@
    "service_served": "screener"
   },
   {
+   "service": "infra",
+   "file": "vinu-infra/model_client.py",
+   "line": 89,
+   "method": "ANY",
+   "path": "/models/angle/{}/compute",
+   "raw_path": "/models/angle/{}/compute",
+   "query": [],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "POST /models/angle/{angle}/compute",
+   "service_served": "models"
+  },
+  {
+   "service": "infra",
+   "file": "vinu-infra/model_client.py",
+   "line": 100,
+   "method": "ANY",
+   "path": "/models/finbert/score",
+   "raw_path": "/models/finbert/score",
+   "query": [],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "POST /models/finbert/score",
+   "service_served": "models"
+  },
+  {
    "service": "initial-analysis",
    "file": "vinu-initial-analysis/vinu_initial_analysis/cli.py",
    "line": 76,
@@ -4137,6 +4254,68 @@
    "dynamic_body": false,
    "route": "GET /stock/watchlist/tickers",
    "service_served": "stock-price"
+  },
+  {
+   "service": "initial-analysis",
+   "file": "vinu-initial-analysis/vinu_initial_analysis/clients/price_client.py",
+   "line": 47,
+   "method": "ANY",
+   "path": "/stock/watchlist/tickers",
+   "raw_path": "/stock/watchlist/tickers",
+   "query": [],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /stock/watchlist/tickers",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "initial-analysis",
+   "file": "vinu-initial-analysis/vinu_initial_analysis/clients/price_client.py",
+   "line": 88,
+   "method": "ANY",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "adjusted",
+    "from",
+    "interval",
+    "limit",
+    "to"
+   ],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "initial-analysis",
+   "file": "vinu-initial-analysis/vinu_initial_analysis/angles/signal_evidence/compute.py",
+   "line": 814,
+   "method": "ANY",
+   "path": "/research/signal-evidence/trigger",
+   "raw_path": "/research/signal-evidence/trigger",
+   "query": [],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "POST /research/signal-evidence/trigger",
+   "service_served": "research"
+  },
+  {
+   "service": "initial-analysis",
+   "file": "vinu-initial-analysis/vinu_initial_analysis/angles/signal_evidence/compute.py",
+   "line": 833,
+   "method": "ANY",
+   "path": "/research/signal-evidence/{}-{}-{}/outcome",
+   "raw_path": "/research/signal-evidence/{}-{}-{}/outcome",
+   "query": [],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "POST /research/signal-evidence/{trigger_id}/outcome",
+   "service_served": "research"
   },
   {
    "service": "live",
@@ -5180,6 +5359,24 @@
    "service_served": "agent"
   },
   {
+   "service": "news",
+   "file": "vinu-news/vinu_news/integrations/stock_price.py",
+   "line": 50,
+   "method": "ANY",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [
+    "limit",
+    "from",
+    "to"
+   ],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
    "service": "portfolio",
    "file": "vinu-portfolio/vinu_portfolio/circuit_breakers.py",
    "line": 222,
@@ -5776,6 +5973,88 @@
   },
   {
    "service": "strategy",
+   "file": "vinu-strategy/vinu_strategy/clients/correlation_client.py",
+   "line": 15,
+   "method": "ANY",
+   "path": "/analysis/impact/{}",
+   "raw_path": "/analysis/impact/{}",
+   "query": [
+    "from_ts",
+    "to_ts"
+   ],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /analysis/impact/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "strategy",
+   "file": "vinu-strategy/vinu_strategy/clients/correlation_client.py",
+   "line": 23,
+   "method": "ANY",
+   "path": "/analysis/correlation/{}",
+   "raw_path": "/analysis/correlation/{}",
+   "query": [
+    "from_ts",
+    "to_ts"
+   ],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /analysis/correlation/batch",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "strategy",
+   "file": "vinu-strategy/vinu_strategy/clients/correlation_client.py",
+   "line": 31,
+   "method": "ANY",
+   "path": "/analysis/drawdown/{}",
+   "raw_path": "/analysis/drawdown/{}",
+   "query": [
+    "from_ts",
+    "to_ts"
+   ],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /analysis/drawdown/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "strategy",
+   "file": "vinu-strategy/vinu_strategy/clients/correlation_client.py",
+   "line": 34,
+   "method": "ANY",
+   "path": "/analysis/angle/{}/{}",
+   "raw_path": "/analysis/angle/{}/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /analysis/angle/{angle_name}/{ticker}",
+   "service_served": "initial-analysis"
+  },
+  {
+   "service": "strategy",
+   "file": "vinu-strategy/vinu_strategy/clients/features_client.py",
+   "line": 29,
+   "method": "ANY",
+   "path": "/features/{}",
+   "raw_path": "/features/{}",
+   "query": [
+    "as_of",
+    "indicators"
+   ],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /features/{symbol_or_kind}",
+   "service_served": "tools"
+  },
+  {
+   "service": "strategy",
    "file": "vinu-strategy/vinu_strategy/server/routes_config.py",
    "line": 29,
    "method": "GET",
@@ -5819,6 +6098,34 @@
    "body": null,
    "dynamic_query": false,
    "dynamic_body": false,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "tools",
+   "file": "vinu-tools/vinu_tools/server/routes_features.py",
+   "line": 191,
+   "method": "ANY",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
+   "route": "GET /stock/candles/{symbol}",
+   "service_served": "stock-price"
+  },
+  {
+   "service": "tools",
+   "file": "vinu-tools/vinu_tools/server/routes_features.py",
+   "line": 198,
+   "method": "ANY",
+   "path": "/stock/candles/{}",
+   "raw_path": "/stock/candles/{}",
+   "query": [],
+   "body": null,
+   "dynamic_query": true,
+   "dynamic_body": true,
    "route": "GET /stock/candles/{symbol}",
    "service_served": "stock-price"
   },

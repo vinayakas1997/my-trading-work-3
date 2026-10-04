@@ -265,19 +265,34 @@ def _scan_function(body_nodes: list[ast.stmt], service: str, file: str, calls: l
                 elif (isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name)
                       and isinstance(t.slice, ast.Constant) and isinstance(t.slice.value, str)):
                     extra.setdefault(t.value.id, set()).add(t.slice.value)
-            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            elif isinstance(node, ast.Call):
                 _maybe_call(node, env, extra, service, file, calls, known_first)
 
 
 def _maybe_call(node: ast.Call, env, extra, service, file, calls, known_first) -> None:
-    attr = node.func.attr
+    is_attr = isinstance(node.func, ast.Attribute)
+    attr = node.func.attr if is_attr else getattr(node.func, "id", "")
     method = None
     url_node = None
-    if attr in HTTP_VERBS and node.args:
+    helper = False
+    if is_attr and attr in HTTP_VERBS and node.args:
         method, url_node = attr.upper(), node.args[0]
-    elif attr == "request" and len(node.args) >= 2 and isinstance(node.args[0], ast.Constant) \
+    elif is_attr and attr == "request" and len(node.args) >= 2 and isinstance(node.args[0], ast.Constant) \
             and isinstance(node.args[0].value, str):
         method, url_node = node.args[0].value.upper(), node.args[1]
+    elif node.args:
+        # A helper that takes the URL in its first or second argument, e.g. `_fetch_json(f"{base}/live/decisions/..")` or
+        # `_post(client, "/research/signal-evidence/{id}/outcome")`. The argument must start with a base-url placeholder, or
+        # be a path of at least two segments whose first segment is a service prefix, so a log line or a dict key can never
+        # look like a call.
+        for cand in node.args[:2]:
+            text = _render(cand, env)
+            if not text or " " in text:               # a path has no spaces: a log message must never look like a call
+                continue
+            if text.startswith("{}/") or (text.startswith("/") and text.strip("/").count("/") >= 1
+                                          and text.strip("/").split("/")[0] in known_first):
+                method, url_node, helper = "ANY", cand, True
+                break
     if method is None or url_node is None:
         return
     rendered = _render(url_node, env)
@@ -292,8 +307,12 @@ def _maybe_call(node: ast.Call, env, extra, service, file, calls, known_first) -
     first = path_part.strip("/").split("/")[0]
     if first not in known_first and not path_part.startswith("/"):
         return
+    if helper and (first not in known_first or "/" not in path_part.strip("/")):
+        return           # not one of our routes (or a bare service prefix: a client constructor's base URL)
     call = Call(service=service, file=file, line=node.lineno, method=method, path=norm_path(path_part), raw_path=raw)
     call.query = _KEY_IN_URL.findall(raw)
+    if helper:
+        call.dynamic_query = call.dynamic_body = True       # the helper decides which fields it adds
     for kw in node.keywords:
         if kw.arg == "params":
             r = _dict_keys(kw.value, env, extra)
@@ -399,7 +418,7 @@ def compare(calls: list[Call], routes: list[Route]) -> tuple[list[Finding], list
                 findings.append(Finding("INFO", "unresolved", c, None,
                                         f"{c.path} starts with no service prefix: an external API or a client with a base path"))
             continue
-        same_method = [r for r in cands if r.method == c.method]
+        same_method = [r for r in cands if c.method == "ANY" or r.method == c.method]
         if not same_method:
             have = ", ".join(sorted({f"{r.method} {r.path}" for r in cands}))
             findings.append(Finding("ERROR", "wrong_method", c, cands[0].path,
@@ -434,18 +453,48 @@ def _field_problems(c: Call, r: Route) -> list[tuple[str, str, str]]:
             for name, required in sorted(r.body.items()):
                 if required and name not in c.body:
                     out.append(("ERROR", "body_missing", f"required body field '{name}' is not sent (route answers 422)"))
-    elif c.body is None and r.body and not r.body_open and any(r.body.values()):
+    elif c.body is None and not c.dynamic_body and r.body and not r.body_open and any(r.body.values()):
         out.append(("ERROR", "body_missing", "the route needs a JSON body but the call sends none"))
     return out
 
 
 # ----------------------------------------------------------------------------------------------- output
 
+def load_route_notes(path: Path | None) -> list[dict[str, str]]:
+    """Hand-maintained classification of routes nothing calls: [{"pattern": regex on 'METHOD path', "class", "reason"}]."""
+    if path is None or not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8")).get("notes", [])
+
+
+def note_for(r: Route, notes: list[dict[str, str]]) -> tuple[str, str] | None:
+    key = f"{r.method} {r.path}"
+    for n in notes:
+        if re.search(n["pattern"], key):
+            return n["class"], n["reason"]
+    return None
+
+
+def unread_routes(routes: list[Route], notes: list[dict[str, str]]) -> list[tuple[Route, str, str]]:
+    """Routes with no caller, each with its class (UNCLASSIFIED when no note matches)."""
+    out = []
+    for r in routes:
+        if r.callers == 0 and not r.path.endswith("/health"):
+            hit = note_for(r, notes)
+            out.append((r, hit[0] if hit else "UNCLASSIFIED", hit[1] if hit else "needs a decision"))
+    return out
+
+
 def registry_markdown(routes: list[Route], matched: list[tuple[Call, Route]], findings: list[Finding],
-                      errors: dict[str, str], n_calls: int) -> str:
+                      errors: dict[str, str], n_calls: int, notes: list[dict[str, str]] | None = None) -> str:
+    notes = notes or []
     by_route: dict[tuple[str, str, str], list[Call]] = {}
     for c, r in matched:
         by_route.setdefault((r.service, r.method, r.path), []).append(c)
+    unread = unread_routes(routes, notes)
+    by_class: dict[str, int] = {}
+    for _, cls, _ in unread:
+        by_class[cls] = by_class.get(cls, 0) + 1
     lines = [
         "# Contract registry (GENERATED — do not edit by hand)",
         "",
@@ -458,6 +507,8 @@ def registry_markdown(routes: list[Route], matched: list[tuple[Call, Route]], fi
         f"- Routes: {len(routes)}; HTTP calls found in source: {n_calls}; calls matched to a route: {len(matched)}",
         f"- Findings: {sum(1 for f in findings if f.level == 'ERROR')} ERROR, {sum(1 for f in findings if f.level == 'WARN')} WARN"
         " (see `03-findings.md` for what each means and its fix status)",
+        f"- Routes nothing in the code calls: {len(unread)} ("
+        + ", ".join(f"{k}: {v}" for k, v in sorted(by_class.items())) + "); each is classified in the last column.",
         "",
         "Legend: `*` = required. Body `(open)` = untyped object, any key accepted. Callers are `file:line`.",
         "",
@@ -473,7 +524,10 @@ def registry_markdown(routes: list[Route], matched: list[tuple[Call, Route]], fi
             else:
                 b = ", ".join(f"{k}{'*' if v else ''}" for k, v in r.body.items()) or "-"
             callers = by_route.get((r.service, r.method, r.path), [])
-            who = "; ".join(sorted({f"{c.file.split('/')[0].removeprefix('vinu-')}" for c in callers})) or "**nobody**"
+            who = "; ".join(sorted({f"{c.file.split('/')[0].removeprefix('vinu-')}" for c in callers}))
+            if not who and not r.path.endswith("/health"):
+                hit = note_for(r, notes)
+                who = f"**nobody** — {hit[0]}: {hit[1]}" if hit else "**nobody** — UNCLASSIFIED: needs a decision"
             lines.append(f"| `{r.method} {r.path}` | {q} | {b} | {who} |")
         lines.append("")
     return "\n".join(lines) + "\n"
@@ -520,6 +574,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--root", type=Path, required=True, help="the vinu-components folder")
     ap.add_argument("--out", type=Path, required=True, help="folder for contracts.json and 02-contract-registry.md")
     ap.add_argument("--allowlist", type=Path, default=None)
+    ap.add_argument("--route-notes", type=Path, default=None,
+                    help="json file classifying routes nothing calls (human-view, file-read, covered, candidate-gap)")
     ap.add_argument("--client-prefixes", type=Path, default=None,
                     help="json file naming the service prefix of clients whose base URL is set elsewhere")
     ap.add_argument("--python", action="append", default=[], metavar="SERVICE=PYTHON",
@@ -543,13 +599,15 @@ def main(argv: list[str] | None = None) -> int:
     allow = load_allowlist(args.allowlist)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "contracts.json").write_text(json.dumps(contracts_json(routes, matched, findings), indent=1), encoding="utf-8")
-    (args.out / "02-contract-registry.md").write_text(registry_markdown(routes, matched, findings, errors, len(calls)),
+    (args.out / "02-contract-registry.md").write_text(registry_markdown(routes, matched, findings, errors, len(calls),
+                                                                         load_route_notes(args.route_notes)),
                                                      encoding="utf-8")
+    unclassified = [r for r, cls, _ in unread_routes(routes, load_route_notes(args.route_notes)) if cls == "UNCLASSIFIED"]
     real_errors = [f for f in findings if f.level == "ERROR" and not is_allowed(f, allow)]
     print(f"services={len(docs)} routes={len(routes)} calls={len(calls)} matched={len(matched)} "
           f"errors={sum(1 for f in findings if f.level == 'ERROR')} warns={sum(1 for f in findings if f.level == 'WARN')} "
           f"info={sum(1 for f in findings if f.level == 'INFO')} "
-          f"(unallowed errors: {len(real_errors)})")
+          f"(unallowed errors: {len(real_errors)}; unread routes with no classification: {len(unclassified)})")
     for f in findings:
         if f.level == "INFO":
             continue

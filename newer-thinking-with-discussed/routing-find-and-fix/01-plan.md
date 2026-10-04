@@ -8,7 +8,7 @@ How real systems keep services from drifting apart: every producer states exactl
 
 | Layer | What it checks | Needs data? | Status |
 |---|---|---|---|
-| **A. Static contract scan** | Every HTTP call in the source reaches a real route (path and method), sends the required fields, and does not send fields the route drops. | No | **Built** (`vinu-infra/contract_scan.py`, 15 tests) |
+| **A. Static contract scan** | Every HTTP call in the source reaches a real route (path and method), sends the required fields, and does not send fields the route drops; routes nobody calls are classified. | No | **Built** (`vinu-infra/contract_scan.py`, 19 tests) |
 | **B. Contract in the edge manifest** | Per data connection (`pipeline_edges.yaml`): the fields it must carry and an example payload, so the contract is written down next to the "who sends, who reads" entry. | No | Not built |
 | **C. Runtime shape check** | The edge recorder compares the shape of a real payload with the contract and logs a mismatch (missing field, wrong type, empty where it should not be). | Yes (Phase 2) | Not built |
 
@@ -24,7 +24,7 @@ Layer A is the foundation: it generates `contracts.json`, the machine-readable c
 ## Known limits of layer A
 
 - It checks that fields exist, not their types or values, and not the response a caller reads.
-- A URL passed through a helper function, or a body built from `**kwargs`, is not checked field by field.
+- Helper calls (`_fetch_json(f"{base}/..")`, `_post(client, "/..")`) are seen for path and method, but their fields are not compared; a body built from `**kwargs` is not checked field by field.
 - It cannot see anything that only fails with real data (Phase 2).
 
 ## Maintenance rules
