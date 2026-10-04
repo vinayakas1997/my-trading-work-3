@@ -7,21 +7,21 @@ from vinu_agent.tools.angles_tool import ExplainAngleTool
 
 
 def test_every_real_angle_has_a_glossary_entry():
-    """All 28 real angle ids from angles.yaml must be covered -- a
+    """All 25 real angle ids from angles.yaml must be covered -- a
     missing one would silently fall back to the generic 'no entry'
     message instead of the intended explanation."""
     real_angle_ids = {
         "arima", "backtesting_44_metrics", "chronos", "dlinear",
         "drawdown_deep_dive", "exponential_smoothing", "garch",
-        "itransformer", "kalman_filters", "kronos", "lag_llama",
-        "lpatchtst", "lstm", "moirai", "moment", "news_price_causality",
+        "itransformer", "kalman_filters", "kronos",
+        "lpatchtst", "lstm", "news_price_causality",
         "patchtst", "peer_relative_strength", "pnl_attribution",
         "regime_analysis", "shock_clustering", "shock_personality",
         "tft", "timer_timerxl", "timesfm", "tips_regime_aware_transformer",
         "trend_lifecycle", "trend_session_structure",
     }
     assert real_angle_ids == set(ANGLE_GLOSSARY.keys())
-    assert len(real_angle_ids) == 28
+    assert len(real_angle_ids) == 25
 
 
 def test_every_blurb_is_real_content_not_empty():

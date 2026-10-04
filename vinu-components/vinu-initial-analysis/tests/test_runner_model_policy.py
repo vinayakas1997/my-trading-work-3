@@ -94,8 +94,11 @@ def test_permanently_disabled_angle_name_never_runs_even_if_named(monkeypatch):
     importlib.reload(model_policy_module)
     with TemporaryDirectory() as tmp:
         angle_runner, _, _ = _make_runner(tmp)
-        # moirai is a real, already-discovered angle (permanently excluded
-        # per Decision 5) -- naming it explicitly must still produce no
-        # result, regardless of its own spec.yaml's category tag.
-        result = angle_runner.run("AAPL", angle_names=["moirai"])
-        assert "moirai" not in result
+        # No angle is permanently disabled in the real system any more, so a stand-in set switches off arima
+        # (a real, already-discovered angle): naming it explicitly must still produce no result, regardless of
+        # its own spec.yaml's category tag (Decision 5).
+        import vinu_infra.system_manifest as sm
+
+        monkeypatch.setattr(sm, "PERMANENTLY_DISABLED_ANGLES", frozenset({"arima"}))
+        result = angle_runner.run("AAPL", angle_names=["arima"])
+        assert "arima" not in result

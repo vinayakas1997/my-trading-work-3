@@ -47,11 +47,12 @@ FIXED_EVIDENCE_COLUMNS: list[str] = [
 ]
 
 # Decision 5: permanently excluded regardless of category tag or the
-# MODELS switch -- these three are pinned to a statistical fallback
-# proxy by design (a real dependency conflict, not a temporary error
-# path), and would otherwise silently masquerade as independent model
-# opinions in the evidence table.
-PERMANENTLY_DISABLED_ANGLES: frozenset[str] = frozenset({"moirai", "moment", "lag_llama"})
+# MODELS switch -- an angle pinned to a statistical fallback proxy by design
+# (a real dependency conflict, not a temporary error path) would otherwise
+# silently masquerade as an independent model opinion in the evidence table.
+# Empty since moirai, moment and lag_llama were removed outright (2026-10-04);
+# the mechanism stays for any future angle that has to be switched off for good.
+PERMANENTLY_DISABLED_ANGLES: frozenset[str] = frozenset()
 
 
 def _category(angle: dict[str, Any]) -> str:

@@ -270,34 +270,6 @@ angles:
       ("pretrained" or "fallback_proxy") and fallback_reason explaining why.
 
       '
-- id: lag_llama
-  title: Lag-Llama Probabilistic Time-Series Model (fallback proxy)
-  purpose: 'Probabilistic (multi-quantile) forecast in the spirit of Lag-Llama (method
-    16 of the 32-method plan, see New-talk-/Final-implementation/01-present-considerations/16-lag-llama.md).
-    lag-llama has no PyPI package and only a manual-clone research repo — this angle
-    uses an honestly-labeled AR(5) linear-Gaussian fallback proxy that still emits
-    a genuinely probabilistic output. See compute.py''s module docstring.
-
-    '
-  time_formats:
-  - 1min
-  - 5min
-  - 15min
-  - 1H
-  - 4H
-  - 1D
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: 'Point forecast plus a 5-quantile (p5/p25/p50/p75/p95) distributional
-      forecast for the next 5 periods, plus model_backend (always "fallback_proxy")
-      and fallback_reason.
-
-      '
 - id: lpatchtst
   title: LPatchTST LSTM+PatchTST Hybrid Forecast
   purpose: 'Trained-from-scratch LPatchTST model (method 23 of the 32-method plan,
@@ -356,64 +328,6 @@ angles:
     type: dict
     description: 'One-step-ahead forecast price/return, thresholded direction (up/down/flat),
       and the fit''s training-window count and final training loss.
-
-      '
-- id: moirai
-  title: MOIRAI Any-Variate Time-Series Foundation Model (fallback proxy)
-  purpose: 'Forecast in the spirit of Salesforce''s MOIRAI (method 13 of the 32-method
-    plan, see New-talk-/Final-implementation/01-present-considerations/13-moirai.md).
-    The real `uni2ts` package exists but would downgrade the shared environment''s
-    torch build and can''t exercise MOIRAI''s any-variate multi-ticker mechanism from
-    this per-symbol interface anyway — this angle uses an honestly-labeled AR(3) statistical
-    fallback proxy. See compute.py''s module docstring.
-
-    '
-  time_formats:
-  - 1min
-  - 5min
-  - 15min
-  - 1H
-  - 4H
-  - 1D
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: 'Point + p10/p90 forecast for the next 5 periods, plus model_backend
-      (always "fallback_proxy"), fallback_reason, and any_variate_note explaining
-      the single-ticker degeneration.
-
-      '
-- id: moment
-  title: MOMENT Multi-Task Time-Series Foundation Model (fallback proxy)
-  purpose: 'Forecast in the spirit of MOMENT''s forecasting task (method 14 of the
-    32-method plan, see New-talk-/Final-implementation/01-present-considerations/14-moment.md).
-    The real `momentfm` package failed to build in this Python 3.12 environment (pkgutil.ImpImporter
-    incompatibility, confirmed via an actual install attempt) — this angle uses an
-    honestly-labeled statistical fallback proxy for the forecasting task only. See
-    compute.py''s module docstring.
-
-    '
-  time_formats:
-  - 1min
-  - 5min
-  - 15min
-  - 1H
-  - 4H
-  - 1D
-  inputs:
-    symbol: str
-    from_ts: int | None
-    to_ts: int | None
-  outputs:
-  - column: angle_data
-    type: dict
-    description: 'Point + p10/p90 forecast for the next 5 periods, plus model_backend
-      (always "fallback_proxy"), fallback_reason, and task_note flagging that only
-      the forecasting task is implemented.
 
       '
 - id: news_price_causality

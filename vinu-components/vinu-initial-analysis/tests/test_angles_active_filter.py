@@ -20,6 +20,15 @@ ANGLES = [_angle("arima", "raw_data"), _angle("chronos", "model"), _angle("lstm"
           _angle("moirai", "disabled"), _angle("regime_analysis", "raw_data")]
 
 
+@pytest.fixture(autouse=True)
+def _stand_in_permanently_disabled(monkeypatch):
+    """No angle is permanently disabled in the real system any more (moirai was removed); this test still pins
+    the mechanism, so it switches the name `moirai` off with a stand-in set."""
+    import vinu_infra.system_manifest as sm
+
+    monkeypatch.setattr(sm, "PERMANENTLY_DISABLED_ANGLES", frozenset({"moirai"}))
+
+
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(routes_read, "get_service", lambda: SimpleNamespace(list_angles=lambda: ANGLES))

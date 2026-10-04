@@ -92,13 +92,6 @@ ANGLE_GLOSSARY: dict[str, str] = {
         "Check model_backend: if \"fallback_proxy,\" this is a weaker MLP "
         "substitute, not the real model."
     ),
-    "lag_llama": (
-        "Important: model_backend is ALWAYS \"fallback_proxy\" for this "
-        "angle -- the real Lag-Llama model was never installable here, so "
-        "this is a simple AR(5) statistical substitute, not the actual "
-        "published model. Weigh accordingly, lower confidence than a "
-        "genuinely pretrained angle."
-    ),
     "lpatchtst": (
         "The single best-performing trained-from-scratch model in this "
         "system's own benchmark survey (57.7% directional accuracy, Sharpe "
@@ -111,20 +104,6 @@ ANGLE_GLOSSARY: dict[str, str] = {
         "this system's from-scratch models -- a well-known architecture, "
         "treat roughly as a competent generalist forecaster, not the "
         "strongest or weakest of its cluster."
-    ),
-    "moirai": (
-        "Always a \"fallback_proxy\" here (simple AR(3)), never the real "
-        "MOIRAI model -- and even the real model's key feature (attending "
-        "across multiple tickers at once) can't work through this system's "
-        "per-symbol interface anyway. Weight this low, closer to a generic "
-        "statistical baseline than a foundation model."
-    ),
-    "moment": (
-        "Always a \"fallback_proxy\" here -- the real MOMENT package "
-        "couldn't even be installed in this environment. Also note: MOMENT "
-        "is normally multi-task (classification, anomaly detection, "
-        "forecasting); only the forecasting piece exists here at all, and "
-        "even that isn't the real model."
     ),
     "news_price_causality": (
         "Tests whether news genuinely causes this symbol's price moves "
@@ -227,6 +206,6 @@ def explain_angle(angle_name: str) -> str:
     know about."""
     return ANGLE_GLOSSARY.get(
         angle_name,
-        f"No glossary entry for '{angle_name}' yet -- not one of the 28 "
+        f"No glossary entry for '{angle_name}' yet -- not one of the 25 "
         "angles this module currently covers.",
     )

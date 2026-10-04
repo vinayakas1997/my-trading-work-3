@@ -9,19 +9,19 @@ from vinu_agent.tools.cluster_digest_validator import (
 )
 
 
-def test_all_28_real_angles_are_assigned_to_exactly_one_cluster():
+def test_all_25_real_angles_are_assigned_to_exactly_one_cluster():
     real_angle_ids = {
         "arima", "backtesting_44_metrics", "chronos", "dlinear",
         "drawdown_deep_dive", "exponential_smoothing", "garch",
-        "itransformer", "kalman_filters", "kronos", "lag_llama",
-        "lpatchtst", "lstm", "moirai", "moment", "news_price_causality",
+        "itransformer", "kalman_filters", "kronos",
+        "lpatchtst", "lstm", "news_price_causality",
         "patchtst", "peer_relative_strength", "pnl_attribution",
         "regime_analysis", "shock_clustering", "shock_personality",
         "tft", "timer_timerxl", "timesfm", "tips_regime_aware_transformer",
         "trend_lifecycle", "trend_session_structure",
     }
     assert real_angle_ids == ALL_REAL_ANGLE_IDS
-    assert len(real_angle_ids) == 28
+    assert len(real_angle_ids) == 25
     assert set(ANGLE_CLUSTERS.keys()) == {"A", "B", "C", "D", "E", "F", "G"}
 
 

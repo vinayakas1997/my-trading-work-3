@@ -538,12 +538,12 @@ class TestGetClusterAnglesTool:
 
         assert result["time_format"] == "1D"
 
-    def test_cluster_b_has_all_14_real_members(self) -> None:
+    def test_cluster_b_has_all_11_real_members(self) -> None:
         angle_responses = {
             name: {"symbol": "AAPL", "angle": name, "row_count": 0, "data": []}
             for name in [
-                "chronos", "dlinear", "itransformer", "kronos", "lag_llama",
-                "lpatchtst", "lstm", "moirai", "moment", "patchtst", "tft",
+                "chronos", "dlinear", "itransformer", "kronos",
+                "lpatchtst", "lstm", "patchtst", "tft",
                 "timer_timerxl", "timesfm", "tips_regime_aware_transformer",
             ]
         }
@@ -553,8 +553,8 @@ class TestGetClusterAnglesTool:
         with patch("httpx.Client", return_value=client):
             result = json.loads(tool.execute(ticker="AAPL", cluster="B"))
 
-        assert result["angle_count"] == 14
-        assert len(result["cluster_members"]) == 14
+        assert result["angle_count"] == 11
+        assert len(result["cluster_members"]) == 11
 
     def test_all_mode_fetches_only_this_clusters_members_at_their_own_formats(self) -> None:
         """time_format='ALL' on get_cluster_angles: fetches the /angles

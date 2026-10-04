@@ -39,14 +39,6 @@ MODELS: dict[str, str] = {
     "timer-timerxl": "thuml/timer-base-84m",
     "kronos": "NeoQuasar/Kronos-base",
     "kronos-tokenizer": "NeoQuasar/Kronos-Tokenizer-base",
-    # Weights-only entries below are download-ready (folder prepped via
-    # `make models`) but their loaders are NOT wired: each requires a shared-env
-    # change (moirai -> uni2ts downgrades torch; moment -> momentfm fails to
-    # build on Py3.12; lag-llama -> gluonts downgrades pandas + needs repo
-    # code). Their angles keep the honest fallback_proxy backend by decision.
-    "moirai": "Salesforce/moirai-1.0-R-small",
-    "moment": "autonlab/MOMENT-1-small",
-    "lag-llama": "time-series-foundation-models/Lag-Llama",
 }
 
 

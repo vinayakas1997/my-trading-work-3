@@ -23,6 +23,11 @@ def _reload_modules(monkeypatch):
     monkeypatch.delenv("VINU_MODELS_ENABLED", raising=False)
     importlib.reload(model_policy_module)
     importlib.reload(system_manifest_module)
+    # No angle is permanently disabled in the real system any more (moirai, moment and lag_llama were removed);
+    # these tests still pin the mechanism, so they switch these three names off with a stand-in set.
+    monkeypatch.setattr(
+        system_manifest_module, "PERMANENTLY_DISABLED_ANGLES", frozenset({"moirai", "moment", "lag_llama"}),
+    )
     yield
     importlib.reload(model_policy_module)
     importlib.reload(system_manifest_module)

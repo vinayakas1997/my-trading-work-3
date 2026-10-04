@@ -83,11 +83,8 @@ from vinu_initial_analysis.angles.kalman_filters.backtest import kalman_step, ru
 from vinu_initial_analysis.angles.kronos.backtest import HORIZON as _KRONOS_HORIZON
 from vinu_initial_analysis.angles.kronos.backtest import WALK_FORWARD_MIN_OBSERVATIONS as _KRONOS_MIN_OBS
 from vinu_initial_analysis.angles.kronos.backtest import kronos_step, run_kronos_backtest
-from vinu_initial_analysis.angles.lag_llama.backtest import run_lag_llama_backtest
 from vinu_initial_analysis.angles.lpatchtst.backtest import run_lpatchtst_backtest
 from vinu_initial_analysis.angles.lstm.backtest import run_lstm_backtest
-from vinu_initial_analysis.angles.moirai.backtest import run_moirai_backtest
-from vinu_initial_analysis.angles.moment.backtest import run_moment_backtest
 from vinu_initial_analysis.angles.news_price_causality.backtest import (
     run_aggregate_tests_backtest,
     run_impact_backtest,
@@ -159,9 +156,6 @@ ANGLE_REGISTRY: dict[str, tuple[Callable[..., pd.DataFrame], str]] = {
     "garch": (run_garch_backtest, "std"),
     "kalman_filters": (run_kalman_backtest, "std"),
     "kronos": (run_kronos_backtest, "std"),
-    "lag_llama": (run_lag_llama_backtest, "std"),
-    "moirai": (run_moirai_backtest, "std"),
-    "moment": (run_moment_backtest, "std"),
     "timesfm": (run_timesfm_backtest, "std"),
     "timer_timerxl": (run_timer_timerxl_backtest, "std"),
     "backtesting_44_metrics": (run_core_metrics_backtest, "std"),

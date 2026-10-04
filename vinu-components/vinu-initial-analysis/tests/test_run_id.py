@@ -22,21 +22,21 @@ def test_format_shape_and_fields():
 
 
 def test_every_real_angle_has_a_stable_code():
-    """All 28 real angle ids from angles.yaml must be present -- a
+    """All 25 real angle ids from angles.yaml must be present -- a
     missing one would silently fall back to a truncated/sanitized id
     instead of the intended short code."""
     real_angle_ids = {
         "arima", "backtesting_44_metrics", "chronos", "dlinear",
         "drawdown_deep_dive", "exponential_smoothing", "garch",
-        "itransformer", "kalman_filters", "kronos", "lag_llama",
-        "lpatchtst", "lstm", "moirai", "moment", "news_price_causality",
+        "itransformer", "kalman_filters", "kronos",
+        "lpatchtst", "lstm", "news_price_causality",
         "patchtst", "peer_relative_strength", "pnl_attribution",
         "regime_analysis", "shock_clustering", "shock_personality",
         "tft", "timer_timerxl", "timesfm", "tips_regime_aware_transformer",
         "trend_lifecycle", "trend_session_structure",
     }
     assert real_angle_ids == set(ANGLE_SHORTCODES.keys())
-    assert len(real_angle_ids) == 28
+    assert len(real_angle_ids) == 25
 
 
 def test_angle_codes_are_unique():
