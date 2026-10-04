@@ -9,6 +9,7 @@ Checks that every connection between services is wired correctly (Phase 1, code 
 | `contracts.json` | **Generated.** The same, machine-readable (routes, matched calls, findings). |
 | `03-findings.md` | What was found, what it means, fix status. |
 | `04-implementation-status.md` | What is built, files touched, tests, what is still open. |
+| `../../vinu-components/vinu-infra/edge_contracts.py` | **Layer B.** One pydantic model per connection that carries a JSON payload; `check_payload` is the runtime check for layer C. The manifest (`pipeline_edges.yaml`) names the model of each edge or gives the reason it has none. |
 | `contract_allowlist.json` | Findings that are correct to leave, each with a reason. |
 | `client_prefixes.json` | Clients whose base URL carries the service prefix (hand-verified). |
 | `route_notes.json` | Classification of routes nothing calls (human-view, operator-action, file-read, covered, candidate-gap). |

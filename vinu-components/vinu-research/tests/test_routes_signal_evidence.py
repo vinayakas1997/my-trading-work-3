@@ -206,3 +206,13 @@ class TestUnconfirmedMovesRoute:
         resp = client.get("/research/unconfirmed-moves", params={"symbol": "AAPL"})
         assert resp.status_code == 200
         assert resp.json()["count"] == 0
+
+
+class TestUnconfirmedMovesContract:
+    def test_answers_match_the_edge_contract(self, client):
+        from vinu_infra.edge_contracts import check_payload
+
+        edge = "research.unconfirmed_moves->agent.live_decision_context"
+        assert check_payload(edge, client.get("/research/unconfirmed-moves", params={"symbol": "AAPL"}).json()) == []
+        client.post("/research/move-evidence/AAPL", json=_MOVE_PAYLOAD)
+        assert check_payload(edge, client.get("/research/unconfirmed-moves", params={"symbol": "AAPL"}).json()) == []

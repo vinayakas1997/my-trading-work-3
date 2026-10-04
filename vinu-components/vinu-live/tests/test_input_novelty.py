@@ -131,3 +131,11 @@ def test_high_novelty_is_passed_to_the_agent_and_normal_novelty_is_not(tmp_path)
     assert "novelty" not in _trigger(p)
     p._novelty["AAPL"] = {"status": "ok", "ratio": 3.1, "novelty_high": True}
     assert _trigger(p)["novelty"]["ratio"] == 3.1
+
+
+def test_novelty_answers_match_the_edge_contract():
+    """Layer B (producer side): both the normal and the not-enough-history answer validate against the contract."""
+    from vinu_infra.edge_contracts import check_payload
+
+    assert check_payload(EDGE, novelty_ratio({"a": 0.1, "b": 10.2, "c": -1.0}, _ref())) == []
+    assert check_payload(EDGE, novelty_ratio({"a": 0.1}, _ref(n=3))) == []

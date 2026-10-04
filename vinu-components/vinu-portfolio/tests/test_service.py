@@ -1559,3 +1559,20 @@ class TestFetchAccountEquity:
         svc = _service()
         svc._http.get = AsyncMock(side_effect=ConnectionError("agent-api down"))
         assert asyncio.run(svc._fetch_account_equity()) is None
+
+
+def test_portfolio_state_matches_the_edge_contract() -> None:
+    """Layer B (producer side): the real build_portfolio answer validates against the contract its consumers use."""
+    from vinu_infra.edge_contracts import check_payload
+
+    svc = _service()
+    svc.list_active_strategies = AsyncMock(return_value=[{"name": "a", "kind": "yaml", "symbol": "AAPL"}])
+    svc._build_returns_df = AsyncMock(return_value=None)
+    result = asyncio.run(svc.build_portfolio())
+    assert check_payload("portfolio.state->live.scheduler", result) == []
+    assert check_payload("portfolio.state->agent.order_guard", result) == []
+    svc.list_active_strategies = AsyncMock(return_value=[])
+    svc._portfolio_cache.clear()
+    empty = asyncio.run(svc.build_portfolio())
+    assert empty["status"] == "empty"
+    assert check_payload("portfolio.state->live.scheduler", empty) == []

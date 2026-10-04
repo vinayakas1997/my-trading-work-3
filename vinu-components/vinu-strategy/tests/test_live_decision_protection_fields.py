@@ -65,3 +65,19 @@ class TestApiExposure:
         result = StrategyAPI(_make_config(tmp_path, d)).get_strategy("sma_cross")
         assert result["live_decision_stop_pct"] == 0.0
         assert result["live_decision_max_hold_bars"] == 0
+
+
+class TestEdgeContracts:
+    def test_get_strategy_matches_the_edge_contracts(self, tmp_path) -> None:
+        """Layer B (producer side): the strategy answer validates against both contracts its consumers are checked with."""
+        from vinu_infra.edge_contracts import check_payload
+
+        d = tmp_path / "strategies"
+        d.mkdir()
+        (d / "sma_cross.yaml").write_text(
+            "name: sma_cross\ndescription: test\nschedule: 15m\n"
+            "live_decision_stop_pct: 0.04\nlive_decision_max_hold_bars: 30\n"
+        )
+        result = StrategyAPI(_make_config(tmp_path, d)).get_strategy("sma_cross")
+        assert check_payload("strategy.config->live.scheduler", result) == []
+        assert check_payload("strategy.stop_rules->live.poller", result) == []

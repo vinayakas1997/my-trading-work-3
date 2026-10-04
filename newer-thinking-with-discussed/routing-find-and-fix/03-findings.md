@@ -32,10 +32,16 @@ Routes nothing in the code calls: **165 of 272**, every one classified in `02-co
 | D3 | `GET /analysis/events/{ticker}` | Older analysis view; research and strategy read story / drawdown / correlation / angle instead. Still needed? |
 | D4 | the four `GET /v1/stage1/.../fetch` and `factsheet` routes (stock-price, news, initial-analysis) | The positional stage-1 API exists beside the older `/analysis`, `/stock`, `/news` routes, but the pipeline still reads the older ones (only `latest-run` is used). Which API is the canonical one? |
 
+## Found by layer B
+
+| ID | Status | What | Effect |
+|---|---|---|---|
+| R13 | OPEN (low) | `GET /portfolio/risk/status` returns the allocation itself (`status: empty`, no `symbols`, no `aggregate`) when no strategy is active. The order guard reads `budget.get("symbols", [])`, so "portfolio empty" and "this symbol has no open position" look the same and the order passes the risk-budget check. | Fail-open, and with no active strategy there is no budget to enforce, so it is probably right. Recorded because layer B made the two shapes visible (`RiskStatus` documents it); a decision, not a fix. |
+
 ## Open (limits of the scan)
 
 | ID | What | Notes |
 |---|---|---|
 | R9 | 1 call is only partly checked: `vinu-live/.../bars_client.py:37` builds `params` with a conditional `**`, so only its known keys are checked (they match). | By design (the `closed_only` option). |
-| R10 | Field **types** and the **response** a caller reads are not checked. | The scan checks that fields exist. Layers B and C in `01-plan.md`. |
+| R10 | Field **types** and the **response** a caller reads are not checked by the scan. | Layer B now covers the response shape and types of 15 connections (`edge_contracts.py`); layer C (real payloads) is not built. |
 | R11 | A URL built inside one helper and passed to another, or a body assembled from `**kwargs`, is not checked field by field. | Helper calls whose URL is a visible argument (`_fetch_json(f"{base}/..")`, `_post(client, "/..")`) are now seen and checked for path and method; their fields count as dynamic and are not compared. |

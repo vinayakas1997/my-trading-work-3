@@ -28,6 +28,8 @@ edges:
     cadence: per scheduler cycle (3600s default)
     empty_ok: true
     status: wired
+    contract: PortfolioState
+    contract_producer_files: [vinu-portfolio/vinu_portfolio/service.py]
     instrumented: true
     stale_after_sec: 8000
 
@@ -44,6 +46,8 @@ edges:
     cadence: per scheduler cycle
     empty_ok: false
     status: wired
+    contract: DailyAllocation
+    contract_producer_files: [vinu-portfolio/vinu_portfolio/service.py]
     instrumented: true
     stale_after_sec: 8000
     note: wired 2026-10-03 (logic-audit A1), but read only when scheduler_use_daily_allocation is on (default off); when on, portfolio.state is read only as the fallback
@@ -61,6 +65,7 @@ edges:
     cadence: per scheduler cycle
     empty_ok: true
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (typed records)"
     instrumented: true
     stale_after_sec: 8000
 
@@ -77,6 +82,8 @@ edges:
     cadence: per EXECUTE
     empty_ok: false
     status: wired
+    contract: StrategyConfig
+    contract_producer_files: [vinu-strategy/vinu_strategy/api.py]
     instrumented: true
 
   - id: research.active_trade_plans->live.orchestrator
@@ -92,6 +99,7 @@ edges:
     cadence: per orchestrator cycle (~90s)
     empty_ok: true
     status: wired
+    contract_none: "response is a bare JSON list of artifact summaries; list-root contracts are not supported yet"
     instrumented: true
     stale_after_sec: 1800
 
@@ -108,6 +116,7 @@ edges:
     cadence: per approval-worker cycle
     empty_ok: true
     status: wired
+    contract_none: "POST to an action route: the request body is checked field by field by contract_scan (layer A); the answer is only a status"
     instrumented: true
     stale_after_sec: 3000
 
@@ -126,6 +135,8 @@ edges:
     cadence: per order
     empty_ok: false
     status: wired
+    contract: RiskStatus
+    contract_producer_files: [vinu-portfolio/vinu_portfolio/service.py, vinu-portfolio/vinu_portfolio/risk_budget.py]
     instrumented: true
 
   - id: portfolio.state->agent.order_guard
@@ -141,6 +152,8 @@ edges:
     cadence: per order
     empty_ok: true
     status: wired
+    contract: PortfolioState
+    contract_producer_files: [vinu-portfolio/vinu_portfolio/service.py]
     instrumented: true
 
   - id: halt_flag->live.scheduler
@@ -156,6 +169,7 @@ edges:
     cadence: per cycle and per slice
     empty_ok: true
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (a reason string or None)"
     instrumented: true
 
   - id: halt_flag->live.orchestrator
@@ -171,6 +185,7 @@ edges:
     cadence: per cycle
     empty_ok: true
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (a reason string or None)"
     instrumented: true
 
   - id: breaker.limits->live.scheduler
@@ -186,6 +201,7 @@ edges:
     cadence: per cycle
     empty_ok: false
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (a typed verdict)"
     instrumented: true
 
   - id: drawdown_status->portfolio.allocation
@@ -201,6 +217,7 @@ edges:
     cadence: per allocation
     empty_ok: true
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (a typed store row)"
     instrumented: true
     note: wired inside compute_daily_allocation only -- see portfolio.daily_allocation->live.scheduler
 
@@ -219,6 +236,7 @@ edges:
     cadence: per cycle
     empty_ok: true
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (a bool)"
     instrumented: true
     note: wired 2026-10-02 (plan 2.2); opt-in via scheduler_entry_guards_enabled / VINU_LIVE_SCHEDULER_ENTRY_GUARDS_ENABLED, default off; entries only
 
@@ -235,6 +253,7 @@ edges:
     cadence: per cycle
     empty_ok: true
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (a bool)"
     instrumented: true
     note: wired 2026-10-02 (plan 2.2); opt-in via scheduler_entry_guards_enabled / VINU_LIVE_SCHEDULER_ENTRY_GUARDS_ENABLED, default off; entries only
 
@@ -251,6 +270,7 @@ edges:
     cadence: per cycle
     empty_ok: true
     status: wired
+    contract_none: "a module constant and an age function, not a payload"
     instrumented: true
     note: wired 2026-10-02 (plan 2.2); opt-in via scheduler_entry_guards_enabled / VINU_LIVE_SCHEDULER_ENTRY_GUARDS_ENABLED, default off; entries only
 
@@ -267,6 +287,7 @@ edges:
     cadence: per order
     empty_ok: false
     status: wired
+    contract_none: "a boolean flag on an in-process call, not a payload"
     instrumented: true
     note: wired 2026-10-03 (logic-audit A5), but only when scheduler_exits_exempt_from_halts is on (default off)
 
@@ -283,6 +304,7 @@ edges:
     cadence: per fill
     empty_ok: false
     status: gap
+    contract_none: "known gap: nothing is sent yet"
     gap_ref: logic-audit-2026-10-02 A6
     note: scheduler reads the book for check_limits() but never writes its own positions to it
 
@@ -299,6 +321,7 @@ edges:
     cadence: per EXECUTE
     empty_ok: false
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (a nullable bool)"
     instrumented: true
     note: wired 2026-10-03 (inconsistencies v1 A8), but enforced only when precondition_enforcing_enabled is on (default off)
 
@@ -317,6 +340,8 @@ edges:
     cadence: per cycle when enabled
     empty_ok: true
     status: wired
+    contract: MaturityStatus
+    contract_producer_files: [vinu-research/vinu_research/maturity_assessor.py]
     instrumented: true
 
   - id: maturity.status->portfolio.capital
@@ -332,6 +357,7 @@ edges:
     cadence: per allocation when enabled
     empty_ok: true
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (a typed assessment object; the same fields cross HTTP in MaturityStatus)"
     instrumented: true
 
   - id: maturity.status->agent.live_decision_context
@@ -347,6 +373,8 @@ edges:
     cadence: per decision
     empty_ok: true
     status: wired
+    contract: MaturityStatus
+    contract_producer_files: [vinu-research/vinu_research/maturity_assessor.py]
     instrumented: true
 
   - id: reflection.synthesis->agent.idea_generator
@@ -362,6 +390,7 @@ edges:
     cadence: per idea cycle
     empty_ok: true
     status: wired
+    contract: ReflectionSynthesis
     instrumented: true
 
   - id: reflection.notable_beliefs->agent.live_decision_context
@@ -377,6 +406,7 @@ edges:
     cadence: per decision
     empty_ok: true
     status: wired
+    contract: NotableBeliefs
     instrumented: true
 
   - id: research.unconfirmed_moves->agent.live_decision_context
@@ -392,6 +422,7 @@ edges:
     cadence: per decision
     empty_ok: true
     status: wired
+    contract: UnconfirmedMoves
     instrumented: true
 
   - id: signal_evidence->hypothesis_registry
@@ -407,6 +438,7 @@ edges:
     cadence: scheduled worker
     empty_ok: true
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (a count)"
     instrumented: true
 
   - id: evaluation_status->agent.idea_prompt
@@ -422,6 +454,7 @@ edges:
     cadence: per idea cycle
     empty_ok: true
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (typed rows from a shared SQLite store)"
     instrumented: true
 
   - id: screener.top->agent.planner_worker
@@ -437,6 +470,8 @@ edges:
     cadence: per planner cycle
     empty_ok: true
     status: wired
+    contract: ScreenerRanking
+    contract_producer_files: [vinu-screener/vinu_screener/rankers/snapshot_store.py]
     instrumented: true
 
   - id: reconciliation_drift->agent.notify
@@ -452,6 +487,7 @@ edges:
     cadence: edge-triggered
     empty_ok: true
     status: wired
+    contract_none: "POST to a notify route: the request body is checked field by field by contract_scan (layer A); nothing is read back"
     instrumented: true
 
   # ---------------- live-decision position protection (plan 2.3) ----------------
@@ -469,6 +505,7 @@ edges:
     cadence: per candle close
     empty_ok: true
     status: wired
+    contract: StrategyStopRules
     instrumented: true
     note: added 2026-10-02 (plan 2.3, audit A3); both fields default to 0 = off
 
@@ -485,6 +522,7 @@ edges:
     cadence: per scheduler cycle, write-once
     empty_ok: true
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (a write to a shared store)"
     instrumented: true
     note: added 2026-10-02 (plan 2.3); approximates the fill with the last daily close
 
@@ -503,6 +541,7 @@ edges:
     cadence: on request / per scheduler cycle
     empty_ok: true
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (typed records)"
     instrumented: true
     note: added 2026-10-03 (plan 2.4, v1 C2); read-time anti-join, no table
 
@@ -519,6 +558,7 @@ edges:
     cadence: edge-triggered, once per stuck trigger
     empty_ok: true
     status: wired
+    contract_none: "POST to a notify route: the request body is checked field by field by contract_scan (layer A); nothing is read back"
     instrumented: true
     note: added 2026-10-03 (plan 2.4, v1 C1)
 
@@ -535,6 +575,7 @@ edges:
     cadence: per new candle per ticker (only when VINU_LIVE_DECISION_NOVELTY_ENABLED)
     empty_ok: true
     status: wired
+    contract: NoveltyResult
     instrumented: true
     note: added 2026-10-03 (v2 B1); observe-only, `empty` while the ticker has too little snapshot history
 
@@ -545,12 +586,13 @@ edges:
       defines: ['async def compute_angle']
     consumer:
       service: vinu-initial-analysis
-      files: [vinu-initial-analysis/vinu_initial_analysis/runner.py]
+      files: [vinu-initial-analysis/vinu_initial_analysis/runner.py, vinu-infra/model_client.py]
       references: ['model_client.compute_angle(']
       purpose: model-category angles (chronos, timesfm, kronos, timer, lstm, dlinear, patchtst, lpatchtst, itransformer, tft, tips) are computed by the model service, not in-process
     cadence: per model angle per ticker per timeframe, on each analysis run
     empty_ok: true
     status: wired
+    contract: ModelAngleCompute
     instrumented: true
     note: added 2026-10-03; `missing` = the model service refused or was unreachable (the run is recorded as an error and retried)
 
@@ -561,12 +603,14 @@ edges:
       defines: ['async def score_finbert']
     consumer:
       service: vinu-news
-      files: [vinu-news/vinu_news/analysis/enrichment/finbert_sentiment.py]
+      files: [vinu-news/vinu_news/analysis/enrichment/finbert_sentiment.py, vinu-infra/model_client.py]
       references: ['model_client.score_finbert(']
       purpose: FinBERT sentiment for articles is scored by the model service, not by torch inside vinu-news
     cadence: on each FinBERT backfill batch
     empty_ok: true
     status: wired
+    contract: ModelFinbertScore
+    contract_producer_files: [vinu-infra/finbert_scoring.py]
     instrumented: true
     note: added 2026-10-03
 
@@ -583,6 +627,7 @@ edges:
     cadence: on request (GET /research/candidate-graveyard/{symbol})
     empty_ok: true
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (typed rows from a SQLite store)"
     instrumented: true
     note: added 2026-10-03 (plan 2.4c, v1 A4); read-only, not a gate
 
@@ -601,6 +646,7 @@ edges:
     cadence: on request
     empty_ok: true
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (typed rows served by the same service)"
     instrumented: true
     note: added 2026-10-03 (plan 2.4d, v1 C4); the store had readers but no route
 
@@ -617,5 +663,6 @@ edges:
     cadence: per strategy run
     empty_ok: false
     status: wired
+    contract_none: "in-process call: returns a Python value, not a JSON payload on the wire (fields built inside the same service)"
     instrumented: true
     note: added 2026-10-03 (plan 2.4d, v1 C4)

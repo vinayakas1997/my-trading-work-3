@@ -78,6 +78,13 @@ class Edge:
     # runtime report calls the edge stale (None = never judged stale by age).
     instrumented: bool = False
     stale_after_sec: float | None = None
+    # Layer B (routing-find-and-fix/01-plan.md): `contract` is the name of the pydantic model in
+    # edge_contracts.py that describes the payload on this connection; `contract_none` is the written reason
+    # an edge carries no JSON payload to describe. `contract_producer_files` are extra files searched for the
+    # producer's field names when the producer's own files only hold the route, not the code that builds it.
+    contract: str = ""
+    contract_none: str = ""
+    contract_producer_files: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -129,6 +136,9 @@ def load_edges(path: Path | None = None) -> list[Edge]:
                 note=str(e.get("note", "")),
                 instrumented=bool(e.get("instrumented", False)),
                 stale_after_sec=(float(e["stale_after_sec"]) if e.get("stale_after_sec") is not None else None),
+                contract=str(e.get("contract", "")),
+                contract_none=str(e.get("contract_none", "")),
+                contract_producer_files=_as_list(e.get("contract_producer_files")),
             )
         except KeyError as exc:
             raise ValueError(f"pipeline_edges entry #{i} is missing field {exc}") from exc

@@ -203,3 +203,17 @@ def test_real_model_rows_are_unaffected_by_allow_proxy_off():
     svc = _svc(lambda a: _module(lambda **k: pd.DataFrame([{"symbol": k["symbol"], "model_backend": "pretrained"}])), allow_proxy=False)
     out = _client(svc).post("/models/angle/chronos/compute", json=BODY).json()
     assert out["backends"] == {"pretrained": 1}
+
+
+# ------------------------------------------------------------------ the contract (layer B, producer side)
+
+def test_service_answers_match_the_edge_contracts():
+    """What the service really returns must validate against the contract the consumers are checked with."""
+    from vinu_infra.edge_contracts import check_payload
+
+    out = _client(_svc()).post("/models/angle/chronos/compute", json=BODY).json()
+    assert check_payload("models.angle_compute->initial_analysis.runner", out) == []
+    svc = ModelService(models_enabled_fn=lambda: True,
+                       finbert_scorer=lambda texts, bs: [{"finbert_label": "positive", "finbert_score": 0.5}] * len(texts))
+    fb = _client(svc).post("/models/finbert/score", json={"texts": ["a", "b"]}).json()
+    assert check_payload("models.finbert_score->news.backfill", fb) == []

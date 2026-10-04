@@ -71,6 +71,9 @@ class TestEndToEndPipeline:
         assert allocation["status"] == "ok"
         assert allocation["regime"]["regime"] == "bull"
         assert allocation["account_equity"] == 100_000.0
+        # layer B (producer side): the real answer validates against the contract its consumer is checked with
+        from vinu_infra.edge_contracts import check_payload
+        assert check_payload("portfolio.daily_allocation->live.scheduler", allocation) == []
         weights = {w["name"]: w["target_weight"] for w in allocation["weights"]}
         total = sum(weights.values())
         assert total == pytest.approx(1.0, abs=0.02)
@@ -94,6 +97,7 @@ class TestEndToEndPipeline:
         ])
         risk = asyncio.run(svc.compute_risk_status())
         assert risk["equity"] == 100_000.0
+        assert check_payload("portfolio.risk_status->agent.order_guard", risk) == []
         assert risk["aggregate"]["n_positions"] == 2
         assert risk["aggregate"]["n_halted"] == 0
         # most profitable symbol first

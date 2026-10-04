@@ -33,3 +33,12 @@ def test_response_carries_the_real_evidence_not_just_the_tier(client) -> None:
         "tier", "n_real_trades", "n_paper_trading_days",
         "directional_accuracy", "regime_coverage",
     }
+
+
+def test_answer_matches_the_edge_contract(client) -> None:
+    """Layer B (producer side): the route validates against the contract its consumers are checked with."""
+    from vinu_infra.edge_contracts import check_payload
+
+    body = client.get("/research/maturity/status").json()
+    assert check_payload("maturity.status->live.limits", body) == []
+    assert check_payload("maturity.status->agent.live_decision_context", body) == []

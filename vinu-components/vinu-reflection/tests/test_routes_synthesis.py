@@ -156,3 +156,20 @@ class TestListNotableBeliefs:
         _write_belief(store, psi=0.3)
         resp = client.get("/reflection/beliefs/notable", params={"limit": 1})
         assert resp.json()["count"] == 1
+
+
+def test_answers_match_the_edge_contracts(client, store) -> None:
+    """Layer B (producer side): what the routes return validates against the contract their consumer is checked with."""
+    from vinu_infra.edge_contracts import check_payload
+
+    assert check_payload("reflection.synthesis->agent.idea_generator", client.get("/reflection/synthesis/latest").json()) == []
+    assert check_payload("reflection.notable_beliefs->agent.live_decision_context", client.get("/reflection/beliefs/notable").json()) == []
+    store.record_synthesis(
+        trigger_reason="scheduled", inputs_snapshot=[{"belief": "x"}],
+        prediction_json={"proposed_action": {"type": "narrative_only"}},
+        proposed_action_type="narrative_only", resolution_criteria="n/a",
+        resolve_by=time.time() + 3600, evidence_count_at_synthesis=5,
+    )
+    _write_belief(store, psi=0.3)
+    assert check_payload("reflection.synthesis->agent.idea_generator", client.get("/reflection/synthesis/latest").json()) == []
+    assert check_payload("reflection.notable_beliefs->agent.live_decision_context", client.get("/reflection/beliefs/notable").json()) == []

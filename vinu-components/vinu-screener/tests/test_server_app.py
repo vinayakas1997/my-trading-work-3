@@ -319,3 +319,12 @@ class TestRankerChurn:
         events = resp.json()["events"]
         assert all(e["symbol"] == "MSFT" for e in events)
         assert len(events) == 1
+
+
+def test_latest_ranking_matches_the_edge_contract(client: TestClient) -> None:
+    """Layer B (producer side): the route validates against the contract its consumer is checked with."""
+    from vinu_infra.edge_contracts import check_payload
+
+    client.put("/screener/rankers/r1", json=_RANKER_BODY)
+    client.post("/screener/rankers/r1/rank")
+    assert check_payload("screener.top->agent.planner_worker", client.get("/screener/rankers/r1/latest").json()) == []
