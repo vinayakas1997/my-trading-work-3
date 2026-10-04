@@ -5,6 +5,11 @@ WORKDIR /app
 COPY vinu-infra /app/vinu-infra
 RUN pip install --no-cache-dir -e /app/vinu-infra
 
+# vinu_stock.query.indicators imports the shared indicator implementations from vinu-tools (single implementation);
+# without this the container died at import with "No module named 'vinu_tools'". Base package only, no [ml] extras.
+COPY vinu-tools /app/vinu-tools
+RUN pip install --no-cache-dir -e /app/vinu-tools
+
 COPY vinu-stock-price /app/vinu-stock-price
 
 WORKDIR /app/vinu-stock-price

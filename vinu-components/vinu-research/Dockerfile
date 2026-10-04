@@ -11,6 +11,11 @@ RUN pip install --no-cache-dir -e /app/vinu-stock-price
 COPY vinu-tools /app/vinu-tools
 RUN pip install --no-cache-dir -e /app/vinu-tools
 
+# vinu_simulator.engine.sizing imports vinu_portfolio.circuit_breakers and vinu_tools at load time; without them the
+# service dies at import. vinu-portfolio is installed --no-deps (only its light circuit_breakers module is used here).
+COPY vinu-portfolio /app/vinu-portfolio
+RUN pip install --no-cache-dir --no-deps -e /app/vinu-portfolio
+
 COPY vinu-simulator /app/vinu-simulator
 RUN pip install --no-cache-dir -e /app/vinu-simulator
 
