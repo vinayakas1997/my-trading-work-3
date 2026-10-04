@@ -29,3 +29,27 @@ Run it: `VINU_API_KEY=... python scripts/validate_strategies.py` (after adding o
 * Only conditions the backtester can compute are testable (`sma_N`, `ema_N`, `rsi_N`, `adx_N` and `dist_from_sma_N` / `dist_from_ema_N`). Anything else is `unvalidatable`, which is blocked, not waved through.
 * A validated strategy is not a profitable one. The promotion bar is the system's existing one; passing it is the minimum to be allowed to trade paper money, not evidence of an edge.
 * The order guard's `require_active_artifact` is ticker-level (an ACTIVE artifact for the ticker). The new gate is strategy-level, in the live loop. Both are on; neither replaces the other.
+
+---
+
+## First results (2026-10-04) and two faults found in the validation itself
+
+**Fault 1: the first validation measured nothing.** All five strategies came back "rejected" with `best_sharpe 0.000`. The reports said "Symbol AAPL is exhausted. Skipping this research request." The research service has a rule that stops the idea generator from retrying a ticker after 5 consecutive failures, and my earlier test runs plus five validations running in parallel had tripped it for every ticker. The validator then called a skipped run "rejected", which claims the strategy was judged and failed. Fixed three ways: validation runs ignore the flag and do not feed it (`validation=True`), a ticker research skipped is reported as `not_tested` (still blocked, honestly labelled), and the stored reasons now carry the real attempt (Sharpe, drawdown, win rate) and the checks that failed instead of the placeholder zeros. The catalog entries my test runs had polluted (AAPL exhausted, the other four one step from it) were reset with the service's own `clear_exhaustion`, for exactly those five tickers.
+
+**Fault 2: the script stopped waiting too early.** It treated the previous run's stored "rejected" as the new result. Cosmetic for the verdicts (they were real the second time) but worth knowing.
+
+**The real verdicts**, from the research loop's own tests on about four years of data (one iteration, rules exactly as written):
+
+| Strategy | Sharpe per ticker | What the system found |
+|---|---|---|
+| 15-minute | -3.9 to -2.5, drawdown -45% to -57% | losing on every ticker; rejected |
+| 1-hour | -0.56 to +1.33 | negative or flat on four of five; META's +1.33 fails the block-bootstrap test |
+| 4-hour | +0.36 to +0.91 | positive but every ticker fails the significance tests (placebo, bootstrap, resample) |
+| daily | +0.70 to +1.51 | positive but every ticker fails significance (bootstrap interval includes zero, trade-permutation p = 1.0) |
+| smoke test (always long AAPL) | +0.81 | rejected too: even buy-and-hold on one stock does not clear the bar over this window |
+
+Reading: no strategy is allowed to trade, so nothing in the live-decision loop opens a position. The shorter the bar the worse it is; the longer bars look fine on Sharpe but cannot be told apart from luck with this many trades. That is the gate doing its job, not a failure of the gate.
+
+## What this means for getting trades
+
+The YAML strategies are one route. The system's main route is the research loop proposing and optimising strategies itself, then promotion to an ACTIVE artifact, a trade plan and the orchestrator. Nothing from the YAML route can trade until it passes this bar. To make more candidates pass, give the research loop more to work with (more tickers, longer history, better ideas); do not lower the bar.
