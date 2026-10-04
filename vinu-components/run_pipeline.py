@@ -360,25 +360,14 @@ def step_news(ticker: str, article_count: int, wait_sec: float = 180.0) -> dict:
             break
         time.sleep(5)
 
-    def _analyze_one(article: dict) -> bool:
-        url_or_id = article.get("url") or article.get("id")
-        if not url_or_id:
-            return False
-        try:
-            _req("POST", f"{base}/news/analyze", json={"url_or_id": url_or_id}, timeout=300)
-            return True
-        except requests.RequestException:
-            _log("✗", f"news/analyze failed for {url_or_id}")
-            return False
-
-    targets = [a for a in articles[:article_count] if a.get("url") or a.get("id")]
-    if not targets:
-        _log("!", f"No articles found for {ticker} after polling {wait_sec}s — skipping analysis")
-        analyzed = 0
+    # The news service has no per-article analysis route any more (POST /news/analyze was removed): article scoring is
+    # FinBERT in the models container, which is dormant until the model stage. So this step only reports the articles
+    # that arrived; it must not fail the run for a route that no longer exists.
+    analyzed = 0
+    if articles:
+        _log("•", f"{len(articles)} articles arrived for {ticker}; scoring waits for the models container (dormant)")
     else:
-        with ThreadPoolExecutor(max_workers=min(5, len(targets))) as pool:
-            results = list(pool.map(_analyze_one, targets))
-        analyzed = sum(1 for r in results if r)
+        _log("!", f"No articles found for {ticker} after polling {wait_sec}s")
 
     return {"articles_found": len(articles), "articles_analyzed": analyzed}
 

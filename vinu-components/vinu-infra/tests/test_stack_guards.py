@@ -118,3 +118,15 @@ def test_env_example_carries_the_real_system_flag_profile():
     for flag in ("VINU_LIVE_SCHEDULER_USE_DAILY_ALLOCATION", "VINU_LIVE_SCHEDULER_ENTRY_GUARDS_ENABLED",
                  "VINU_LIVE_PRECONDITION_ENFORCING_ENABLED", "VINU_PORTFOLIO_MATURITY_CAPITAL_GATING_ENABLED"):
         assert re.search(rf"^{flag}=true\s*$", text, re.M), f"{flag} should be on in the example profile"
+
+
+# ----------------------------------------------------------------------------- shipped strategies reach the service
+
+def test_quant_core_seeds_the_strategy_volume_from_the_image():
+    """The strategy service reads $VINU_STRATEGY_STRATEGIES_DIR (an empty mounted volume on a fresh machine) while the
+    shipped YAML strategies live in the image; without seeding, GET /strategy/strategies is [] and nothing can run."""
+    dockerfile = (ROOT / "vinu-quant-core" / "Dockerfile").read_text(encoding="utf-8")
+    assert 'ENTRYPOINT ["/app/entrypoint.sh"]' in dockerfile
+    script = (ROOT / "vinu-quant-core" / "entrypoint.sh").read_text(encoding="utf-8")
+    assert "cp -n /app/vinu-strategy/strategies/*.yaml" in script          # never overwrites an edited strategy
+    assert list((ROOT / "vinu-strategy" / "strategies").glob("*.yaml")), "no shipped strategies to seed"

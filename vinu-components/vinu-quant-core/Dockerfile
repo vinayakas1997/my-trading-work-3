@@ -42,4 +42,10 @@ VOLUME ["/data/strategy", "/data/simulator"]
 
 EXPOSE 8084
 
+COPY vinu-quant-core/entrypoint.sh /app/entrypoint.sh
+USER root
+RUN chmod +x /app/entrypoint.sh
+USER app
+
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["vinu-strategy", "serve-merged", "--host", "0.0.0.0", "--port", "8084"]
