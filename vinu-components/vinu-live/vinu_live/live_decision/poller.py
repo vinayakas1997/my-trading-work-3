@@ -67,6 +67,7 @@ class CandleClosePoller:
             headers = None
         self._http = httpx.AsyncClient(timeout=30.0, headers=headers)
         self._novelty: dict[str, dict[str, Any]] = {}   # latest per-ticker novelty result (B1), when enabled
+        self._last_close: dict[tuple[str, str], float] = {}   # (ticker, timeframe) -> close of the newest processed candle
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -133,6 +134,7 @@ class CandleClosePoller:
             )
             if warmup.empty:
                 continue
+            self._remember_last_close(ticker, timeframe, warmup)
             snapshot = compute_live_snapshot(warmup)
             self._check_novelty(ticker, timeframe, snapshot)   # before recording, so the reference excludes this row
 
@@ -277,7 +279,7 @@ class CandleClosePoller:
                     bar_ts=bar_ts, decision="EXIT", precondition_held=None,
                     reasoning=reasoning, raw_content="",
                 ))
-                close_position(self._backend, pos.id, reason=reasoning, bar_ts=bar_ts)
+                close_position(self._backend, pos.id, reason=reasoning, bar_ts=bar_ts, exit_price=last_close)
                 LOG.warning("position rule EXIT for %s/%s (position %s): %s",
                             pos.ticker, pos.strategy_id, pos.id, reasoning)
                 closed += 1
@@ -354,12 +356,24 @@ class CandleClosePoller:
             )
             if cursor.last_processed_bar_ts - last_reviewed < cadence_seconds:
                 continue
-            await self._trigger_position_review(pos, cursor.last_processed_bar_ts)
+            await self._trigger_position_review(
+                pos, cursor.last_processed_bar_ts, exit_price=self._last_close.get((pos.ticker, timeframe)),
+            )
             reviewed += 1
         return reviewed
 
+    def _remember_last_close(self, ticker: str, timeframe: str, bars: Any) -> None:
+        """The close of the newest processed candle for this pair, kept so an exit decided later in the cycle
+        (the agent's review) can record what the position was worth when it closed. Best-effort; never raises."""
+        try:
+            value = float(bars["close"].iloc[-1])
+            if value > 0 and value == value and value != float("inf"):
+                self._last_close[(ticker, timeframe)] = value
+        except Exception:  # noqa: BLE001
+            pass
+
     async def _trigger_position_review(
-        self, pos: LiveDecisionOpenPosition, bar_ts: int,
+        self, pos: LiveDecisionOpenPosition, bar_ts: int, exit_price: float | None = None,
     ) -> None:
         """Calls the same `/agent/live-decision/run` route the entry
         trigger uses, with mode="review" so live_decision_agent's prompt
@@ -417,7 +431,7 @@ class CandleClosePoller:
         ))
 
         if decision == "EXIT":
-            close_position(self._backend, pos.id, reason=reasoning, bar_ts=bar_ts)
+            close_position(self._backend, pos.id, reason=reasoning, bar_ts=bar_ts, exit_price=exit_price)
             mark_position_reviewed(self._backend, pos.id, bar_ts)
             LOG.info("position-review EXIT for %s/%s (position %s): %s", pos.ticker, pos.strategy_id, pos.id, reasoning)
         elif decision == "HOLD":

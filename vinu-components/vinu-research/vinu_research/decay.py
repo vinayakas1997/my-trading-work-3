@@ -146,6 +146,12 @@ def evaluate_strategy_health(
     ratio = metrics.get("sharpe_ratio", 0.0)
     if metrics.get("n_entries", 0) < 2:
         return "HEALTHY"
+    # A strategy whose average re-backtest Sharpe is at or below the existing `sharpe_critical` floor (0.0:
+    # it is not making money) is never healthy. The ratio below cannot see this: once the baseline average
+    # turns negative too, negative / negative is a large POSITIVE ratio, so a losing strategy read as
+    # healthy (approved 1.5, then -0.5 on every re-backtest: ratio 3.75, HEALTHY).
+    if metrics.get("rolling_sharpe", 0.0) <= t.sharpe_critical:
+        return "CRITICAL"
     if ratio >= t.ic_ratio_healthy:
         return "HEALTHY"
     if ratio >= t.ic_ratio_warning:

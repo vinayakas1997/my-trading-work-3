@@ -581,3 +581,33 @@ class TestApproveDecayMain:
         except SystemExit as e:
             assert e.code == 1
         assert "Error" in capsys.readouterr().out
+
+
+class TestStrategyDecayLogicByHand:
+    """Worked examples (features-logic-checking/): a strategy approved at Sharpe 1.5, then re-backtested over time."""
+
+    @staticmethod
+    def _health(sharpes):
+        from vinu_research.decay import compute_strategy_decay_metrics, evaluate_strategy_health
+        from vinu_research.models import BenchEntry
+        hist = [BenchEntry(artifact_id="a", date=f"d{i}", sharpe=s) for i, s in enumerate(sharpes)]
+        return evaluate_strategy_health(compute_strategy_decay_metrics(hist))
+
+    def test_a_strategy_that_loses_money_is_never_healthy(self):
+        # mean([1.5, -0.5, -0.5, -0.5]) = 0.0 -> at the sharpe_critical floor. Before the guard the ratio was
+        # 0/0.0 -> 0.0 here, and from the 5th entry on negative/negative gave 3.75 -> HEALTHY.
+        assert self._health([1.5, -0.5, -0.5, -0.5]) == "CRITICAL"
+        assert self._health([1.5] + [-0.5] * 10) == "CRITICAL"
+
+    def test_a_strategy_that_stays_positive_is_judged_by_the_ratio_as_before(self):
+        # 1.5 then 0.4 for 14 re-backtests: ratio 0.76 >= 0.7 -> HEALTHY (a large drop that the ratio tolerates).
+        assert self._health([1.5] + [0.4] * 14) == "HEALTHY"
+
+    def test_known_lag_a_collapse_to_zero_is_only_noticed_on_the_8th_and_11th_entry(self):
+        # Pins today's behaviour so a change to the metric is deliberate (decision D-DECAY-2 in
+        # features-logic-checking/): baseline = first 5 entries, rolling = mean of ALL entries, so the baseline
+        # is diluted by the very decay it should detect.
+        assert self._health([1.5] + [0.0] * 6) == "HEALTHY"   # 7 entries, ratio 0.71
+        assert self._health([1.5] + [0.0] * 7) == "WARNING"   # 8 entries, ratio 0.62
+        assert self._health([1.5] + [0.0] * 9) == "WARNING"   # 10 entries, ratio 0.50
+        assert self._health([1.5] + [0.0] * 10) == "DECAYED"  # 11 entries, ratio 0.45

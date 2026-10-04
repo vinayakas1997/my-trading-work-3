@@ -163,6 +163,12 @@ class LiveDecisionOpenPosition:
     # measures against. None until that cycle runs; a stop cannot be
     # evaluated without it (a max-hold rule can).
     entry_price: float | None = None
+    # features-logic-checking F3: what the position was worth when it closed, so a loss leaves a number.
+    # `exit_price` is the close of the newest processed candle at the moment of the exit decision (a reference
+    # price like `entry_price`, not the fill); `return_pct` = (exit / entry - 1), sign-flipped for a short,
+    # before costs and slippage. Both are None when either price was unusable -- never guessed.
+    exit_price: float | None = None
+    return_pct: float | None = None
 
 
 @dataclass

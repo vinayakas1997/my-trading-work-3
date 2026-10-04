@@ -115,7 +115,7 @@ class LiveDecisionBackend(SQLiteBackend):
         CREATE INDEX IF NOT EXISTS idx_live_snapshots_lookup
             ON {LIVE_SNAPSHOTS_TABLE} (symbol, angle_name, computed_at);
     """
-    SCHEMA_VERSION = 5
+    SCHEMA_VERSION = 6
     # Point 7 option 1 (06-execution-handoff-and-architecture.md): lets
     # LiveScheduler find EXECUTE decisions it hasn't yet folded into a
     # real cycle's target_weights, on a database that may already exist
@@ -155,6 +155,10 @@ class LiveDecisionBackend(SQLiteBackend):
          "add lookup index to live_snapshots"),
         (f"ALTER TABLE {LIVE_DECISION_OPEN_POSITIONS_TABLE} ADD COLUMN entry_price REAL",
          "add entry_price to live_decision_open_positions (rule-based stop reference, audit A3)"),
+        (f"ALTER TABLE {LIVE_DECISION_OPEN_POSITIONS_TABLE} ADD COLUMN exit_price REAL",
+         "add exit_price to live_decision_open_positions (a loss leaves a number, features-logic-checking F3)"),
+        (f"ALTER TABLE {LIVE_DECISION_OPEN_POSITIONS_TABLE} ADD COLUMN return_pct REAL",
+         "add return_pct to live_decision_open_positions (reference return at the exit)"),
     ]
 
 
@@ -482,6 +486,8 @@ def _row_to_open_position(row: Any) -> LiveDecisionOpenPosition:
         closed_bar_ts=row["closed_bar_ts"],
         closed_reason=row["closed_reason"] or "",
         entry_price=row["entry_price"] if "entry_price" in row.keys() else None,
+        exit_price=row["exit_price"] if "exit_price" in row.keys() else None,
+        return_pct=row["return_pct"] if "return_pct" in row.keys() else None,
     )
 
 
@@ -556,8 +562,21 @@ def mark_position_reviewed(backend: LiveDecisionBackend, position_id: int, bar_t
     conn.commit()
 
 
+def _reference_return(position_size: float, entry_price: Any, exit_price: Any) -> float | None:
+    """(exit / entry - 1), sign-flipped for a short; None unless both prices are finite and positive."""
+    try:
+        entry, exit_ = float(entry_price), float(exit_price)
+    except (TypeError, ValueError):
+        return None
+    if not (entry > 0 and exit_ > 0) or entry != entry or exit_ != exit_ or entry == float("inf") or exit_ == float("inf"):
+        return None
+    raw = exit_ / entry - 1.0
+    return -raw if position_size < 0 else raw
+
+
 def close_position(
     backend: LiveDecisionBackend, position_id: int, *, reason: str, bar_ts: int,
+    exit_price: float | None = None,
 ) -> None:
     """The actual exit: flips status to 'closed'. The *next* scheduler
     cycle then simply omits this position from `target_weights` -- and
@@ -566,12 +585,26 @@ def close_position(
     same mechanism every other strategy exit already uses. No new sell
     logic is written for this -- reusing that rule is the point."""
     conn = backend._get_conn()
+    exit_value: float | None = None
+    return_pct: float | None = None
+    if exit_price is not None:
+        row = conn.execute(
+            f"SELECT position_size, entry_price FROM {LIVE_DECISION_OPEN_POSITIONS_TABLE} WHERE id=?",
+            (position_id,),
+        ).fetchone()
+        if row is not None:
+            return_pct = _reference_return(row["position_size"], row["entry_price"], exit_price)
+        try:
+            candidate = float(exit_price)
+            exit_value = candidate if candidate > 0 and candidate == candidate and candidate != float("inf") else None
+        except (TypeError, ValueError):
+            exit_value = None
     conn.execute(
         f"""UPDATE {LIVE_DECISION_OPEN_POSITIONS_TABLE}
             SET status='closed', closed_at=?, closed_bar_ts=?, closed_reason=?,
-                last_reviewed_bar_ts=?
+                last_reviewed_bar_ts=?, exit_price=?, return_pct=?
             WHERE id=?""",
-        (now_iso(), bar_ts, reason, bar_ts, position_id),
+        (now_iso(), bar_ts, reason, bar_ts, exit_value, return_pct, position_id),
     )
     conn.commit()
 

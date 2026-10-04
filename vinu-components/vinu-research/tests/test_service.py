@@ -417,3 +417,67 @@ class TestGenerationCandidateStoreWiring:
         injected = GenerationCandidateStore(":memory:")
         svc = ResearchService(config=ResearchConfig(data_root=tmp_path), generation_candidate_store=injected)
         assert svc._generation_candidate_store is injected
+
+
+class TestRevalidateFeedsDecay:
+    """The decay scan needs >= 2 bench entries per artifact; approval writes one, so every re-backtest must write
+    another or no real artifact ever reaches the decay logic."""
+
+    @staticmethod
+    def _result(sharpe):
+        from vinu_research.models import BacktestMetrics, BacktestResult
+        return BacktestResult(
+            run_id="r", strategy_name="CustomStrategy", metrics=BacktestMetrics(sharpe_ratio=sharpe),
+            benchmark_metrics={}, trade_count=5, equity_points=10, raw={"validation": {"passed": True}},
+        )
+
+    @staticmethod
+    def _artifact(strategy_store):
+        from vinu_research.models import Artifact, ArtifactStatus, BenchEntry
+        a = Artifact.create("strategy", "Active", universe=["AAPL"])
+        a.strategy_code = "class UserStrategy: pass"
+        a.status = ArtifactStatus.ACTIVE
+        strategy_store.upsert_artifact(a)
+        strategy_store.append_bench_entry(BenchEntry(artifact_id=a.artifact_id, date="2026-01-01", sharpe=1.5))  # approval
+        return a
+
+    @pytest.mark.asyncio
+    async def test_each_revalidation_appends_the_re_backtest_sharpe(self, service, strategy_store, monkeypatch):
+        monkeypatch.delenv("VINU_RESEARCH_DECAY_RESPONSE_MODE", raising=False)
+        a = self._artifact(strategy_store)
+
+        async def fake(self, **kw):
+            return TestRevalidateFeedsDecay._result(0.4)
+
+        monkeypatch.setattr("vinu_research.tools.ResearchTools.run_backtest", fake)
+        await service.revalidate_artifact(a.artifact_id)
+        history = strategy_store.get_bench_history(a.artifact_id)
+        assert [e.sharpe for e in history] == [1.5, 0.4]  # approval Sharpe, then the re-backtest
+
+    @pytest.mark.asyncio
+    async def test_the_entry_is_recorded_even_when_the_response_mode_is_off(self, service, strategy_store, monkeypatch):
+        monkeypatch.setenv("VINU_RESEARCH_DECAY_RESPONSE_MODE", "off")
+        a = self._artifact(strategy_store)
+
+        async def fake(self, **kw):
+            return TestRevalidateFeedsDecay._result(0.4)
+
+        monkeypatch.setattr("vinu_research.tools.ResearchTools.run_backtest", fake)
+        await service.revalidate_artifact(a.artifact_id)
+        assert len(strategy_store.get_bench_history(a.artifact_id)) == 2  # data is telemetry; the mode gates transitions
+
+    @pytest.mark.asyncio
+    async def test_a_failed_bench_write_never_fails_the_revalidation(self, service, strategy_store, monkeypatch):
+        monkeypatch.delenv("VINU_RESEARCH_DECAY_RESPONSE_MODE", raising=False)
+        a = self._artifact(strategy_store)
+
+        async def fake(self, **kw):
+            return TestRevalidateFeedsDecay._result(0.4)
+
+        def boom(entry):
+            raise RuntimeError("disk full")
+
+        monkeypatch.setattr("vinu_research.tools.ResearchTools.run_backtest", fake)
+        monkeypatch.setattr(strategy_store, "append_bench_entry", boom)
+        result = await service.revalidate_artifact(a.artifact_id)
+        assert result["revalidated"] is True

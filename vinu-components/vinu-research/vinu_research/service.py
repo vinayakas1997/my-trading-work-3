@@ -586,6 +586,23 @@ class ResearchService:
 
             await self._run_in_thread(self._strategy_store.upsert_artifact, artifact)
 
+            # Feed the decay scan: bench_history is "a series of re-backtest Sharpe ratios over time"
+            # (decay.compute_strategy_decay_metrics) and decay_scan skips an artifact with fewer than two
+            # entries, but the only other writer (_create_artifact_from_run) records one entry at approval.
+            # Without this, no real artifact ever reached the decay logic. Telemetry only: recorded in every
+            # response mode (the mode gates status transitions, not data) and never allowed to fail the
+            # revalidation.
+            try:
+                await self._run_in_thread(
+                    self._strategy_store.append_bench_entry,
+                    BenchEntry(
+                        artifact_id=artifact.artifact_id, date=now.date().isoformat(),
+                        sharpe=float(result.metrics.sharpe_ratio),
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                LOG.warning("Could not record bench entry for %s: %s", artifact.artifact_id, exc)
+
             # Update research_catalog's last_validated_ts for this symbol
             if symbol:
                 await self._run_in_thread(

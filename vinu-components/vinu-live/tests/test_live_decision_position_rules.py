@@ -302,3 +302,127 @@ def test_full_cycle_closes_the_position_through_the_real_loop(poller):
 
     assert list_open_positions(poller._backend) == []
     assert "max_hold" in list_open_positions(poller._backend, status="closed")[0].closed_reason
+
+
+# ------------------------------------------------------------------ F3: a loss leaves a number (features-logic-checking)
+
+def _closed(poller):
+    return list_open_positions(poller._backend, status="closed")[0]
+
+
+def test_a_stop_out_records_the_exit_price_and_the_loss(poller):
+    # Hand-worked: entry 100, stop 5% -> level 95; the newest close is 94.0 -> exit; return = 94/100 - 1 = -6%.
+    pos = _open(poller._backend)
+    set_entry_price_if_missing(poller._backend, pos.id, 100.0)
+    poller._apply_position_rules("AAPL", "15m", 1_000_000 + TF, _bars_df(94.0), [_strat(live_decision_stop_pct=0.05)])
+    done = _closed(poller)
+    assert done.exit_price == 94.0
+    assert done.return_pct == pytest.approx(-0.06)
+
+
+def test_a_short_that_is_stopped_out_on_a_rise_records_a_negative_return(poller):
+    # Short 0.05, entry 100, stop 5% -> level 105; close 106 -> exit; the short lost: -(106/100 - 1) = -6%.
+    pos = _open(poller._backend, size=-0.05)
+    set_entry_price_if_missing(poller._backend, pos.id, 100.0)
+    poller._apply_position_rules("AAPL", "15m", 1_000_000 + TF, _bars_df(106.0), [_strat(live_decision_stop_pct=0.05)])
+    assert _closed(poller).return_pct == pytest.approx(-0.06)
+
+
+def test_a_short_that_exits_on_a_fall_records_a_gain(poller):
+    pos = _open(poller._backend, size=-0.05, opened=1_000_000 - 20 * TF)
+    set_entry_price_if_missing(poller._backend, pos.id, 100.0)
+    poller._apply_position_rules("AAPL", "15m", 1_000_000 + TF, _bars_df(90.0), [_strat(live_decision_max_hold_bars=10)])
+    assert _closed(poller).return_pct == pytest.approx(0.10)  # -(90/100 - 1)
+
+
+def test_without_an_entry_price_the_exit_price_is_kept_and_the_return_is_not_guessed(poller):
+    _open(poller._backend, opened=1_000_000 - 20 * TF)  # never stamped with an entry price
+    poller._apply_position_rules("AAPL", "15m", 1_000_000 + TF, _bars_df(94.0), [_strat(live_decision_max_hold_bars=10)])
+    done = _closed(poller)
+    assert done.exit_price == 94.0 and done.return_pct is None
+
+
+@pytest.mark.parametrize("bad", [0.0, -5.0, float("nan"), float("inf"), "abc"])
+def test_an_unusable_exit_price_still_closes_the_position_and_records_nothing(backend, bad):
+    from vinu_live.live_decision.storage import close_position
+
+    pos = _open(backend)
+    set_entry_price_if_missing(backend, pos.id, 100.0)
+    close_position(backend, pos.id, reason="x", bar_ts=2_000_000, exit_price=bad)
+    done = list_open_positions(backend, status="closed")[0]
+    assert done.exit_price is None and done.return_pct is None and done.status == "closed"
+
+
+def test_closing_without_an_exit_price_behaves_as_before(backend):
+    from vinu_live.live_decision.storage import close_position
+
+    pos = _open(backend)
+    close_position(backend, pos.id, reason="x", bar_ts=2_000_000)
+    done = list_open_positions(backend, status="closed")[0]
+    assert done.exit_price is None and done.return_pct is None
+
+
+def test_the_agents_exit_decision_records_the_exit_price_and_return(poller):
+    # Hand-worked: long, entry 100, the agent says EXIT while the newest close is 110 -> return = +10%.
+    from vinu_live.live_decision.storage import advance_cursor
+
+    pos = _open(poller._backend, opened=1_000_000)
+    set_entry_price_if_missing(poller._backend, pos.id, 100.0)
+    advance_cursor(poller._backend, "AAPL", "15m", 1_000_000 + 10 * TF)          # 10 bars on: a review is due
+    poller._remember_last_close("AAPL", "15m", _bars_df(110.0))
+    poller._http.post = AsyncMock(return_value=_resp({"decision": "EXIT", "reasoning": "thesis broken"}))
+    reviewed = asyncio.run(poller._review_open_positions({"s1": _strat()}))
+    assert reviewed == 1
+    done = _closed(poller)
+    assert done.exit_price == 110.0 and done.return_pct == pytest.approx(0.10)
+
+
+def test_a_hold_decision_records_no_exit(poller):
+    from vinu_live.live_decision.storage import advance_cursor
+
+    pos = _open(poller._backend, opened=1_000_000)
+    set_entry_price_if_missing(poller._backend, pos.id, 100.0)
+    advance_cursor(poller._backend, "AAPL", "15m", 1_000_000 + 10 * TF)
+    poller._remember_last_close("AAPL", "15m", _bars_df(110.0))
+    poller._http.post = AsyncMock(return_value=_resp({"decision": "HOLD", "reasoning": "still valid"}))
+    asyncio.run(poller._review_open_positions({"s1": _strat()}))
+    still = list_open_positions(poller._backend)[0]
+    assert still.exit_price is None and still.return_pct is None
+
+
+def test_remembering_the_last_close_never_raises_on_bad_bars(poller):
+    poller._remember_last_close("AAPL", "15m", None)
+    poller._remember_last_close("AAPL", "15m", pd.DataFrame())
+    poller._remember_last_close("AAPL", "15m", pd.DataFrame({"close": [float("nan")]}))
+    assert ("AAPL", "15m") not in poller._last_close
+
+
+def test_an_old_database_without_the_exit_columns_is_migrated(tmp_path):
+    from vinu_live.live_decision.storage import close_position
+
+    db = tmp_path / "v5.db"
+    con = sqlite3.connect(db)
+    con.executescript(
+        """
+        CREATE TABLE live_decision_open_positions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL, strategy_id TEXT NOT NULL,
+            position_size REAL NOT NULL, opened_bar_ts INTEGER NOT NULL, trigger_id TEXT,
+            status TEXT NOT NULL DEFAULT 'open', opened_at TEXT NOT NULL,
+            last_reviewed_bar_ts INTEGER, closed_at TEXT, closed_bar_ts INTEGER, closed_reason TEXT, entry_price REAL
+        );
+        INSERT INTO live_decision_open_positions
+            (ticker, strategy_id, position_size, opened_bar_ts, status, opened_at, entry_price)
+            VALUES ('MSFT', 'old', 0.02, 5, 'open', '2026-09-01T00:00:00+00:00', 200.0);
+        PRAGMA user_version=5;
+        """
+    )
+    con.commit()
+    con.close()
+    b = LiveDecisionBackend(str(db))
+    try:
+        pos = list_open_positions(b)[0]
+        close_position(b, pos.id, reason="x", bar_ts=10, exit_price=180.0)
+        done = list_open_positions(b, status="closed")[0]
+        assert done.exit_price == 180.0 and done.return_pct == pytest.approx(-0.10)
+    finally:
+        b.close()
