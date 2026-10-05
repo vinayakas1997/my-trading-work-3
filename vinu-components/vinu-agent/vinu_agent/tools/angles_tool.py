@@ -111,6 +111,43 @@ def _fetch_angle_results(
     return results
 
 
+# An angle's result carries every stored row (one per date since 2022; peer_relative_strength has a row per date per
+# peer), and the tools put the whole thing into the model's prompt. For META cluster F that was 9.7 MB, which
+# overflowed the local model's context for every ticker the planner tried to bootstrap. The model needs the recent
+# picture, so keep the newest rows, say how many there really are, and shrink further if the total is still too big.
+_ROW_STEPS = (30, 10, 3)
+_MAX_PAYLOAD_CHARS = 60_000
+
+
+def _cap_rows(node, max_rows: int) -> None:
+    if isinstance(node, dict):
+        data = node.get("data")
+        if isinstance(data, list) and len(data) > max_rows:
+            node["rows_total"] = node.get("row_count", len(data))
+            node["rows_shown"] = max_rows
+            node["truncated"] = True
+            node["data"] = data[-max_rows:]
+        for value in node.values():
+            if isinstance(value, (dict, list)):
+                _cap_rows(value, max_rows)
+    elif isinstance(node, list):
+        for item in node:
+            if isinstance(item, (dict, list)):
+                _cap_rows(item, max_rows)
+
+
+def _bounded_payload(obj: dict) -> str:
+    import json
+
+    text = ""
+    for max_rows in _ROW_STEPS:
+        _cap_rows(obj, max_rows)
+        text = json.dumps(obj)
+        if len(text) <= _MAX_PAYLOAD_CHARS:
+            break
+    return text
+
+
 _ALL_TIME_FORMATS_SENTINEL = "ALL"
 
 
@@ -343,7 +380,7 @@ class GetAllAnglesTool(BaseTool):
                     1 for by_fmt in nested.values() for r in by_fmt.values() if r.get("row_count", 0) > 0
                 )
                 total_pairs = sum(len(by_fmt) for by_fmt in nested.values())
-                payload = json.dumps({
+                payload = _bounded_payload({
                     "ticker": ticker,
                     "time_format": "ALL",
                     "angle_count": len(angle_names),
@@ -359,7 +396,7 @@ class GetAllAnglesTool(BaseTool):
             )
 
         with_data = sum(1 for r in results.values() if r.get("row_count", 0) > 0)
-        payload = json.dumps({
+        payload = _bounded_payload({
             "ticker": ticker,
             "time_format": time_format,
             "angle_count": len(angle_names),
@@ -478,7 +515,7 @@ class GetClusterAnglesTool(BaseTool):
                     1 for by_fmt in nested.values() for r in by_fmt.values() if r.get("row_count", 0) > 0
                 )
                 total_pairs = sum(len(by_fmt) for by_fmt in nested.values())
-                payload = json.dumps({
+                payload = _bounded_payload({
                     "ticker": ticker,
                     "cluster": cluster,
                     "cluster_members": members,
@@ -496,7 +533,7 @@ class GetClusterAnglesTool(BaseTool):
             )
 
         with_data = sum(1 for r in results.values() if r.get("row_count", 0) > 0)
-        payload = json.dumps({
+        payload = _bounded_payload({
             "ticker": ticker,
             "cluster": cluster,
             "cluster_members": members,

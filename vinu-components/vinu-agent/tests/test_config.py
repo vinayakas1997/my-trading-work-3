@@ -115,6 +115,8 @@ class TestLoadConfigLiveDecisionMaturityScaling:
     same cautious-rollout posture as every other maturity-tier consumer."""
 
     def test_defaults_to_false(self, monkeypatch) -> None:
+        # The code default, not whatever a local .env sets (the real-system profile turns this flag on there).
+        monkeypatch.setattr("vinu_agent.config.load_dotenv", lambda *a, **k: False)
         monkeypatch.delenv("VINU_AGENT_LIVE_DECISION_MATURITY_SCALING_ENABLED", raising=False)
         assert load_config().live_decision_maturity_scaling_enabled is False
 

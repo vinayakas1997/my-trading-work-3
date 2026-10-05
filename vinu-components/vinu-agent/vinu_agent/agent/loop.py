@@ -20,6 +20,21 @@ from .workflow import WorkflowTracker
 _DEFAULT_MAX_CONTEXT_TOKENS = 8000
 
 
+def cap_tool_result(*, name: str, content, limit: int | None = None):
+    """Backstop for any tool: a result over the limit is cut with an explicit marker instead of overflowing the model's
+    context (one tool returned 9.7 MB and every ticker's bootstrap failed with 'Context size has been exceeded').
+    Tools should bound their own output; this only catches the ones that do not."""
+    import os
+
+    if not isinstance(content, str):
+        return content
+    cap = limit if limit is not None else int(os.environ.get("VINU_AGENT_MAX_TOOL_RESULT_CHARS", "100000"))
+    if len(content) <= cap:
+        return content
+    return (content[:cap] + f"\n\n[TRUNCATED by the agent loop: tool '{name}' returned {len(content):,} characters; "
+            f"only the first {cap:,} are shown. Use a narrower request if you need the rest.]")
+
+
 @dataclass
 class TokenUsage:
     total: int = 0
@@ -387,6 +402,8 @@ class AgentLoop:
                 "content": result,
             })
 
+        for r in results:
+            r["content"] = cap_tool_result(name=r.get("name", ""), content=r.get("content"))
         return results
 
     def _record_tool_telemetry(
