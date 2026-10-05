@@ -196,3 +196,12 @@ def test_the_local_llm_runs_one_slot_so_concurrent_prompts_queue_instead_of_over
     assert re.search(r"LLAMA_ARG_N_PARALLEL:\s*\$\{HINDSIGHT_LLM_PARALLEL:-1\}", compose)
     example = (ROOT / ".env-example").read_text(encoding="utf-8")
     assert re.search(r"^HINDSIGHT_LLM_PARALLEL=1\s*$", example, re.M)
+
+
+def test_a_sub_agent_delegation_may_outlast_several_slow_local_llm_calls():
+    """60 s cut off most angle_synthesizer delegations (one cluster read is ~30 s on the local 9B model, more when it
+    queues), so META's summary came back with 6 of 7 clusters 'timed out'. Tickers also run one at a time, since the
+    single LLM slot makes parallel tickers only wait longer."""
+    example = (ROOT / ".env-example").read_text(encoding="utf-8")
+    assert int(re.search(r"^VINU_AGENT_TOOL_TIMEOUT=(\d+)\s*$", example, re.M).group(1)) >= 600
+    assert re.search(r"^VINU_AGENT_SUMMARY_PARALLELISM=1\s*$", example, re.M)
