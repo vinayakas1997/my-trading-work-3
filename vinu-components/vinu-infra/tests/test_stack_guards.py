@@ -180,3 +180,10 @@ def test_the_planner_is_pointed_at_a_screener_ranker_and_takes_the_top_ten():
     example = (ROOT / ".env-example").read_text(encoding="utf-8")
     assert re.search(r"^VINU_AGENT_SCREENER_RANKER_ID=\S+", example, re.M)
     assert re.search(r"^VINU_AGENT_SCREENER_TOP_N=10\s*$", example, re.M)
+
+
+def test_the_local_llm_context_is_big_enough_for_the_agent_teams():
+    """16K made the local server answer 'Context size has been exceeded' to the screener team's prompts."""
+    example = (ROOT / ".env-example").read_text(encoding="utf-8")
+    ctx = int(re.search(r"^HINDSIGHT_LLM_CTX_SIZE=(\d+)\s*$", example, re.M).group(1))
+    assert ctx >= 40000
