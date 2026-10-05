@@ -362,6 +362,12 @@ def bootstrap_new_tickers(service: Any, seed_tickers: list[str]) -> list[str]:
             run_team_for_ticker(
                 service, "screener", f"Ticker: {ticker}", session_id=f"watchlist-bootstrap-{ticker}",
             )
+            # A finished team run is not a stored summary: if the manager's answer had no parseable JSON block
+            # (e.g. the cross-cluster analyst timed out) nothing was written. Only a row in the store counts.
+            if service.ticker_summary_store.get_summary(ticker) is None:
+                LOG.warning("watchlist bootstrap for %s finished but stored no summary (no usable JSON block "
+                            "in the screener answer); it stays new and is retried next cycle", ticker)
+                return None
             return ticker
         except Exception:
             LOG.exception("watchlist bootstrap failed for %s, continuing", ticker)

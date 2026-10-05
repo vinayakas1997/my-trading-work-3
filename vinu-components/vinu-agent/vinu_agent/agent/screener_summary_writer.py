@@ -38,9 +38,12 @@ def write_ticker_summaries(
     try:
         data = _extract_json_block(content)
         if not data:
+            LOG.warning("screener answer has no parseable ```json summary block (run %s): nothing stored",
+                        source_run_id or "?")
             return []
         tickers = data.get("tickers")
         if not isinstance(tickers, dict) or not tickers:
+            LOG.warning("screener summary block has no 'tickers' (run %s): nothing stored", source_run_id or "?")
             return []
     except Exception:
         LOG.exception("failed to parse screener summary block, continuing without it")

@@ -56,6 +56,10 @@ def resolve_context_window(base_url: str, model: str = "", timeout: float = 5.0)
             for item in data.get("data", []) or []:
                 if isinstance(item, dict):
                     candidates.append(item)
+                    # llama.cpp reports the live context size nested under `meta` (n_ctx, next to n_ctx_train);
+                    # missing it made every local model look like an 8000-token one.
+                    if isinstance(item.get("meta"), dict):
+                        candidates.append(item["meta"])
         for c in candidates:
             for field_name in _CONTEXT_WINDOW_FIELDS:
                 val = c.get(field_name)
@@ -66,6 +70,12 @@ def resolve_context_window(base_url: str, model: str = "", timeout: float = 5.0)
             "Could not resolve context window from %s: %s — falling back to %d",
             base_url, e, _DEFAULT_CONTEXT_WINDOW,
         )
+        return _DEFAULT_CONTEXT_WINDOW
+    LOG.warning(
+        "%s/models answered but exposes no context size (looked for %s, also under `meta`) — falling back to %d; "
+        "the agent loop will compact at that size",
+        base_url, ", ".join(_CONTEXT_WINDOW_FIELDS), _DEFAULT_CONTEXT_WINDOW,
+    )
     return _DEFAULT_CONTEXT_WINDOW
 
 
