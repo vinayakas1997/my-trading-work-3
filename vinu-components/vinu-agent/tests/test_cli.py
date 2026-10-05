@@ -265,7 +265,7 @@ class TestPlannerWorkerMain:
              patch("vinu_agent.cli.time.sleep", side_effect=KeyboardInterrupt):
             planner_worker_main(argparse.Namespace(interval_sec=None))
 
-        mock_fetch.assert_called_once_with(config.services["vinu_screener"], "core_starter")
+        mock_fetch.assert_called_once_with(config.services["vinu_screener"], "core_starter", limit=config.screener_top_n)
         mock_bootstrap.assert_called_once_with(fake_service, ["NVDA", "AAPL", "TSLA"])
 
     def test_screener_ranker_configured_uses_its_current_output_as_the_cycle_watchlist(self) -> None:

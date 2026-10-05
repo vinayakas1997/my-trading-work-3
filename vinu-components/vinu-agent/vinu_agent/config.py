@@ -145,6 +145,8 @@ class AgentConfig:
     # change unless explicitly set, same "skip, don't guess" contract as
     # watchlist_seed_tickers above.
     screener_ranker_id: str = ""
+    # How many of the ranker's top symbols the planner takes each cycle (the ranker itself keeps its own top_n).
+    screener_top_n: int = 10
     # Angle-comprehension coverage gate (missing-pieces-of-system/
     # angle-comprehension-hierarchy/): RunLogTrigger fires the Summary
     # Agent's 7 cluster-synthesis LLM calls the moment vinu-initial-
@@ -304,6 +306,7 @@ def load_config() -> AgentConfig:
             t.strip() for t in os.environ.get("VINU_AGENT_WATCHLIST_SEED_TICKERS", "").split(",") if t.strip()
         ],
         screener_ranker_id=os.environ.get("VINU_AGENT_SCREENER_RANKER_ID", ""),
+        screener_top_n=int(os.environ.get("VINU_AGENT_SCREENER_TOP_N", "10")),
         angle_coverage_min_fraction=float(os.environ.get("VINU_AGENT_ANGLE_COVERAGE_MIN_FRACTION", "0.0")),
         angle_coverage_max_deferrals=int(os.environ.get("VINU_AGENT_ANGLE_COVERAGE_MAX_DEFERRALS", "3")),
         live_decision_maturity_scaling_enabled=os.environ.get(

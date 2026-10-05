@@ -492,7 +492,8 @@ def planner_worker_main(args: argparse.Namespace) -> None:
                         from .tools.screener_client import fetch_screener_top_tickers
 
                         screener_url = config.services.get("vinu_screener", "")
-                        screener_tickers = fetch_screener_top_tickers(screener_url, config.screener_ranker_id)
+                        screener_tickers = fetch_screener_top_tickers(
+                            screener_url, config.screener_ranker_id, limit=config.screener_top_n)
                         for ticker in screener_tickers:
                             if ticker not in seed_tickers:
                                 seed_tickers.append(ticker)

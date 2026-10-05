@@ -172,3 +172,11 @@ def test_the_live_decision_validation_gate_is_never_switched_off_in_deployment_f
         for line in path.read_text(encoding="utf-8").splitlines():
             if flag in line and not line.lstrip().startswith("#"):
                 assert not re.search(r"(false|0|no)\s*[\"']?\s*$", line.split(flag, 1)[1], re.I), f"{name}: {line.strip()}"
+
+
+def test_the_planner_is_pointed_at_a_screener_ranker_and_takes_the_top_ten():
+    """Without VINU_AGENT_SCREENER_RANKER_ID the planner worker cycles with an empty ticker list: screener -> planner is
+    unconnected and nothing downstream (analysis, research, strategy) is ever triggered by the screener."""
+    example = (ROOT / ".env-example").read_text(encoding="utf-8")
+    assert re.search(r"^VINU_AGENT_SCREENER_RANKER_ID=\S+", example, re.M)
+    assert re.search(r"^VINU_AGENT_SCREENER_TOP_N=10\s*$", example, re.M)
