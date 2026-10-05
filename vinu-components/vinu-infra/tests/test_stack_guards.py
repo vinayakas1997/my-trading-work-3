@@ -187,3 +187,12 @@ def test_the_local_llm_context_is_big_enough_for_the_agent_teams():
     example = (ROOT / ".env-example").read_text(encoding="utf-8")
     ctx = int(re.search(r"^HINDSIGHT_LLM_CTX_SIZE=(\d+)\s*$", example, re.M).group(1))
     assert ctx >= 40000
+
+
+def test_the_local_llm_runs_one_slot_so_concurrent_prompts_queue_instead_of_overflowing():
+    """n_slots=4 with kv_unified shared one 40K pool: three concurrent ~15K-token prompts answered 'Context size has
+    been exceeded'. One slot makes concurrent requests queue."""
+    compose = (ROOT / "docker-compose-hindsight.yml").read_text(encoding="utf-8")
+    assert re.search(r"LLAMA_ARG_N_PARALLEL:\s*\$\{HINDSIGHT_LLM_PARALLEL:-1\}", compose)
+    example = (ROOT / ".env-example").read_text(encoding="utf-8")
+    assert re.search(r"^HINDSIGHT_LLM_PARALLEL=1\s*$", example, re.M)

@@ -42,6 +42,9 @@ services:
       LLAMA_MODEL_FILE: ${HINDSIGHT_LLM_MODEL_FILE:-Qwen3.5-4B-Q4_K_M.gguf}
       LLAMA_CTX_SIZE: ${HINDSIGHT_LLM_CTX_SIZE:-32768}
       LLAMA_N_GPU_LAYERS: ${HINDSIGHT_LLM_N_GPU_LAYERS:-999}
+      # One slot: the server's context is one shared pool (kv_unified), so with 4 slots two or three big prompts at
+      # once answer 'Context size has been exceeded'. The GPU is serial anyway; extra requests queue instead of failing.
+      LLAMA_ARG_N_PARALLEL: ${HINDSIGHT_LLM_PARALLEL:-1}
     volumes:
       - ./hindsight-llm/models:/models:ro
     # Same nvidia device-reservation shape already used by
