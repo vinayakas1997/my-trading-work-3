@@ -63,7 +63,11 @@ class HttpStockDataSource:
     # vinu-stock-price's code, only its HTTP contract) so a universe larger
     # than one server-side batch call allows is split into several batch
     # calls rather than one oversized request the server would reject.
-    BATCH_CHUNK_SIZE = 500
+    # Smaller than the server's cap of 500 on purpose: the server builds each symbol's bars on the fly (about 1s per
+    # symbol for daily bars from 1-minute data), so one 50-symbol call took 38s and tripped the old fixed 30s timeout,
+    # which flagged the whole universe fetch-failed and left the ranker with zero candidates.
+    BATCH_CHUNK_SIZE = 20
+    SECONDS_PER_SYMBOL = 3.0          # timeout budget per symbol in a chunk, on top of a 30s base
 
     def __init__(self, client, *, base_url: str, days: int = 250, interval: str = "1d") -> None:
         self._client = client
@@ -113,7 +117,7 @@ class HttpStockDataSource:
                 resp = self._client.post(
                     f"{self._base_url}/candles/batch",
                     json={"symbols": chunk, "interval": self._interval, "days": self._days, "adjusted": True},
-                    timeout=30.0,
+                    timeout=30.0 + self.SECONDS_PER_SYMBOL * len(chunk),
                 )
                 resp.raise_for_status()
                 data = resp.json()

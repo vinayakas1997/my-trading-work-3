@@ -158,9 +158,19 @@ class TestGetOhlcvBatch:
         client = MagicMock()
         client.post.return_value = _resp({"results": {}})
         ds = HttpStockDataSource(client, base_url="http://stock:8081")
-        symbols = [f"S{i}" for i in range(1100)]  # 3 chunks at BATCH_CHUNK_SIZE=500
+        n = HttpStockDataSource.BATCH_CHUNK_SIZE
+        symbols = [f"S{i}" for i in range(n * 2 + 5)]  # 3 chunks
         ds.get_ohlcv_batch(symbols)
         assert client.post.call_count == 3
+
+    def test_the_timeout_grows_with_the_chunk_so_a_50_symbol_universe_cannot_time_out_at_38s(self) -> None:
+        """Found in the first full-chain run: a fixed 30s timeout vs ~38s for 50 symbols left the ranker empty."""
+        client = MagicMock()
+        client.post.return_value = _resp({"results": {}})
+        ds = HttpStockDataSource(client, base_url="http://stock:8081")
+        ds.get_ohlcv_batch([f"S{i}" for i in range(HttpStockDataSource.BATCH_CHUNK_SIZE)])
+        budget = client.post.call_args.kwargs["timeout"]
+        assert budget >= HttpStockDataSource.BATCH_CHUNK_SIZE * 1.0 + 30   # well above the measured ~1s per symbol
 
     def test_lowercase_input_symbols_come_back_uppercased(self) -> None:
         client = MagicMock()
