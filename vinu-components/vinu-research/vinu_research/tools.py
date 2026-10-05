@@ -151,7 +151,10 @@ class ResearchTools:
                 detail = str(payload.get("detail", payload))[:500]
             except Exception:
                 detail = (exc.response.text[:500] if exc.response is not None else "")
-            if status in (401, 403) or status == 422 or (isinstance(status, int) and status >= 500):
+            # 422 is NOT infrastructure: the simulator is up and answering. It means this candidate produced no
+            # usable weights (its code crashed or returned nothing for every symbol), so it is a candidate failure
+            # the loop may replace. Calling it infrastructure aborted whole runs and tripped the shared breaker.
+            if status in (401, 403) or (isinstance(status, int) and status >= 500):
                 raise InfrastructureError(
                     f"INFRASTRUCTURE FAILURE, not a strategy problem: simulator "
                     f"returned HTTP {status} ({detail}). Do NOT retry with another "

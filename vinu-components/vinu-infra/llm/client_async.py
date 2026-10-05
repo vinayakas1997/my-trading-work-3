@@ -72,7 +72,7 @@ def _parse_json_content(content: str) -> dict[str, Any]:
     if text.startswith("```"):
         lines = text.split("\n")
         text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-    return json.loads(text)
+    return json.loads(text, strict=False)   # models put raw newlines inside code strings; strict mode rejected those and burned retries
 
 
 def _should_retry(exc: BaseException) -> bool:

@@ -45,6 +45,18 @@ class CircuitBreaker:
 
         try:
             result = await fn()
+        except httpx.HTTPStatusError as e:
+            if e.response is not None and e.response.status_code < 500:
+                # A 4xx is an answer from a live service (bad request, unknown id): not an outage, so it must
+                # not count toward opening the breaker, or one bad candidate silences the service for everyone.
+                await self._record_success()
+                raise
+            await self._record_failure()
+            LOG.warning("Request failed (%s), failure %d/%d", e, self._failures, self._threshold)
+            state, _ = await self._check_state()
+            if state == _STATE_OPEN:
+                return fallback
+            raise
         except Exception as e:
             await self._record_failure()
             LOG.warning("Request failed (%s), failure %d/%d", e, self._failures, self._threshold)
