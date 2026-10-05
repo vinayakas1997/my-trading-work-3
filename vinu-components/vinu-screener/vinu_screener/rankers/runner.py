@@ -36,13 +36,19 @@ LOG = logging.getLogger(__name__)
 STALE_DATA_MAX_AGE_DAYS = 3
 
 
-def _is_stale(df: pd.DataFrame, max_age_days: int = STALE_DATA_MAX_AGE_DAYS) -> bool:
+def _is_stale(df: pd.DataFrame, max_age_days: int = STALE_DATA_MAX_AGE_DAYS, now: datetime | None = None) -> bool:
+    """Age is counted in business days, not calendar days. Daily bars are stamped 00:00 UTC, so on a Monday morning
+    Friday's bar is already more than 3 calendar days old: the old calendar check flagged every ticker stale every
+    Monday (and after any long weekend) and subtracted 10 points from all of them. Holidays are not modelled; an
+    unparseable index is not evidence of staleness."""
     try:
+        import numpy as np
+
         last_ts = df.index[-1]
         if getattr(last_ts, "tzinfo", None) is None:
             last_ts = last_ts.tz_localize("UTC")
-        age = datetime.now(timezone.utc) - last_ts.to_pydatetime()
-        return age.total_seconds() > max_age_days * 86400
+        today = (now or datetime.now(timezone.utc)).date()
+        return int(np.busday_count(last_ts.date(), today)) > max_age_days
     except Exception:
         return False
 
