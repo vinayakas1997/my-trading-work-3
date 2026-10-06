@@ -140,6 +140,21 @@ class TestGenerateWeightsCrashIsDistinguishableFromLegitimateZeroTrades:
         assert "BBB" not in result.diagnostics.get("strategy_crashed_symbols", {})
         assert "rsi_14" in result.diagnostics["strategy_crashed_symbols"]["AAA"]
 
+    def test_every_symbol_crashing_names_the_crash_not_empty_data(self, sim_config):
+        """When the strategy crashes for ALL symbols the error must say so with
+        the real cause; "all symbols returned empty" sent a whole research run
+        to look at the data when the RSI recipe asked for a column 'rsi_14.0'."""
+        dates = pd.date_range("2023-01-02", "2023-01-20", freq="B")
+        closes = 100.0 + np.arange(len(dates), dtype=float)
+        with pytest.raises(ValueError, match=r"crashed for every symbol.*rsi_14"):
+            simulate_custom(
+                strategy_class=_CrashingStrategy,
+                symbols=["AAA"],
+                ohclv_data={"AAA": _make_ohlcv(dates, closes)},
+                sim_config=sim_config,
+                indicator_data=None,
+            )
+
     def test_legitimate_zero_trades_has_no_crash_diagnostics(self, sim_config):
         """A strategy that runs cleanly and just returns all-zero weights must
         NOT be flagged as a crash -- the two cases must stay distinguishable

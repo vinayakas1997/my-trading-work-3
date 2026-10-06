@@ -32,7 +32,10 @@ signal[(fast_ma > mid_ma) & (mid_ma > slow_ma)] = 1.0
 signal[(fast_ma < mid_ma) & (mid_ma < slow_ma)] = -1.0
 return signal * {allocation}"""
 
-RSI_TEMPLATE = """rsi = data['rsi_{rsi_period}']
+RSI_TEMPLATE = """delta = data['close'].diff()
+gain = delta.clip(lower=0).ewm(alpha=1.0 / int({rsi_period}), adjust=False, min_periods=int({rsi_period})).mean()
+loss = (-delta.clip(upper=0)).ewm(alpha=1.0 / int({rsi_period}), adjust=False, min_periods=int({rsi_period})).mean()
+rsi = 100 - 100 / (1 + gain / loss.replace(0, float('nan')))
 signal = pd.Series(0.0, index=data.index)
 signal[rsi < {oversold}] = 1.0
 signal[rsi > {overbought}] = -1.0

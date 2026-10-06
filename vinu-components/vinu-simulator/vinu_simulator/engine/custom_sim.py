@@ -81,6 +81,13 @@ def simulate_custom(
             all_dates.update(weights.index)
 
     if not all_dates:
+        if crashed_symbols:
+            # Name the real cause: "all symbols returned empty" sent every
+            # reader to the data when the strategy code itself crashed.
+            raise ValueError(
+                "No weight data generated — the strategy's generate_weights "
+                f"crashed for every symbol: {crashed_symbols}"
+            )
         raise ValueError("No weight data generated — all symbols returned empty")
 
     sorted_dates = sorted(all_dates)
