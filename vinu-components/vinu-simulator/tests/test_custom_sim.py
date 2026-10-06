@@ -215,3 +215,52 @@ class TestPerfectForesightCannotProfit:
         # is enforced.
         assert result.metrics["total_return"] == pytest.approx(-2 / 11, abs=1e-6)
         assert result.metrics["total_return"] < 0.0
+
+
+class TestWeightsContractViolationIsExplainedNotSilentlyZero:
+    """A strategy returning `pd.Series([signal])` (one number for the whole history) got all-zero weights and 0 trades
+    with no explanation; the research writer made that mistake repeatedly and could not tell why."""
+
+    def _run(self, strategy_class, sim_config, symbols=("AAA",)):
+        dates = pd.date_range("2023-01-02", "2023-02-17", freq="B")
+        closes = 100.0 + np.arange(len(dates), dtype=float)
+        return simulate_custom(
+            strategy_class=strategy_class, symbols=list(symbols),
+            ohclv_data={s: _make_ohlcv(dates, closes) for s in symbols}, sim_config=sim_config,
+        )
+
+    def test_a_single_value_series_is_rejected_with_what_to_return(self, sim_config):
+        class _OneNumber(BaseStrategy):
+            def generate_weights(self, data):
+                return pd.Series([1])
+
+        with pytest.raises(ValueError, match=r"one weight per bar.*index=data\.index"):
+            self._run(_OneNumber, sim_config)
+
+    def test_a_non_series_is_rejected_with_what_to_return(self, sim_config):
+        class _AList(BaseStrategy):
+            def generate_weights(self, data):
+                return [1.0] * len(data)
+
+        with pytest.raises(ValueError, match=r"returned list.*pandas Series"):
+            self._run(_AList, sim_config)
+
+    def test_a_violation_in_one_symbol_is_flagged_while_the_others_trade(self, sim_config):
+        class _Mixed(BaseStrategy):
+            calls = 0
+
+            def generate_weights(self, data):
+                type(self).calls += 1                      # symbols are processed in order: AAA is fine, BBB is not
+                return pd.Series(1.0, index=data.index) if type(self).calls == 1 else pd.Series([1])
+
+        result = self._run(_Mixed, sim_config, symbols=("AAA", "BBB"))
+        assert result.diagnostics.get("crash_fallback") is True
+        assert list(result.diagnostics["strategy_crashed_symbols"]) == ["BBB"]
+
+    def test_correct_and_partially_covering_series_are_accepted(self, sim_config):
+        class _Half(BaseStrategy):
+            def generate_weights(self, data):
+                return pd.Series(1.0, index=data.index[len(data) // 2:])      # later bars only: the rest is flat
+
+        result = self._run(_Half, sim_config)
+        assert not result.diagnostics.get("crash_fallback")

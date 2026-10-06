@@ -67,10 +67,15 @@ def simulate_custom(
             crashed_symbols[sym] = str(e)
             continue
 
-        if not isinstance(weights, pd.Series):
-            LOG.warning("generate_weights for %s returned %s, expected Series, using zeros",
-                        sym, type(weights).__name__)
+        # Contract: one weight per bar, indexed like `data`. Breaking it used to be treated as "never trade": a strategy
+        # that returned `pd.Series([signal])` (one number for the whole history) got all-zero weights, 0 trades and no
+        # explanation, and its writer burned attempt after attempt on a result it could not understand. A violation is
+        # recorded like a crash, with a message that says what to return.
+        violation = _weights_contract_violation(weights, data)
+        if violation:
+            LOG.warning("generate_weights for %s broke the contract: %s", sym, violation)
             per_ticker_weights[sym] = pd.Series(index=data.index, data=0.0)
+            crashed_symbols[sym] = violation
             continue
 
         if weights.empty:
@@ -137,3 +142,17 @@ def _normalize_weights(weights: pd.DataFrame) -> pd.DataFrame:
     abs_sums = weights.abs().sum(axis=1)
     divisor = abs_sums.where(abs_sums > 1.0, other=1.0)
     return weights.div(divisor, axis=0)
+
+
+def _weights_contract_violation(weights: object, data: pd.DataFrame) -> str:
+    """Why `generate_weights` output cannot be used, or "" when it can (an empty Series is allowed: it means flat)."""
+    if not isinstance(weights, pd.Series):
+        return (f"generate_weights returned {type(weights).__name__}; it must return a pandas Series with one weight "
+                f"per bar, indexed like `data` (pd.Series(..., index=data.index))")
+    if weights.empty:
+        return ""
+    if weights.index.intersection(data.index).empty:
+        return (f"generate_weights returned {len(weights)} value(s) whose index does not match the {len(data)} price "
+                f"bars; it must return one weight per bar, indexed like `data` (pd.Series(..., index=data.index)), not "
+                f"a single number or a list")
+    return ""
