@@ -18,7 +18,7 @@ def _rets():
 def test_sharpe_is_the_textbook_formula_not_cagr_over_vol():
     r = _rets()
     m = _core_metrics(r, "1D")
-    expected = r.mean() / r.std() * np.sqrt(252)
+    expected = r.mean() / r.std(ddof=1) * np.sqrt(252)  # sample std, same as the simulator
     assert m["sharpe_ratio"] == pytest.approx(expected, abs=1e-3)
 
 
@@ -35,3 +35,22 @@ def test_sortino_uses_downside_deviation_of_all_returns():
     m = _core_metrics(r, "1D")
     dd = np.sqrt(np.mean(np.minimum(r, 0) ** 2)) * np.sqrt(252)
     assert m["sortino_ratio"] == pytest.approx(r.mean() * 252 / dd, abs=1e-3)
+
+
+def test_a_fall_right_after_the_first_bar_counts_toward_max_drawdown():
+    """Price 100 -> 80 on day 2, then flat: the max drawdown is -20%. Without the
+    starting price as a peak it read 0."""
+    m = _core_metrics(np.array([-0.20, 0.0, 0.0, 0.0]), "1D")
+    assert m["max_drawdown"] == pytest.approx(-0.20, abs=1e-6)
+
+
+def test_the_angle_and_the_simulator_report_the_same_sharpe_for_the_same_returns():
+    """One Sharpe definition across the system: the idea generator reads the
+    angle's number and then the simulator's, and they must be comparable."""
+    metrics = pytest.importorskip("vinu_simulator.engine.metrics")
+    import pandas as pd
+
+    r = _rets()
+    angle = _core_metrics(r, "1D")["sharpe_ratio"]
+    sim = metrics._get_basic_sharpe(pd.Series(100 * (1 + r).cumprod()), pd.Series(r), 0.0, 252.0)
+    assert angle == pytest.approx(sim, abs=1e-3)

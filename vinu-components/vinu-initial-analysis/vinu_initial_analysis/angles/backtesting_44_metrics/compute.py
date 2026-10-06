@@ -21,7 +21,7 @@ def _core_metrics(rets: np.ndarray, time_format: str | None) -> dict[str, Any]:
 
     total_return = float((1 + rets).prod() - 1)
     cagr = float((1 + total_return) ** (ppy / n) - 1) if n > 0 else 0.0
-    ann_vol = float(rets.std() * af)
+    ann_vol = float(rets.std(ddof=1) * af) if n > 1 else 0.0  # sample std, as in the simulator
     # Standard Sharpe: annualised ARITHMETIC mean return over annualised volatility
     # (same definition as the simulator). It used to be CAGR / volatility, which
     # compounds a short window up to a year: +35% in 72 days read as Sharpe 5.3
@@ -33,7 +33,10 @@ def _core_metrics(rets: np.ndarray, time_format: str | None) -> dict[str, Any]:
     downside_dev = float(np.sqrt(np.mean(np.minimum(rets, 0.0) ** 2))) * af if n > 0 else 0.0
     sortino_ratio = ann_mean / downside_dev if downside_dev > 0 else 0.0
 
-    cum = (1 + rets).cumprod()
+    # Start the equity curve at 1.0 (the first bar's price) so a fall right
+    # after the first bar counts: without the base, ACN's -17.8% first-day drop
+    # was missed (max drawdown -10.6% reported, -20.3% real).
+    cum = np.concatenate([[1.0], (1 + rets).cumprod()])
     running_max = np.maximum.accumulate(cum)
     drawdowns = (cum - running_max) / running_max
     max_dd = float(drawdowns.min())
