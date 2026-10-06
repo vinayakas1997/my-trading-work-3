@@ -297,3 +297,22 @@ def test_model_angles_are_switched_off_while_the_models_service_is_dormant():
     assert dormant, "models-api is expected to sit behind a compose profile; update this guard if that changed"
     if dormant:
         assert re.search(r"^VINU_MODELS_ENABLED=false\s*$", env, re.M), "set VINU_MODELS_ENABLED=false in .env-example"
+
+
+def test_every_team_purpose_is_one_the_gateway_knows():
+    """A team mapped to a purpose the gateway's table lacks would have every one of its LLM calls rejected (400)."""
+    import ast
+    import importlib.util
+
+    root = Path(__file__).resolve().parents[2]
+    tree = ast.parse((root / "vinu-agent/vinu_agent/agent/team.py").read_text(encoding="utf-8"))
+    mapping = next(
+        ast.literal_eval(n.value) for n in ast.walk(tree)
+        if isinstance(n, ast.AnnAssign) and getattr(n.target, "id", "") == "TEAM_PURPOSE"
+    )
+    spec = importlib.util.spec_from_file_location("gw_priorities", root / "vinu-llm-gateway/vinu_llm_gateway/priorities.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    unknown = {t: p for t, p in mapping.items() if p not in mod.PURPOSE_PRIORITY}
+    assert not unknown, f"purposes missing from the gateway table: {unknown}"
+    assert mapping["live_decision"] == "live_decision" and mod.PURPOSE_PRIORITY["live_decision"] == 1

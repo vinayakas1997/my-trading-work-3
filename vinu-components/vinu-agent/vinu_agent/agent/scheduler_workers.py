@@ -18,6 +18,8 @@ import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
+
+from vinu_infra.llm.identity import bind_context
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -338,7 +340,7 @@ def _map_parallel(fn: Callable[[Any], Any], items: list[Any], *, max_workers: in
     if len(items) <= 1 or workers <= 1:
         return [fn(item) for item in items]
     with ThreadPoolExecutor(max_workers=min(workers, len(items))) as pool:
-        return list(pool.map(fn, items))
+        return list(pool.map(bind_context(fn), items))
 
 
 def bootstrap_new_tickers(service: Any, seed_tickers: list[str]) -> list[str]:

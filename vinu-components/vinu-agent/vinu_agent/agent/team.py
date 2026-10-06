@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from vinu_infra.llm.identity import purpose_scope
+
 from .frontmatter import parse_frontmatter
 from .llm import wrap_with_logging
 from .loop import AgentLoop
@@ -292,6 +294,17 @@ class DelegateToAgentTool(BaseTool):
         })
 
 
+# What each team's answers are for. The gateway turns the purpose into a queue priority, so a live trading decision
+# is not stuck behind a summary. A team not listed here uses the agent's default purpose.
+TEAM_PURPOSE: dict[str, str] = {
+    "live_decision": "live_decision",
+    "risk_gatekeeper": "risk_gate",
+    "capital_allocator": "risk_gate",
+    "research": "research",
+    "screener": "summary",
+    "thesis_intake": "planner",
+}
+
 class TeamManager:
     """Loads one team's TEAM.md + agents/*/AGENT.md and exposes a single
     run(task) entrypoint -- the manager's own AgentLoop, scoped to its
@@ -341,6 +354,14 @@ class TeamManager:
         self._services_config = services_config
 
     def run(self, task: str, *, context: Optional[str] = None) -> dict:
+        """Run the team; every LLM call it makes tells the gateway what it is for (see TEAM_PURPOSE)."""
+        purpose = TEAM_PURPOSE.get(self.spec.name)
+        if purpose is None:
+            return self._run(task, context=context)
+        with purpose_scope(purpose):
+            return self._run(task, context=context)
+
+    def _run(self, task: str, *, context: Optional[str] = None) -> dict:
         db_run = None
         if self._run_store is not None:
             db_run = self._run_store.create_run(

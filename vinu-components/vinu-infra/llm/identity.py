@@ -13,8 +13,8 @@ purpose into a priority, so setting one cannot make a call jump the queue unless
 from __future__ import annotations
 
 from contextlib import contextmanager
-from contextvars import ContextVar
-from typing import Iterator
+from contextvars import ContextVar, copy_context
+from typing import Any, Callable, Iterator
 
 _PURPOSE: ContextVar[str | None] = ContextVar("vinu_llm_purpose", default=None)
 
@@ -38,3 +38,16 @@ def llm_identity_headers(caller: str) -> dict[str, str]:
     if purpose:
         headers["X-Vinu-Purpose"] = purpose
     return headers
+
+
+def bind_context(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap `fn` so that, run later on another thread, it still sees the purpose set where it was wrapped.
+
+    A thread pool does not inherit context variables: without this a tool call executed in a pool thread would reach the
+    gateway with no purpose and fall to the caller's default priority, however urgent the team that started it."""
+    ctx = copy_context()
+
+    def runner(*args: Any, **kwargs: Any) -> Any:
+        return ctx.run(fn, *args, **kwargs)
+
+    return runner

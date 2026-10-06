@@ -3,6 +3,8 @@ import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
+
+from vinu_infra.llm.identity import bind_context
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -336,7 +338,7 @@ class AgentLoop:
                 for tc in readonly_calls:
                     name = tc["function"]["name"]
                     params = self._parse_params(tc)
-                    fut = pool.submit(self.registry.execute, name, params)
+                    fut = pool.submit(bind_context(self.registry.execute), name, params)
                     fut_to_call[fut] = (tc, time.perf_counter())
 
                 for fut in as_completed(fut_to_call):
@@ -381,7 +383,7 @@ class AgentLoop:
                 tool._grounding_context = self._grounding_context
             try:
                 with ThreadPoolExecutor(max_workers=1) as pool:
-                    fut = pool.submit(self.registry.execute, name, params)
+                    fut = pool.submit(bind_context(self.registry.execute), name, params)
                     result = fut.result(timeout=self.tool_timeout)
                 self._record_tool_telemetry(name, call_start, success=True, outcome="completed")
             except TimeoutError:
