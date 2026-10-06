@@ -199,6 +199,15 @@ class Gateway:
         if w:
             w.event.set()
 
+    async def models(self) -> tuple[int, Any]:
+        """Read-only passthrough of the model server's /models: callers (the agent) ask it for the real context size
+        to budget their prompts. It is not a generation, so it does not queue."""
+        try:
+            resp = await self._http.get(self.cfg.upstream_url.rstrip("/") + "/models", timeout=10.0)
+            return resp.status_code, resp.json()
+        except (httpx.RequestError, ValueError) as exc:
+            return 502, {"error": {"message": f"model server unreachable: {type(exc).__name__}: {exc}"}}
+
     # ---- the worker ----------------------------------------------------------------------------------------------
 
     async def _worker(self, worker_id: str) -> None:

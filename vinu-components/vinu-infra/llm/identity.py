@@ -48,6 +48,8 @@ def bind_context(fn: Callable[..., Any]) -> Callable[..., Any]:
     ctx = copy_context()
 
     def runner(*args: Any, **kwargs: Any) -> Any:
-        return ctx.run(fn, *args, **kwargs)
+        # a Context cannot be entered by two threads at once, and one wrapped function is often mapped over a pool:
+        # every call gets its own copy
+        return ctx.copy().run(fn, *args, **kwargs)
 
     return runner

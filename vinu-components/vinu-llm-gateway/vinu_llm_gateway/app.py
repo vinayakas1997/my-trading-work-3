@@ -47,6 +47,11 @@ def create_app(gateway: Gateway | None = None) -> FastAPI:
         except GatewayFailure as exc:
             return _error(exc.status, exc.message)
 
+    @app.get("/v1/models")
+    async def models() -> JSONResponse:
+        status, body = await holder["gw"].models()
+        return JSONResponse(status_code=status, content=body)
+
     @app.get("/llm/queue")
     def queue() -> dict[str, Any]:
         gw = holder["gw"]

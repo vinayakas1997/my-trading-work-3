@@ -34,3 +34,19 @@ def test_purpose_survives_a_worker_thread_only_when_bound():
     with purpose_scope("live_decision"), ThreadPoolExecutor(max_workers=1) as pool:
         assert pool.submit(current_purpose).result() is None                                   # the trap
         assert pool.submit(bind_context(current_purpose)).result() == "live_decision"          # the fix
+
+
+def test_one_bound_function_can_run_on_many_threads_at_once():
+    """pool.map(bind_context(fn), items) enters the captured context from several threads simultaneously; one shared
+    Context object raises 'cannot enter context: already entered'."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    barrier = threading.Barrier(4)
+
+    def work(i):
+        barrier.wait(timeout=5)                       # all four are inside at the same moment
+        return current_purpose()
+
+    with purpose_scope("research"), ThreadPoolExecutor(max_workers=4) as pool:
+        assert list(pool.map(bind_context(work), range(4))) == ["research"] * 4
