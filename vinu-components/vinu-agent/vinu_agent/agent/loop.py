@@ -113,6 +113,7 @@ class AgentLoop:
         self._previous_summary: str = ""
         self._nudge_sent: bool = False
         self._compact_requested: bool = False
+        self._compaction_base: Optional[List[Dict]] = None
         # Real gap found 2026-09-21: this previously had no constructor
         # param or env override at all -- hardcoded to 60 regardless of
         # LLMConfig.timeout/VINU_LLM_TIMEOUT (default 120) or
@@ -151,6 +152,13 @@ class AgentLoop:
         iteration = 0
         full_history = list(messages)
         token_usage = TokenUsage()
+        # `full_history` is the complete record (callers read it back). What the model is sent is built from the latest
+        # compaction plus only the messages since it: before this the compacted copy was thrown away every turn, so once
+        # the history crossed the threshold EVERY later turn paid for a fresh summarise call plus a merge call (63% of one
+        # research run's model time) and re-summarised the same old messages again.
+        ctx_base: Optional[List[Dict]] = None
+        ctx_cut = 0
+        self._compaction_base = None
 
         # #6: scoped to THIS turn's own user message, not the whole session --
         # `messages` is the full accumulated conversation the caller passes in,
@@ -194,7 +202,11 @@ class AgentLoop:
                 })
 
             # 1. Apply context management
-            compressed = self._apply_context_layers(full_history)
+            view = full_history if ctx_base is None else ctx_base + full_history[ctx_cut:]
+            compressed = self._apply_context_layers(view)
+            if self._compaction_base is not None:
+                ctx_base, ctx_cut = self._compaction_base, len(full_history)
+                self._compaction_base = None
 
             # 1b. Inject workflow context
             wf_block = self._workflow_tracker.to_context_block()
@@ -492,8 +504,9 @@ class AgentLoop:
         if self._compact_requested:
             self._compact_requested = False
             self._emit("context.compact", {"reason": "compact_tool"})
-            result = self._auto_compact(messages)
-            return self._fix_tool_pairs(result)
+            result = self._fix_tool_pairs(self._auto_compact(messages))
+            self._compaction_base = list(result)
+            return result
 
         # the tool definitions travel with every request and count against the window too
         tools_tokens = int(len(json.dumps(self.registry.get_definitions())) / _ESTIMATED_CHARS_PER_TOKEN)
@@ -504,8 +517,9 @@ class AgentLoop:
         max_tokens = self.max_context_tokens
 
         if estimated_tokens >= max_tokens:
-            result = self._auto_compact(messages)
-            return self._fix_tool_pairs(result)
+            result = self._fix_tool_pairs(self._auto_compact(messages))
+            self._compaction_base = list(result)
+            return result
 
         ratio = estimated_tokens / max_tokens
 
