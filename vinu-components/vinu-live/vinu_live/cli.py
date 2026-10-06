@@ -368,6 +368,10 @@ def worker_main(args: argparse.Namespace | None = None) -> None:
     directly, or a `--interval` passed on that command line is silently
     dropped in favor of config/env defaults. Previously it was.
     """
+    # The `vinu-live-worker` console script calls this directly, bypassing
+    # main() where logging is configured -- so this hourly order scheduler ran
+    # silent: every INFO line (cycle complete) was dropped for days.
+    setup_logging("live")
     config = load_config()
     interval = resolve_worker_interval(args, config)
     print(f"[worker] Starting vinu-live worker (interval={interval}s)")
