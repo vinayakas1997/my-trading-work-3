@@ -268,6 +268,26 @@ class TestHealth:
             assert not info["dependencies"][dep]["reachable"]
 
 
+class TestHealthProbesTheRealRoutes:
+    async def test_dependencies_are_probed_at_their_own_health_routes_and_a_404_is_not_reachable(self, service):
+        import httpx
+
+        seen: list[str] = []
+
+        def _handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.path)
+            ok = request.url.path in ("/simulator/health", "/features/health")
+            return httpx.Response(200 if ok else 404)
+
+        service._http = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
+        info = await service.health()
+
+        assert sorted(seen) == ["/analysis/health", "/features/health", "/simulator/health"]
+        assert info["dependencies"]["simulator"]["reachable"] is True
+        assert info["dependencies"]["features"]["reachable"] is True
+        assert info["dependencies"]["correlation"]["reachable"] is False  # 404 is not healthy
+
+
 class TestContextManager:
     async def test_async_context_manager(self, storage, tmp_path):
         from vinu_research.config import ResearchConfig

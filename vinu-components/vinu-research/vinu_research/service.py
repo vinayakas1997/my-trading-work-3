@@ -843,14 +843,20 @@ class ResearchService:
 
     async def health(self) -> dict[str, Any]:
         deps: dict[str, dict] = {}
-        for name, url in [
-            ("simulator", self._config.simulator_api_url),
-            ("features", self._config.features_api_url),
-            ("correlation", self._config.correlation_api_url),
+        # Each service serves its health under its own route prefix; probing a
+        # bare /health got 404 from all three every 10 s and still reported
+        # them as reachable.
+        for name, url, path in [
+            ("simulator", self._config.simulator_api_url, "/simulator/health"),
+            ("features", self._config.features_api_url, "/features/health"),
+            ("correlation", self._config.correlation_api_url, "/analysis/health"),
         ]:
             try:
-                res = await self._http.get(f"{url}/health")
-                deps[name] = {"reachable": True, "status_code": res.status_code}
+                res = await self._http.get(f"{url}{path}")
+                deps[name] = {
+                    "reachable": res.status_code < 400,
+                    "status_code": res.status_code,
+                }
             except Exception as e:
                 deps[name] = {"reachable": False, "error": str(e)}
         info = await self._run_in_thread(self._storage.health_info)
