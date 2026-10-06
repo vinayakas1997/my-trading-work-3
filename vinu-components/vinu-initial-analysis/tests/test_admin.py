@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -11,6 +12,7 @@ from vinu_initial_analysis.storage.weights import WeightsStore
 
 
 def test_delete_angle_removes_analysis_weights_and_run_log_rows():
+    pytest.importorskip("torch")  # saves a model angle's weights; the images leave torch out while the models container is dormant
     with TemporaryDirectory() as tmp:
         run_log = RunLog(Path(tmp) / "runs.db")
         try:

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import logging
 from typing import Any
 
 import numpy as np
 import pandas as pd
 from statsmodels.tsa.stattools import grangercausalitytests
+
+LOG = logging.getLogger(__name__)
 
 
 def run_granger_causality_test(
@@ -28,7 +33,10 @@ def run_granger_causality_test(
     test_results = {}
 
     try:
-        gct = grangercausalitytests(df[["returns", "news"]], max_lag, verbose=False)
+        # No `verbose=` argument: statsmodels 0.15 removed it, and passing it raised a TypeError that the handler
+        # below turned into "no causality" for every ticker. Older versions print; swallow that output instead.
+        with contextlib.redirect_stdout(io.StringIO()):
+            gct = grangercausalitytests(df[["returns", "news"]], max_lag)
         for lag, result in gct.items():
             p = result[0]["ssr_ftest"][1]
             test_results[int(lag)] = {
@@ -37,13 +45,16 @@ def run_granger_causality_test(
             if p < best_p:
                 best_p = p
                 best_lag = lag
-    except Exception:
+    except Exception as exc:
+        # Still fail open (no causal claim), but never silently: a failure here is not evidence of "no causality".
+        LOG.exception("granger test failed; reporting no causal claim")
         return {
             "granger_causes_prices": False,
             "best_lag_hours": 0,
             "best_lag_minutes": 0,
             "p_value": 1.0,
             "test_results": {},
+            "error": f"{type(exc).__name__}: {exc}",
         }
 
     return {

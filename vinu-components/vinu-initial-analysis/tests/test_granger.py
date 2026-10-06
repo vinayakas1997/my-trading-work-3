@@ -33,3 +33,18 @@ def test_granger_no_causality():
 def test_granger_insufficient_data():
     result = _run_granger_test(pd.Series([1, 2, 3]), pd.Series([4, 5, 6]), max_lag=5)
     assert result["p_value"] == 1.0
+
+
+def test_a_failing_statsmodels_call_is_reported_not_passed_off_as_no_causality(monkeypatch):
+    """statsmodels 0.15 removed `verbose=`; the call raised a TypeError that was swallowed into p=1.0, so the angle
+    reported 'no causality' for every ticker. A failure must carry its error."""
+    import vinu_initial_analysis.angles.news_price_causality.granger as g
+
+    def boom(*_a, **_k):
+        raise TypeError("unexpected keyword argument")
+
+    monkeypatch.setattr(g, "grangercausalitytests", boom)
+    rng = np.random.default_rng(0)
+    result = g.run_granger_causality_test(pd.Series(rng.normal(size=100)), pd.Series(rng.normal(size=100)), max_lag=3)
+    assert result["granger_causes_prices"] is False
+    assert "TypeError" in result["error"]
