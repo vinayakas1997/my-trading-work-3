@@ -229,3 +229,12 @@ def test_no_service_switches_sqlite_to_wal_on_its_own():
         if re.search(r"""execute\(\s*["']PRAGMA journal_mode\s*=\s*WAL""", path.read_text(encoding="utf-8", errors="ignore")):
             offenders.append(rel)
     assert offenders == [], f"use vinu_infra.db.enable_wal instead of the raw pragma in: {offenders}"
+
+
+def test_deploy_does_not_abort_when_the_stale_check_exits_nonzero():
+    """stale_images.py exits 1 when something is stale. `stack.sh deploy` captured its output under
+    `set -euo pipefail`, so the first time anything WAS stale the script stopped silently without rebuilding."""
+    script = (ROOT / "scripts" / "stack.sh").read_text(encoding="utf-8")
+    assert "set -euo pipefail" in script
+    capture = re.search(r"names=\$\(python scripts/stale_images\.py[^\n]*\)", script)
+    assert capture and "|| true" in capture.group(0)

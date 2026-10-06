@@ -58,7 +58,8 @@ stale() { python scripts/stale_images.py; }
 deploy() {
   prepare; check
   local names
-  names=$(python scripts/stale_images.py | awk '/^  STALE/ {print $2}')
+  # stale_images.py exits 1 when anything is stale; under `set -o pipefail` that would abort the script here
+  names=$(python scripts/stale_images.py | awk '/^  STALE/ {print $2}' || true)
   [ -z "$names" ] && { echo "nothing is stale"; return 0; }
   docker compose build $names
   docker compose up -d $names
