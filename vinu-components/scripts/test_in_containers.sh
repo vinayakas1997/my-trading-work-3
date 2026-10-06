@@ -31,14 +31,18 @@ for svc in $SERVICES; do
   for p in $(MSYS_NO_PATHCONV=1 docker run --rm --entrypoint ls "vinu-components-$svc" /app | grep "^vinu-"); do
     [ -d "vinu-${p#vinu-}/tests" ] && MOUNTS="$MOUNTS -v $HOST/$p/tests:/app/$p/tests:ro"
   done
-  MSYS_NO_PATHCONV=1 docker run --rm --user root --cpus 2 $ENVS $MOUNTS --entrypoint sh "vinu-components-$svc" -c '
+  SKIP_PKG=""; [ "$svc" = "quant-core-api" ] && SKIP_PKG="vinu-portfolio"
+  MSYS_NO_PATHCONV=1 docker run --rm --user root --cpus 2 -e SKIP_PKG="$SKIP_PKG" $ENVS $MOUNTS --entrypoint sh "vinu-components-$svc" -c '
     # the images carry pytest but not its async plugin, so every async test would fail with
     # "async def functions are not natively supported" (a missing tool, not a code bug)
     pip install -q pytest-asyncio >/dev/null 2>&1
     for d in /app/vinu-*/; do
       [ -d "$d/tests" ] || continue
+      # quant-core carries portfolio code only so the strategy service can import it, without the research package
+      # those tests need; the portfolio's own tests run in the portfolio-api image (and agent, research, reflection).
+      [ "$SKIP_PKG" = "$(basename $d)" ] && { echo "### $(basename $d): skipped in this image (its tests need packages this image does not carry)"; continue; }
       cd "$d"
-      args="tests -q --no-header -p no:cacheprovider --tb=line -rf"
+      args="tests -q --no-header -p no:cacheprovider --tb=line -rfE"
       # these read repo-level files (docker-compose.yml, the edge manifest, the source tree) that no image carries
       [ "$(basename $d)" = "vinu-infra" ] && args="$args --ignore=tests/test_stack_guards.py --ignore=tests/test_compose_wiring.py --ignore=tests/test_edge_contracts.py --ignore=tests/test_pipeline_edges.py"
       res=$(python -m pytest $args 2>&1)
