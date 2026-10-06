@@ -71,6 +71,44 @@ class TestOhclvCache:
         service._get_ohclv_cached(["AAPL"], "2023-01-01", "2023-01-10", "1d", ["sma_20"])
         assert calls["n"] == 1
 
+    def test_identical_concurrent_requests_share_one_fetch(self, service, monkeypatch) -> None:
+        """A sweep round runs many points at once for the same candles. Each used
+        to fetch on its own; the stock API timed out under that load and every
+        walk-forward window saw 'no data'."""
+        import threading
+        import time
+
+        calls = {"n": 0}
+
+        def _slow_get_ohclv(symbols, start, end, resolution="1d", indicators=None):
+            calls["n"] += 1
+            time.sleep(0.2)
+            return self._series_frame(100.0)
+
+        monkeypatch.setattr(service._price_client, "get_ohclv", _slow_get_ohclv)
+        threads = [
+            threading.Thread(target=service._get_ohclv_cached,
+                             args=(["AAPL"], "2023-01-01", "2023-01-10", "1d", None))
+            for _ in range(8)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert calls["n"] == 1
+
+    def test_a_failed_fetch_is_not_cached(self, service, monkeypatch) -> None:
+        calls = {"n": 0}
+
+        def _get_ohclv(symbols, start, end, resolution="1d", indicators=None):
+            calls["n"] += 1
+            return {} if calls["n"] == 1 else self._series_frame(100.0)
+
+        monkeypatch.setattr(service._price_client, "get_ohclv", _get_ohclv)
+        assert service._get_ohclv_cached(["AAPL"], "2023-01-01", "2023-01-10", "1d", None) == {}
+        assert "AAPL" in service._get_ohclv_cached(["AAPL"], "2023-01-01", "2023-01-10", "1d", None)
+        assert calls["n"] == 2
+
     def test_symbol_order_does_not_defeat_the_cache(self, service, monkeypatch) -> None:
         calls = {"n": 0}
 

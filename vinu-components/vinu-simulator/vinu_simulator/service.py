@@ -70,6 +70,8 @@ class SimulatorService:
         self._features_client = FeaturesClient(f"{self._config.features_api_url}/features")
         self._ohclv_cache: dict[tuple[Any, ...], tuple[float, dict[str, pd.DataFrame]]] = {}
         self._ohclv_cache_lock = threading.Lock()
+        # One lock per request key: identical concurrent requests share one fetch.
+        self._ohclv_inflight: dict[tuple, threading.Lock] = {}
 
     def _get_ohclv_cached(
         self,
@@ -93,30 +95,48 @@ class SimulatorService:
             resolution,
             tuple(sorted(indicators)) if indicators else None,
         )
-        now = time.monotonic()
-        with self._ohclv_cache_lock:
-            entry = self._ohclv_cache.get(key)
-            if entry is not None and (now - entry[0]) < _OHCLV_CACHE_TTL_SECONDS:
-                return entry[1]
+        def _cached():
+            with self._ohclv_cache_lock:
+                entry = self._ohclv_cache.get(key)
+                if entry is not None and (time.monotonic() - entry[0]) < _OHCLV_CACHE_TTL_SECONDS:
+                    return entry[1]
+            return None
 
-        data = self._price_client.get_ohclv(
-            symbols, start_date, end_date, resolution=resolution, indicators=indicators,
-        )
+        hit = _cached()
+        if hit is not None:
+            return hit
 
+        # A sweep round runs several grid points (and walk-forward windows) at
+        # once, all asking for the same candles. Without this, N identical
+        # requests hit the stock API together; under that load it timed out and
+        # reset connections, so every walk-forward window saw "no data".
         with self._ohclv_cache_lock:
-            if set(symbols) <= set(data):  # never cache a partial or empty fetch
-                self._ohclv_cache[key] = (now, data)
-            if len(self._ohclv_cache) > 64:
-                # Bounded, simple eviction: drop expired entries first; this
-                # cache only needs to live long enough to de-duplicate one
-                # sweep round, not to grow without bound across a long-lived
-                # service process.
-                stale = [
-                    k for k, (ts, _) in self._ohclv_cache.items()
-                    if (now - ts) >= _OHCLV_CACHE_TTL_SECONDS
-                ]
-                for k in stale:
-                    self._ohclv_cache.pop(k, None)
+            flight = self._ohclv_inflight.setdefault(key, threading.Lock())
+        with flight:
+            hit = _cached()
+            if hit is not None:
+                return hit
+            now = time.monotonic()
+            data = self._price_client.get_ohclv(
+                symbols, start_date, end_date, resolution=resolution, indicators=indicators,
+            )
+
+            with self._ohclv_cache_lock:
+                if set(symbols) <= set(data):  # never cache a partial or empty fetch
+                    self._ohclv_cache[key] = (now, data)
+                if len(self._ohclv_cache) > 64:
+                    # Bounded, simple eviction: drop expired entries first; this
+                    # cache only needs to live long enough to de-duplicate one
+                    # sweep round, not to grow without bound across a long-lived
+                    # service process.
+                    stale = [
+                        k for k, (ts, _) in self._ohclv_cache.items()
+                        if (now - ts) >= _OHCLV_CACHE_TTL_SECONDS
+                    ]
+                    for k in stale:
+                        self._ohclv_cache.pop(k, None)
+            with self._ohclv_cache_lock:
+                self._ohclv_inflight.pop(key, None)
         return data
 
     @staticmethod
