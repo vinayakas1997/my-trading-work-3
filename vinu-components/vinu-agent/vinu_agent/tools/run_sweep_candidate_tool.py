@@ -83,6 +83,11 @@ class RunSweepCandidateTool(BaseTool):
                 "type": "number",
                 "description": "Starting capital for the backtest (optional, defaults to service config)",
             },
+            "interval": {
+                "type": "string",
+                "enum": ["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+                "description": "Bar size to backtest on, lowercase (default 1d). Periods are counted in bars of this size.",
+            },
         },
         "required": ["symbol", "from_date", "to_date"],
     }
@@ -104,6 +109,7 @@ class RunSweepCandidateTool(BaseTool):
                 recipe=kwargs.get("recipe"), params=params, base_code=kwargs.get("base_code"),
                 param_name=kwargs.get("param_name"), param_value=kwargs.get("param_value"),
                 indicators=indicators, initial_capital=kwargs.get("initial_capital"),
+                interval=kwargs.get("interval"),
             ))
             return json.dumps(_serialize_sweep_candidate(result))
         except ImportError as exc:
@@ -156,6 +162,8 @@ class RunSweepCandidateTool(BaseTool):
             payload["indicators"] = indicators
         if kwargs.get("initial_capital") is not None:
             payload["initial_capital"] = kwargs["initial_capital"]
+        if kwargs.get("interval"):
+            payload["interval"] = kwargs["interval"]
 
         resp = httpx.post(
             f"{url}/research/sweep/candidate", json=payload, headers=_h,

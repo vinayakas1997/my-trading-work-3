@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from vinu_infra.point_in_time import clamp_to_as_of
 from vinu_stock.catalog.gap_validation import count_session_gaps
 from vinu_stock.query.indicators import parse_indicator_names
-from vinu_stock.server.schemas import CandlesBatchRequest, CandlesBatchResponse, DataResponse
+from vinu_stock.server.schemas import CandlesBatchRequest, CandlesBatchResponse, CandlesResponse, DataResponse
 from vinu_stock.service import StockService
 
 router = APIRouter(tags=["prices"])
@@ -76,7 +76,7 @@ def symbol_catalog(symbol: str) -> DataResponse:
     return DataResponse(count=len(rows), data=rows)
 
 
-@router.get("/candles/{symbol}", response_model=DataResponse)
+@router.get("/candles/{symbol}", response_model=CandlesResponse)
 def candles(
     symbol: str,
     response: Response,
@@ -102,7 +102,7 @@ def candles(
             "tool code remembered to clamp client-side."
         ),
     ),
-) -> DataResponse:
+) -> CandlesResponse:
     service = get_service()
     try:
         indicator_list = parse_indicator_names(indicators)
@@ -119,12 +119,22 @@ def candles(
         to_ts=to_ts,
         days=days,
         provider=provider,
-        limit=limit,
+        limit=limit + 1,          # one extra bar tells us whether the window held more than `limit`
         indicators=indicator_list or None,
         adjusted=adjusted,
         cache_info=cache_info,
         closed_only=closed_only,
     )
+    truncated = len(rows) > limit
+    next_from: int | None = None
+    if truncated:
+        # forward pagination (an explicit start) keeps the oldest bars; an open-ended request keeps the newest
+        if from_ts is None:
+            rows = rows[1:]
+        else:
+            rows = rows[:-1]
+            next_from = int(rows[-1]["bar_ts"]) + 1
+        response.headers["X-Truncated"] = "true"
     if cache_info.get("hit"):
         # item #19 finding #5: a "live" caller polling an open-ended
         # window could get up to 5-minute-stale indicator data with no
@@ -155,7 +165,7 @@ def candles(
                 "candles %s %s served with %d session gap(s) (from=%s to=%s days=%s)",
                 symbol.upper(), interval, gap_count, from_ts, to_ts, days,
             )
-    return DataResponse(count=len(rows), data=rows)
+    return CandlesResponse(count=len(rows), data=rows, truncated=truncated, next_from=next_from)
 
 
 @router.post("/candles/batch", response_model=CandlesBatchResponse)

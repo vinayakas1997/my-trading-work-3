@@ -20,6 +20,8 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 
 from vinu_infra.llm.identity import bind_context
+
+from .research_intervals import research_intervals, window_for
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -811,7 +813,21 @@ def make_planner_on_yes(service: Any, triage: PlannerTriage, run_log_reader: Any
         if eval_context:
             task += f"\n\n{eval_context}"
 
-        handoff = run_team_for_ticker(service, "research", task, session_id=f"planner-{ticker}")
+        # The same idea is researched on every configured bar size (15m, 1h, 4h, 1d): a daily-only test hides nearly
+        # every trade an intraday strategy would make. Each is judged by the same unchanged promotion bar.
+        handoffs: list[dict[str, Any]] = []
+        for interval in research_intervals():
+            from_date, to_date = window_for(interval)
+            interval_task = task + f"\n\nInterval: {interval}\nWindow: {from_date} to {to_date}\n"
+            try:
+                handoffs.append(run_team_for_ticker(
+                    service, "research", interval_task, session_id=f"planner-{ticker}-{interval}"))
+            except Exception:
+                LOG.exception("research team run failed for %s on %s bars, continuing with the other bar sizes",
+                              ticker, interval)
+        if not handoffs:
+            return
+        handoff = handoffs[0]
 
         debate_run_id = ""
         if DEBATE_MODE == "full":

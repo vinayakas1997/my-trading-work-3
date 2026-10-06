@@ -217,3 +217,40 @@ class TestFetchPriceData:
         assert len(prices) == 2
         assert prices["AAPL"].iloc[0] == pytest.approx(100.0)
         assert prices["MSFT"].iloc[0] == pytest.approx(200.0)
+
+
+class TestPaginationOfALongWindow:
+    """The price service caps one response and says so; a client that ignored that backtested 15-minute strategies on
+    only the oldest 5,000 bars of the window it asked for."""
+
+    def _paged_get(self, total: int, page: int):
+        calls = []
+
+        def _get(path: str, params=None):
+            calls.append(dict(params))
+            start = params["from"]
+            rows = [t for t in range(0, total) if t >= start][:page]
+            body = _candles(rows, [100.0 + t for t in rows], [1000.0] * len(rows))
+            last = rows[-1] if rows else None
+            more = last is not None and last + 1 < total
+            body.update({"truncated": more, "next_from": last + 1 if more else None})
+            return body
+
+        return _get, calls
+
+    def test_every_page_is_fetched_and_joined_in_order(self) -> None:
+        client = PriceClient(base_url="http://prices.invalid")
+        client.get, calls = self._paged_get(total=25, page=10)
+        out = client.get_ohclv(["AAPL"], "1970-01-01", "1970-01-02", resolution="15m")
+        assert len(out["AAPL"]) == 25
+        assert out["AAPL"].index.is_monotonic_increasing and out["AAPL"].index.is_unique
+        assert len(calls) == 3 and all(c["limit"] == 50_000 for c in calls)
+
+    def test_a_history_still_cut_after_the_page_budget_is_refused_not_used(self) -> None:
+        client = PriceClient(base_url="http://prices.invalid")
+
+        def _always_more(path: str, params=None):
+            return {**_candles([params["from"]], [1.0], [1.0]), "truncated": True, "next_from": params["from"] + 1}
+
+        client.get = _always_more
+        assert client.get_ohclv(["AAPL"], "1970-01-01", "1970-01-02", resolution="15m") == {}

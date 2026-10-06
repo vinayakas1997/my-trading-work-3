@@ -83,6 +83,14 @@ class RunParameterSweepTool(BaseTool):
                 "type": "number",
                 "description": "Starting capital for the backtest (optional, defaults to service config)",
             },
+            "interval": {
+                "type": "string",
+                "enum": ["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+                "description": (
+                    "Bar size to backtest on, lowercase (default 1d). Indicator periods in the recipe/param_grid are "
+                    "counted in bars of THIS size: a 20-period average on 15m bars spans 5 hours, on 1d bars 20 days."
+                ),
+            },
         },
         "required": ["symbol", "from_date", "to_date", "param_grid"],
     }
@@ -104,6 +112,7 @@ class RunParameterSweepTool(BaseTool):
                 param_grid=param_grid, recipe=kwargs.get("recipe"), base_code=kwargs.get("base_code"),
                 param_name=kwargs.get("param_name"), indicators=indicators,
                 initial_capital=kwargs.get("initial_capital"),
+                interval=kwargs.get("interval"),
             ))
             return json.dumps(_serialize_sweep_grid(result))
         except Exception as exc:
@@ -133,6 +142,8 @@ class RunParameterSweepTool(BaseTool):
             payload["indicators"] = indicators
         if kwargs.get("initial_capital") is not None:
             payload["initial_capital"] = kwargs["initial_capital"]
+        if kwargs.get("interval"):
+            payload["interval"] = kwargs["interval"]
 
         resp = httpx.post(f"{url}/research/sweep/grid", json=payload, headers=_h, timeout=600)
         resp.raise_for_status()

@@ -13,6 +13,9 @@ from vinu_simulator.clients.base import BaseClient
 LOG = logging.getLogger(__name__)
 
 
+_PAGE_LIMIT = 50_000
+_MAX_PAGES = 20
+
 class PriceClient(BaseClient):
 
     def __init__(self, base_url: str, timeout: float = 30.0, cache_maxsize: int = 256):
@@ -59,14 +62,25 @@ class PriceClient(BaseClient):
         max_workers = min(len(symbols), 8)
 
         def _fetch(sym: str) -> tuple[str, pd.DataFrame | None]:
-            try:
-                resp = self.get(f"/candles/{sym}", dict(params_template))
-            except Exception as exc:
-                LOG.warning("get_ohclv: %s %s..%s fetch failed: %r", sym, from_date, to_date, exc)
-                return sym, None
-            if not resp or "data" not in resp:
-                return sym, None
-            records = resp["data"]
+            # The price service caps one response; it says so (`truncated`, `next_from`). Follow the pages, or a long
+            # 15-minute window was silently backtested on only its oldest 5,000 bars.
+            params = dict(params_template, limit=_PAGE_LIMIT)
+            records: list[dict] = []
+            for _page in range(_MAX_PAGES):
+                try:
+                    resp = self.get(f"/candles/{sym}", dict(params))
+                except Exception as exc:
+                    LOG.warning("get_ohclv: %s %s..%s fetch failed: %r", sym, from_date, to_date, exc)
+                    return sym, None
+                if not resp or "data" not in resp:
+                    return sym, None
+                records.extend(resp["data"])
+                if not resp.get("truncated") or not resp.get("next_from"):
+                    break
+                params["from"] = resp["next_from"]
+            else:
+                LOG.warning("get_ohclv: %s %s..%s still truncated after %d pages", sym, from_date, to_date, _MAX_PAGES)
+                return sym, None            # an incomplete history must not be backtested as if it were complete
             if not records:
                 return sym, None
             df = pd.DataFrame(records)

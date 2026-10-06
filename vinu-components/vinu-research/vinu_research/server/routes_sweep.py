@@ -5,7 +5,7 @@ and why this is deliberately not called "Monte Carlo."
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
@@ -62,6 +62,8 @@ class SweepCandidateRequest(BaseModel):
 
     indicators: list[str] | None = None
     initial_capital: float | None = None
+    interval: Literal["1m", "5m", "15m", "30m", "1h", "4h", "1d"] | None = Field(
+        default=None, description="Bar size to backtest on (default 1d).")
 
     @model_validator(mode="after")
     def _exactly_one_mode(self) -> "SweepCandidateRequest":
@@ -104,6 +106,7 @@ async def sweep_candidate(body: SweepCandidateRequest) -> dict[str, Any]:
             param_value=body.param_value,
             indicators=body.indicators,
             initial_capital=body.initial_capital,
+            interval=body.interval,
             tools=_tools,
         )
     except ParameterNotFoundError as e:
@@ -136,6 +139,8 @@ class SweepGridRequest(BaseModel):
 
     indicators: list[str] | None = None
     initial_capital: float | None = None
+    interval: Literal["1m", "5m", "15m", "30m", "1h", "4h", "1d"] | None = Field(
+        default=None, description="Bar size to backtest on (default 1d). Periods in the recipe are counted in these bars.")
 
     @model_validator(mode="after")
     def _exactly_one_mode(self) -> "SweepGridRequest":
@@ -209,6 +214,7 @@ async def sweep_grid(body: SweepGridRequest) -> dict[str, Any]:
             param_name=body.param_name,
             indicators=body.indicators,
             initial_capital=body.initial_capital,
+            interval=body.interval,
             tools=_tools,
             sweep_store=_sweep_store,
         )

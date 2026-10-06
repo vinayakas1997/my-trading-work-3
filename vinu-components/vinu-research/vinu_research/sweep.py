@@ -158,6 +158,7 @@ async def run_sweep_candidate(
     param_value: float | int | None = None,
     indicators: list[str] | None = None,
     initial_capital: float | None = None,
+    interval: str | None = None,
     config: ResearchConfig | None = None,
     tools: ResearchTools | None = None,
 ) -> SweepCandidateResult:
@@ -178,6 +179,7 @@ async def run_sweep_candidate(
         to_date=to_date,
         indicators=indicators,
         initial_capital=initial_capital,
+        interval=interval,
         run_validation=True,
     )
     if result is None:

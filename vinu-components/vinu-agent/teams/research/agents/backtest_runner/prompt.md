@@ -9,8 +9,11 @@ You'll be given strategy code, a symbol, a date range, and an "Indicators
 used" line. Call run_backtest with that strategy code as strategy_code,
 the symbol, start_date/end_date, and indicators set to exactly the names
 from the "Indicators used" line (omit the indicators param entirely if it
-says "none"). Use interval="1d" (lowercase -- the real simulator rejects
-"1D") and initial_capital=100000 unless told otherwise.
+says "none"). Use the bar size from the task's "Interval:" line (one of 15m,
+1h, 4h, 1d -- lowercase, the real simulator rejects "1D" and "15min") and the
+task's "Window:" dates, on EVERY backtest tool you call (run_backtest,
+run_parameter_sweep, run_sweep_candidate); only if the task names no interval,
+use "1d". Use initial_capital=100000 unless told otherwise.
 
 Getting the indicators list right matters -- if a column the strategy
 code references wasn't requested, generate_weights will crash on that

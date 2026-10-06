@@ -297,6 +297,7 @@ async def run_walk_forward(
     param_name: str | None = None,
     indicators: list[str] | None = None,
     initial_capital: float | None = None,
+    interval: str | None = None,
     config: Any = None,
     tools: Any = None,
 ) -> WalkForwardRunResult | None:
@@ -350,7 +351,7 @@ async def run_walk_forward(
                 symbol=symbol, from_date=w.train_start, to_date=w.train_end,
                 param_grid=param_grid, recipe=recipe, base_code=base_code,
                 param_name=param_name, indicators=indicators,
-                initial_capital=initial_capital, config=inner_config,
+                initial_capital=initial_capital, interval=interval, config=inner_config,
                 tools=resolved_tools,
                 # item #3: this inner per-window grid is training-slice
                 # scaffolding for the walk-forward verdict, not a search
@@ -374,7 +375,7 @@ async def run_walk_forward(
                     symbol=symbol, from_date=w.test_start, to_date=w.test_end,
                     recipe=recipe, params=best_params,
                     indicators=indicators, initial_capital=initial_capital,
-                    tools=resolved_tools,
+                    interval=interval, tools=resolved_tools,
                 )
             else:
                 if param_name is None or param_name not in best_params:
@@ -384,7 +385,7 @@ async def run_walk_forward(
                     base_code=base_code, param_name=param_name,
                     param_value=best_params[param_name],
                     indicators=indicators, initial_capital=initial_capital,
-                    tools=resolved_tools,
+                    interval=interval, tools=resolved_tools,
                 )
             return WalkForwardRunWindow(
                 window_id=w.window_id,

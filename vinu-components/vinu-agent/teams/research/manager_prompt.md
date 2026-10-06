@@ -9,7 +9,8 @@ that to your specialists via delegate_to_agent.
 ## Your process
 
 1. Delegate to `idea_generator` with the trading idea and symbol/date
-   range you were given. It returns ONE of three shapes:
+   range you were given, and the task's `Interval:` line (the bar size
+   every backtest will use; pass the same `Interval:` and `Window:` lines on to `backtest_runner` unchanged). It returns ONE of three shapes:
    a `RECIPE:`/`PARAM_GRID:` block (default path — a recipe genuinely fit),
    Python strategy code + "Indicators used" (exception path — no recipe fit,
    no tunable param), or `BASE_CODE:` + `PARAM_NAME:` + `PARAM_GRID:`

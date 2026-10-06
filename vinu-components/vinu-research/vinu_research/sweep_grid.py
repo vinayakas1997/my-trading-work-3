@@ -108,6 +108,7 @@ async def run_sweep_grid(
     param_name: str | None = None,
     indicators: list[str] | None = None,
     initial_capital: float | None = None,
+    interval: str | None = None,
     config: ResearchConfig | None = None,
     tools: ResearchTools | None = None,
     persist: bool = True,
@@ -179,7 +180,7 @@ async def run_sweep_grid(
                     symbol=symbol, from_date=from_date, to_date=to_date,
                     recipe=recipe, params=point,
                     indicators=indicators, initial_capital=initial_capital,
-                    tools=resolved_tools,
+                    interval=interval, tools=resolved_tools,
                 )
             else:
                 if param_name not in point:
@@ -188,7 +189,7 @@ async def run_sweep_grid(
                     symbol=symbol, from_date=from_date, to_date=to_date,
                     base_code=base_code, param_name=param_name, param_value=point[param_name],
                     indicators=indicators, initial_capital=initial_capital,
-                    tools=resolved_tools,
+                    interval=interval, tools=resolved_tools,
                 )
             return GridPointOutcome(params=point, succeeded=True, sweep_result=sweep_result)
         except (ParameterNotFoundError, ValueError, RuntimeError) as exc:
@@ -283,7 +284,7 @@ async def run_sweep_grid(
                 symbol=symbol, from_date=from_date, to_date=to_date,
                 param_grid=param_grid, recipe=recipe, base_code=base_code,
                 param_name=param_name, indicators=indicators,
-                initial_capital=initial_capital, config=config,
+                initial_capital=initial_capital, interval=interval, config=config,
                 tools=resolved_tools,
             )
             if wf is not None:

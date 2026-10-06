@@ -12,6 +12,14 @@ class DataResponse(BaseModel):
     data: list[dict[str, Any]]
 
 
+class CandlesResponse(DataResponse):
+    # True when more bars exist in the requested window than `limit` allowed. `next_from` is where to resume (forward
+    # pagination: the first bar_ts after the last bar returned). Without this a long intraday window was silently cut
+    # to its oldest `limit` bars and callers backtested on a fraction of what they asked for.
+    truncated: bool = False
+    next_from: int | None = None
+
+
 class CandlesBatchRequest(BaseModel):
     symbols: list[str] = Field(min_length=1)
     interval: str = "1m"

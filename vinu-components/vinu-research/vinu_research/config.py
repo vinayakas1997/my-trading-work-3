@@ -320,7 +320,7 @@ class ResearchConfig:
     trade_score_calibration_bound: float = 0.2
 
     # Sweep knobs (10-env-knobs.md): intervals + topN + fast flags. Env only, no code change to flip.
-    sweep_intervals: str = "1d,1H,15min"
+    sweep_intervals: str = "1d,4h,1h,15m"
     sweep_top_n_per_interval: int = 3
     sweep_use_vectorbt: bool = True
     sweep_vectorbt_concurrency: int = 5
@@ -332,7 +332,7 @@ class ResearchConfig:
     def sweep_interval_list(self) -> list[str]:
         """Ordered intervals, 1D first (07 No.1): callers run 1d before 1H
         before 15min so slower, more-trusted evidence lands first."""
-        order = {"1d": 0, "1D": 0, "1h": 1, "1H": 1, "15min": 2, "15m": 2}
+        order = {"1d": 0, "1D": 0, "4h": 1, "4H": 1, "1h": 2, "1H": 2, "15min": 3, "15m": 3}
         parts = [p.strip() for p in (self.sweep_intervals or "").split(",") if p.strip()]
         return sorted(parts, key=lambda p: order.get(p, 99))
 
@@ -551,7 +551,7 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         trade_score_calibration_bound=float(
             os.environ.get("VINU_RESEARCH_TRADE_SCORE_CALIBRATION_BOUND", "0.2")
         ),
-        sweep_intervals=os.environ.get("VINU_SWEEP_INTERVALS", "1d,1H,15min"),
+        sweep_intervals=os.environ.get("VINU_SWEEP_INTERVALS", "1d,4h,1h,15m"),
         sweep_top_n_per_interval=int(os.environ.get("VINU_SWEEP_TOP_N_PER_INTERVAL", "3")),
         sweep_use_vectorbt=os.environ.get("VINU_SWEEP_USE_VECTORBT", "true").lower() in ("1", "true", "yes"),
         sweep_vectorbt_concurrency=int(os.environ.get("VINU_SWEEP_VECTORBT_CONCURRENCY", "5")),

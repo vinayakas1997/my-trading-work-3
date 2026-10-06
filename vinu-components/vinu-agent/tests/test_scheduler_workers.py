@@ -42,6 +42,13 @@ from vinu_agent.storage.ticker_ledger import TickerLedgerStore
 from vinu_infra.telemetry import LLMCallRecord, TelemetryStore
 
 
+@pytest.fixture(autouse=True)
+def _one_bar_size(monkeypatch) -> None:
+    """Most tests here are about hand-offs and cycles, not bar sizes: pin one (the multi-bar-size behaviour has its own
+    class, which sets the variable itself)."""
+    monkeypatch.setenv("VINU_SWEEP_INTERVALS", "1d")
+
+
 def _fake_service() -> MagicMock:
     service = MagicMock()
     service.config.services = {"vinu_initial_analysis": "http://x"}
@@ -953,3 +960,46 @@ class TestHypothesisReaderFor:
             "hypothesis_id": "h1", "thesis": "AAPL breaks out on volume",
             "status": "rejected", "invalidation_reason": "correlated with existing position",
         }]
+
+
+class TestPlannerResearchesEveryBarSize:
+    """A daily-only test hides nearly every trade an intraday strategy would make: each idea is researched on 15m, 1h, 4h
+    and 1d bars, each over its own window and judged by the same promotion bar."""
+
+    def test_one_research_run_per_bar_size_each_told_its_interval_and_window(self, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_SWEEP_INTERVALS", "1d,4h,1h,15min")        # note the spelling the services reject
+        service = _fake_service()
+        triage = MagicMock()
+        result = PlannerTriageResult("AAPL", True, "ok", recipe_name="macd_cross")
+        triage.check.return_value = result
+        ids = iter(["r1", "r2", "r3", "r4"])
+
+        with patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker",
+                   side_effect=lambda *a, **k: {"run_id": next(ids)}) as mock_run:
+            make_planner_on_yes(service, triage)("AAPL", MagicMock())
+
+        assert mock_run.call_count == 4
+        intervals = [c[0][2].split("Interval: ")[1].split("\n")[0] for c in mock_run.call_args_list]
+        assert intervals == ["1d", "4h", "1h", "15m"]
+        assert all("Window: " in c[0][2] for c in mock_run.call_args_list)
+        assert [c[1]["session_id"] for c in mock_run.call_args_list] == [f"planner-AAPL-{i}" for i in intervals]
+        triage.on_propose.assert_called_once_with("AAPL", result, ref_id="r1", debate_run_id="")
+
+    def test_one_bar_size_failing_does_not_cancel_the_others(self, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_SWEEP_INTERVALS", "1d,15m")
+        service = _fake_service()
+        triage = MagicMock()
+        triage.check.return_value = PlannerTriageResult("AAPL", True, "ok", recipe_name="macd_cross")
+        calls = []
+
+        def _run(svc, team, task, *, session_id):
+            calls.append(session_id)
+            if session_id.endswith("1d"):
+                raise RuntimeError("boom")
+            return {"run_id": "r2"}
+
+        with patch("vinu_agent.agent.scheduler_workers.run_team_for_ticker", side_effect=_run):
+            make_planner_on_yes(service, triage)("AAPL", MagicMock())
+
+        assert calls == ["planner-AAPL-1d", "planner-AAPL-15m"]
+        triage.on_propose.assert_called_once()

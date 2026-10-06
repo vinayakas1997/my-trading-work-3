@@ -448,3 +448,43 @@ class TestSerializeGridIncludesParamDiff:
         )
         payload = _serialize_grid(result)
         assert payload["ranked"] == []
+
+
+class TestSweepRunsOnTheRequestedBarSize:
+    """The sweep path had no interval at all: every recipe and every walk-forward window was backtested on daily bars
+    whatever the task asked for, so 15-minute and hourly strategies were never actually tested."""
+
+    @pytest.mark.asyncio
+    async def test_every_grid_point_is_backtested_on_the_requested_interval(self) -> None:
+        mock_tools = AsyncMock()
+        mock_tools.run_backtest.side_effect = [_bt_result(f"r{i}", sharpe=float(i)) for i in range(3)]
+        grid = [{"fast_period": 5 + i, "slow_period": 40} for i in range(3)]
+
+        await run_sweep_grid(
+            symbol="AAPL", from_date="2025-10-01", to_date="2026-10-01", recipe="crossover",
+            param_grid=grid, interval="15m", tools=mock_tools, persist=False,
+        )
+
+        assert [c.kwargs["interval"] for c in mock_tools.run_backtest.await_args_list] == ["15m"] * 3
+
+    @pytest.mark.asyncio
+    async def test_no_interval_keeps_the_daily_default(self) -> None:
+        mock_tools = AsyncMock()
+        mock_tools.run_backtest.side_effect = [_bt_result("r0", sharpe=1.0)]
+        await run_sweep_grid(
+            symbol="AAPL", from_date="2023-01-01", to_date="2023-12-31", recipe="crossover",
+            param_grid=[{"fast_period": 5, "slow_period": 40}], tools=mock_tools, persist=False,
+        )
+        assert mock_tools.run_backtest.await_args_list[0].kwargs["interval"] is None     # the tool then defaults to 1d
+
+    def test_the_http_route_accepts_only_real_bar_sizes(self) -> None:
+        from pydantic import ValidationError
+
+        from vinu_research.server.routes_sweep import SweepGridRequest
+
+        ok = SweepGridRequest(symbol="AAPL", from_date="2025-01-01", to_date="2025-12-31",
+                              param_grid=[{"fast_period": 5.0}], recipe="crossover", interval="15m")
+        assert ok.interval == "15m"
+        with pytest.raises(ValidationError):
+            SweepGridRequest(symbol="AAPL", from_date="2025-01-01", to_date="2025-12-31",
+                             param_grid=[{"fast_period": 5.0}], recipe="crossover", interval="15min")
