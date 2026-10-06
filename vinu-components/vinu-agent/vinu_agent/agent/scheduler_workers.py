@@ -813,21 +813,18 @@ def make_planner_on_yes(service: Any, triage: PlannerTriage, run_log_reader: Any
         if eval_context:
             task += f"\n\n{eval_context}"
 
-        # The same idea is researched on every configured bar size (15m, 1h, 4h, 1d): a daily-only test hides nearly
-        # every trade an intraday strategy would make. Each is judged by the same unchanged promotion bar.
-        handoffs: list[dict[str, Any]] = []
-        for interval in research_intervals():
-            from_date, to_date = window_for(interval)
-            interval_task = task + f"\n\nInterval: {interval}\nWindow: {from_date} to {to_date}\n"
-            try:
-                handoffs.append(run_team_for_ticker(
-                    service, "research", interval_task, session_id=f"planner-{ticker}-{interval}"))
-            except Exception:
-                LOG.exception("research team run failed for %s on %s bars, continuing with the other bar sizes",
-                              ticker, interval)
-        if not handoffs:
-            return
-        handoff = handoffs[0]
+        # ONE strategy per ticker, designed and optimised on the first configured bar size. When the team passes it, code
+        # re-tests that exact strategy on every bar size (research_artifact_writer -> /research/validate-code) and the
+        # artifact keeps the bar size it cleared the promotion bar on. A strategy is not rewritten per bar size.
+        bars = research_intervals()
+        design = bars[0]
+        from_date, to_date = window_for(design)
+        task += (
+            f"\n\nInterval: {design}\nWindow: {from_date} to {to_date}\n"
+            f"Final check: the strategy you pass is re-tested unchanged on {', '.join(bars)} bars. Write rules that "
+            "make sense on all of them (count bars, not days) and return the same weight on a bar as on any other.\n"
+        )
+        handoff = run_team_for_ticker(service, "research", task, session_id=f"planner-{ticker}")
 
         debate_run_id = ""
         if DEBATE_MODE == "full":

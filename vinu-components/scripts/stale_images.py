@@ -48,10 +48,9 @@ def newest_change(paths: list[str]) -> tuple[float, str]:
     rel = [str(Path(p).resolve().relative_to(ROOT)) if Path(p).is_absolute() else p for p in paths]
     # Test files never reach a running service, so a tests-only change is not staleness.
     skip = (":(exclude)**/tests/**", ":(exclude)**/test_*.py", ":(exclude)**/*.md")
-    committed = run("git", "log", "-1", "--format=%ct|%h|%s", "--", *rel, *skip).strip()
-    if committed:
-        ts, sha, subject = committed.split("|", 2)
-        newest, what = float(ts), f"commit {sha} {subject[:60]}"
+    # The commit time is deliberately NOT used: committing content that an image was already built from (the normal
+    # build, test, then commit order) made every service look stale until the next real change. Anything a checkout, a
+    # pull or an edit changes also changes the file's modification time, which is tested below.
     # `git status` prints paths relative to the REPOSITORY root, which is not ROOT when this folder is a subdirectory
     # of the repo; joining them to ROOT pointed at files that do not exist, so uncommitted edits were never noticed.
     top = Path(run("git", "rev-parse", "--show-toplevel").strip() or ROOT)
@@ -116,9 +115,16 @@ def main() -> int:
         running_image = run("docker", "inspect", "-f", "{{.Image}}", cid).strip()
         tag = svc.get("image") or f"{cfg['name']}-{name}"
         tag_image = run("docker", "image", "inspect", "-f", "{{.Id}}", tag).strip()
-        built_at = parse_time(run("docker", "image", "inspect", "-f", "{{.Created}}", running_image))
+        created = run("docker", "image", "inspect", "-f", "{{.Created}}", running_image).strip()
         problems = []
-        if changed_at > built_at:
+        if not created:
+            # the container's image id is gone (an older build was replaced and pruned): it is by definition not the
+            # current build. This used to crash the whole check with "Invalid isoformat string".
+            built_at = 0.0
+            problems.append("the container's image no longer exists; recreate it")
+        else:
+            built_at = parse_time(created)
+        if built_at and changed_at > built_at:
             problems.append(f"source changed after the image was built ({what})")
         if tag_image and running_image != tag_image:
             problems.append("container runs an older image than the current build; recreate it")

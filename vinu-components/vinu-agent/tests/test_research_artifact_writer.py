@@ -191,3 +191,26 @@ class TestBarEvidenceDecidesTheArtifact:
         )
         a = store.get_artifact(artifact_id)
         assert "UserStrategy" in a.bar_evidence and a.status == ArtifactStatus.BENCHING
+
+
+class TestCriticIsAdviceCodeDecides:
+    def test_a_stop_whose_strategy_clears_the_bar_on_some_bar_size_still_becomes_an_artifact(self, store) -> None:
+        row = _row("1h", eligible=True, sharpe=1.1, deflated=1.3)
+        evidence = {"bars": [row], "passing_bars": ["1h"], "chosen": row, "chosen_bar": "1h"}
+        artifact_id = write_artifact_from_research_pass(
+            _STOP_CONTENT, strategy_store=store, source_run_id="s1", bar_validator=lambda *a: evidence,
+        )
+        a = store.get_artifact(artifact_id)
+        assert a.status == ArtifactStatus.BENCHING and a.bar_interval == "1h"
+
+    def test_a_stop_that_no_bar_size_clears_writes_nothing(self, store) -> None:
+        evidence = {"bars": [_row("1d", eligible=False)], "passing_bars": [], "chosen": None, "chosen_bar": None}
+        assert write_artifact_from_research_pass(
+            _STOP_CONTENT, strategy_store=store, source_run_id="s2", bar_validator=lambda *a: evidence,
+        ) is None
+        assert store.list_artifacts() == []
+
+    def test_a_stop_is_not_tested_when_the_validation_cannot_run(self, store) -> None:
+        assert write_artifact_from_research_pass(
+            _STOP_CONTENT, strategy_store=store, source_run_id="s3", bar_validator=lambda *a: None,
+        ) is None

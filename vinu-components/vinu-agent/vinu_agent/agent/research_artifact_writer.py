@@ -116,8 +116,11 @@ def write_artifact_from_research_pass(
     write itself failed) -- never raises."""
     try:
         data = _extract_json_block(content)
-        if not data or data.get("verdict") != "PASS":
+        if not data or data.get("verdict") not in ("PASS", "STOP"):
             return None
+        # The risk critic is advice, not the decider. A STOP that left a runnable strategy is still tested by code; it
+        # becomes an artifact only if some bar size clears the promotion bar (see below), and is dropped otherwise.
+        stopped = data.get("verdict") == "STOP"
 
         symbol = str(data.get("symbol", "")).strip().upper()
         strategy_code = str(data.get("strategy_code", "")).strip()
@@ -173,6 +176,9 @@ def write_artifact_from_research_pass(
         # size and replaces them with measured numbers (and a bar size); a strategy no bar size clears is disabled here.
         validator = bar_validator or validate_on_all_bars
         decision = apply_bar_evidence(artifact, validator(symbol, strategy_code, services_config))
+        if stopped and decision != "verified":
+            LOG.info("research STOP for %s: the last strategy was tested by code and %s; no artifact written", symbol, decision)
+            return None
         LOG.info("research-pass artifact %s for %s: bar validation %s (bar size %s)",
                  artifact.artifact_id, symbol, decision, artifact.bar_interval or "-")
         strategy_store.upsert_artifact(artifact)

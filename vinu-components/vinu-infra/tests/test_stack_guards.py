@@ -286,6 +286,37 @@ def test_stale_check_sees_an_uncommitted_edit_when_the_folder_is_a_subdirectory_
     assert "uncommitted edit" in what and changed_at >= (sub / "pkg" / "a.py").stat().st_mtime - 1
 
 
+def test_committing_what_an_image_was_built_from_does_not_make_it_stale(tmp_path, monkeypatch):
+    """Build, test, then commit is the normal order. The commit time is later than the build, but the files are the ones
+    the image was built from; judging by commit time flagged every service stale until the next real change."""
+    import importlib.util
+    import os
+    import subprocess
+
+    spec = importlib.util.spec_from_file_location("stale_images", Path(__file__).resolve().parents[2] / "scripts" / "stale_images.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    (tmp_path / "pkg").mkdir()
+    f = tmp_path / "pkg" / "a.py"
+    f.write_text("x = 1\n")
+    git = lambda *a, **k: subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True, **k)
+    git("init", "-q")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    git("add", ".")
+    future = str(int(f.stat().st_mtime) + 86_400)               # the commit is dated a day AFTER the file was written
+    git("commit", "-q", "-m", "after the build", env={**os.environ, "GIT_COMMITTER_DATE": future, "GIT_AUTHOR_DATE": future})
+    monkeypatch.setattr(mod, "ROOT", tmp_path)
+    changed_at, _ = mod.newest_change(["pkg"])
+    assert changed_at <= f.stat().st_mtime + 1
+
+
+def test_a_container_whose_image_was_removed_is_reported_stale_not_a_crash():
+    text = (Path(__file__).resolve().parents[2] / "scripts" / "stale_images.py").read_text(encoding="utf-8")
+    assert "the container's image no longer exists" in text
+
+
 def test_model_angles_are_switched_off_while_the_models_service_is_dormant():
     """models-api only starts under a compose profile. With VINU_MODELS_ENABLED unset the analysis service tried every
     model angle on every ticker each cycle, failed on the missing host, and logged ~100 tracebacks per 6 minutes that

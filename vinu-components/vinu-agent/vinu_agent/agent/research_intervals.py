@@ -1,9 +1,10 @@
 """Which bar sizes every strategy idea is researched on, and over how long a window.
 
 A strategy that has an edge on daily bars may have none on 15-minute bars and the reverse, and a daily-only test hides
-nearly every trade an intraday system would make (15 minutes gives ~26 bars a day to a daily bar's 1). So the planner
-hands the research team the same ticker once per bar size, each judged by the SAME unchanged promotion bar on its own
-bars; the promotion bar is not touched here.
+nearly every trade an intraday system would make (15 minutes gives ~26 bars a day to a daily bar's 1). So the research
+team designs ONE strategy per ticker on the first bar size listed, and code then tests that exact strategy on every bar
+size (vinu-research `bar_validation`), each judged by the SAME unchanged promotion bar on its own bars; the promotion bar
+is not touched here.
 
 `VINU_SWEEP_INTERVALS` (default "1d,4h,1h,15m") is the existing research knob, with its spellings normalised: the price
 service and simulator accept only lowercase `1m 5m 15m 30m 1h 4h 1d`, and `15min`/`1H`/`1D` were rejected with a 422.
