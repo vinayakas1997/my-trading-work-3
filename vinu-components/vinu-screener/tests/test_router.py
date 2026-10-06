@@ -65,3 +65,15 @@ class TestFailOpenOverHttp:
         assert r2.status_code == 200
         assert r2.json()["stale"] is True
         assert r2.json()["symbols"] == ["A"]
+
+
+class TestUnknownRule:
+    def test_unknown_rule_is_404_not_a_503_outage(self) -> None:
+        """A rule id that does not exist will never exist; answering 503 told callers it was an outage worth retrying."""
+
+        def refresh(rule_id: str) -> list[str]:
+            raise KeyError(f"no such rule: {rule_id}")
+
+        resp = _client(refresh).get("/screener/pairlist/nope", headers={"Authorization": "Bearer secret"})
+        assert resp.status_code == 404
+        assert "no such rule" in resp.json()["detail"]

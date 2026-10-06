@@ -112,6 +112,10 @@ async def get_messages(session_id: str, limit: int = Query(default=100)):
 @router.get("/sessions/{session_id}/events")
 async def stream_events(session_id: str, last_event_id: str = Query(default="")):
     svc: AgentService = _get_service()
+    # An unknown session used to open a stream that never delivered anything and never closed
+    # (a client polling a wrong id hung forever); answer 404 like every other session route.
+    if not svc._store.get_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
 
     async def event_stream():
         async for event in svc.event_bus.subscribe(

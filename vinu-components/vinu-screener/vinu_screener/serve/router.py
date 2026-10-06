@@ -22,6 +22,10 @@ def build_router(cache: PairlistCache, *, bearer_token: str) -> APIRouter:
             raise HTTPException(status_code=401, detail="invalid or missing bearer token")
         try:
             entry = cache.get(rule_id)
+        except KeyError as exc:
+            # an unknown rule is the caller's mistake (404), not an outage (503) -- a monitor
+            # retrying a 503 would retry a rule id that will never exist
+            raise HTTPException(status_code=404, detail=f"unknown rule: {exc}") from None
         except Exception as exc:  # noqa: BLE001 -- no cache and refresh failed: nothing safe to serve
             raise HTTPException(status_code=503, detail=f"pairlist unavailable: {exc}") from None
         return {
