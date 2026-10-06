@@ -10,6 +10,9 @@ set -e
 # feedback-worker/shadow-worker (see vinu-live/entrypoint.sh). Mirrored
 # here: one background worker, foreground `serve` still owns the
 # container's lifecycle.
+# A run in flight when the previous container died is gone with its process; clear its `running` row first, before any
+# worker can start a run of its own (the only moment this is safe).
+vinu-agent reconcile-runs || true
 vinu-agent skill-audit-worker &
 # mermaid-explanation.md's Planner (Section 2) = a deterministic triage
 # hook (agent/planner_triage_hook.py) + the real, already-built

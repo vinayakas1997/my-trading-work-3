@@ -325,6 +325,29 @@ class TeamRunStore(SQLiteBackend):
         )
         conn.commit()
 
+    def fail_interrupted(self, reason: str) -> list[str]:
+        """Mark every run still `pending`/`running` as failed with `reason`; returns their ids.
+
+        Only valid when nothing in this database's container can still be running, i.e. once at container start. A run
+        in flight when the container restarts is gone with its process, but its row said `running` forever, so the
+        planner saw a live research run that did no work and nothing could replace it."""
+        now = _now()
+        conn = self._get_conn()
+        ids = [r["run_id"] for r in conn.execute(
+            "SELECT run_id FROM team_runs WHERE status IN (?, ?)", (STATUS_PENDING, STATUS_RUNNING)).fetchall()]
+        if ids:
+            conn.execute(
+                "UPDATE team_runs SET status = ?, error_message = ?, updated_at = ?, completed_at = ? "
+                "WHERE status IN (?, ?)",
+                (STATUS_FAILED, reason, now, now, STATUS_PENDING, STATUS_RUNNING),
+            )
+            conn.execute(
+                "UPDATE team_tasks SET status = ?, error = ?, completed_at = ? WHERE status IN (?, ?)",
+                (TASK_STATUS_FAILED, reason, now, TASK_STATUS_PENDING, TASK_STATUS_RUNNING),
+            )
+            conn.commit()
+        return ids
+
     def mark_cancelled(self, run_id: str) -> None:
         now = _now()
         conn = self._get_conn()

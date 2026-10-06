@@ -102,6 +102,11 @@ def _parse_args(argv=None) -> argparse.Namespace:
     rgw_p = sub.add_parser("risk-gatekeeper-worker", help="Run continuous risk_gatekeeper (BENCHING→PEND) worker loop")
     rgw_p.add_argument("--interval", type=int, dest="interval_sec", default=None)
 
+    sub.add_parser(
+        "reconcile-runs",
+        help="Once per container start, before any worker: mark team runs left running by the previous container as failed",
+    )
+
     # ── broker ──
     broker_p = sub.add_parser("broker", help="Broker operations")
     broker_sub = broker_p.add_subparsers(dest="broker_cmd")
@@ -387,6 +392,15 @@ def resolve_worker_interval(args: argparse.Namespace | None, config, config_fiel
     worker -- each is only ever reached via its own subcommand through
     main()'s dispatch, so args is always real here, never None."""
     return args.interval_sec if args and args.interval_sec else getattr(config, config_field)
+
+
+def reconcile_runs_main(args: argparse.Namespace) -> None:
+    from .storage.team_runs import TeamRunStore
+
+    config = load_config()
+    store = TeamRunStore(Path(config.memory_dir).parent / "team_runs.db")
+    ids = store.fail_interrupted("interrupted: the agent container restarted while this run was in flight")
+    print(f"[reconcile-runs] marked {len(ids)} interrupted team run(s) as failed")
 
 
 def skill_audit_worker_main(args: argparse.Namespace) -> None:
@@ -754,6 +768,8 @@ def main() -> None:
         asyncio.run(_broker())
     elif args.command == "channel":
         _cmd_channel(args)
+    elif args.command == "reconcile-runs":
+        reconcile_runs_main(args)
     elif args.command == "skill-audit-worker":
         skill_audit_worker_main(args)
     elif args.command == "planner-worker":
