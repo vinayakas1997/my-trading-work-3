@@ -98,6 +98,9 @@ def test_fetch_no_articles_is_404(client: TestClient) -> None:
     ],
 )
 def test_fetch_runs_every_method_successfully(client: TestClient, method: str) -> None:
+    if method == "llm-sentiment-classifier-alternatives":
+        # needs the model stack (torch), which the news image leaves out while the models container is dormant
+        pytest.importorskip("torch")
     resp = client.get(f"/v1/stage1/vinu-news/fetch/AAPL/1hr/{_range()}/{method}")
     assert resp.status_code == 200
     body = resp.json()

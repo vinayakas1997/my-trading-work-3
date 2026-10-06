@@ -33,7 +33,7 @@ def _make_http_error(status_code: int) -> requests.HTTPError:
 def test_get_candles_404_returns_empty(monkeypatch):
     seen = {}
 
-    def fake_request(method, url, params=None, timeout=None):
+    def fake_request(method, url, params=None, timeout=None, headers=None):
         seen["url"] = url
         raise _make_http_error(404)
 
@@ -46,7 +46,7 @@ def test_get_candles_404_returns_empty(monkeypatch):
 
 
 def test_get_candles_other_errors_raise(monkeypatch):
-    def fake_request(method, url, params=None, timeout=None):
+    def fake_request(method, url, params=None, timeout=None, headers=None):
         raise _make_http_error(500)
 
     monkeypatch.setattr(

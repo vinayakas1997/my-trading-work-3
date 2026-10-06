@@ -89,6 +89,8 @@ class TestRSI:
         index-for-index identical to vinu_tools's own Wilder RSI, not just
         close -- a subtly different seed is exactly the bug that was
         fixed."""
+        # The screener image does not ship vinu_tools; the drift guard runs in the images that carry both.
+        pytest.importorskip("vinu_tools")
         from vinu_tools.compute.indicators.rsi.rsi import _rsi as tools_rsi
 
         rng = np.random.default_rng(0)
