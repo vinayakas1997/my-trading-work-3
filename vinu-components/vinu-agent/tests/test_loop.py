@@ -62,9 +62,10 @@ class FakeLLM:
 
 class TestEstimateTokens:
     def test_estimate_tokens(self) -> None:
-        assert _estimate_tokens("hello") == 2
+        # 2 characters per token: dense numeric/JSON tool output measured ~1.6, so assume the dense case (see loop.py)
+        assert _estimate_tokens("hello") == 3
         assert _estimate_tokens("") == 1
-        assert _estimate_tokens("a" * 400) == 101
+        assert _estimate_tokens("a" * 400) == 201
 
 
 class TestAgentLoop:

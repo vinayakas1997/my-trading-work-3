@@ -58,7 +58,9 @@ class TestAgentSkillsAndWorkflowEndToEnd:
             },
             {"content": "Workflow complete."},
         ])
-        loop = AgentLoop(registry=registry, llm=llm, max_iterations=10)
+        # a realistic window: the 8,000-token fallback cannot hold the real tool definitions plus a skill file, so the
+        # loop would (correctly) compact on every turn and consume the scripted replies
+        loop = AgentLoop(registry=registry, llm=llm, max_iterations=10, max_context_tokens=40_000)
         loop._workflow_tracker = workflow_tracker
 
         result = loop.run([{"role": "user", "content": "Plan and run agent-self."}])

@@ -53,7 +53,14 @@ class AgentResult:
     trace: List[Dict[str, Any]] = field(default_factory=list)
 
 
-_ESTIMATED_CHARS_PER_TOKEN = 4.0
+# Measured against the model server: dense numeric/JSON tool output (indicator tables, angle rows) is ~1.6 characters
+# per token, not the 4 of prose. With 4 here a 112,000-character request was judged ~28K tokens and sent; the server
+# counted 75,217 against a 40,192 window and rejected it. Underestimating tokens is the dangerous direction (the
+# request fails outright), overestimating only compacts a little early, so assume the dense case.
+_ESTIMATED_CHARS_PER_TOKEN = 2.0
+
+# One tool result may take at most this share of the context window.
+_TOOL_RESULT_WINDOW_SHARE = 0.25
 
 
 def _estimate_tokens(text: str) -> int:
@@ -404,9 +411,19 @@ class AgentLoop:
                 "content": result,
             })
 
+        cap = self._tool_result_cap()
         for r in results:
-            r["content"] = cap_tool_result(name=r.get("name", ""), content=r.get("content"))
+            r["content"] = cap_tool_result(name=r.get("name", ""), content=r.get("content"), limit=cap)
         return results
+
+    def _tool_result_cap(self) -> int:
+        """Characters one tool result may occupy: a fixed backstop, but never more than a quarter of the model's window
+        (two uncapped 65K- and 40K-character results in one request overflowed a 40K-token window)."""
+        import os
+
+        fixed = int(os.environ.get("VINU_AGENT_MAX_TOOL_RESULT_CHARS", "100000"))
+        by_window = int(self.max_context_tokens * _TOOL_RESULT_WINDOW_SHARE * _ESTIMATED_CHARS_PER_TOKEN)
+        return min(fixed, max(2000, by_window))
 
     def _record_tool_telemetry(
         self, tool_name: str, call_start: float, *, success: bool, outcome: str, error: str = "",
@@ -478,7 +495,9 @@ class AgentLoop:
             result = self._auto_compact(messages)
             return self._fix_tool_pairs(result)
 
-        estimated_tokens = _estimate_tokens_for_messages(messages)
+        # the tool definitions travel with every request and count against the window too
+        tools_tokens = int(len(json.dumps(self.registry.get_definitions())) / _ESTIMATED_CHARS_PER_TOKEN)
+        estimated_tokens = _estimate_tokens_for_messages(messages) + tools_tokens
         # Real context window (resolved by create_llm() from the backing
         # model's own /models endpoint, or an explicit config override) —
         # not a hardcoded guess. See __init__'s max_context_tokens.
