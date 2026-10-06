@@ -22,8 +22,16 @@ def _core_metrics(rets: np.ndarray, time_format: str | None) -> dict[str, Any]:
     total_return = float((1 + rets).prod() - 1)
     cagr = float((1 + total_return) ** (ppy / n) - 1) if n > 0 else 0.0
     ann_vol = float(rets.std() * af)
-    sharpe = cagr / ann_vol if ann_vol > 0 else 0.0
-    sortino_ratio = cagr / (rets[rets < 0].std() * af) if (rets[rets < 0].std() * af) > 0 else 0.0
+    # Standard Sharpe: annualised ARITHMETIC mean return over annualised volatility
+    # (same definition as the simulator). It used to be CAGR / volatility, which
+    # compounds a short window up to a year: +35% in 72 days read as Sharpe 5.3
+    # against 3.2 by the standard formula, and that number reached the idea
+    # generator's prompt. The old ratio stays available as cagr_over_vol.
+    ann_mean = float(rets.mean() * ppy) if n > 0 else 0.0
+    sharpe = ann_mean / ann_vol if ann_vol > 0 else 0.0
+    cagr_over_vol = cagr / ann_vol if ann_vol > 0 else 0.0
+    downside_dev = float(np.sqrt(np.mean(np.minimum(rets, 0.0) ** 2))) * af if n > 0 else 0.0
+    sortino_ratio = ann_mean / downside_dev if downside_dev > 0 else 0.0
 
     cum = (1 + rets).cumprod()
     running_max = np.maximum.accumulate(cum)
@@ -44,6 +52,7 @@ def _core_metrics(rets: np.ndarray, time_format: str | None) -> dict[str, Any]:
         "cagr": round(cagr, 6),
         "ann_vol": round(ann_vol, 6),
         "sharpe_ratio": round(sharpe, 4),
+        "cagr_over_vol": round(cagr_over_vol, 4),
         "sortino_ratio": round(sortino_ratio, 4),
         "max_drawdown": round(max_dd, 6),
         "calmar_ratio": round(calmar, 4),
