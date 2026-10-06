@@ -34,7 +34,10 @@ LOG = logging.getLogger(__name__)
 #: steps can a sub-agent take" number -- same concept, same default.
 _DEFAULT_SPECIALIST_MAX_ITERATIONS = 25
 
-_VERDICT_RE = re.compile(r"VERDICT:\s*(PASS|STOP)", re.IGNORECASE)
+# A standalone `VERDICT:` only. The backtest runner also writes `SELF-VERDICT: PASS` about its own sweep evidence, which
+# contains the text "VERDICT: PASS": the old pattern read that as the team's final verdict, so a research run was
+# stamped PASS before the risk critic had even been consulted.
+_VERDICT_RE = re.compile(r"(?<![\w-])VERDICT:\s*\**\s*(PASS|STOP)", re.IGNORECASE)
 
 
 def _extract_verdict(content: str) -> str:
@@ -43,8 +46,42 @@ def _extract_verdict(content: str) -> str:
     "VERDICT: PASS/STOP" line). Not every team's manager necessarily ends
     with this exact shape -- empty string just means "no verdict found",
     not an error."""
-    match = _VERDICT_RE.search(content or "")
-    return match.group(1).upper() if match else ""
+    matches = _VERDICT_RE.findall(content or "")
+    return matches[-1].upper() if matches else ""        # the LAST one: the final answer, not an earlier quote
+
+
+#: Teams whose manager must END with a `VERDICT: PASS|STOP` line (from the risk critic). A manager that stops after the
+#: backtest with "now I need to send this to the risk_critic" has not decided anything.
+TEAMS_REQUIRING_VERDICT = {"research"}
+MAX_VERDICT_NUDGES = 2
+
+_VERDICT_NUDGE = (
+    "You have not given a final verdict yet, so this run decided nothing. Do not stop here. If you have backtest "
+    "evidence you trust, delegate to `risk_critic` NOW with the strategy description, the metrics and the full "
+    "validation reasons; if the evidence is not trustworthy, delegate back to `idea_generator` with that feedback. "
+    "Finish only with a line `VERDICT: PASS` or `VERDICT: STOP` (and the JSON block on PASS)."
+)
+
+
+def run_until_verdict(
+    make_loop: Callable[[], Any], messages: list[dict], *, required: bool, max_nudges: int = MAX_VERDICT_NUDGES,
+) -> dict:
+    """Run the manager loop; for a team that must reach a verdict, ask it to continue (up to `max_nudges` times) when it
+    ends its turn without one. The nudge carries the manager's own last answer, so it resumes from where it stopped."""
+    result = make_loop().run(messages=messages)
+    if not required:
+        return result
+    for attempt in range(max_nudges):
+        content = result.get("content", "")
+        if result.get("status") != "completed" or _extract_verdict(content):
+            break
+        LOG.warning("manager ended without a VERDICT line; nudging to continue (%d/%d)", attempt + 1, max_nudges)
+        messages = messages + [
+            {"role": "assistant", "content": content},
+            {"role": "user", "content": _VERDICT_NUDGE},
+        ]
+        result = make_loop().run(messages=messages)
+    return result
 
 
 def _apply_team_result_hook(
@@ -400,16 +437,23 @@ class TeamManager:
             agent="manager", role="manager", session_id=self._triggered_by_session_id,
         )
         t0 = time.perf_counter()
-        loop = AgentLoop(
-            registry=manager_registry,
-            llm=manager_llm,
-            event_callback=manager_callback,
-            max_iterations=self._max_iterations,
+
+        def _new_loop() -> AgentLoop:
+            return AgentLoop(
+                registry=manager_registry,
+                llm=manager_llm,
+                event_callback=manager_callback,
+                max_iterations=self._max_iterations,
+            )
+
+        result = run_until_verdict(
+            _new_loop,
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            required=self.spec.name in TEAMS_REQUIRING_VERDICT,
         )
-        result = loop.run(messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ])
         elapsed = time.perf_counter() - t0
 
         if db_run is not None:
