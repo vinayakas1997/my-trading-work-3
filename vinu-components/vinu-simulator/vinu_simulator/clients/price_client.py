@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
 from typing import Any
 
 import pandas as pd
 
 from vinu_simulator.clients._cache import LRUCache
 from vinu_simulator.clients.base import BaseClient
+
+
+LOG = logging.getLogger(__name__)
 
 
 class PriceClient(BaseClient):
@@ -57,7 +61,8 @@ class PriceClient(BaseClient):
         def _fetch(sym: str) -> tuple[str, pd.DataFrame | None]:
             try:
                 resp = self.get(f"/candles/{sym}", dict(params_template))
-            except Exception:
+            except Exception as exc:
+                LOG.warning("get_ohclv: %s %s..%s fetch failed: %r", sym, from_date, to_date, exc)
                 return sym, None
             if not resp or "data" not in resp:
                 return sym, None
@@ -77,7 +82,11 @@ class PriceClient(BaseClient):
                 sym, df = future.result()
                 if df is not None:
                     result[sym] = df
-        self._ohclv_cache.set(cache_key, result)
+        # Cache only a complete answer. A failed or empty fetch used to be
+        # cached with no expiry, so one transient failure made every later
+        # call for that range return "no data" without asking the stock API.
+        if set(symbols) <= set(result):
+            self._ohclv_cache.set(cache_key, result)
         return {sym: df.copy() for sym, df in result.items()}
 
     def get_prices(

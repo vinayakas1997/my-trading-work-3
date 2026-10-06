@@ -56,7 +56,8 @@ class TestComputeConfigHash:
 class TestOhclvCache:
     def _series_frame(self, value: float) -> dict[str, pd.DataFrame]:
         dates = pd.date_range("2023-01-02", periods=3, freq="D")
-        return {"AAPL": pd.DataFrame({"close": [value] * 3}, index=dates)}
+        frame = pd.DataFrame({"close": [value] * 3}, index=dates)
+        return {"AAPL": frame, "MSFT": frame}  # a complete answer for the symbols the tests ask for
 
     def test_a_repeated_call_hits_the_cache_not_the_client(self, service, monkeypatch) -> None:
         calls = {"n": 0}

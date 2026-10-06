@@ -104,7 +104,8 @@ class SimulatorService:
         )
 
         with self._ohclv_cache_lock:
-            self._ohclv_cache[key] = (now, data)
+            if set(symbols) <= set(data):  # never cache a partial or empty fetch
+                self._ohclv_cache[key] = (now, data)
             if len(self._ohclv_cache) > 64:
                 # Bounded, simple eviction: drop expired entries first; this
                 # cache only needs to live long enough to de-duplicate one

@@ -89,6 +89,25 @@ class TestOhclvCache:
 
         assert calls["n"] == 1
 
+    def test_a_failed_fetch_is_not_cached_so_the_next_call_asks_again(self) -> None:
+        """A transient failure used to be cached with no expiry: every later
+        call for that date range returned "no data" without contacting the
+        stock API, which made all walk-forward windows fail."""
+        client = PriceClient(base_url="http://prices.invalid")
+        calls = {"n": 0}
+
+        def _get(path: str, params=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("stock api briefly unavailable")
+            return _candles([0], [100.0], [1000.0])
+
+        client.get = _get
+        assert client.get_ohclv(["AAPL"], "2020-01-01", "2020-01-05") == {}
+        again = client.get_ohclv(["AAPL"], "2020-01-01", "2020-01-05")
+
+        assert "AAPL" in again and calls["n"] == 2
+
     def test_symbol_order_does_not_defeat_the_cache(self) -> None:
         client = PriceClient(base_url="http://prices.invalid")
         calls = {"n": 0}
