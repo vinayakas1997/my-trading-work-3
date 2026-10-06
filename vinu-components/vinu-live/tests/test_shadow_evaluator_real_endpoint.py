@@ -15,6 +15,9 @@ from __future__ import annotations
 import pytest
 from fastapi import FastAPI
 
+# This cross-package test needs the agent's routes; it runs in the images that carry both packages.
+pytest.importorskip("vinu_agent")
+
 from vinu_live.shadow_evaluator import ShadowEvaluator
 
 

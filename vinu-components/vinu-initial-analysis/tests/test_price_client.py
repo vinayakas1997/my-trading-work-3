@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+pytest.importorskip("vinu_stock")  # runs in the images that carry the stock-price package
+
 from vinu_initial_analysis.clients.local_price_client import LocalPriceClient
 from vinu_initial_analysis.clients.price_client import _INTERVAL_MAP, PriceClient
 

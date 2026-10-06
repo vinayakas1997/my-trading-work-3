@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import threading
 from pathlib import Path
 
@@ -156,7 +157,10 @@ class TestThreadSafety:
             try:
                 s2 = ResearchStorage(tmp_db_path)
                 for i in range(10):
-                    rec = sample_record
+                    # one record per write: the four threads used to share (and mutate) the same object, so
+                    # they raced on its id and the test failed one run in three for a reason that was not the storage
+                    rec = copy.copy(sample_record)
+                    rec.id = None
                     rec.user_idea = f"thread-{i}"
                     s2.insert_run(rec)
                 s2.close()

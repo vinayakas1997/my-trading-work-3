@@ -8,6 +8,11 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
+# needs the research package; runs in the images that carry both
+pytest.importorskip("vinu_research")
+
 from vinu_portfolio.research_link import get_maturity_assessment
 
 

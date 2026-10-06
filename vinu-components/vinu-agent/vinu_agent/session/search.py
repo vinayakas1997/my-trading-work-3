@@ -14,7 +14,8 @@ class FTSSearch:
     def _init_db(self) -> None:
         with self._lock:
             conn = sqlite3.connect(str(self._db_path))
-            conn.execute("PRAGMA journal_mode=WAL")
+            from vinu_infra.db import enable_wal
+            enable_wal(conn)
             conn.execute(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5("
                 "session_id, role, content, message_id UNINDEXED"

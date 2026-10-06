@@ -216,3 +216,16 @@ def test_a_stale_container_cannot_go_unnoticed():
     assert "prepare|check|build|up|down|ps|stale|deploy" in script
     checker = (ROOT / "scripts" / "stale_images.py").read_text(encoding="utf-8")
     assert "docker" in checker and "COPY" in checker and "sys.exit(main())" in checker
+
+
+def test_no_service_switches_sqlite_to_wal_on_its_own():
+    """Switching a file to WAL races when several connections open it together ("database is locked", instantly, past
+    the busy timeout). vinu_infra.db.enable_wal retries; a service that writes the pragma itself brings the race back."""
+    offenders = []
+    for path in ROOT.glob("vinu-*/**/*.py"):
+        rel = path.relative_to(ROOT).as_posix()
+        if "/tests/" in rel or rel in ("vinu-infra/db.py", "vinu-infra/sqlite.py"):
+            continue
+        if re.search(r"""execute\(\s*["']PRAGMA journal_mode\s*=\s*WAL""", path.read_text(encoding="utf-8", errors="ignore")):
+            offenders.append(rel)
+    assert offenders == [], f"use vinu_infra.db.enable_wal instead of the raw pragma in: {offenders}"

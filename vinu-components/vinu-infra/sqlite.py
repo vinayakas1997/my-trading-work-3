@@ -14,8 +14,10 @@ Usage:
 
 from __future__ import annotations
 
+import random
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -54,15 +56,40 @@ class SQLiteBackend:
             # armed for the pragma calls made during connection setup itself.
             # Passing timeout= here arms it before any statement runs.
             conn = sqlite3.connect(str(self._db_path), timeout=5.0)
-            conn.execute("PRAGMA busy_timeout=5000")
-            conn.execute("PRAGMA journal_mode=WAL")
             conn.row_factory = sqlite3.Row
-            self._init_schema(conn)
+            self._setup_connection(conn)
             self._local.conn = conn
             self._local.gen = self._generation
             with self._all_conns_lock:
                 self._all_conns.append(conn)
         return conn
+
+    # Switching a file to WAL, and the first schema write, need locks the busy timeout does not wait for: when
+    # several connections open the same file at once, all but one failed instantly with "database is locked"
+    # (the stock ingest cycle died of it; a four-thread research test failed one run in three). Setup is
+    # idempotent, so retry it with a short randomised backoff until a deadline instead of failing the caller.
+    _SETUP_DEADLINE_SEC = 20.0
+
+    def _setup_connection(self, conn: sqlite3.Connection) -> None:
+        deadline = time.monotonic() + self._SETUP_DEADLINE_SEC
+        delay = 0.02
+        while True:
+            try:
+                conn.execute("PRAGMA busy_timeout=5000")
+                conn.execute("PRAGMA journal_mode=WAL")
+                self._init_schema(conn)
+                return
+            except sqlite3.OperationalError as exc:
+                text = str(exc).lower()
+                if ("locked" not in text and "busy" not in text) or time.monotonic() >= deadline:
+                    conn.close()
+                    raise
+                try:
+                    conn.rollback()
+                except sqlite3.Error:
+                    pass
+                time.sleep(delay * (1 + random.random()))
+                delay = min(delay * 2, 0.5)
 
     def _init_schema(self, conn: sqlite3.Connection) -> None:
         if self.SCHEMA:

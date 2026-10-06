@@ -27,7 +27,8 @@ class LlmCache:
         if conn is None or getattr(self._local, "gen", -1) != self._generation:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(str(self._path))
-            conn.execute("PRAGMA journal_mode=WAL")
+            from vinu_infra.db import enable_wal
+            enable_wal(conn)
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS llm_cache ("
                 "  cache_key TEXT PRIMARY KEY,"

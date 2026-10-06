@@ -96,6 +96,7 @@ class TestGenerationStoreEmptySpelling:
 
 class TestAgentEvalEmptySpelling:
     def test_unset_env_is_inert_empty_string(self, monkeypatch) -> None:
+        pytest.importorskip("vinu_agent")  # cross-package: runs in the images that carry both
         from vinu_agent.agent.scheduler_workers import _strategy_evaluation_context_for_ticker
 
         monkeypatch.delenv("VINU_STRATEGY_EVAL_DATA_ROOT", raising=False)

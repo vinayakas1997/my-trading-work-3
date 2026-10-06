@@ -75,7 +75,8 @@ class SqliteBackend:
         if conn is None or gen != self._generation:
             conn = sqlite3.connect(str(self.db_path))
             conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
+            from vinu_infra.db import enable_wal
+            enable_wal(conn)
             conn.executescript(_SCHEMA)
             self._migrate(conn)
             self._local.conn = conn

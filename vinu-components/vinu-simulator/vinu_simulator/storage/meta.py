@@ -25,7 +25,8 @@ class MetaStorage:
     def _get_conn(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn") or self._local.conn is None:
             conn = sqlite3.connect(str(self._db_path))
-            conn.execute("PRAGMA journal_mode=WAL")
+            from vinu_infra.db import enable_wal
+            enable_wal(conn)
             conn.row_factory = sqlite3.Row
             self._local.conn = conn
             with self._close_lock:

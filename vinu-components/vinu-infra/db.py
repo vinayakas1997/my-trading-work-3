@@ -15,7 +15,9 @@ Usage:
 
 from __future__ import annotations
 
+import random
 import sqlite3
+import time
 from typing import Any
 
 # The only real, idempotency-safe reasons a migration statement can fail on
@@ -88,3 +90,25 @@ def add_columns(
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}")
             except sqlite3.OperationalError:
                 pass
+
+
+def enable_wal(conn: sqlite3.Connection, *, deadline_sec: float = 20.0) -> None:
+    """Switch a connection's database to WAL, waiting out lock contention.
+
+    Switching a file to WAL needs a lock the busy timeout does not wait for: when several connections open the same
+    file at once, all but one failed instantly with "database is locked". Once the file is in WAL the pragma is a
+    no-op, so retrying until a deadline is safe.
+    """
+    end = time.monotonic() + deadline_sec
+    delay = 0.02
+    while True:
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            text = str(exc).lower()
+            if ("locked" not in text and "busy" not in text) or time.monotonic() >= end:
+                raise
+            time.sleep(delay * (1 + random.random()))
+            delay = min(delay * 2, 0.5)
+

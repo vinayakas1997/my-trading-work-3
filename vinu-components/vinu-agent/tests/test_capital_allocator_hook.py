@@ -346,6 +346,10 @@ class TestUnwindRequests:
 
 
 class TestUnwindCrossProcessWire:
+    @pytest.fixture(autouse=True)
+    def _needs_live(self):
+        pytest.importorskip("vinu_live")  # runs in the images that carry both packages
+
     """Implementation-plan task 04: the unwind REQUEST must reach
     vinu-live's TradePlanOrchestrator through a real HTTP route, not just
     an in-process call -- verified with both services' real code running,

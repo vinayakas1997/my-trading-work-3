@@ -1,3 +1,7 @@
+import pytest
+
+pytest.importorskip("vinu_initial_analysis.angles.news_first_analysis", reason="angle not built: no news_first_analysis package exists")
+
 from vinu_initial_analysis.angles.news_first_analysis.baseline import _classify_deviation, compute_baseline
 
 

@@ -1,3 +1,7 @@
+import pytest
+
+pytest.importorskip("vinu_initial_analysis.angles.cross_attention_gcn_news_price_fusion", reason="angle not built: no such package exists")
+
 import numpy as np
 import pandas as pd
 

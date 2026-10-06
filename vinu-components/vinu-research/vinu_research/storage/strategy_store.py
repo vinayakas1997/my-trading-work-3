@@ -156,7 +156,8 @@ class SqliteStrategyStore:
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is None:
             conn = sqlite3.connect(str(self.db_path))
-            conn.execute("PRAGMA journal_mode=WAL")
+            from vinu_infra.db import enable_wal
+            enable_wal(conn)
             conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("PRAGMA foreign_keys=ON")
             conn.row_factory = sqlite3.Row
