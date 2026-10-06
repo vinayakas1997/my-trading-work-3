@@ -316,3 +316,15 @@ def test_every_team_purpose_is_one_the_gateway_knows():
     unknown = {t: p for t, p in mapping.items() if p not in mod.PURPOSE_PRIORITY}
     assert not unknown, f"purposes missing from the gateway table: {unknown}"
     assert mapping["live_decision"] == "live_decision" and mod.PURPOSE_PRIORITY["live_decision"] == 1
+
+
+def test_no_script_or_container_entrypoint_has_windows_line_endings():
+    """An entrypoint saved with CRLF makes `#!/bin/bash\r` unresolvable: the container dies with 'exec /app/entrypoint.sh:
+    no such file or directory' and restarts forever (an edit of the agent's entrypoint from Windows did exactly that).
+    bash -n does not notice, so check the bytes."""
+    root = Path(__file__).resolve().parents[2]
+    bad = []
+    for path in list(root.glob("*/entrypoint.sh")) + list((root / "scripts").glob("*.sh")):
+        if b"\r" in path.read_bytes():
+            bad.append(str(path.relative_to(root)))
+    assert not bad, f"CRLF line endings (run: sed -i 's/\r$//' <file>): {bad}"
