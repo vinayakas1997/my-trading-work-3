@@ -328,3 +328,41 @@ def test_no_script_or_container_entrypoint_has_windows_line_endings():
         if b"\r" in path.read_bytes():
             bad.append(str(path.relative_to(root)))
     assert not bad, f"CRLF line endings (run: sed -i 's/\r$//' <file>): {bad}"
+
+
+def test_stale_check_sees_a_changed_file_that_git_considers_unchanged(tmp_path, monkeypatch):
+    """Git normalises line endings, so an entrypoint re-saved with CRLF looks clean to `git status` while the next build
+    copies different bytes; the deploy then rebuilt nothing and the container crash-looped. The file's modification
+    time is checked directly."""
+    import importlib.util
+    import subprocess
+    import time
+
+    spec = importlib.util.spec_from_file_location("stale_images2", Path(__file__).resolve().parents[2] / "scripts" / "stale_images.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    sub = tmp_path / "sub"
+    (sub / "pkg").mkdir(parents=True)
+    git = lambda *a: subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
+    git("init", "-q")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    f = sub / "pkg" / "entrypoint.sh"
+    f.write_bytes(b"#!/bin/bash\necho hi\n")
+    git("add", ".")
+    git("commit", "-q", "-m", "first")
+    time.sleep(1.1)
+    f.write_bytes(b"#!/bin/bash\r\necho hi\r\n")             # different bytes, same content to git after normalisation
+    (tmp_path / ".gitattributes").write_text("*.sh text eol=lf\n")
+    monkeypatch.setattr(mod, "ROOT", sub)
+    mtime, which = mod.newest_mtime(["pkg"])
+    assert which.endswith("entrypoint.sh") and mtime >= f.stat().st_mtime - 1
+    # tests and docs never reach a running service, so changing them must not make an image look stale
+    (sub / "pkg" / "tests").mkdir()
+    (sub / "pkg" / "tests" / "test_x.py").write_text("x
+")
+    (sub / "pkg" / "README.md").write_text("x
+")
+    assert mod.newest_mtime(["pkg"])[1].endswith("entrypoint.sh")
+    assert mod.newest_change(["pkg"])[0] >= mtime

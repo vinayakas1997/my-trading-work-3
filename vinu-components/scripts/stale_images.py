@@ -59,7 +59,43 @@ def newest_change(paths: list[str]) -> tuple[float, str]:
         f = top / line[3:].strip().strip('"')
         if f.is_file() and f.stat().st_mtime > newest:
             newest, what = f.stat().st_mtime, f"uncommitted edit {line[3:].strip()}"
+    # Git's view is not the whole truth: it normalises line endings and ignores gitignored files, so a file whose bytes
+    # changed (an entrypoint saved with CRLF, which crash-looped its container) can look unchanged to git while the
+    # next build would copy different bytes. The modification time of the files a build would actually copy is the
+    # direct test.
+    mtime, which = newest_mtime(paths)
+    if mtime > newest:
+        newest, what = mtime, f"file modified {which}"
     return newest, what
+
+
+_SKIP_DIRS = {"__pycache__", "tests", ".pytest_cache", ".git", "node_modules"}
+
+
+def newest_mtime(paths: list[str]) -> tuple[float, str]:
+    """Newest modification time among the non-test, non-doc files a COPY of `paths` would bring into an image."""
+    import os
+
+    best, which = 0.0, ""
+    for p in paths:
+        p = Path(p) if Path(p).is_absolute() else ROOT / p
+        files: list[Path] = []
+        if p.is_file():
+            files = [p]
+        elif p.is_dir():
+            for root, dirs, names in os.walk(p):
+                dirs[:] = [d for d in dirs if d not in _SKIP_DIRS and not d.endswith(".egg-info")]
+                files.extend(Path(root) / n for n in names)
+        for f in files:
+            if f.name.startswith("test_") or f.name.endswith((".md", ".pyc")):
+                continue
+            try:
+                m = f.stat().st_mtime
+            except OSError:
+                continue
+            if m > best:
+                best, which = m, str(f.relative_to(ROOT)) if ROOT in f.parents else str(f)
+    return best, which
 
 
 def main() -> int:
