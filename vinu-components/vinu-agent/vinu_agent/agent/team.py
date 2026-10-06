@@ -13,6 +13,7 @@ design.
 from __future__ import annotations
 
 import json
+import os
 import logging
 import re
 import time
@@ -55,6 +56,21 @@ def _extract_verdict(content: str) -> str:
 TEAMS_REQUIRING_VERDICT = {"research"}
 MAX_VERDICT_NUDGES = 2
 
+#: A research run may not end in STOP before the idea generator has been asked for at least this many candidate
+#: strategies (each is tested, optimised by its parameter sweep, risk-reviewed, and its failure reasons fed to the next
+#: attempt). A PASS ends the run at once. Without this a manager gave up after ONE attempt, claiming it "reached the
+#: maximum number of iterations" when it had used 2 of 25.
+MIN_RESEARCH_ATTEMPTS = int(os.environ.get("VINU_RESEARCH_MIN_ATTEMPTS", "3"))
+
+_ATTEMPTS_NUDGE = (
+    "You stopped after only {n} of the {need} candidate strategies this run requires, so it is too early to give up. You "
+    "have NOT run out of iterations (you have used very few of your {budget} turns; there is no other limit). Use what "
+    "the failures taught you: delegate to `idea_generator` NOW with the specific failure reasons from the attempts so far "
+    "and ask for a genuinely different candidate (a different idea or filter, not the same recipe with new numbers), then "
+    "test it with `backtest_runner` and review it with `risk_critic`. Finish only with `VERDICT: PASS` or "
+    "`VERDICT: STOP` after at least {need} attempts."
+)
+
 _VERDICT_NUDGE = (
     "You have not given a final verdict yet, so this run decided nothing. Do not stop here. If you have backtest "
     "evidence you trust, delegate to `risk_critic` NOW with the strategy description, the metrics and the full "
@@ -65,6 +81,7 @@ _VERDICT_NUDGE = (
 
 def run_until_verdict(
     make_loop: Callable[[], Any], messages: list[dict], *, required: bool, max_nudges: int = MAX_VERDICT_NUDGES,
+    attempts: Optional[Callable[[], int]] = None, min_attempts: int = 0, budget: int = 0,
 ) -> dict:
     """Run the manager loop; for a team that must reach a verdict, ask it to continue (up to `max_nudges` times) when it
     ends its turn without one. The nudge carries the manager's own last answer, so it resumes from where it stopped."""
@@ -73,13 +90,20 @@ def run_until_verdict(
         return result
     for attempt in range(max_nudges):
         content = result.get("content", "")
-        if result.get("status") != "completed" or _extract_verdict(content):
+        if result.get("status") != "completed":
             break
-        LOG.warning("manager ended without a VERDICT line; nudging to continue (%d/%d)", attempt + 1, max_nudges)
-        messages = messages + [
-            {"role": "assistant", "content": content},
-            {"role": "user", "content": _VERDICT_NUDGE},
-        ]
+        verdict = _extract_verdict(content)
+        made = attempts() if attempts is not None else min_attempts
+        if verdict == "PASS" or (verdict == "STOP" and made >= min_attempts):
+            break
+        if verdict == "STOP":
+            LOG.warning("manager gave up after %d of %d required attempts; nudging to continue (%d/%d)",
+                        made, min_attempts, attempt + 1, max_nudges)
+            nudge = _ATTEMPTS_NUDGE.format(n=made, need=min_attempts, budget=budget)
+        else:
+            LOG.warning("manager ended without a VERDICT line; nudging to continue (%d/%d)", attempt + 1, max_nudges)
+            nudge = _VERDICT_NUDGE
+        messages = messages + [{"role": "assistant", "content": content}, {"role": "user", "content": nudge}]
         result = make_loop().run(messages=messages)
     return result
 
@@ -256,6 +280,9 @@ class DelegateToAgentTool(BaseTool):
         session_id: str = "",
     ) -> None:
         self._agents = agents
+        # how many times each specialist was handed a task in this run (the research manager is held to a minimum number
+        # of idea_generator attempts before it may give up)
+        self.delegations: dict[str, int] = {}
         self._full_registry = full_registry
         self._llm = llm
         self._skills_loader = skills_loader
@@ -281,6 +308,7 @@ class DelegateToAgentTool(BaseTool):
                 "error": f"Unknown agent {agent_name!r}. Available: {list(self._agents)}",
             })
 
+        self.delegations[agent_name] = self.delegations.get(agent_name, 0) + 1
         db_task = None
         if self._run_store is not None and self._run_id:
             db_task = self._run_store.add_task(
@@ -446,13 +474,26 @@ class TeamManager:
                 max_iterations=self._max_iterations,
             )
 
+        needs_verdict = self.spec.name in TEAMS_REQUIRING_VERDICT
+        min_attempts = MIN_RESEARCH_ATTEMPTS if self.spec.name == "research" else 0
+        if min_attempts:
+            user_content += (
+                f"\n\nBudget: make at least {min_attempts} distinct candidate attempts (each: idea_generator, then "
+                f"backtest_runner, then risk_critic, feeding every failure reason into the next idea) before you may "
+                f"give up; a PASS ends the run earlier. You have {self._max_iterations} turns, not a handful: never "
+                f"claim you ran out of iterations unless you really used them."
+            )
         result = run_until_verdict(
             _new_loop,
             [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            required=self.spec.name in TEAMS_REQUIRING_VERDICT,
+            required=needs_verdict,
+            max_nudges=MAX_VERDICT_NUDGES + min_attempts,
+            attempts=lambda: delegate_tool.delegations.get("idea_generator", 0),
+            min_attempts=min_attempts,
+            budget=self._max_iterations,
         )
         elapsed = time.perf_counter() - t0
 

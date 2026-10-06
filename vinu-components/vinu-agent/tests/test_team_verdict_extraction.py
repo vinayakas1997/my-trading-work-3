@@ -80,3 +80,79 @@ def test_a_failed_run_is_not_nudged():
     seen = []
     run_until_verdict(_factory([{"status": "error", "content": "boom"}], seen), [], required=True)
     assert len(seen) == 1
+
+
+class TestMinimumAttemptsBeforeGivingUp:
+    """A research manager gave up after ONE attempt ("I've reached the maximum number of iterations") having used 2 of
+    its 25 turns. The process is: at least N distinct candidate strategies, each fed the previous failures, before STOP."""
+
+    def _stop(self, text="gave up.\nVERDICT: STOP"):
+        return {"status": "completed", "content": text}
+
+    def test_an_early_stop_is_sent_back_until_enough_attempts_were_made(self):
+        from vinu_agent.agent.team import run_until_verdict
+
+        made = {"n": 1}
+        seen = []
+
+        def make_loop():
+            class L:
+                def run(self, messages):
+                    seen.append(list(messages))
+                    if len(seen) > 1:
+                        made["n"] = 3           # after the nudge the manager makes the missing attempts
+                    return self_stop()
+            return L()
+
+        self_stop = self._stop
+        result = run_until_verdict(
+            make_loop, [{"role": "user", "content": "task"}], required=True, max_nudges=5,
+            attempts=lambda: made["n"], min_attempts=3, budget=25)
+        assert len(seen) == 2                   # the run, then one nudge; with 3 attempts made the next STOP is accepted
+        nudge = seen[1][-1]["content"]
+        assert "only 1 of the 3" in nudge and "25 turns" in nudge and "idea_generator" in nudge
+        assert result["content"].endswith("VERDICT: STOP")
+
+    def test_a_pass_ends_the_run_at_once_whatever_the_attempt_count(self):
+        from vinu_agent.agent.team import run_until_verdict
+
+        seen = []
+        out = [{"status": "completed", "content": "risk_critic ok.\nVERDICT: PASS"}]
+        result = run_until_verdict(_factory(out, seen), [], required=True, attempts=lambda: 1, min_attempts=3)
+        assert len(seen) == 1 and result["content"].endswith("PASS")
+
+    def test_a_stop_after_enough_attempts_is_accepted(self):
+        from vinu_agent.agent.team import run_until_verdict
+
+        seen = []
+        result = run_until_verdict(_factory([self._stop()], seen), [], required=True, attempts=lambda: 3, min_attempts=3)
+        assert len(seen) == 1 and result["content"].endswith("STOP")
+
+    def test_giving_up_is_still_bounded_when_the_manager_never_complies(self):
+        from vinu_agent.agent.team import run_until_verdict
+
+        seen = []
+        outputs = [self._stop() for _ in range(20)]
+        run_until_verdict(_factory(outputs, seen), [], required=True, max_nudges=4, attempts=lambda: 1, min_attempts=3)
+        assert len(seen) == 5                   # the run plus four nudges, then it stops pushing
+
+
+def test_the_delegation_tool_counts_idea_generator_requests():
+    from unittest.mock import MagicMock
+
+    from vinu_agent.agent.team import AgentSpec, DelegateToAgentTool
+
+    spec = AgentSpec(name="idea_generator", role="r", prompt="p")
+    tool = DelegateToAgentTool({"idea_generator": spec}, full_registry=MagicMock(), llm=MagicMock())
+    tool._full_registry.subset.return_value = MagicMock()
+    import vinu_agent.agent.team as team_mod
+
+    original = team_mod.AgentLoop
+    try:
+        team_mod.AgentLoop = lambda **kw: MagicMock(run=MagicMock(return_value={"content": "ok", "status": "completed"}))
+        tool.execute(agent_name="idea_generator", task="t")
+        tool.execute(agent_name="idea_generator", task="t2")
+        tool.execute(agent_name="nobody", task="t3")
+    finally:
+        team_mod.AgentLoop = original
+    assert tool.delegations == {"idea_generator": 2}        # an unknown agent is not counted
