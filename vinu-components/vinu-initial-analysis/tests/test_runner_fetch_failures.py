@@ -64,3 +64,29 @@ def test_a_failed_news_fetch_is_flagged_on_the_result_and_a_good_one_is_not(tmp_
     assert out["fake"]["status"] == "completed" and "news down" in out["fake"]["news_fetch_failed"]
     out = _runner(str(tmp_path / "b"), price_client=_GoodPrice()).run("AAPL", angle_names=["fake"])
     assert "news_fetch_failed" not in out["fake"]
+
+
+class _PlaceholderMod:
+    """Like drawdown_deep_dive / backtesting_44_metrics: answers empty bars with a
+    placeholder row instead of an empty frame."""
+
+    @staticmethod
+    def compute(symbol, bars=None, news=None, from_ts=None, to_ts=None, time_format=None):
+        if bars is None or len(bars) == 0:
+            return pd.DataFrame([{"symbol": symbol, "type": "status", "drawdown_count": 0}])
+        return pd.DataFrame([{"symbol": symbol, "type": "drawdown", "n_bars": len(bars)}])
+
+
+def test_no_bars_yet_is_not_recorded_as_a_finished_run_so_it_is_retried_when_bars_arrive(tmp_path):
+    """A ticker whose price history is not backfilled yet must not get a stored
+    'zero drawdowns' result that blocks the real computation later."""
+    r = _runner(str(tmp_path), price_client=_EmptyPrice())
+    r._import_compute = lambda name: _PlaceholderMod
+    out = r.run("MSFT", angle_names=["fake"])
+    assert out["fake"]["row_count"] == 0
+    assert not r._run_log.has_existing_run("MSFT", "fake", None, None, granularity="1D")
+
+    r._price_client = _GoodPrice()  # the backfill finished
+    out = r.run("MSFT", angle_names=["fake"])
+    assert out["fake"]["row_count"] == 1
+    assert r._run_log.has_existing_run("MSFT", "fake", None, None, granularity="1D")
