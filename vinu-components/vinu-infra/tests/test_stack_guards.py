@@ -238,3 +238,22 @@ def test_deploy_does_not_abort_when_the_stale_check_exits_nonzero():
     assert "set -euo pipefail" in script
     capture = re.search(r"names=\$\(python scripts/stale_images\.py[^\n]*\)", script)
     assert capture and "|| true" in capture.group(0)
+
+
+def test_every_shell_script_parses():
+    """scripts/test_in_containers.sh was committed with an apostrophe inside a single-quoted block and did not parse.
+    A script that does not parse fails at the moment it is needed."""
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash")
+    if bash is None:
+        import pytest
+
+        pytest.skip("bash not available")
+    bad = []
+    for script in sorted((ROOT / "scripts").glob("*.sh")) + sorted(ROOT.glob("vinu-*/entrypoint.sh")):
+        result = subprocess.run([bash, "-n", str(script)], capture_output=True, text=True)
+        if result.returncode != 0:
+            bad.append(f"{script.name}: {result.stderr.strip()[:120]}")
+    assert bad == [], bad

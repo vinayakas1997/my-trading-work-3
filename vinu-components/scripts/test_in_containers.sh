@@ -39,7 +39,7 @@ for svc in $SERVICES; do
     for d in /app/vinu-*/; do
       [ -d "$d/tests" ] || continue
       # quant-core carries portfolio code only so the strategy service can import it, without the research package
-      # those tests need; the portfolio's own tests run in the portfolio-api image (and agent, research, reflection).
+      # those tests need; the portfolio own tests run in the portfolio-api image (and agent, research, reflection).
       [ "$SKIP_PKG" = "$(basename $d)" ] && { echo "### $(basename $d): skipped in this image (its tests need packages this image does not carry)"; continue; }
       cd "$d"
       args="tests -q --no-header -p no:cacheprovider --tb=line -rfE"
