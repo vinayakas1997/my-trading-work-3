@@ -135,6 +135,16 @@ code only touches open/high/low/close/volume. This tells backtest_runner
 exactly which columns to request — get it right or the columns won't exist
 when your code runs.
 
+**What the weights mean (get this wrong and the backtest measures nothing):**
+the Series you return is the position to HOLD on each bar, not an event.
+`1.0` on a bar means fully long on that bar; `0.0` means flat; the position
+stays whatever you return on the next bar. A crossover is therefore
+`(fast > slow).astype(float)` (long while fast is above slow), NEVER
+`(fast > slow).astype(int).diff()` -- that is non-zero for a single bar at
+the cross and zero all the other bars, so the "strategy" holds for one bar
+and trades on noise. Equities only: stay between 0.0 and 1.0 unless the
+task says shorting is allowed.
+
 The class MUST subclass BaseStrategy -- a bare `class Strategy:` with no
 base class is rejected by the real backtest engine. Do not write your own
 import line for BaseStrategy/pandas/numpy (pd, np, BaseStrategy are

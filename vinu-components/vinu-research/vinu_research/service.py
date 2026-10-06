@@ -38,6 +38,24 @@ def _has_violated_goal_constraints(goal: Any) -> bool:
     return False
 
 
+def _best_attempt_numbers(result: Any) -> dict[str, Any]:
+    """Sharpe, drawdown, return and trade count of the run's best attempt, from the simulator's records."""
+    best = None
+    if result.best_result is not None:
+        best = result.best_result
+    else:
+        tried = [r.result for r in result.iterations if not str(r.result.run_id).startswith("infra_failure")]
+        if tried:
+            best = max(tried, key=lambda r: r.metrics.sharpe_ratio)
+    if best is None:
+        return {}
+    return {
+        "sharpe": best.metrics.sharpe_ratio, "max_drawdown": best.metrics.max_drawdown,
+        "total_return": best.metrics.total_return, "trade_count": best.trade_count,
+        "win_rate": getattr(best.metrics, "win_rate", None),
+    }
+
+
 class ResearchService:
     def __init__(
         self,
@@ -354,6 +372,11 @@ class ResearchService:
                 "report_md": record.report_md,
                 "summary_text": record.summary_text,
                 "diagnosis": diagnosis_text,
+                "pbo": record.pbo,
+                "interval": run_config.interval,
+                # What was measured, copied from the simulator's own result (the best attempt when none passed), so a
+                # caller never has to parse report text to learn the numbers.
+                "attempt": _best_attempt_numbers(result),
             }
             if result.portfolio is not None:
                 response["portfolio"] = {

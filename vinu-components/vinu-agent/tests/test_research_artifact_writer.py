@@ -15,6 +15,12 @@ from vinu_research.models import ArtifactStatus
 from vinu_research.storage.strategy_store import SqliteStrategyStore
 
 
+@pytest.fixture(autouse=True)
+def _no_real_bar_validation(monkeypatch):
+    """The writer asks vinu-research to re-test the strategy on every bar size; these tests do not run that service."""
+    monkeypatch.setattr("vinu_agent.agent.research_artifact_writer.validate_on_all_bars", lambda *a, **k: None)
+
+
 @pytest.fixture
 def store() -> SqliteStrategyStore:
     tmp = tempfile.mktemp(suffix=".db")
@@ -133,3 +139,55 @@ class TestWriteArtifactFromResearchPass:
         artifact_id = write_artifact_from_research_pass(content, strategy_store=store)
         fetched = store.get_artifact(artifact_id)
         assert fetched.origin_angles == []
+
+
+def _row(interval, *, eligible, sharpe=0.9, deflated=1.2, trades=60):
+    return {"interval": interval, "tested": True, "eligible": eligible, "reasons": [] if eligible else ["too few trades"],
+            "sharpe": sharpe, "max_drawdown": -0.08, "deflated_sharpe": deflated, "holdout_passed": True,
+            "stress_test_passed": True, "pbo": None, "trade_count": trades}
+
+
+class TestBarEvidenceDecidesTheArtifact:
+    def test_numbers_and_bar_size_come_from_the_measurement_not_the_models_text(self, store) -> None:
+        rows = [_row("1d", eligible=False), _row("4h", eligible=True, sharpe=1.4, deflated=1.7), _row("15m", eligible=True)]
+        evidence = {"bars": rows, "passing_bars": ["4h", "15m"], "chosen": rows[1], "chosen_bar": "4h"}
+        artifact_id = write_artifact_from_research_pass(
+            _PASS_CONTENT, strategy_store=store, source_run_id="r1", bar_validator=lambda *a: evidence,
+        )
+        a = store.get_artifact(artifact_id)
+        assert a.status == ArtifactStatus.BENCHING
+        assert a.bar_interval == "4h"
+        assert a.initial_sharpe == pytest.approx(1.4)          # the model typed 0.85
+        assert a.deflated_sharpe == pytest.approx(1.7)
+        assert (a.holdout_passed, a.stress_test_passed) == (True, True)
+        import json
+        assert json.loads(a.bar_evidence)["passing_bars"] == ["4h", "15m"]
+
+    def test_no_bar_size_clears_the_bar_so_the_artifact_is_disabled_with_the_table(self, store) -> None:
+        rows = [_row("1d", eligible=False, sharpe=0.2), _row("1h", eligible=False, sharpe=0.5)]
+        evidence = {"bars": rows, "passing_bars": [], "chosen": None, "chosen_bar": None}
+        artifact_id = write_artifact_from_research_pass(
+            _PASS_CONTENT, strategy_store=store, source_run_id="r2", bar_validator=lambda *a: evidence,
+        )
+        a = store.get_artifact(artifact_id)
+        assert a.status == ArtifactStatus.DISABLED and a.bar_interval == ""
+        assert "too few trades" in a.bar_evidence
+
+    def test_unreachable_validation_leaves_it_unverified_and_the_models_numbers_unusable(self, store) -> None:
+        from vinu_research.config import ResearchConfig
+        from vinu_research.promotion import meets_promotion_bar
+
+        artifact_id = write_artifact_from_research_pass(
+            _PASS_CONTENT, strategy_store=store, source_run_id="r3", bar_validator=lambda *a: None,
+        )
+        a = store.get_artifact(artifact_id)
+        assert a.status == ArtifactStatus.BENCHING and a.bar_interval == ""
+        assert not meets_promotion_bar(a, ResearchConfig()).eligible      # fails closed
+
+    def test_a_validation_error_answer_is_unverified_too(self, store) -> None:
+        artifact_id = write_artifact_from_research_pass(
+            _PASS_CONTENT, strategy_store=store, source_run_id="r4",
+            bar_validator=lambda *a: {"error": "HTTP 422: strategy_code must define a class named UserStrategy"},
+        )
+        a = store.get_artifact(artifact_id)
+        assert "UserStrategy" in a.bar_evidence and a.status == ArtifactStatus.BENCHING

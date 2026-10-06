@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from vinu_research.generator import (
     BUILTIN_RECIPES,
     _generate_from_description,
@@ -165,3 +167,48 @@ class TestGenerateFromDescription:
     def test_specific_keyword_routes_correctly(self):
         code = _generate_from_description("MACD crossover strategy", {})
         assert "ema_fast" in code or "macd_line" in code
+
+
+# ---- a recipe's weights are the position HELD on each bar, not an event on one bar ------------------------------------
+# The simulator treats each bar's weight as the target position. Six recipes returned `state.astype(int).diff()` -- non-zero
+# for the single bar of a cross -- so every "trend" strategy was held for one bar (win rate ~1-2%, overtrading costs on
+# 15m/1h). These tests run each recipe's real generated code and check the position persists.
+
+def _run_recipe(recipe: str):
+    import numpy as np
+    import pandas as pd
+
+    from vinu_research.generator import generate_strategy
+
+    rng = np.random.default_rng(7)
+    n = 600
+    swings = 30 * np.sin(np.arange(n) / 20)          # real up and down legs, so band breakouts happen
+    close = pd.Series(100 + swings + np.cumsum(rng.normal(0.05, 1.0, n)), index=pd.date_range("2024-01-01", periods=n, freq="D"))
+    data = pd.DataFrame({"open": close, "high": close * 1.01, "low": close * 0.99, "close": close,
+                         "volume": rng.integers(1_000, 5_000, n).astype(float)})
+    data["adx_14"] = 30.0
+    scope: dict = {}
+    exec(generate_strategy(recipe=recipe), scope)  # noqa: S102 -- our own template, tested here
+    return scope["UserStrategy"]().generate_weights(data).fillna(0.0)
+
+
+def _mean_holding_bars(w) -> float:
+    """Average length of an unbroken stretch of non-zero weight."""
+    runs, current = [], 0
+    for v in (w != 0).tolist():
+        if v:
+            current += 1
+        elif current:
+            runs.append(current)
+            current = 0
+    if current:
+        runs.append(current)
+    return sum(runs) / len(runs) if runs else 0.0
+
+
+@pytest.mark.parametrize("recipe", ["crossover", "adx_filtered_crossover", "macd", "vwap_crossover", "supertrend"])
+def test_event_recipes_hold_their_position_between_signals(recipe):
+    w = _run_recipe(recipe)
+    # the old `.diff()` form held every position for exactly ONE bar (mean 1.0)
+    assert _mean_holding_bars(w) > 1.5, f"{recipe}: positions last {_mean_holding_bars(w):.2f} bars on average"
+    assert w.min() >= 0.0, f"{recipe} goes short; equities-only paper account"

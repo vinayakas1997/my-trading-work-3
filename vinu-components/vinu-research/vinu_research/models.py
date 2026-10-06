@@ -252,6 +252,11 @@ class Artifact:
     # returns the literal string "unclassified" for the latter, a real,
     # honest bucket, not a classification failure.
     strategy_family: str = ""
+    # The bar size the promotion numbers above were measured on ("15m", "1h", "4h", "1d"); "" for an artifact whose numbers
+    # were never measured per bar size. bar_evidence is the JSON table of every bar size tested (numbers copied from the
+    # backtest records by code, never typed by a model).
+    bar_interval: str = ""
+    bar_evidence: str = ""
 
     @classmethod
     def create(cls, type_: str, name: str, universe: list[str] | None = None) -> Artifact:

@@ -124,7 +124,7 @@ def _apply_team_result_hook(
     if team_name == "research":
         from .research_artifact_writer import write_artifact_from_research_pass
         return write_artifact_from_research_pass(
-            content, strategy_store=strategy_store, source_run_id=run_id,
+            content, strategy_store=strategy_store, source_run_id=run_id, services_config=services_config,
         )
     if team_name == "risk_gatekeeper":
         from .risk_gatekeeper_hook import apply_risk_gatekeeper_verdict

@@ -35,7 +35,9 @@ plus any technical indicators requested via `features_required`.
 
 Rules:
 - Use pandas rolling/ewm operations, not loops
-- Return a pd.Series of target weights (between -1.0 and 1.0)
+- Return a pd.Series of target weights (between -1.0 and 1.0). Each value is the position HELD on that bar (1.0 = long,
+  0.0 = flat), not an event: a crossover is `(fast > slow).astype(float)`, never `.astype(int).diff()` (non-zero on the
+  one bar of the cross only, so the position would be held for a single bar)
 - Handle NaN values (use .fillna(0) or similar)
 - Do not use __import__, eval, exec, os, subprocess, open
 - The strategy should be parameterizable via __init__

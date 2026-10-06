@@ -40,11 +40,76 @@ def _extract_json_block(content: str) -> Optional[dict[str, Any]]:
         return None
 
 
+def validate_on_all_bars(symbol: str, strategy_code: str, services_config: Any) -> Optional[dict[str, Any]]:
+    """Ask vinu-research to run this exact code on every bar size and judge it with the promotion bar. None when the
+    service could not be reached or answered with an error (the caller then leaves the numbers unverified)."""
+    import os
+
+    import httpx
+
+    url = (services_config or {}).get("vinu_research", "http://localhost:8087")
+    headers: dict[str, str] = {}
+    try:
+        from vinu_infra.auth import VINU_API_KEY
+        if VINU_API_KEY:
+            headers["Authorization"] = f"Bearer {VINU_API_KEY}"
+    except Exception:
+        pass
+    timeout = float(os.environ.get("VINU_BAR_VALIDATION_TIMEOUT_SEC", "3600"))
+    try:
+        resp = httpx.post(f"{url}/research/validate-code", json={"symbol": symbol, "strategy_code": strategy_code},
+                          headers=headers, timeout=timeout)
+        if resp.status_code >= 400:
+            LOG.warning("bar validation for %s rejected (HTTP %s): %s", symbol, resp.status_code, resp.text[:300])
+            return {"error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
+        return resp.json()
+    except Exception as exc:  # noqa: BLE001 -- unreachable service must not break the research result
+        LOG.warning("bar validation for %s failed: %s", symbol, exc)
+        return None
+
+
+def apply_bar_evidence(artifact: Any, evidence: Optional[dict[str, Any]]) -> str:
+    """Copy the measured numbers onto the artifact and decide, in code, whether it may go on. Returns the decision:
+    "verified" (a bar size cleared the promotion bar; the artifact keeps that bar size and its numbers), "rejected" (every
+    bar size tested and none cleared it; the artifact is DISABLED with the reasons), or "unverified" (no usable
+    measurement; the model's own numbers are NOT trusted, the artifact stays BENCHING and fails the promotion bar closed)."""
+    import json
+
+    from vinu_research.models import ArtifactStatus
+
+    if not evidence or evidence.get("error") or not evidence.get("bars"):
+        artifact.deflated_sharpe = 0.0
+        artifact.holdout_passed = None
+        artifact.stress_test_passed = None
+        artifact.pbo = None
+        artifact.bar_evidence = json.dumps({"verified": False, "error": (evidence or {}).get("error", "validation unavailable")})
+        return "unverified"
+
+    rows = evidence["bars"]
+    chosen = evidence.get("chosen")
+    show = chosen or max((r for r in rows if r.get("tested")), key=lambda r: float(r.get("sharpe") or -1e9), default=None)
+    if show is not None:
+        artifact.initial_sharpe = float(show.get("sharpe") or 0.0)
+        artifact.initial_max_dd = float(show.get("max_drawdown") or 0.0)
+        artifact.deflated_sharpe = float(show.get("deflated_sharpe") or 0.0)
+        artifact.holdout_passed = show.get("holdout_passed")
+        artifact.stress_test_passed = show.get("stress_test_passed")
+        artifact.pbo = show.get("pbo")
+    artifact.bar_evidence = json.dumps({"verified": True, "passing_bars": evidence.get("passing_bars", []), "bars": rows}, default=str)
+    if chosen:
+        artifact.bar_interval = str(chosen["interval"])
+        return "verified"
+    artifact.status = ArtifactStatus.DISABLED
+    return "rejected"
+
+
 def write_artifact_from_research_pass(
     content: str,
     *,
     strategy_store: Any,
     source_run_id: str = "",
+    services_config: Any = None,
+    bar_validator: Any = None,
 ) -> Optional[str]:
     """Returns the new artifact_id if one was written, None otherwise
     (verdict wasn't PASS, the json block was missing/unparseable, or the
@@ -104,6 +169,12 @@ def write_artifact_from_research_pass(
         # back to this run lives in team_runs (run_id is the primary key
         # there already), not duplicated onto the artifact itself.
 
+        # The model's own Sharpe / drawdown above are only a first guess. Code now re-tests this exact strategy on every bar
+        # size and replaces them with measured numbers (and a bar size); a strategy no bar size clears is disabled here.
+        validator = bar_validator or validate_on_all_bars
+        decision = apply_bar_evidence(artifact, validator(symbol, strategy_code, services_config))
+        LOG.info("research-pass artifact %s for %s: bar validation %s (bar size %s)",
+                 artifact.artifact_id, symbol, decision, artifact.bar_interval or "-")
         strategy_store.upsert_artifact(artifact)
         return artifact.artifact_id
     except Exception:

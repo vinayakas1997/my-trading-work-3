@@ -88,6 +88,36 @@ async def run_research(body: RunResearchRequest) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class ValidateCodeRequest(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=10)
+    strategy_code: str = Field(..., min_length=1)
+    bars: list[str] | None = Field(default=None, description="Bar sizes to test (default: the service's configured sweep intervals).")
+    to_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+    @field_validator("strategy_code")
+    @classmethod
+    def _must_be_runnable(cls, value: str) -> str:
+        from vinu_research.bar_validation import normalise_strategy_code
+
+        return normalise_strategy_code(value)
+
+
+@router.post("/validate-code")
+async def validate_code(body: ValidateCodeRequest) -> dict[str, Any]:
+    """One strategy, run unchanged on every bar size and judged by the promotion bar (see bar_validation.py). Slow: it runs
+    the full research checks once per bar size."""
+    if _service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    from vinu_research.bar_validation import validate_across_bars
+
+    try:
+        return await validate_across_bars(
+            _service, symbol=body.symbol.upper(), strategy_code=body.strategy_code, bars=body.bars, to_date=body.to_date,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/ensure")
 async def ensure_strategy(body: RunResearchRequest) -> dict[str, Any]:
     """Like /research/run, but skips running if `symbol` already has an

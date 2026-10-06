@@ -21,7 +21,7 @@ class UserStrategy(BaseStrategy):
 
 CROSSOVER_TEMPLATE = """fast_ma = data['close'].rolling(int({fast_period})).mean()
 slow_ma = data['close'].rolling(int({slow_period})).mean()
-signal = (fast_ma > slow_ma).astype(int).diff()
+signal = (fast_ma > slow_ma).astype(int)
 return signal * {allocation}"""
 
 TRIPLE_CROSSOVER_TEMPLATE = """fast_ma = data['close'].rolling(int({fast_period})).mean()
@@ -94,15 +94,29 @@ atr = atr.rolling(int({st_period})).mean()
 hl_avg = (high + low) / 2
 upper_band = hl_avg + {st_multiplier} * atr
 lower_band = hl_avg - {st_multiplier} * atr
-in_uptrend = close > upper_band.shift()
-in_uptrend = in_uptrend.where(in_uptrend.notna(), True)
-signal = in_uptrend.astype(int).diff().fillna(0)
+c = close.to_numpy(dtype=float)
+ub = upper_band.to_numpy(dtype=float)
+lb = lower_band.to_numpy(dtype=float)
+n = len(c)
+valid = ~(np.isnan(ub) | np.isnan(lb))
+start = int(np.argmax(valid)) if valid.any() else n
+final_ub = ub.copy()
+final_lb = lb.copy()
+trend = np.zeros(n)
+for i in range(start + 1, n):
+    final_ub[i] = ub[i] if (ub[i] < final_ub[i - 1] or c[i - 1] > final_ub[i - 1]) else final_ub[i - 1]
+    final_lb[i] = lb[i] if (lb[i] > final_lb[i - 1] or c[i - 1] < final_lb[i - 1]) else final_lb[i - 1]
+    if trend[i - 1] == 1.0:
+        trend[i] = 0.0 if c[i] < final_lb[i] else 1.0
+    else:
+        trend[i] = 1.0 if c[i] > final_ub[i] else 0.0
+signal = pd.Series(trend, index=data.index)
 return signal * {allocation}"""
 
 ADX_CROSSOVER_TEMPLATE = """fast_ma = data['close'].rolling(int({fast_period})).mean()
 slow_ma = data['close'].rolling(int({slow_period})).mean()
 adx = data.get('adx_{adx_period}', pd.Series(25.0, index=data.index))
-raw_signal = (fast_ma > slow_ma).astype(int).diff()
+raw_signal = (fast_ma > slow_ma).astype(int)
 signal = raw_signal.where(adx > {adx_threshold}, 0)
 return signal * {allocation}"""
 
@@ -124,7 +138,7 @@ close = data['close']
 ma = close.rolling(int({mr_period})).mean()
 std = close.rolling(int({mr_period})).std()
 z = (close - ma) / std.replace(0, float('inf'))
-trend_signal = (fast_ma > slow_ma).astype(int).diff()
+trend_signal = (fast_ma > slow_ma).astype(int)
 mr_signal = pd.Series(0.0, index=data.index)
 mr_signal[z < -{mr_entry}] = 1.0
 mr_signal[z > {mr_entry}] = -1.0
@@ -135,11 +149,11 @@ MACD_TEMPLATE = """ema_fast = data['close'].ewm(span=int({macd_fast}), adjust=Fa
 ema_slow = data['close'].ewm(span=int({macd_slow}), adjust=False).mean()
 macd_line = ema_fast - ema_slow
 signal_line = macd_line.ewm(span=int({macd_signal}), adjust=False).mean()
-signal = (macd_line > signal_line).astype(int).diff()
+signal = (macd_line > signal_line).astype(int)
 return signal * {allocation}"""
 
 VWAP_CROSSOVER_TEMPLATE = """vwap = (data['volume'] * data['close']).rolling(int({vwap_period})).sum() / data['volume'].rolling(int({vwap_period})).sum().replace(0, float('inf'))
-signal = (data['close'] > vwap).astype(int).diff()
+signal = (data['close'] > vwap).astype(int)
 return signal * {allocation}"""
 
 TEMPLATE_METADATA: list[dict[str, Any]] = [
