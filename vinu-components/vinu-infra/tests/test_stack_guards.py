@@ -360,9 +360,7 @@ def test_stale_check_sees_a_changed_file_that_git_considers_unchanged(tmp_path, 
     assert which.endswith("entrypoint.sh") and mtime >= f.stat().st_mtime - 1
     # tests and docs never reach a running service, so changing them must not make an image look stale
     (sub / "pkg" / "tests").mkdir()
-    (sub / "pkg" / "tests" / "test_x.py").write_text("x
-")
-    (sub / "pkg" / "README.md").write_text("x
-")
+    (sub / "pkg" / "tests" / "test_x.py").write_text("x")
+    (sub / "pkg" / "README.md").write_text("x")
     assert mod.newest_mtime(["pkg"])[1].endswith("entrypoint.sh")
     assert mod.newest_change(["pkg"])[0] >= mtime
