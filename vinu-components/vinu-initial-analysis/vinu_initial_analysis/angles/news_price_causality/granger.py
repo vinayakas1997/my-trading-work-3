@@ -19,7 +19,10 @@ def run_granger_causality_test(
 ) -> dict[str, Any]:
     df = pd.DataFrame({"news": news_series, "returns": return_series})
     df = df.dropna()
-    if len(df) < max_lag + 5:
+    # statsmodels allows at most about (n - 1) // 3 lags for n observations and raises ValueError beyond that. Ask for
+    # no more than the data supports (one less than the limit, to stay clear of its edge) rather than failing the angle.
+    max_lag = min(max_lag, (len(df) - 1) // 3 - 1)
+    if max_lag < 1 or len(df) < max_lag + 5:
         return {
             "granger_causes_prices": False,
             "best_lag_hours": 0,

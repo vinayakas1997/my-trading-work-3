@@ -48,3 +48,19 @@ def test_a_failing_statsmodels_call_is_reported_not_passed_off_as_no_causality(m
     result = g.run_granger_causality_test(pd.Series(rng.normal(size=100)), pd.Series(rng.normal(size=100)), max_lag=3)
     assert result["granger_causes_prices"] is False
     assert "TypeError" in result["error"]
+
+
+def test_few_observations_cap_the_lag_instead_of_failing():
+    """30 observations with the default 12 lags used to raise 'Insufficient observations. Maximum allowable lag is 8'
+    inside statsmodels and be logged as an ERROR traceback every time the angle ran."""
+    rng = np.random.default_rng(1)
+    idx = pd.RangeIndex(30)
+    out = _run_granger_test(pd.Series(rng.normal(size=30), index=idx), pd.Series(rng.normal(size=30), index=idx))
+    assert "error" not in out
+    assert out["test_results"] and max(out["test_results"]) <= 8
+
+
+def test_too_few_observations_to_test_at_all_is_insufficient_not_an_error():
+    idx = pd.RangeIndex(6)
+    out = _run_granger_test(pd.Series(range(6), index=idx, dtype=float), pd.Series(range(6), index=idx, dtype=float))
+    assert out["p_value"] == 1.0 and out["test_results"] == {} and "error" not in out
