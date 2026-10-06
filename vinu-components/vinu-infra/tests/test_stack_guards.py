@@ -257,3 +257,30 @@ def test_every_shell_script_parses():
         if result.returncode != 0:
             bad.append(f"{script.name}: {result.stderr.strip()[:120]}")
     assert bad == [], bad
+
+
+def test_stale_check_sees_an_uncommitted_edit_when_the_folder_is_a_subdirectory_of_the_repo(tmp_path, monkeypatch):
+    """git status prints repo-root-relative paths; joining them to a sub-folder found no file, so an edited but
+    uncommitted source never made its image look stale (a deploy then rebuilt nothing)."""
+    import importlib.util
+    import subprocess
+    import time
+
+    spec = importlib.util.spec_from_file_location("stale_images", Path(__file__).resolve().parents[2] / "scripts" / "stale_images.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    sub = tmp_path / "sub"
+    (sub / "pkg").mkdir(parents=True)
+    git = lambda *a: subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
+    git("init", "-q")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    (sub / "pkg" / "a.py").write_text("x = 1\n")
+    git("add", ".")
+    git("commit", "-q", "-m", "first")
+    time.sleep(1.1)
+    (sub / "pkg" / "a.py").write_text("x = 2\n")           # edited, not committed
+    monkeypatch.setattr(mod, "ROOT", sub)
+    changed_at, what = mod.newest_change(["pkg"])
+    assert "uncommitted edit" in what and changed_at >= (sub / "pkg" / "a.py").stat().st_mtime - 1

@@ -17,6 +17,11 @@ from vinu_research.models import BacktestMetrics, BacktestResult, HypothesisStat
 LOG = logging.getLogger(__name__)
 
 
+class StrategyCrashed(RuntimeError):
+    """The simulator answered (422): this candidate's code produced no usable weights for any symbol. A failure of the
+    strategy, not of the environment -- the loop feeds the reason back to the writer and tries again."""
+
+
 class InfrastructureError(RuntimeError):
     """The backtest (or its data) is unavailable for environment reasons:
     simulator unreachable/rejecting, auth failure, or empty market data.
@@ -160,6 +165,8 @@ class ResearchTools:
                     f"returned HTTP {status} ({detail}). Do NOT retry with another "
                     f"recipe — STOP this run and report the blocker."
                 ) from exc
+            if status == 422:
+                raise StrategyCrashed(f"Backtest failed: HTTP {status} ({detail})") from exc
             raise RuntimeError(f"Backtest failed: HTTP {status} ({detail})") from exc
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             raise InfrastructureError(

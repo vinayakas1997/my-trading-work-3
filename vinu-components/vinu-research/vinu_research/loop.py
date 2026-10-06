@@ -39,7 +39,7 @@ from vinu_research.models import (
 from vinu_research.report import generate_report
 from vinu_research.benchmark import compute_benchmark_comparison, compute_benchmark_returns_metrics
 from vinu_research.portfolio import analyze_portfolio
-from vinu_research.tools import InfrastructureError, ResearchTools, timestamps_from_dates
+from vinu_research.tools import InfrastructureError, ResearchTools, StrategyCrashed, timestamps_from_dates
 from vinu_research.walk_forward import (
     WalkForwardConfig,
     WalkForwardWindow,
@@ -552,6 +552,32 @@ class StrategyResearchLoop:
                             initial_capital=initial_capital,
                             symbols=backtest_symbols,
                         )
+                except StrategyCrashed as crash:
+                    # The candidate's own code crashed for every symbol. That is the writer's mistake to fix, not a
+                    # reason to end the run (it used to escape as an HTTP 500 and the writer never saw why).
+                    LOG.warning("Iteration %s: strategy crashed: %s", iteration, crash)
+                    record = IterationRecord(
+                        iteration=iteration,
+                        strategy_code=strategy_code,
+                        result=BacktestResult(
+                            run_id=f"strategy_crashed_{iteration}",
+                            strategy_name="UserStrategy",
+                            metrics=BacktestMetrics.from_dict({}),
+                            benchmark_metrics={},
+                            trade_count=0,
+                            equity_points=0,
+                            raw={},
+                        ),
+                        critique=CriticFeedback(
+                            verdict="REFINE",
+                            reasoning=f"The strategy code crashed when it ran: {crash}",
+                            suggestions=["Fix the error above; the code must run on plain OHLCV data without exceptions."],
+                        ),
+                    )
+                    history.append(record)
+                    if self._on_iteration:
+                        self._on_iteration(record)
+                    continue
                 except InfrastructureError as infra_exc:
                     # Environment failure (simulator/auth/data), not a
                     # strategy failure: stop now instead of spending the

@@ -130,6 +130,38 @@ services:
         condition: service_healthy
 
   # =========================================================================
+  # vinu-llm-gateway (Port: 8099) — the one priority queue in front of the single-slot local LLM
+  # Every service's VINU_LLM_BASE_URL points here; only this service talks to VINU_LLM_UPSTREAM_URL.
+  # =========================================================================
+  llm-gateway:
+    build:
+      context: .
+      dockerfile: vinu-llm-gateway/Dockerfile
+    env_file: .env
+    ports:
+      - "127.0.0.1:8099:8099"
+    volumes:
+      - ./data/llm-gateway:/data
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/app/.cache
+    mem_limit: 512m
+    cpus: 1
+    pids_limit: 128
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8099/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # =========================================================================
   # vinu-tools (Port: 8082) — API + feature worker
   # =========================================================================
   features-api:

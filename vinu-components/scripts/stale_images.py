@@ -52,8 +52,11 @@ def newest_change(paths: list[str]) -> tuple[float, str]:
     if committed:
         ts, sha, subject = committed.split("|", 2)
         newest, what = float(ts), f"commit {sha} {subject[:60]}"
+    # `git status` prints paths relative to the REPOSITORY root, which is not ROOT when this folder is a subdirectory
+    # of the repo; joining them to ROOT pointed at files that do not exist, so uncommitted edits were never noticed.
+    top = Path(run("git", "rev-parse", "--show-toplevel").strip() or ROOT)
     for line in run("git", "status", "--porcelain", "--", *rel, *skip).splitlines():
-        f = ROOT / line[3:].strip().strip('"')
+        f = top / line[3:].strip().strip('"')
         if f.is_file() and f.stat().st_mtime > newest:
             newest, what = f.stat().st_mtime, f"uncommitted edit {line[3:].strip()}"
     return newest, what

@@ -388,3 +388,15 @@ class TestOpenAIChatLLMOutputCap:
     def test_explicit_cap_wins(self, monkeypatch) -> None:
         monkeypatch.setenv("VINU_LLM_MAX_TOKENS", "1234")
         assert self._sent_params(monkeypatch, max_tokens=50)["max_tokens"] == 50
+
+
+def test_agent_chat_tells_the_gateway_who_is_asking():
+    from vinu_infra.llm.identity import purpose_scope
+
+    llm = OpenAIChatLLM(model="test-model", base_url="http://fake")
+    llm._client = MagicMock()
+    llm._client.chat.completions.create.return_value = _openai_response("ok")
+    with purpose_scope("live_decision"):
+        llm.chat([{"role": "user", "content": "hi"}])
+    sent = llm._client.chat.completions.create.call_args.kwargs
+    assert sent["extra_headers"] == {"X-Vinu-Caller": "vinu-agent", "X-Vinu-Purpose": "live_decision"}

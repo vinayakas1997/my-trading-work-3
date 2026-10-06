@@ -13,7 +13,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-DATA_DIRS="stock-price screener features initial-analysis live agent research portfolio strategy simulator shared strategy-evaluation news reflection"
+DATA_DIRS="stock-price screener features initial-analysis live agent research portfolio strategy simulator shared strategy-evaluation news reflection llm-gateway"
 
 prepare() {
   [ -f .env ] || { cp .env-example .env; echo "created .env from .env-example"; }

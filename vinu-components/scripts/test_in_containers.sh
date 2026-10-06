@@ -13,7 +13,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-SERVICES="${*:-stock-api screener-api features-api news-api portfolio-api quant-core-api research-api live-api agent-api reflection-worker initial-analysis-api}"
+SERVICES="${*:-llm-gateway stock-api screener-api features-api news-api portfolio-api quant-core-api research-api live-api agent-api reflection-worker initial-analysis-api}"
 OUT="${TEST_OUT:-logs/container-tests}"
 mkdir -p "$OUT"
 

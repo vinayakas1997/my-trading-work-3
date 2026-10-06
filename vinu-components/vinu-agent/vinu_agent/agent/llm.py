@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Generator, Optional
 
 from vinu_infra.llm.retry import build_retry
+from vinu_infra.llm.identity import llm_identity_headers
 from vinu_infra.llm.thinking import thinking_extra
 
 from ..config import AgentConfig, LLMConfig
@@ -180,6 +181,7 @@ class OpenAIChatLLM(ChatLLM):
         extra = thinking_extra()
         if extra:
             params["extra_body"] = extra
+        params["extra_headers"] = llm_identity_headers("vinu-agent")
 
         attempts = {"n": 0}
 

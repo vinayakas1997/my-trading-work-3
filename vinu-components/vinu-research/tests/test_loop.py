@@ -529,6 +529,37 @@ class TestNullCaseNeverFalselyPasses:
         assert all(rec.critique.verdict != "PASS" for rec in result.iterations)
 
 
+class TestStrategyCrashIsFeedbackNotAnAbort:
+    """A candidate whose code crashes for every symbol (the simulator answers 422) is the writer's mistake. It used to
+    escape the loop as an HTTP 500 on the first iteration, so the writer never saw why and the whole run was lost."""
+
+    async def test_crash_on_the_first_iteration_is_recorded_and_the_loop_goes_on(self):
+        from vinu_research.tools import StrategyCrashed
+
+        loop = StrategyResearchLoop(config=ResearchConfig(max_iterations=2, walk_forward_enabled=False))
+        calls = {"n": 0}
+
+        async def fake_run_backtest(strategy_code, symbol, from_date, to_date, **kwargs):
+            calls["n"] += 1
+            raise StrategyCrashed("Backtest failed: HTTP 422 (generate_weights crashed for every symbol: 'ndarray' has no fillna)")
+
+        async def fake_none(*args, **kwargs):
+            return None
+
+        loop._run_backtest = fake_run_backtest
+        loop._tools.get_story = fake_none
+        loop._tools.get_drawdowns = fake_none
+        loop._tools.get_benchmark_data = fake_none
+
+        result = await loop.run(user_idea="SMA crossover", symbol="AAPL", from_date="2024-01-01", to_date="2024-12-31")
+
+        assert calls["n"] == 2                                   # it tried again instead of dying on the first crash
+        assert len(result.iterations) == 2
+        first = result.iterations[0]
+        assert first.critique.verdict == "REFINE" and "fillna" in first.critique.reasoning
+        assert first.result.run_id == "strategy_crashed_1"
+
+
 class TestUniverseBacktesting:
     """
     Phase 4B: a `universe` of tickers can be backtested as one portfolio (the

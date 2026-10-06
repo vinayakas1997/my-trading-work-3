@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from vinu_infra.llm.identity import llm_identity_headers
 from vinu_infra.llm.thinking import thinking_extra
 
 import hashlib
@@ -158,6 +159,7 @@ class LlmClient:
         payload.update(thinking_extra())
 
         headers = {"Content-Type": "application/json"}
+        headers.update(llm_identity_headers(self._service))
         if self._config.api_key:
             headers["Authorization"] = f"Bearer {self._config.api_key}"
 
