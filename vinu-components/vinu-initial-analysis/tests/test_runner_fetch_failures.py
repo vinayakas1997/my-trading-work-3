@@ -90,3 +90,12 @@ def test_no_bars_yet_is_not_recorded_as_a_finished_run_so_it_is_retried_when_bar
     out = r.run("MSFT", angle_names=["fake"])
     assert out["fake"]["row_count"] == 1
     assert r._run_log.has_existing_run("MSFT", "fake", None, None, granularity="1D")
+
+
+def test_an_explicit_single_timeframe_trigger_still_gets_its_answer_with_no_bars(tmp_path):
+    """The v1 trigger route polls one exact run id; it must still resolve (with the
+    module's own placeholder row), not stay 'not_found' forever."""
+    r = _runner(str(tmp_path), price_client=_EmptyPrice())
+    r._import_compute = lambda name: _PlaceholderMod
+    out = r.run("MSFT", angle_names=["fake"], time_format="1D", run_id="trigger-run-1")
+    assert out["fake"]["row_count"] == 1

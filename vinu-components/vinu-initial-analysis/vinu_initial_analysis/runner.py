@@ -276,13 +276,15 @@ class AngleRunner:
                 # The price service failed -- recording this as a "completed" empty run would hide the outage
                 # behind a healthy-looking result. Raising lets run() record a real error row instead.
                 raise RuntimeError(f"bars fetch failed for {symbol} at {tf}: {self._bar_errors[(symbol, tf)]}")
-            if needs_bars and bars.empty and self._price_client is not None:
+            if needs_bars and bars.empty and self._price_client is not None and time_format is None:
                 # No price history for this symbol yet (a new watchlist ticker
                 # before its backfill). Several angles answer empty bars with a
                 # placeholder row (drawdown: "0 drawdowns", metrics: "no_data");
                 # recording that as a completed run made the window final, so
                 # MSFT's real result was never computed once the bars arrived.
-                # Write nothing and record nothing: the next cycle retries.
+                # Write nothing and record nothing: the next cycle retries. (An
+                # explicit single-timeframe trigger keeps the old behaviour: the
+                # caller polls that exact run id and needs an answer.)
                 LOG.warning("No bars for %s at %s yet -- %s not computed, will retry", symbol, tf, angle["name"])
                 continue
             if remote:
