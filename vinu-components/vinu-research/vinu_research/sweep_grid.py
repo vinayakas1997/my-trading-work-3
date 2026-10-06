@@ -162,6 +162,14 @@ async def run_sweep_grid(
         raise ValueError("base_code mode requires `param_name`.")
 
     resolved_tools = tools or ResearchTools(config)
+    if config is None:
+        # Neither the /sweep/grid route nor the agent's tool passes a config,
+        # so the walk-forward pass below never ran in the real chain and every
+        # sweep reported "no walk-forward evidence". Use the config the tools
+        # were built with.
+        tools_config = getattr(resolved_tools, "_config", None)
+        if isinstance(tools_config, ResearchConfig):
+            config = tools_config
     requested = len(param_grid)
 
     async def _run_one(point: dict[str, Any]) -> GridPointOutcome:

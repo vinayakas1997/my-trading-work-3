@@ -253,6 +253,18 @@ class TestRunSweepGridWalkForwardWiring:
         assert calls[0]["config"] is config
 
     @pytest.mark.asyncio
+    async def test_walk_forward_runs_when_the_caller_passes_no_config(self, monkeypatch) -> None:
+        """The /sweep/grid route and the agent's sweep tool pass no config. The
+        pass used to be skipped for them, so the real chain never produced
+        walk-forward evidence. It must use the config the tools carry."""
+        mock_tools = AsyncMock()
+        mock_tools._config = ResearchConfig(walk_forward_enabled=True)
+        result, calls = await self._grid_result(mock_tools, None, monkeypatch)
+        assert len(calls) == 1
+        assert calls[0]["config"] is mock_tools._config
+        assert result.walk_forward is not None
+
+    @pytest.mark.asyncio
     async def test_walk_forward_skipped_when_disabled(self, monkeypatch) -> None:
         mock_tools = AsyncMock()
         config = ResearchConfig(walk_forward_enabled=False)
