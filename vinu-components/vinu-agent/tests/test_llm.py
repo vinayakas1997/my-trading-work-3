@@ -363,3 +363,28 @@ class TestLoggingChatLLM:
         assert wrapped.model == "fake-model"
         assert wrapped.base_url == "http://fake"
         assert wrapped.context_window == 32000
+
+
+class TestOpenAIChatLLMOutputCap:
+    """A request with no max_tokens lets a local server run a degenerate answer unbounded and block its only slot."""
+
+    def _sent_params(self, monkeypatch, **chat_kwargs) -> dict:
+        llm = OpenAIChatLLM(model="test-model", base_url="http://fake")
+        llm._client = MagicMock()
+        llm._client.chat.completions.create.return_value = _openai_response("ok")
+        llm.chat([{"role": "user", "content": "hi"}], **chat_kwargs)
+        return llm._client.chat.completions.create.call_args.kwargs
+
+    def test_every_request_carries_the_configured_cap(self, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_LLM_MAX_TOKENS", "1234")
+        assert self._sent_params(monkeypatch)["max_tokens"] == 1234
+
+    def test_default_cap_when_unset_or_garbage(self, monkeypatch) -> None:
+        monkeypatch.delenv("VINU_LLM_MAX_TOKENS", raising=False)
+        assert self._sent_params(monkeypatch)["max_tokens"] == 8000
+        monkeypatch.setenv("VINU_LLM_MAX_TOKENS", "lots")
+        assert self._sent_params(monkeypatch)["max_tokens"] == 8000
+
+    def test_explicit_cap_wins(self, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_LLM_MAX_TOKENS", "1234")
+        assert self._sent_params(monkeypatch, max_tokens=50)["max_tokens"] == 50

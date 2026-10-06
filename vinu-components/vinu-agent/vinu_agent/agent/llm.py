@@ -1,4 +1,5 @@
 import json
+import os
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -131,6 +132,18 @@ def _is_transient_openai_error(e: Exception) -> bool:
     return status is not None and (status == 429 or status >= 500)
 
 
+def _max_output_tokens(kwargs: dict) -> int:
+    """Every chat request must carry an output cap. Without one a local server (llama.cpp) lets a degenerate answer run
+    unbounded, and with a single slot that one request blocks every other caller (research timed out behind it)."""
+    explicit = kwargs.get("max_tokens")
+    if explicit:
+        return int(explicit)
+    try:
+        return max(1, int(os.environ.get("VINU_LLM_MAX_TOKENS", "8000")))
+    except ValueError:
+        return 8000
+
+
 class OpenAIChatLLM(ChatLLM):
     def __init__(
         self, model: str = "gpt-4o-mini", api_key: str = "", base_url: str = "",
@@ -160,7 +173,7 @@ class OpenAIChatLLM(ChatLLM):
         return self._base_url
 
     def chat(self, messages: list, tools: Optional[list] = None, **kwargs) -> dict:
-        params = {"model": self._model, "messages": messages}
+        params = {"model": self._model, "messages": messages, "max_tokens": _max_output_tokens(kwargs)}
         if tools:
             params["tools"] = tools
             params["tool_choice"] = "auto"
