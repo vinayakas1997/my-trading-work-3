@@ -284,3 +284,16 @@ def test_stale_check_sees_an_uncommitted_edit_when_the_folder_is_a_subdirectory_
     monkeypatch.setattr(mod, "ROOT", sub)
     changed_at, what = mod.newest_change(["pkg"])
     assert "uncommitted edit" in what and changed_at >= (sub / "pkg" / "a.py").stat().st_mtime - 1
+
+
+def test_model_angles_are_switched_off_while_the_models_service_is_dormant():
+    """models-api only starts under a compose profile. With VINU_MODELS_ENABLED unset the analysis service tried every
+    model angle on every ticker each cycle, failed on the missing host, and logged ~100 tracebacks per 6 minutes that
+    buried the real errors."""
+    root = Path(__file__).resolve().parents[2]
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    env = (root / ".env-example").read_text(encoding="utf-8")
+    dormant = re.search(r"^  models-api:\r?\n(?:.*\r?\n)*?    profiles:", compose, re.M) is not None
+    assert dormant, "models-api is expected to sit behind a compose profile; update this guard if that changed"
+    if dormant:
+        assert re.search(r"^VINU_MODELS_ENABLED=false\s*$", env, re.M), "set VINU_MODELS_ENABLED=false in .env-example"
