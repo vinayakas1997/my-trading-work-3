@@ -9,6 +9,7 @@ pandas, so steady-state candle queries are milliseconds.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 import warnings
@@ -28,6 +29,11 @@ LOG = logging.getLogger(__name__)
 # symbol -> (file_signature, pandas DataFrame, last_signature_check_monotonic)
 _CACHED_FRAMES: dict[str, tuple[tuple, Any, float]] = {}
 _FRAME_LOCK = threading.Lock()
+
+# How many parquet loads may run at once, and the memory each DuckDB connection may use (env-tunable).
+_LOAD_SLOTS = threading.BoundedSemaphore(max(1, int(os.environ.get("VINU_STOCK_MAX_CONCURRENT_LOADS", "2"))))
+_LOAD_MEMORY_LIMIT = os.environ.get("VINU_STOCK_LOAD_MEMORY_LIMIT", "512MB")
+_LOAD_THREADS = max(1, int(os.environ.get("VINU_STOCK_LOAD_THREADS", "2")))
 _SIGNATURE_COOLDOWN_SEC = 30.0
 
 
@@ -110,20 +116,24 @@ def _load_symbol_frame(data_root: Path, symbol: str) -> Any:
     df = None
     if good_files:
         placeholders = ", ".join(f"'{p}'" for p in good_files)
-        conn = duckdb.connect()
-        try:
-            df = conn.execute(
-                f"""
-                SELECT symbol, provider, bar_ts, open, high, low, close, volume,
-                       COALESCE(adj_factor, 1.0) AS adj_factor
-                FROM read_parquet([{placeholders}], union_by_name=true)
-                WHERE symbol = ?
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY symbol, provider, bar_ts ORDER BY bar_ts DESC) = 1
-                """,
-                [sym],
-            ).fetchdf()
-        finally:
-            conn.close()
+        # Every load used to open its own unbounded DuckDB connection, all at once: a burst (the analysis service
+        # restarting for 50 tickers) could exhaust the container's memory and fail with "Out of buffer" (500s, and
+        # restarts). Bound how many loads run together and how much memory each may take.
+        with _LOAD_SLOTS:
+            conn = duckdb.connect(config={"memory_limit": _LOAD_MEMORY_LIMIT, "threads": _LOAD_THREADS})
+            try:
+                df = conn.execute(
+                    f"""
+                    SELECT symbol, provider, bar_ts, open, high, low, close, volume,
+                           COALESCE(adj_factor, 1.0) AS adj_factor
+                    FROM read_parquet([{placeholders}], union_by_name=true)
+                    WHERE symbol = ?
+                    QUALIFY ROW_NUMBER() OVER (PARTITION BY symbol, provider, bar_ts ORDER BY bar_ts DESC) = 1
+                    """,
+                    [sym],
+                ).fetchdf()
+            finally:
+                conn.close()
 
         if df is not None and not df.empty:
             df["bar_ts"] = df["bar_ts"].astype("int64")
