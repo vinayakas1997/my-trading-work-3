@@ -5,7 +5,11 @@
 #   * the data folders are made writable for the container user before start (Docker Desktop on Windows creates
 #     them root-owned and the services then fail with "unable to open database file")
 #
-# Usage (from vinu-components/):  scripts/stack.sh prepare | check | build | up | down | ps
+# A fix only takes effect once its image is rebuilt AND the container recreated, so:
+#   * `stale` lists every running service older than its source (exit 1 if any)
+#   * `deploy` rebuilds and recreates exactly those services, then re-checks
+#
+# Usage (from vinu-components/):  scripts/stack.sh prepare | check | build | up | down | ps | stale | deploy
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -50,8 +54,18 @@ build() { prepare; check; docker compose build $(services); }
 up()    { prepare; check; docker compose up -d $(services); }
 down()  { docker compose down; }
 ps()    { docker compose ps --format "table {{.Name}}\t{{.Status}}"; }
+stale() { python scripts/stale_images.py; }
+deploy() {
+  prepare; check
+  local names
+  names=$(python scripts/stale_images.py | awk '/^  STALE/ {print $2}')
+  [ -z "$names" ] && { echo "nothing is stale"; return 0; }
+  docker compose build $names
+  docker compose up -d $names
+  python scripts/stale_images.py
+}
 
 case "${1:-}" in
-  prepare|check|build|up|down|ps) "$1" ;;
-  *) echo "usage: scripts/stack.sh prepare|check|build|up|down|ps"; exit 2 ;;
+  prepare|check|build|up|down|ps|stale|deploy) "$1" ;;
+  *) echo "usage: scripts/stack.sh prepare|check|build|up|down|ps|stale|deploy"; exit 2 ;;
 esac

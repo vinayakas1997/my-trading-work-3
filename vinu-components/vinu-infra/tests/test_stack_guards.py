@@ -205,3 +205,14 @@ def test_a_sub_agent_delegation_may_outlast_several_slow_local_llm_calls():
     example = (ROOT / ".env-example").read_text(encoding="utf-8")
     assert int(re.search(r"^VINU_AGENT_TOOL_TIMEOUT=(\d+)\s*$", example, re.M).group(1)) >= 600
     assert re.search(r"^VINU_AGENT_SUMMARY_PARALLELISM=1\s*$", example, re.M)
+
+
+def test_a_stale_container_cannot_go_unnoticed():
+    """Fixes only take effect once the image is rebuilt and the container recreated. Seven of eleven running services
+    were older than their source (the agent still ran the old research code in-process), so `stack.sh stale` reports
+    them and `stack.sh deploy` rebuilds and recreates exactly those."""
+    script = (ROOT / "scripts" / "stack.sh").read_text(encoding="utf-8")
+    assert re.search(r"^stale\(\)", script, re.M) and re.search(r"^deploy\(\)", script, re.M)
+    assert "prepare|check|build|up|down|ps|stale|deploy" in script
+    checker = (ROOT / "scripts" / "stale_images.py").read_text(encoding="utf-8")
+    assert "docker" in checker and "COPY" in checker and "sys.exit(main())" in checker
