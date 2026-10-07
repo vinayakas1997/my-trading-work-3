@@ -89,3 +89,12 @@ def pytest_report_header(config):
     if _TORCH_MISSING:
         return "torch not installed: model-angle and orchestration-registry tests are not collected (they run where torch is installed)"
     return None
+
+
+@pytest.fixture(autouse=True)
+def _no_real_news_service(monkeypatch):
+    """The real news client would call vinu-news (not running in a test) and retry with backoff before giving up, which made
+    some tests wait minutes for nothing (problem log O14). Tests that need articles pass their own fake client."""
+    from vinu_initial_analysis.clients.news_client import NewsClient
+
+    monkeypatch.setattr(NewsClient, "get_ticker_news", lambda self, *a, **k: [])

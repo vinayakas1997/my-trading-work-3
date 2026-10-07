@@ -173,3 +173,9 @@ def test_answers_match_the_edge_contracts(client, store) -> None:
     _write_belief(store, psi=0.3)
     assert check_payload("reflection.synthesis->agent.idea_generator", client.get("/reflection/synthesis/latest").json()) == []
     assert check_payload("reflection.notable_beliefs->agent.live_decision_context", client.get("/reflection/beliefs/notable").json()) == []
+
+
+def test_the_service_answers_a_health_check(config, store) -> None:
+    """The container had no health check, so it always showed as unchecked (problem log O15)."""
+    client = TestClient(create_app(config, store))
+    assert client.get("/reflection/health").status_code == 200

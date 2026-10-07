@@ -494,3 +494,24 @@ def test_the_env_example_keeps_the_full_history_start_date_not_the_short_test_ov
     text = (ROOT / ".env-example").read_text(encoding="utf-8")
     values = re.findall(r"^VINU_STAGE1_START_DATE=(\S+)", text, re.M)
     assert values == ["2022-01-01"], values
+
+
+def test_the_infra_tests_run_in_an_empty_folder_so_they_cannot_leave_databases_among_the_real_ones():
+    import os
+
+    assert Path.cwd().resolve() != ROOT.resolve() and not os.listdir(Path.cwd())
+
+
+def test_every_long_running_service_in_the_compose_file_has_a_health_check():
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    body = compose.partition("services:")[2]
+    services = re.split(r"^  (?=[a-z][a-z0-9-]*:\s*$)", body, flags=re.M)
+    missing = [s.split(":", 1)[0] for s in services if "    build:" in s and "healthcheck:" not in s]
+    assert not missing, f"no health check: {missing}"
+
+
+def test_deploy_refuses_to_restart_the_research_services_while_a_run_is_in_flight():
+    """A deploy killed 24 of the 30 research runs that failed in one day (problem log O7, O17)."""
+    script = (ROOT / "scripts" / "stack.sh").read_text(encoding="utf-8")
+    assert "refusing to deploy" in script and 'FORCE:-}" != "1"' in script
+    assert "status='running'" in script and "agent-api|research-api|llm-gateway|quant-core-api" in script

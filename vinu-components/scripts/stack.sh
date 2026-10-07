@@ -61,6 +61,16 @@ deploy() {
   # stale_images.py exits 1 when anything is stale; under `set -o pipefail` that would abort the script here
   names=$(python scripts/stale_images.py | awk '/^  STALE/ {print $2}' || true)
   [ -z "$names" ] && { echo "nothing is stale"; return 0; }
+  # A research run takes 5 to 100 minutes and a restart of any service it uses kills it (problem log O7, O17: 24 of 30 failed
+  # runs in a day were restarts). Refuse to restart those services while a run is in flight, unless told to.
+  if [ "${FORCE:-}" != "1" ] && echo " $names " | grep -qE " (agent-api|research-api|llm-gateway|quant-core-api) "; then
+    running=$(python scripts/stack_db.py agent-api team_runs.db "select count(*) from team_runs where status='running'" 2>/dev/null | grep -oE '\([0-9]+' | tr -d '(' || echo 0)
+    if [ "${running:-0}" -gt 0 ]; then
+      echo "refusing to deploy: $running research/team run(s) in flight would be killed by restarting: $names"
+      echo "wait for them to finish (python scripts/pipeline_health.py lists them) or run: FORCE=1 scripts/stack.sh deploy"
+      return 1
+    fi
+  fi
   docker compose build $names
   docker compose up -d $names
   python scripts/stale_images.py

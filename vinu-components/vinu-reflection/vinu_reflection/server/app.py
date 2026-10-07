@@ -24,6 +24,6 @@ def create_app(config: ReflectionConfig | None = None, store: ReflectionStore | 
         description="Reflection layer — 24 analysts plus the maturity-synthesis brain (Step 8/9)",
         router=merged,
         static_dir=None,
-        expose_health_on_root=False,
+        expose_health_on_root=True,     # /reflection/health: the container's health check (it had none, so it always showed as unchecked)
         route_prefix="reflection",
     )

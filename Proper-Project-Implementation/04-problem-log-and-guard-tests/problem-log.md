@@ -259,6 +259,24 @@ Read `how-to-use-this-log.md` for the rules.
 - **Must agree with:** `quarters.py` (the start must stay before the current period's start)
 - **Status:** GUARDED (the guard covers the template; the live `.env` was set by hand and has no test)
 
+### P39 Running the infra tests on the host left stray databases next to the real stores
+- **Seen:** (O18) `strategy_store.db` and `market_regime_history.db` appeared in `vinu-components/data` after a host run, because some code defaults its data root to `./data` under the working folder.
+- **Fix:** `vinu-infra/tests/conftest.py` runs every infra test from its own empty temporary folder.
+- **Guard:** `vinu-infra/tests/test_stack_guards.py::test_the_infra_tests_run_in_an_empty_folder_so_they_cannot_leave_databases_among_the_real_ones`
+- **Status:** GUARDED (verified: a full host run now leaves no `.db` in `data/`)
+
+### P40 The reflection worker had no health check, so the scoreboard always showed it as unchecked
+- **Seen:** (O15, last part) the container ran the worker and the API but declared no health check, so `docker compose ps` and `pipeline_health.py` could not tell a working worker from a dead API.
+- **Fix:** the reflection API now exposes `/reflection/health` and the compose file gives the container a health check on it. If the worker loop dies the container exits and restarts (it is the main process); the check covers the API process.
+- **Guard:** `vinu-reflection/tests/test_routes_synthesis.py::test_the_service_answers_a_health_check`, `vinu-infra/tests/test_stack_guards.py::test_every_long_running_service_in_the_compose_file_has_a_health_check`
+- **Status:** GUARDED (the check does not prove the worker's last cycle succeeded; the five waiting analysts and the likely-inert `screener_agreement` stay under O15)
+
+### P41 A deploy killed research runs that were in flight
+- **Seen:** (O7, O17) 24 of the 30 failed research runs in one day were "interrupted: the agent container restarted"; a run takes 5 to 100 minutes, so any restart of a service it uses killed it. Most of those restarts were deploys.
+- **Fix:** `scripts/stack.sh deploy` now refuses to restart `agent-api`, `research-api`, `llm-gateway` or `quant-core-api` while a run is in flight, and prints how to wait or override (`FORCE=1`). This stops the self-inflicted kills; it does not make runs survive a crash or a power cut.
+- **Guard:** `vinu-infra/tests/test_stack_guards.py::test_deploy_refuses_to_restart_the_research_services_while_a_run_is_in_flight`
+- **Status:** GUARDED (a text check of the script; the refusal itself was not exercised against a live run). Resumable runs remain open as O7.
+
 ---
 
 ## E. Open problems (found, not fixed)
@@ -267,11 +285,11 @@ Read `how-to-use-this-log.md` for the rules.
 |---|---|---|---|
 | O1 | CLOSED. Fixed: P38. | | |
 | O2 | CLOSED. Fixed: P37 (the switches did nothing). | | |
-| O3 | Backtest spread is 0 (`VINU_SIM_SPREAD_BPS`) | overnight results are flattered; session approval rests on them | measure spreads per session |
+| O3 | Reworded after reading the code: backtest costs are not zero. Every trade pays `VINU_SIMULATOR_TRANSACTION_COST_PCT` plus `VINU_SIMULATOR_SLIPPAGE_PCT` (0.0005) per side, and `VINU_SIM_SPREAD_BPS=0` is only the extra quote spread on top. What is missing is that the cost is the same in every session | overnight and pre-market trades are probably cheaper in the backtest than in life, so session approval is flattered | measure quote spreads per session (O10), then give the cost model the bar time |
 | O4 | No alert channel configured (Telegram or Discord) | at night a halt reaches nobody | set one, with quiet hours |
 | O5 | CLOSED. Fixed: P33 (not yet seen on a real fill). | | |
-| O6 | Portfolio allocation does not carry approved sessions or size multipliers | only the order guard enforces them | decide whether the allocator must too |
-| O7 | A deploy kills a running research run | work lost silently | make the kill visible and restartable |
+| O6 | DECIDED, not built: the allocator does not carry approved sessions or size multipliers; the order guard stays the single place that enforces them (two places would drift apart) | a strategy approved only for the regular session still gets capital allocated overnight, which sits idle | revisit only if idle overnight capital turns out to matter |
+| O7 | Partly fixed (P41): deploys no longer kill a run in flight. A crash or restart outside a deploy still does | work lost | make runs resumable: save progress after each strategy attempt and continue from it after a restart (a design decision; bring options) |
 | O8 | Gatekeeper, allocator and live feedback never run on a real strategy | still synthetic only | needs the first real ACTIVE strategy |
 | O9 | CLOSED. Fixed: P34 (not yet seen on a real night exit). | | |
 | O10 | Per-session spread and liquidity not measured | risk hint uses return volatility only | quote-based spread per session |
@@ -279,7 +297,7 @@ Read `how-to-use-this-log.md` for the rules.
 | O12 | CLOSED. Fixed: P35. | | |
 | O13 | CLOSED. Fixed: P36 (thresholds are guessed). | | |
 | O14 | The initial-analysis tests are not hermetic. In the container harness the full suite never finishes: `test_pnl_attribution.py::test_run_with_angle_names_does_not_error` waits on a news fetch to a service that is not there, and `test_arima_backtest.py` parallel-fit tests take many minutes. With every service URL set to a refusing port, everything except the arima backtest file ran in 103 s (378 passed, 1 failed: `test_api_v1.py::test_trigger_and_poll_flow`, which needs the default URLs and passes under them) | the suite cannot be run as one command, so regressions in this package can hide | make the tests fake the news and bar clients (or set refusing URLs only where the test does not need them), and time-box the arima parallel tests |
-| O15 | Reflection worker: 5 of its 6 analysts still skip each cycle. One was a real bug (P31, fixed). The other five wait on files that their producers write only when an event happens, and nothing has happened yet: `injected_context_log.db` (agent, when context is injected), `rebalance_requests.db` (live, on a rebalance request), `paper_performance.db` (shadow evaluator, on paper trades), `market_regime_history.db` (research, when a trade plan is analysed). `screener_agreement` reads the screener's rule-fire audit, which fills only when a screener RULE fires; this system uses rankers, so it may stay inert for good. A reflection reader on a read-only mount also cannot open a WAL database whose owner has it closed (seen on research telemetry, llm_cache, signal_evidence, sweep_grid) | the learning loop has little to learn from until trades exist; cross-container SQLite reads are fragile | after the first paper trades, confirm the four files appear and the analysts run; decide whether screener_agreement is worth keeping; add a health check to the reflection worker; longer term, give reflection a read path that does not depend on the owner having the file open |
+| O15 | Reflection worker: 5 of its 6 analysts still skip each cycle. One was a real bug (P31, fixed). The other five wait on files that their producers write only when an event happens, and nothing has happened yet: `injected_context_log.db` (agent, when context is injected), `rebalance_requests.db` (live, on a rebalance request), `paper_performance.db` (shadow evaluator, on paper trades), `market_regime_history.db` (research, when a trade plan is analysed). `screener_agreement` reads the screener's rule-fire audit, which fills only when a screener RULE fires; this system uses rankers, so it may stay inert for good. The missing health check is fixed (P40). A reflection reader on a read-only mount also cannot open a WAL database whose owner has it closed (seen on research telemetry, llm_cache, signal_evidence, sweep_grid) | the learning loop has little to learn from until trades exist; cross-container SQLite reads are fragile | after the first paper trades, confirm the four files appear and the analysts run; decide whether screener_agreement is worth keeping; add a health check to the reflection worker; longer term, give reflection a read path that does not depend on the owner having the file open |
 | O16 | Partly fixed (P32). The backlog came from a 76-minute stall of the host model server, not from ordering. Still open: the cause of the stall (host side, unknown); a stall still costs 300 s per call, so a quick probe-and-pause would be better; the planner still queues summaries (5 waiting, 4 with 1,300 s or more) while the model is stalled | a stall wastes research runs; nothing tells the user it happened (see O4) | find why the model server stopped answering (its log on the host); add a cheap probe before each call, and an alert (O4) |
-| O17 | Cause proven (2026-10-07, from `team_runs`): of 30 failed research runs in 24 h, 24 were "interrupted: the agent container restarted while this run was in flight" (deploys and restarts) and 6 were model-server timeouts (the stall in P32). A finished run takes 5 to 100 minutes (average about 40), so almost any restart kills one. The 3-attempt rule is per strategy inside one run, so a killed run does not use it up; it only wastes the work so far | each deploy loses every research run in flight, and runs that were nearly done start again from nothing | make runs resumable (see O7); until then deploy only when no research run is in flight (`scripts/pipeline_health.py` lists them) |
-| O18 | Running the infra tests on the host (python -m pytest vinu-infra/tests from vinu-components) leaves stray database files in vinu-components/data (strategy_store.db, market_regime_history.db at the top level) because some code defaults its data root to the working folder | stray files look like real stores and can be read by mistake | make the tests use a temporary data root, or run them only in the container harness |
+| O17 | Cause proven and the self-inflicted part stopped (P41). See O7 for the rest | | |
+| O18 | CLOSED. Fixed: P39. | | |

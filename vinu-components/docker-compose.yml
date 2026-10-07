@@ -718,6 +718,12 @@ services:
     cpus: 1
     pids_limit: 128
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8092/reflection/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       agent-api:
         condition: service_healthy
