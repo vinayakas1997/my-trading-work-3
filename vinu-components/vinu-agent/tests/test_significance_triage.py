@@ -524,3 +524,37 @@ class TestMissingChannelFailureMode:
         assert flag_store.get_flag(flag.flag_id) is not None
         # ...and the missing delivery target is loud, never silent.
         assert any("no channel is configured to deliver it" in rec.message for rec in caplog.records)
+
+
+class TestSignificanceFlagStoreMigratesWhenOpened:
+    """The reflection worker reads this file from a read-only mount. A file left on the old layout made every cycle fail with
+    "attempt to write a readonly database" because the migration only ran on a write. The owner now migrates when it opens."""
+
+    @staticmethod
+    def _old_layout_db(path) -> None:
+        import sqlite3
+
+        c = sqlite3.connect(str(path))
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("""CREATE TABLE significance_flags (flag_id TEXT PRIMARY KEY, ticker TEXT NOT NULL, reason TEXT NOT NULL,
+                     detail TEXT NOT NULL, created_at TEXT NOT NULL, responded_at TEXT NOT NULL DEFAULT '',
+                     response_text TEXT NOT NULL DEFAULT '', resolved INTEGER NOT NULL DEFAULT 0)""")
+        c.execute("INSERT INTO significance_flags (flag_id, ticker, reason, detail, created_at) VALUES ('f1','AAPL','r','d','2026-01-01T00:00:00Z')")
+        c.commit()
+        c.close()
+
+    def test_opening_an_old_layout_file_adds_the_new_columns_at_once(self, tmp_path) -> None:
+        import sqlite3
+
+        db = tmp_path / "significance_flags.db"
+        self._old_layout_db(db)
+        SignificanceFlagStore(db)                       # nothing reads or writes a flag: opening alone must migrate
+        cols = [r[1] for r in sqlite3.connect(str(db)).execute("PRAGMA table_info(significance_flags)").fetchall()]
+        assert "muted_until" in cols and "skill_version" in cols
+
+    def test_the_old_rows_survive_and_reading_needs_no_further_change(self, tmp_path) -> None:
+        db = tmp_path / "significance_flags.db"
+        self._old_layout_db(db)
+        SignificanceFlagStore(db)
+        reader = SignificanceFlagStore(db)              # a second opener (the reflection worker) finds nothing left to migrate
+        assert [f.flag_id for f in reader.all_flags()] == ["f1"]

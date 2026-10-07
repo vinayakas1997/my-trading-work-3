@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sqlite3
 import time
 import uuid
 from dataclasses import dataclass
@@ -153,6 +154,16 @@ def _skill_version() -> str:
 class SignificanceFlagStore(SQLiteBackend):
     SCHEMA = SCHEMA
     SCHEMA_VERSION = 2
+
+    def __init__(self, db_path) -> None:
+        super().__init__(db_path)
+        # Migrate NOW, in the process that owns the file. The migration used to run only on the first write, so a file
+        # last written by an older version stayed on the old layout; the reflection worker (which mounts this folder
+        # read-only) then failed on every cycle with "attempt to write a readonly database" while reading it.
+        try:
+            self._ensure_v2()
+        except sqlite3.OperationalError:
+            pass    # a read-only reader cannot migrate: it needs the owner's file to be migrated already
 
     def _ensure_v2(self) -> None:
         conn = self._get_conn()
