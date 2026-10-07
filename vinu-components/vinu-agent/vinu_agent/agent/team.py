@@ -108,6 +108,32 @@ def run_until_verdict(
     return result
 
 
+RESUME_BRIEFING_CHARS = 6000          # how much of an interrupted run's finished work is handed to its successor
+RESUME_RESULT_CHARS = 700             # per finished specialist task
+
+
+def resume_briefing(tasks: list[dict]) -> tuple[str, int]:
+    """(text, attempts already tested) built from the specialist tasks an interrupted run had finished. The newest work
+    is kept when the text must be cut. `attempts` counts finished backtest_runner tasks: a candidate counts once it has
+    been TESTED, the same rule the budget uses."""
+    if not tasks:
+        return "", 0
+    lines = [f"- [{t['agent_name']}] {str(t['result']).strip()[:RESUME_RESULT_CHARS]}" for t in tasks]
+    kept, size = [], 0
+    for line in reversed(lines):
+        if size + len(line) > RESUME_BRIEFING_CHARS:
+            break
+        kept.append(line)
+        size += len(line)
+    attempts = sum(1 for t in tasks if t["agent_name"] == "backtest_runner")
+    text = (
+        "Work already done for this ticker before the service restarted (oldest first). Do not repeat these ideas; build on "
+        "what they showed. The backtests below already count toward your required attempts."
+    )
+    text += "\n" + "\n".join(reversed(kept))
+    return text, attempts
+
+
 def _apply_team_result_hook(
     team_name: str, content: str, *, strategy_store: Any, run_id: str,
     ticker_ledger_store: Any = None, services_config: Any = None,
@@ -455,6 +481,22 @@ class TeamManager:
             system_prompt = f"{system_prompt}\n\n## Reference knowledge\n{skills_text}"
 
         user_content = f"{context}\n\n{task}" if context else task
+        carried_attempts = 0
+        if db_run is not None and self.spec.name == "research" and hasattr(self._run_store, "find_resumable"):
+            # A restart kills a run mid-way, but the specialists' finished tasks are stored: hand them to this run so the
+            # work is not redone from nothing (problem log O7).
+            try:
+                earlier = self._run_store.find_resumable(self.spec.name, self._triggered_by_session_id)
+                if earlier is not None:
+                    briefing, carried_attempts = resume_briefing(self._run_store.completed_tasks(earlier.run_id))
+                    if briefing:
+                        user_content += "\n\n" + briefing
+                        self._run_store.mark_resumed(earlier.run_id, db_run.run_id)
+                        LOG.info("research run %s carries over %d tested attempt(s) from interrupted run %s",
+                                 db_run.run_id, carried_attempts, earlier.run_id)
+            except Exception:  # noqa: BLE001 -- carrying work over is a help, never a reason to fail the run
+                LOG.exception("could not carry over an interrupted run's work; starting fresh")
+                carried_attempts = 0
 
         manager_callback = _tag_event_callback(
             self._event_callback, team=self.spec.name, agent="manager", role="manager",
@@ -492,7 +534,7 @@ class TeamManager:
             required=needs_verdict,
             max_nudges=MAX_VERDICT_NUDGES + min_attempts,
             # a candidate counts once it has actually been TESTED; an idea that was only proposed has not been tried
-            attempts=lambda: delegate_tool.delegations.get("backtest_runner", 0),
+            attempts=lambda: delegate_tool.delegations.get("backtest_runner", 0) + carried_attempts,
             min_attempts=min_attempts,
             budget=self._max_iterations,
         )

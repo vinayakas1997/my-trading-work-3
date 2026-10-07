@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS team_runs (
     created_at                TEXT NOT NULL,
     updated_at                TEXT NOT NULL,
     completed_at              TEXT NOT NULL DEFAULT '',
-    related_artifact_id       TEXT NOT NULL DEFAULT ''
+    related_artifact_id       TEXT NOT NULL DEFAULT '',
+    resumed_from              TEXT NOT NULL DEFAULT '',
+    resumed_by                TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_team_runs_status ON team_runs(status);
 CREATE INDEX IF NOT EXISTS idx_team_runs_session ON team_runs(triggered_by_session_id);
@@ -51,7 +53,7 @@ CREATE INDEX IF NOT EXISTS idx_team_tasks_run ON team_tasks(run_id);
 CREATE INDEX IF NOT EXISTS idx_team_tasks_status ON team_tasks(status);
 """
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MIGRATIONS: list[tuple[str, str]] = [
     # ADD COLUMN is a no-op (idempotent "duplicate column name" error, caught
     # by vinu_infra.db.migrate_schema) on a fresh DB, where CREATE TABLE
@@ -70,6 +72,8 @@ MIGRATIONS: list[tuple[str, str]] = [
         "CREATE INDEX IF NOT EXISTS idx_team_runs_artifact ON team_runs(related_artifact_id)",
         "1.1.0",
     ),
+    ("ALTER TABLE team_runs ADD COLUMN resumed_from TEXT NOT NULL DEFAULT ''", "the interrupted run this one carries work over from"),
+    ("ALTER TABLE team_runs ADD COLUMN resumed_by TEXT NOT NULL DEFAULT ''", "the run that carried this interrupted run's work over"),
 ]
 
 STATUS_PENDING = "pending"
@@ -323,6 +327,35 @@ class TeamRunStore(SQLiteBackend):
             """,
             (STATUS_FAILED, error_message, now, now, run_id),
         )
+        conn.commit()
+
+    def find_resumable(self, team_name: str, session_id: str, *, within_hours: float = 6.0) -> Optional[TeamRun]:
+        """The latest run of this team for this session that a restart cut short and nobody has picked up yet, started
+        within `within_hours` (an older one is stale: the market and the prior rejections have moved on)."""
+        if not session_id:
+            return None
+        cutoff = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - within_hours * 3600))
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM team_runs WHERE team_name = ? AND triggered_by_session_id = ? AND status = ? "
+            "AND error_message LIKE 'interrupted%' AND resumed_by = '' AND created_at >= ? ORDER BY created_at DESC LIMIT 1",
+            (team_name, session_id, STATUS_FAILED, cutoff),
+        ).fetchone()
+        return TeamRun.from_row(dict(row)) if row is not None else None
+
+    def completed_tasks(self, run_id: str) -> list[dict[str, Any]]:
+        """What the run's specialists had already finished, in the order they finished."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT agent_name, result, completed_at FROM team_tasks WHERE run_id = ? AND status = ? AND result != '' "
+            "ORDER BY completed_at ASC, rowid ASC", (run_id, TASK_STATUS_COMPLETED),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_resumed(self, old_run_id: str, new_run_id: str) -> None:
+        conn = self._get_conn()
+        conn.execute("UPDATE team_runs SET resumed_by = ? WHERE run_id = ?", (new_run_id, old_run_id))
+        conn.execute("UPDATE team_runs SET resumed_from = ? WHERE run_id = ?", (old_run_id, new_run_id))
         conn.commit()
 
     def fail_interrupted(self, reason: str) -> list[str]:
