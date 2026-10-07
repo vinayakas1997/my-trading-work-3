@@ -72,3 +72,49 @@ class TestAlmgrenChrissCostModel:
     def test_flat_model_also_has_borrow_cost(self):
         model = FlatCostModel(borrow_cost_annual=0.01)
         assert model.daily_borrow_cost(50_000.0) == pytest.approx(50_000.0 * 0.01 / 252.0)
+
+
+# ---- slippage and spread cost more outside the regular session (problem log O3, O10) ---------------------------------------
+
+class TestSessionScaledCosts:
+    def test_the_multiplier_follows_the_session_of_the_bar(self):
+        import pandas as pd
+
+        from vinu_simulator.engine.costs import session_cost_multiplier
+
+        wed = pd.Timestamp("2026-10-07")                              # naive = UTC; New York is UTC-4 in October
+        assert session_cost_multiplier(wed + pd.Timedelta(hours=15)) == 1.0    # 11:00 New York, regular
+        assert session_cost_multiplier(wed + pd.Timedelta(hours=10)) == 2.0    # 06:00, pre-market
+        assert session_cost_multiplier(wed + pd.Timedelta(hours=21)) == 2.0    # 17:00, after-hours
+        assert session_cost_multiplier(wed + pd.Timedelta(hours=1)) == 3.0     # 21:00 the evening before, overnight
+
+    def test_a_larger_multiplier_makes_a_buy_dearer_and_a_sell_pay_less(self):
+        m = FlatCostModel(cost_pct=0.0, slippage_pct=0.0005)
+        base_buy, base_sell = m.buy_cost(100.0, 10.0), m.sell_proceeds(100.0, 10.0)
+        m.session_multiplier = 3.0
+        assert m.buy_cost(100.0, 10.0) > base_buy and m.sell_proceeds(100.0, 10.0) < base_sell
+
+    def test_the_commission_is_not_scaled(self):
+        m = FlatCostModel(cost_pct=0.001, slippage_pct=0.0, spread_bps=0.0)
+        base = m.buy_cost(100.0, 10.0)
+        m.session_multiplier = 3.0
+        assert m.buy_cost(100.0, 10.0) == base
+
+    def test_an_overnight_round_trip_costs_more_than_the_same_one_in_the_regular_session(self):
+        import pandas as pd
+
+        from vinu_simulator.engine.simulator import WeightSimulator
+        from vinu_simulator.models.simulation import SimulationConfig, SimulationInput
+
+        def final_value(first_bar: str) -> float:
+            dates = pd.date_range(first_bar, periods=5, freq="h")
+            prices = pd.DataFrame({"X": [100.0] * 5}, index=dates)
+            weights = pd.DataFrame({"X": [1.0, 1.0, 0.0]}, index=dates[:3])   # buy, hold, sell on a flat price: only costs remain
+            cfg = SimulationConfig(strategy_name="t", start_date=str(dates[0]), end_date=str(dates[-1]), initial_capital=100_000.0,
+                                   transaction_cost_pct=0.0, slippage_pct=0.001, slippage_model="flat", deviation_threshold=0.0)
+            res = WeightSimulator(cfg).run(SimulationInput(strategy_name="t", weight_signals=weights, price_data=prices, config=cfg))
+            return float(res.portfolio_values.iloc[-1])
+
+        regular = final_value("2026-10-07 14:00")        # 10:00 to 14:00 New York
+        overnight = final_value("2026-10-08 00:00")      # 20:00 to 00:00 New York
+        assert overnight < regular < 100_000.0

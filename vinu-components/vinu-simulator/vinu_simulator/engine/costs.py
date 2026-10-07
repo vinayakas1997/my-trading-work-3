@@ -11,8 +11,36 @@ import numpy as np
 DEFAULT_SPREAD_BPS = float(_os.environ.get("VINU_SIM_SPREAD_BPS", "0"))
 DEFAULT_QUEUE_PCT = float(_os.environ.get("VINU_SIM_QUEUE_PCT", "0"))
 
+# Outside the regular session spreads are wider and books thinner, so slippage and spread cost more. These multipliers are
+# GUESSED starting values (nothing has measured quote spreads per session yet, problem log O10): they scale the slippage and the
+# spread part of a trade's cost, not the commission. Daily bars carry no time of day and are never scaled.
+DEFAULT_SESSION_COST_MULT = "premarket=2,regular=1,afterhours=2,overnight=3"
+
+
+def parse_session_multipliers(spec: str) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for part in (spec or "").split(","):
+        name, _, value = part.partition("=")
+        if name.strip() and value.strip():
+            out[name.strip().lower()] = max(1.0, float(value))
+    return out
+
+
+SESSION_COST_MULT = parse_session_multipliers(_os.environ.get("VINU_SIM_SESSION_COST_MULT", DEFAULT_SESSION_COST_MULT))
+
+
+def session_cost_multiplier(bar_time, multipliers: dict[str, float] | None = None) -> float:
+    """The cost multiplier for a bar opened at `bar_time` (a pandas Timestamp, naive = UTC). 1.0 for the regular session."""
+    from vinu_infra.sessions import session_of
+
+    ts = bar_time.timestamp() if getattr(bar_time, "tzinfo", None) is not None else bar_time.tz_localize("UTC").timestamp()
+    return (multipliers if multipliers is not None else SESSION_COST_MULT).get(session_of(ts), 1.0)
+
 
 class CostModel(ABC):
+    #: Scales slippage and spread for the bar being traded (set by the engine per bar; 1.0 = regular session).
+    session_multiplier: float = 1.0
+
     #: Annual stock-loan/borrow rate charged on short notional, applied once per day.
     #: A generic easy-to-borrow assumption — not calibrated per symbol, but far closer
     #: to reality than the implicit zero the engine used to charge on shorts.
@@ -60,7 +88,7 @@ class FlatCostModel(CostModel):
         self.queue_pct = queue_pct
 
     def _spread_half(self, price: float) -> float:
-        return price * (self.spread_bps / 10000.0) / 2.0
+        return price * (self.spread_bps * self.session_multiplier / 10000.0) / 2.0
 
     def buy_cost(
         self,
@@ -69,7 +97,7 @@ class FlatCostModel(CostModel):
         volume: float | None = None,
         volatility: float | None = None,
     ) -> float:
-        effective_price = price * (1 + self.slippage_pct) + self._spread_half(price)
+        effective_price = price * (1 + self.slippage_pct * self.session_multiplier) + self._spread_half(price)
         # Queue: pay extra queue_pct of notional when participation high (thin).
         base = effective_price * shares * (1 + self.cost_pct)
         if volume and volume > 0 and self.queue_pct > 0:
@@ -83,7 +111,7 @@ class FlatCostModel(CostModel):
         volume: float | None = None,
         volatility: float | None = None,
     ) -> float:
-        effective_price = price * (1 - self.slippage_pct) - self._spread_half(price)
+        effective_price = price * (1 - self.slippage_pct * self.session_multiplier) - self._spread_half(price)
         base = max(0.0, effective_price * shares * (1 - self.cost_pct))
         if volume and volume > 0 and self.queue_pct > 0:
             base = max(0.0, base - price * shares * self.queue_pct * min(shares / volume, 1.0))
@@ -115,7 +143,7 @@ class AlmgrenChrissCostModel(CostModel):
         self.missing_volume_impact_pct = missing_volume_impact_pct
 
     def _spread_half(self, price: float) -> float:
-        return price * (self.spread_bps / 10000.0) / 2.0
+        return price * (self.spread_bps * self.session_multiplier / 10000.0) / 2.0
 
     def _participation_rate(self, shares: float, volume: float | None) -> float:
         if volume is None or volume <= 0 or shares <= 0:
@@ -146,7 +174,7 @@ class AlmgrenChrissCostModel(CostModel):
         volume: float | None = None,
         volatility: float | None = None,
     ) -> float:
-        effective_price = price * (1 + self.slippage_pct) + self._spread_half(price)
+        effective_price = price * (1 + self.slippage_pct * self.session_multiplier) + self._spread_half(price)
         fixed = effective_price * shares * self.fixed_cost_pct
         impact = self._market_impact(price, shares, volume)
         queue = price * shares * self.queue_pct * self._participation_rate(shares, volume) if self.queue_pct > 0 else 0.0
@@ -159,7 +187,7 @@ class AlmgrenChrissCostModel(CostModel):
         volume: float | None = None,
         volatility: float | None = None,
     ) -> float:
-        effective_price = price * (1 - self.slippage_pct) - self._spread_half(price)
+        effective_price = price * (1 - self.slippage_pct * self.session_multiplier) - self._spread_half(price)
         fixed = effective_price * shares * self.fixed_cost_pct
         impact = self._market_impact(price, shares, volume)
         queue = price * shares * self.queue_pct * self._participation_rate(shares, volume) if self.queue_pct > 0 else 0.0

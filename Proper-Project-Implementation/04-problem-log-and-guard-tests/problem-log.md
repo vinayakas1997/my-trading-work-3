@@ -297,6 +297,13 @@ Read `how-to-use-this-log.md` for the rules.
 - **Must agree with:** the gateway's 300 s attempt timeout (the guard waits as long as one attempt, so a slow call is not cut); the model container name and port in `docker-compose-hindsight.yml`.
 - **Status:** GUARDED (installed and ran by itself, result 0; the restart path has not yet fired on a real wedge; the cause of the freeze is still unknown; the task lives on this PC only, so it must be installed again on a new machine)
 
+### P45 A backtest charged the same trading cost at 3 a.m. as at noon
+- **Seen:** (O3, O10) every trade paid the same slippage and spread in every session, so overnight and pre-market results were flattered and session approval rested on them.
+- **Fix:** the cost models take a per-bar `session_multiplier` that scales slippage and spread (not the commission). For bars with a time of day the engine sets it from the bar's session: `VINU_SIM_SESSION_COST_MULT`, default `premarket=2,regular=1,afterhours=2,overnight=3`. Daily bars are stamped at midnight and are never scaled. Both cost models (flat and Almgren-Chriss) use it.
+- **Guard:** `vinu-simulator/tests/test_costs.py::TestSessionScaledCosts::test_an_overnight_round_trip_costs_more_than_the_same_one_in_the_regular_session`, `vinu-simulator/tests/test_costs.py::TestSessionScaledCosts::test_the_multiplier_follows_the_session_of_the_bar`, `vinu-simulator/tests/test_costs.py::TestSessionScaledCosts::test_the_commission_is_not_scaled`
+- **Must agree with:** `vinu_infra/sessions.py` (the session names); the live order guard (it does not use these numbers).
+- **Status:** GUARDED (the 2, 1, 2, 3 are GUESSES, not measurements: nobody has measured quote spreads per session. Strategies tested after this change see higher night costs, so earlier overnight verdicts are not comparable)
+
 ---
 
 ## E. Open problems (found, not fixed)
@@ -305,14 +312,14 @@ Read `how-to-use-this-log.md` for the rules.
 |---|---|---|---|
 | O1 | CLOSED. Fixed: P38. | | |
 | O2 | CLOSED. Fixed: P37 (the switches did nothing). | | |
-| O3 | Reworded after reading the code: backtest costs are not zero. Every trade pays `VINU_SIMULATOR_TRANSACTION_COST_PCT` plus `VINU_SIMULATOR_SLIPPAGE_PCT` (0.0005) per side, and `VINU_SIM_SPREAD_BPS=0` is only the extra quote spread on top. What is missing is that the cost is the same in every session | overnight and pre-market trades are probably cheaper in the backtest than in life, so session approval is flattered | measure quote spreads per session (O10), then give the cost model the bar time |
+| O3 | Mostly fixed (P45): costs now scale by session. The multipliers are guesses | night results are only as honest as the guess | measure quote spreads per session (O10) and replace the guess |
 | O4 | No alert channel configured (Telegram or Discord) | at night a halt reaches nobody | set one, with quiet hours |
 | O5 | CLOSED. Fixed: P33 (not yet seen on a real fill). | | |
 | O6 | DECIDED, not built: the allocator does not carry approved sessions or size multipliers; the order guard stays the single place that enforces them (two places would drift apart) | a strategy approved only for the regular session still gets capital allocated overnight, which sits idle | revisit only if idle overnight capital turns out to matter |
 | O7 | Fixed: P41 stops deploys from killing runs, P43 carries a killed run's finished work into the next run. A run killed mid-conversation still loses that conversation (the model is re-briefed, not resumed) | | |
 | O8 | Gatekeeper, allocator and live feedback never run on a real strategy | still synthetic only | needs the first real ACTIVE strategy |
 | O9 | CLOSED. Fixed: P34 (not yet seen on a real night exit). | | |
-| O10 | Per-session spread and liquidity not measured | risk hint uses return volatility only | quote-based spread per session |
+| O10 | Per-session spread and liquidity are still not measured; P45 uses guessed multipliers. Measuring needs stored quotes (bid and ask) by time of day: the stock service keeps candles, not a quote history | the multipliers 2, 1, 2, 3 may be too high or too low | start storing quote snapshots per session, then fit the multipliers (a design step: a new store) |
 | O11 | CLOSED. Already fixed earlier: `vinu-reflection/entrypoint.sh` runs the API and the worker; checked live on 2026-10-07 (the agent reads `/reflection/synthesis/latest` and `/reflection/beliefs/notable`). Guard: `vinu-infra/tests/test_stack_guards.py::test_the_reflection_container_serves_its_api_as_well_as_running_the_worker`. | | |
 | O12 | CLOSED. Fixed: P35. | | |
 | O13 | CLOSED. Fixed: P36 (thresholds are guessed). | | |

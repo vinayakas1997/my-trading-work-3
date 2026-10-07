@@ -14,6 +14,7 @@ from vinu_simulator.engine.costs import (
     AlmgrenChrissCostModel,
     CostModel,
     FlatCostModel,
+    session_cost_multiplier,
 )
 from vinu_simulator.engine.metrics import (
     compute_full_metrics,
@@ -201,7 +202,11 @@ class WeightSimulator:
                 benchmark_returns_full = benchmark_prices_full.pct_change()
             regimes_full = classify_regime(benchmark_returns_full)
 
+        # Intraday bars carry a time of day; daily bars are stamped at midnight and are never scaled by session.
+        intraday = any(getattr(d, "hour", 0) or getattr(d, "minute", 0) for d in total_calendar)
         for step_idx, date in enumerate(total_calendar):
+            if intraday:
+                self._cost_model.session_multiplier = session_cost_multiplier(date)
             prices = price_matrix[step_idx]
             if np.any(~np.isfinite(prices)):
                 raise ValueError(f"NaN/Inf prices on {date}")
