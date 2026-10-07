@@ -198,3 +198,18 @@ def test_an_artifact_that_was_never_measured_per_session_is_not_restricted(strat
     _active_artifact(strategy_store, sessions="")
     with patch("vinu_agent.broker.research_link.get_strategy_store", return_value=strategy_store):
         assert check(_guard_with_artifacts(_at(5, 22), strategy_store), "limit")
+
+
+def test_the_session_size_hint_applies_without_the_opt_in_soft_limits(strategy_store):
+    """Found by the live drill (2026-10-08): the half-size hint for after-hours was only applied when the opt-in soft limits were on,
+    so with the default configuration an order approved at half size went out at full size."""
+    from unittest.mock import patch
+
+    hints = {"overnight": {"verdict": "reduce", "size_multiplier": 0.5}}
+    _active_artifact(strategy_store, sessions="regular,overnight", hints=hints)
+    with patch("vinu_agent.broker.research_link.get_strategy_store", return_value=strategy_store):
+        overnight = _guard_with_artifacts(_at(5, 22), strategy_store)
+        m = overnight.session_size_multiplier("SPY")
+        assert m.multiplier == 0.5 and m.binding == "session" and m.components == {"session": 0.5}
+        regular = _guard_with_artifacts(_at(5, 11), strategy_store)
+        assert regular.session_size_multiplier("SPY").multiplier == 1.0

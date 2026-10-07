@@ -149,9 +149,8 @@ class TestExecutionSlicesExact:
         assert sum(s.qty for s in plan.slices) == 100.0
 
     def test_tiny_slice_sums_never_drift(self):
-        # 1 share over 10 slices: nine zero-slices plus the full share folded
-        # into the last -- never 0.10000000000000002-style slices.
+        # 1 share over 10 slices: the empty slices are dropped (the broker guard refuses a 0-share order), leaving the one
+        # whole share -- never 0.10000000000000002-style slices.
         plan = plan_twap([self._instr(1.0)], n_slices=10)
         assert sum(s.qty for s in plan.slices) == 1.0
-        assert [s.qty for s in plan.slices].count(0.0) == 9
-        assert plan.slices[-1].qty == 1.0
+        assert [s.qty for s in plan.slices] == [1.0]

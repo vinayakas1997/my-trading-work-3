@@ -38,6 +38,16 @@ class ExecutionPlan:
         return len(self.slices)
 
 
+def _without_empty_slices(slices: list["ExecutionSlice"]) -> list["ExecutionSlice"]:
+    """Drop slices that round to zero shares and renumber the rest. Shares are whole by default, so a 2-share order cut into 6
+    gave five 0-share slices and one slice with everything: the broker guard refused each empty one (invalid_qty), they filled the
+    safety ledger, and the cycle waited out their delays. The quantities of the kept slices still sum to the order."""
+    kept = [s for s in slices if s.qty > 0]
+    for i, s in enumerate(kept, start=1):
+        s.slice_number, s.total_slices = i, len(kept)
+    return kept
+
+
 def plan_twap(
     instructions: list[OrderInstruction],
     n_slices: int = 6,
@@ -60,11 +70,12 @@ def plan_twap(
             continue
         per_slice = total / n_slices
         allocated = Decimal("0")
+        pieces: list[ExecutionSlice] = []
         for i in range(n_slices):
             is_last = i == n_slices - 1
             slice_qty = total - allocated if is_last else floor_qty(per_slice)
             allocated += slice_qty
-            plan.slices.append(ExecutionSlice(
+            pieces.append(ExecutionSlice(
                 symbol=instr.symbol,
                 side=instr.side,
                 qty=float(slice_qty),
@@ -73,6 +84,7 @@ def plan_twap(
                 max_slippage_pct=instr.max_slippage_pct,
                 reduce_only=instr.reduces_exposure,
             ))
+        plan.slices.extend(_without_empty_slices(pieces))
     return plan
 
 
@@ -142,6 +154,7 @@ def plan_vwap(
             weights = [w / wsum for w in weights]
 
         allocated = Decimal("0")
+        pieces = []
         for i, w in enumerate(weights):
             is_last = i == n_slices - 1
             if is_last:
@@ -149,7 +162,7 @@ def plan_vwap(
             else:
                 slice_qty = floor_qty(total * Decimal(str(w)))
             allocated += slice_qty
-            plan.slices.append(ExecutionSlice(
+            pieces.append(ExecutionSlice(
                 symbol=instr.symbol,
                 side=instr.side,
                 qty=float(slice_qty),
@@ -158,6 +171,7 @@ def plan_vwap(
                 max_slippage_pct=instr.max_slippage_pct,
                 reduce_only=instr.reduces_exposure,
             ))
+        plan.slices.extend(_without_empty_slices(pieces))
     return plan
 
 

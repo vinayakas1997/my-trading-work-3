@@ -329,6 +329,24 @@ Read `how-to-use-this-log.md` for the rules.
 - **Guard:** `vinu-initial-analysis/tests/test_api_v1.py::test_trigger_and_poll_flow`, `vinu-initial-analysis/tests/test_arima_backtest.py::test_parallel_at_cadence_greater_than_1_runs_but_is_not_identical_to_sequential`
 - **Status:** GUARDED (full package in the image, nothing deselected: 389 passed, 7 skipped in 116 s)
 
+### P50 A small order cut into time slices produced slices of zero shares
+- **Seen:** (live drill, 2026-10-08) a 2-share order planned as TWAP or VWAP came out as several slices, some of 0 shares. The scheduler would send each as an order, and the guard refused the empty ones.
+- **Fix:** `_without_empty_slices` in `vinu-live/vinu_live/execution.py` drops empty slices and gives their share to the neighbours, so the slice quantities still add up to the order.
+- **Guard:** `vinu-live/tests/test_execution.py::TestSmallOrdersAreNotCutIntoEmptySlices::test_twap_of_a_two_share_order_has_no_zero_quantity_slice`, `vinu-live/tests/test_execution.py::TestSmallOrdersAreNotCutIntoEmptySlices::test_vwap_of_a_small_order_has_no_zero_quantity_slice`
+- **Status:** GUARDED (live suite 964 passed before the agent change)
+
+### P51 The session size hint (for example half size after hours) was ignored when the optional soft limits were off
+- **Seen:** (live drill) the artifact was approved for after-hours with size multiplier 0.5, yet the first after-hours entry was sent at full size, because the multiplier only ran together with the opt-in soft limits.
+- **Fix:** `session_size_multiplier` in `vinu-agent/vinu_agent/broker/order_guard.py` returns just the session part; `vinu-agent/vinu_agent/tools/trade_tool.py` always applies it to entries (never to `reduce_only` exits), while the other soft limits stay opt-in. Checked live: a 4-share entry became 2 and a 1-share entry was refused as "below one share".
+- **Guard:** `vinu-agent/tests/test_session_orders.py::test_the_session_size_hint_applies_without_the_opt_in_soft_limits`, `vinu-agent/tests/test_trade_tool.py::TestTradeToolPreApproveResultChecked::test_the_session_size_hint_scales_an_entry_even_with_soft_limits_off`, `vinu-agent/tests/test_trade_tool.py::TestTradeToolPreApproveResultChecked::test_an_exit_is_never_scaled_by_the_session_hint`
+- **Status:** GUARDED (agent suite in the image: 0 failures)
+
+### P52 Live drill of the gatekeepers on Alpaca paper (2026-10-08): results
+- **Seen:** a synthetic edge (planted trend, measured by the real simulator) was written as a real artifact for AAPL and pushed down the whole chain. Worked: no ACTIVE artifact and BENCHING are refused; the gatekeeper hook moved it to PEND and the allocator to ACTIVE; research-api and portfolio-api saw it; the scheduler reached the order step; after-hours routing sent a limit order; a session not approved was refused; the kill switch refused a new entry (`kill_switch_halt`) while a `reduce_only` exit still passed and filled; `max_position_pct` refused an oversized order; a 2-share entry filled at 336.80 and the next cycle's fill enrichment recorded the fill, 6.5 bps slippage and `book_applied_qty` 2; the exit filled at 336.54. Afterwards the artifact was set DISABLED, nothing rests at Alpaca, the kill switch is off. Two of my own drill calls used a wrong field (`type` instead of `order_type`), so they went as market orders and the guard correctly refused them; not a system fault.
+- **Fix:** not applicable; this entry records evidence. The two defects the drill found are P50 and P51.
+- **Guard:** the P50 and P51 guard tests; the drill itself is a manual script, not repeatable in the suite because it spends paper money.
+- **Status:** GUARDED (by P50 and P51; open findings O20 to O22)
+
 ---
 
 ## E. Open problems (found, not fixed)
@@ -354,3 +372,6 @@ Read `how-to-use-this-log.md` for the rules.
 | O17 | Fixed as far as it can be: P41 and P43 (see O7) | | |
 | O18 | CLOSED. Fixed: P39. | | |
 | O19 | Recovery is automatic now (P44). Still open: why the model freezes (a 2,810-token prompt with thinking on; try capping thinking or `max_tokens`), and the task only exists on this PC | a freeze still costs up to 5 minutes plus the restart | find the cause in the model server's own log; reinstall the task on a new machine |
+| O20 | Portfolio-api allocates equal weights across 11 strategies from YAML (never research-validated) plus any ACTIVE artifact, and ignores the allocator's `amount` | capital can go to unvalidated strategies, and the allocator's size has no effect | decide: allocate only to ACTIVE artifacts and use the allocator amount |
+| O21 | The safety ledger holds only kill-switch events; the sequence diagram (D5) says more | docs and behaviour disagree | either log breaker, lockout and refusals there or correct the diagram |
+| O22 | The mandate has `allow_short: true` but the book (`apply_fill`) is long-only; and a sell sent straight to the agent endpoint (not through the scheduler) is not written to the book, so the book still showed 2 AAPL after the exit while Alpaca was flat, and reconciliation reported no drift (AAPL was skipped as orchestrator-owned) | a short or a manual exit would leave the book wrong | route manual exits through the book, or have reconciliation check orchestrator-owned symbols too |

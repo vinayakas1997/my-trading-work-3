@@ -75,3 +75,28 @@ class TestScheduleSliceDelays:
         delays = schedule_slice_delays(6, total_window_minutes=60)
         assert len(delays) == 5
         assert sum(delays) <= 3600
+
+
+class TestSmallOrdersAreNotCutIntoEmptySlices:
+    """Found by the live drill (2026-10-08): a 2-share AAPL order cut into 6 slices gave five 0-share slices and one slice with
+    everything. The broker guard refused each empty one (invalid_qty) and the cycle waited out their delays."""
+
+    @staticmethod
+    def _instr(qty):
+        from vinu_live.signal_translator import OrderInstruction
+
+        return OrderInstruction(symbol="AAPL", side="buy", qty=qty, target_weight=0.01, current_qty=0.0, estimated_value=qty * 300.0)
+
+    def test_twap_of_a_two_share_order_has_no_zero_quantity_slice(self):
+        plan = plan_twap([self._instr(2.0)], n_slices=6)
+        assert [s.qty for s in plan.slices] == [2.0] and (plan.slices[0].slice_number, plan.slices[0].total_slices) == (1, 1)
+
+    def test_vwap_of_a_small_order_has_no_zero_quantity_slice(self):
+        plan = plan_vwap([self._instr(3.0)], n_slices=6)
+        assert all(s.qty > 0 for s in plan.slices) and sum(s.qty for s in plan.slices) == 3.0
+        assert [s.slice_number for s in plan.slices] == list(range(1, len(plan.slices) + 1))
+        assert all(s.total_slices == len(plan.slices) for s in plan.slices)
+
+    def test_a_large_order_is_still_cut_into_all_its_slices_summing_to_the_order(self):
+        plan = plan_twap([self._instr(60.0)], n_slices=6)
+        assert len(plan.slices) == 6 and sum(s.qty for s in plan.slices) == 60.0

@@ -308,9 +308,11 @@ class TradeTool(BaseTool):
         size_scaled = None
         from ..broker.order_guard import SOFT_LIMITS_ENABLED
 
-        if SOFT_LIMITS_ENABLED and not reduce_only and qty > 0:
-            mult = guard.position_size_multiplier(
-                symbol, side, qty, price=(limit_price or None), estimated_value=estimated_value,
+        if not reduce_only and qty > 0:
+            # The soft limits are opt-in; the per-session size hint is not (it is part of what the strategy was approved for).
+            mult = (
+                guard.position_size_multiplier(symbol, side, qty, price=(limit_price or None), estimated_value=estimated_value)
+                if SOFT_LIMITS_ENABLED else guard.session_size_multiplier(symbol)
             )
             if mult.multiplier < 1.0:
                 new_qty = int(qty * mult.multiplier)

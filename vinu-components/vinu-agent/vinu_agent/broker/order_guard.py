@@ -629,6 +629,21 @@ class OrderGuard:
         binding = min(comps, key=lambda k: comps[k]) if m < 1.0 else None
         return MultiplierResult(m, comps, binding)
 
+    def session_size_multiplier(self, symbol: str) -> MultiplierResult:
+        """Only the per-session risk hint of `position_size_multiplier`: outside the regular session a strategy whose test said
+        "trade smaller there" trades at that fraction. Unlike the soft limits this is NOT opt-in: it is part of what the strategy
+        was approved for (found by the live drill 2026-10-08: with soft limits off, an after-hours order approved at half size
+        went out at full size). 1.0 in the regular session, for an unmeasured artifact, and on any lookup problem."""
+        if getattr(self, "_session", None) is None:
+            self._check_session(symbol, "limit", require_open=False)       # only to learn which session it is now
+        current = getattr(self, "_session", None)
+        if current and current != REGULAR:
+            _, session_mult = self._strategy_session_profile(symbol)
+            if current in session_mult:
+                m = max(0.0, min(1.0, session_mult[current]))
+                return MultiplierResult(m, {"session": m}, "session" if m < 1.0 else None)
+        return MultiplierResult(1.0, {}, None)
+
     def _fetch_risk_budget(self, symbol: str) -> dict | None:
         """GET /portfolio/risk/status, memoized per instance (see __init__)
         so _risk_budget_multiplier and _check_risk_budget -- both of which

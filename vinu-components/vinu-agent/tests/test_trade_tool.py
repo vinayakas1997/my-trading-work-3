@@ -373,11 +373,52 @@ class TestTradeToolPreApproveResultChecked:
         assert "multiplier" in result["reason"]
         broker.submit_order.assert_not_called()
 
-    def test_soft_limits_off_by_default_leaves_qty_untouched(self) -> None:
+    def test_the_session_size_hint_scales_an_entry_even_with_soft_limits_off(self) -> None:
+        # Live drill 2026-10-08: an after-hours order approved "at half size" reached the broker at full size.
+        from vinu_agent.broker.order_guard import MultiplierResult
+
         broker = _configured_broker()
         guard = MagicMock()
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
+        guard.session_size_multiplier.return_value = MultiplierResult(0.5, {"session": 0.5}, "session")
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            result = json.loads(_tool().execute(symbol="AAPL", qty=100, side="buy", limit_price=100.0))
+
+        assert result["qty"] == 50 and result["size_scaled"]["binding"] == "session"
+        guard.position_size_multiplier.assert_not_called()          # the other soft limits stay opt-in
+        assert guard.check.call_args.args[2] == 50
+
+    def test_an_exit_is_never_scaled_by_the_session_hint(self) -> None:
+        from vinu_agent.broker.order_guard import MultiplierResult
+
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(True)
+        guard.pre_approve.return_value = GuardResult(True)
+        guard.session_size_multiplier.return_value = MultiplierResult(0.5, {"session": 0.5}, "session")
+
+        with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
+             patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
+             patch("vinu_agent.tools.trade_tool.TradingMandate") as MockMandate:
+            MockMandate.load.return_value = MagicMock(require_confirmation=False, to_dict=lambda: {})
+            result = json.loads(_tool().execute(symbol="AAPL", qty=100, side="sell", limit_price=100.0, reduce_only=True))
+
+        assert result["qty"] == 100
+        guard.session_size_multiplier.assert_not_called()
+
+    def test_soft_limits_off_by_default_leaves_qty_untouched(self) -> None:
+        from vinu_agent.broker.order_guard import MultiplierResult
+
+        broker = _configured_broker()
+        guard = MagicMock()
+        guard.check.return_value = GuardResult(True)
+        guard.pre_approve.return_value = GuardResult(True)
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
 
         with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
              patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \
