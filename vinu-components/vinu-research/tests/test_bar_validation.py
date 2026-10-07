@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from datetime import datetime, timezone
 from dataclasses import replace
 
 import pytest
@@ -39,8 +41,16 @@ class FakeService:
         return out
 
 
+_NOW = datetime(2026, 10, 1, tzinfo=timezone.utc).timestamp()
+
+
+def _healthy_catalog(*_a):
+    return {"backfill_status": "complete", "first_bar_ts": _NOW - 6 * 365 * 86_400, "last_bar_ts": time.time() - 3600}
+
+
 def _validate(by_interval, **kw):
     svc = FakeService(by_interval)
+    kw.setdefault("catalog_lookup", _healthy_catalog)
     return svc, asyncio.run(validate_across_bars(svc, symbol="AMD", strategy_code=CODE, to_date="2026-10-01", **kw))
 
 
@@ -144,3 +154,58 @@ def test_normaliser_leaves_ready_code_alone_and_rejects_ambiguous_or_broken_code
         normalise_strategy_code("class A(BaseStrategy):\n    pass\nclass B(BaseStrategy):\n    pass\n")
     with pytest.raises(ValueError, match="not valid Python"):
         normalise_strategy_code("def (:")
+
+
+def test_columns_the_backtest_cannot_supply_are_rejected_before_any_run_is_spent():
+    code = "class UserStrategy:\n    def generate_weights(self, data):\n        return data['supertrend'] * data['close']\n"
+    svc = FakeService({b: _run() for b in BAR_WINDOW_DAYS})
+    out = asyncio.run(validate_across_bars(svc, symbol="AMD", strategy_code=code, to_date="2026-10-01", catalog_lookup=_healthy_catalog))
+    assert svc.calls == [] and out["passing_bars"] == []
+    assert all("supertrend" in r["reasons"][0] and "sma_N" in r["reasons"][0] for r in out["bars"])
+
+
+def test_indicator_columns_the_code_reads_are_requested_for_the_backtest():
+    from vinu_research.bar_validation import plan_indicators
+
+    code = ("class UserStrategy:\n    def generate_weights(self, data):\n"
+            "        a = data['sma_20'] - data['sma_50']\n        b = data.get('adx_14', 25)\n"
+            "        return (data['close'] > a).astype(float) * (b > 20)\n")
+    assert plan_indicators(code) == (["adx_14", "sma_20", "sma_50"], [])
+    svc = FakeService({b: _run() for b in BAR_WINDOW_DAYS})
+    asyncio.run(validate_across_bars(svc, symbol="AMD", strategy_code=code, to_date="2026-10-01", catalog_lookup=_healthy_catalog))
+    assert all(c["indicators"] == ["adx_14", "sma_20", "sma_50"] for c in svc.calls)
+
+
+def test_a_get_with_a_default_is_not_an_unknown_column():
+    from vinu_research.bar_validation import plan_indicators
+
+    assert plan_indicators("def f(data):\n    return data.get('anything_else', 0)\n") == ([], [])
+
+
+# ---- data readiness: a test on stale, partial or missing prices is not a test --------------------------------------------
+
+def test_data_problem_reasons():
+    from vinu_research.bar_validation import data_problem
+
+    ok = {"backfill_status": "complete", "first_bar_ts": _NOW - 5 * 365 * 86_400, "last_bar_ts": _NOW - 86_400}
+    assert data_problem(ok, 365, now=_NOW) == ""
+    assert "not in the price catalog" in data_problem(None, 365, now=_NOW)
+    assert "backfill is running" in data_problem({**ok, "backfill_status": "running"}, 365, now=_NOW)
+    assert "stalled" in data_problem({**ok, "last_bar_ts": _NOW - 20 * 86_400}, 365, now=_NOW)
+    assert "only 100 days of history" in data_problem({**ok, "first_bar_ts": _NOW - 101 * 86_400}, 1460, now=_NOW)
+
+
+def test_a_bar_size_with_stale_or_thin_data_is_not_tested_and_says_why_while_the_others_run():
+    def catalog(*_a):    # 400 days of history: enough for 15m (365) and not for 1d (1460) / 4h / 1h
+        return {"backfill_status": "complete", "first_bar_ts": time.time() - 400 * 86_400, "last_bar_ts": time.time() - 3600}
+
+    svc, out = _validate({b: _run() for b in BAR_WINDOW_DAYS}, catalog_lookup=catalog)
+    assert [c["interval"] for c in svc.calls] == ["15m"]
+    rows = {r["interval"]: r for r in out["bars"]}
+    assert rows["1d"]["tested"] is False and "data not ready" in rows["1d"]["reasons"][0]
+    assert out["passing_bars"] == ["15m"]
+
+
+def test_an_unreachable_price_service_means_nothing_is_tested():
+    svc, out = _validate({b: _run() for b in BAR_WINDOW_DAYS}, catalog_lookup=lambda *a: None)
+    assert svc.calls == [] and out["passing_bars"] == []

@@ -13,6 +13,7 @@ apply.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import replace
 from datetime import date, timedelta
 from typing import Any
@@ -55,6 +56,71 @@ def normalise_strategy_code(code: str) -> str:
     if not re.search(r"^\s*(import|from)\s+pandas\b", code, re.M):
         code = _IMPORTS + code
     return code
+
+
+# Columns a strategy may read: price/volume, plus the few indicators the backtest can merge into the DataFrame.
+OHLCV = frozenset({"open", "high", "low", "close", "volume"})
+_MERGEABLE = re.compile(r"^(sma_\d+|rsi_14|macd|macd_signal|daily_return|volatility_20d|adx_14)$")
+MERGEABLE_HELP = "open, high, low, close, volume, sma_N, rsi_14, macd, macd_signal, daily_return, volatility_20d, adx_14"
+
+
+def plan_indicators(code: str) -> tuple[list[str], list[str]]:
+    """(indicator columns to request, unknown columns) from the `data[...]` / `data.get(...)` names the code reads.
+    A strategy that reads a column the backtest cannot supply crashes on every bar size; finding that here costs nothing
+    and gives the writer the list of real names."""
+    import ast
+
+    tree = ast.parse(code)
+    subscripted: set[str] = set()
+    fetched: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == "data":
+            key = node.slice
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                subscripted.add(key.value)
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get"
+              and isinstance(node.func.value, ast.Name) and node.func.value.id == "data"
+              and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+            fetched.add(node.args[0].value)     # .get() has a default, so a missing column is not a crash
+    indicators = sorted(c for c in subscripted | fetched if _MERGEABLE.match(c))
+    unknown = sorted(c for c in subscripted if c not in OHLCV and not _MERGEABLE.match(c))
+    return indicators, unknown
+
+
+MAX_STALE_DAYS = 7           # newest bar older than this (a long weekend is 4 days) means ingestion has stopped
+_MIN_HISTORY_SHARE = 0.9     # the catalog must reach back over at least this much of the bar size's window
+
+
+def data_problem(entry: dict[str, Any] | None, window_days: int, *, now: float | None = None) -> str:
+    """Why the price data cannot support a test over `window_days`, or "" when it can. `entry` is the price service's
+    catalog row for the symbol."""
+    import time
+
+    if not entry:
+        return "the symbol is not in the price catalog"
+    if entry.get("backfill_status") != "complete":
+        return f"history backfill is {entry.get('backfill_status') or 'unknown'}, not complete"
+    last = entry.get("last_bar_ts") or 0
+    age_days = ((now if now is not None else time.time()) - last) / 86_400
+    if age_days > MAX_STALE_DAYS:
+        return f"the newest bar is {age_days:.0f} days old (more than {MAX_STALE_DAYS}); price ingestion has stalled"
+    have_days = (last - (entry.get("first_bar_ts") or last)) / 86_400
+    if have_days < window_days * _MIN_HISTORY_SHARE:
+        return f"only {have_days:.0f} days of history; this bar size needs about {window_days}"
+    return ""
+
+
+def catalog_entry(config: Any, symbol: str) -> dict[str, Any] | None:
+    """The price service's catalog row for `symbol`, or None when it is missing or the service cannot be reached."""
+    import httpx
+
+    try:
+        r = httpx.get(f"{config.stock_price_api_url}/stock/catalog/{symbol}", timeout=15)
+        rows = (r.json() or {}).get("data") or [] if r.status_code == 200 else []
+        return rows[0] if rows else None
+    except Exception as exc:  # noqa: BLE001 -- unreachable data service means "not ready", never "ready"
+        LOG.warning("price catalog lookup for %s failed: %s", symbol, exc)
+        return None
 
 
 def bars_from_config(config: Any) -> list[str]:
@@ -124,20 +190,33 @@ def choose_bar(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 async def validate_across_bars(
     service: Any, *, symbol: str, strategy_code: str, bars: list[str] | None = None, to_date: str | None = None,
+    catalog_lookup: Any = None,
 ) -> dict[str, Any]:
     """Run `strategy_code` unchanged on each bar size and return a comparison table plus the chosen bar size."""
     config = service.config
     end = date.fromisoformat(to_date) if to_date else date.today()
     rows: list[dict[str, Any]] = []
+    entry = (catalog_lookup or catalog_entry)(config, symbol)
+    indicators, unknown = plan_indicators(strategy_code)
+    if unknown:
+        reason = (f"the strategy reads column(s) the backtest cannot supply: {', '.join(unknown)}. "
+                  f"Available columns: {MERGEABLE_HELP}")
+        rows = [_row(b, ("", ""), None, config, error=reason) for b in (bars or bars_from_config(config))]
+        return {"symbol": symbol, "bars": rows, "passing_bars": [], "chosen_bar": None, "chosen": None}
     for interval in (bars or bars_from_config(config)):
         if interval not in BAR_WINDOW_DAYS:
             rows.append(_row(interval, ("", ""), None, config, error=f"bar size {interval!r} is not testable"))
             continue
         window = ((end - timedelta(days=BAR_WINDOW_DAYS[interval])).isoformat(), end.isoformat())
+        problem = data_problem(entry, BAR_WINDOW_DAYS[interval])
+        if problem:
+            rows.append(_row(interval, window, None, config, error=f"data not ready: {problem}"))
+            continue
         try:
             run = await service.run_research(
                 user_idea=f"validate {symbol} strategy on {interval} bars", symbol=symbol, from_date=window[0],
                 to_date=window[1], strategy_code=strategy_code, interval=interval, max_iterations=1, validation=True,
+                indicators=indicators or None,
             )
             rows.append(_row(interval, window, run, config))
         except Exception as exc:  # noqa: BLE001 -- one bar size failing must not hide the others
