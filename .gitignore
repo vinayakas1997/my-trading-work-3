@@ -87,3 +87,27 @@ other-repos-world/repos/
 *.pt
 
 openrouter-api-key
+
+
+# --- runtime data written by the running stack (live databases and run output must never be committed) ---
+# Inputs stay tracked: data/shared/watchlist.json, data/news/tickers.csv, data/models/, data/strategy/.
+vinu-components/data/_backup_*/
+vinu-components/data/agent/
+vinu-components/data/features/
+vinu-components/data/initial-analysis/
+vinu-components/data/live/
+vinu-components/data/llm-gateway/
+vinu-components/data/portfolio/
+vinu-components/data/reflection/
+vinu-components/data/research/
+vinu-components/data/screener/
+vinu-components/data/simulator/
+vinu-components/data/stock-price/
+vinu-components/data/strategy-evaluation/
+vinu-components/data/market_regime_history.db
+vinu-components/data/strategy_store.db
+vinu-components/data/news/*
+!vinu-components/data/news/tickers.csv
+
+# a cloned reference repository (it has its own .git); keep it out of this repo
+personal-important/other-reference-repos/freqtrade/
