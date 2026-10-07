@@ -281,7 +281,7 @@ Read `how-to-use-this-log.md` for the rules.
 - **Seen:** (O14) the full suite hung for over 12 minutes with no output: tests reached the real news client, which calls a service that is not there and retries with backoff.
 - **Fix:** `vinu-initial-analysis/tests/conftest.py` makes the real news client return no articles in every test (tests that need articles pass their own fake client). The container harness also skips the two ProcessPool tests that still never finish in a throwaway container, by name, so the exclusion is visible.
 - **Guard:** `vinu-initial-analysis/tests/test_api_v1.py::test_trigger_and_poll_flow` (it used to wait on the news retries inside a 30 s deadline and now passes in the suite run); the harness line in `scripts/test_in_containers.sh` names the two skipped tests.
-- **Status:** GUARDED. Measured: 387 passed, 7 skipped, 2 deselected in 161 s in the image. The two parallel arima tests (`test_parallel_output_is_row_for_row_identical_to_sequential_at_cadence_1`, `test_parallel_at_cadence_greater_than_1_runs_but_is_not_identical_to_sequential`) are still not run in the container; their cause is not found.
+- **Status:** GUARDED (measured: 387 passed, 7 skipped, 2 deselected in 161 s in the image). The two parallel arima tests (`test_parallel_output_is_row_for_row_identical_to_sequential_at_cadence_1`, `test_parallel_at_cadence_greater_than_1_runs_but_is_not_identical_to_sequential`) are still not run in the container; their cause is not found.
 
 ---
 
