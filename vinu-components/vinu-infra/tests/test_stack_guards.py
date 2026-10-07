@@ -515,3 +515,9 @@ def test_deploy_refuses_to_restart_the_research_services_while_a_run_is_in_fligh
     script = (ROOT / "scripts" / "stack.sh").read_text(encoding="utf-8")
     assert "refusing to deploy" in script and 'FORCE:-}" != "1"' in script
     assert "status='running'" in script and "agent-api|research-api|llm-gateway|quant-core-api" in script
+
+
+def test_deploy_recreates_the_rebuilt_containers_instead_of_leaving_them_on_the_old_image():
+    """Plain `docker compose up -d` reported the rebuilt services as Running and left them on the old image (seen 2026-10-07)."""
+    script = (ROOT / "scripts" / "stack.sh").read_text(encoding="utf-8")
+    assert "up -d --force-recreate --no-deps $names" in script

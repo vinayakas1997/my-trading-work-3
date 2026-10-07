@@ -304,6 +304,19 @@ Read `how-to-use-this-log.md` for the rules.
 - **Must agree with:** `vinu_infra/sessions.py` (the session names); the live order guard (it does not use these numbers).
 - **Status:** GUARDED (the 2, 1, 2, 3 are GUESSES, not measurements: nobody has measured quote spreads per session. Strategies tested after this change see higher night costs, so earlier overnight verdicts are not comparable)
 
+### P46 Nobody was measuring quote spreads, so the cost multipliers had nothing to be fitted to
+- **Seen:** (O10) the stock service only answered live quotes at order time and kept no history; there was no way to see what a spread costs in each session.
+- **Fix:** the stock ingest loop now takes 5 quote snapshots per cycle (walking the watchlist round and round) and files each spread under the session it was taken in (`vinu_spreads.db`, `SpreadStore`). `GET /stock/spread-stats?days=N` returns the median and 90th-percentile spread per session and the multipliers they imply (session median over regular median, never below 1; `null` for a session with fewer than 30 snapshots, so it never guesses).
+- **Guard:** `vinu-stock-price/tests/test_api.py::test_a_snapshot_pass_files_the_spread_under_the_current_session_and_the_route_reports_it`, `vinu-stock-price/tests/test_api.py::test_suggested_multipliers_are_session_median_over_regular_median_only_with_enough_samples`, `vinu-stock-price/tests/test_api.py::test_an_unusable_quote_is_not_filed`
+- **Must agree with:** `VINU_SIM_SESSION_COST_MULT` in the simulator (P45): replace its guessed 2, 1, 2, 3 with the suggested multipliers once every session has 30 or more snapshots.
+- **Status:** GUARDED (live: 70 regular-session snapshots in the first minutes. The first reading is NOT trustworthy as a cost: median 31 bps, 90th percentile 598 bps for liquid names, because the data feed is IEX-only (the SIP feed is not permitted) and one exchange's quote is much wider than the national best bid and offer. The ratio between sessions may still be useful; the absolute level is not)
+
+### P47 `stack.sh deploy` rebuilt the images but left the containers on the old ones
+- **Seen:** on 2026-10-07 `deploy` built five services, then `docker compose up -d` printed "Running" for them and recreated nothing; `stale_images.py` kept reporting "the container's image no longer exists". The new code was not running until I forced the recreate by hand.
+- **Fix:** `deploy` now runs `docker compose up -d --force-recreate --no-deps` on exactly the stale services it just rebuilt.
+- **Guard:** `vinu-infra/tests/test_stack_guards.py::test_deploy_recreates_the_rebuilt_containers_instead_of_leaving_them_on_the_old_image`
+- **Status:** GUARDED (verified live: after the change, deploy ended with "every running service is built from its current source"; the cause of compose skipping the recreate is not known)
+
 ---
 
 ## E. Open problems (found, not fixed)
@@ -319,7 +332,7 @@ Read `how-to-use-this-log.md` for the rules.
 | O7 | Fixed: P41 stops deploys from killing runs, P43 carries a killed run's finished work into the next run. A run killed mid-conversation still loses that conversation (the model is re-briefed, not resumed) | | |
 | O8 | Gatekeeper, allocator and live feedback never run on a real strategy | still synthetic only | needs the first real ACTIVE strategy |
 | O9 | CLOSED. Fixed: P34 (not yet seen on a real night exit). | | |
-| O10 | Per-session spread and liquidity are still not measured; P45 uses guessed multipliers. Measuring needs stored quotes (bid and ask) by time of day: the stock service keeps candles, not a quote history | the multipliers 2, 1, 2, 3 may be too high or too low | start storing quote snapshots per session, then fit the multipliers (a design step: a new store) |
+| O10 | Measuring has started (P46): spreads are recorded per session. Wait for 30 or more snapshots in every session (pre-market, after-hours and overnight will take days), then set `VINU_SIM_SESSION_COST_MULT` from `/stock/spread-stats`. Caveat: the quotes are IEX-only and look far too wide (median 31 bps for liquid names), and overnight quotes may not exist at all on this feed | the cost multipliers stay guesses until then | check `/stock/spread-stats?days=7` in a few days |
 | O11 | CLOSED. Already fixed earlier: `vinu-reflection/entrypoint.sh` runs the API and the worker; checked live on 2026-10-07 (the agent reads `/reflection/synthesis/latest` and `/reflection/beliefs/notable`). Guard: `vinu-infra/tests/test_stack_guards.py::test_the_reflection_container_serves_its_api_as_well_as_running_the_worker`. | | |
 | O12 | CLOSED. Fixed: P35. | | |
 | O13 | CLOSED. Fixed: P36 (thresholds are guessed). | | |

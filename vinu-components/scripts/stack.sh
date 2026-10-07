@@ -72,7 +72,8 @@ deploy() {
     fi
   fi
   docker compose build $names
-  docker compose up -d $names
+  # --force-recreate: plain `up -d` left containers on the old image ("Running") after a rebuild; these are exactly the stale ones
+  docker compose up -d --force-recreate --no-deps $names
   python scripts/stale_images.py
 }
 

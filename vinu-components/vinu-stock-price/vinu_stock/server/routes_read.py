@@ -36,6 +36,13 @@ def quote(symbol: str) -> dict:
     return get_service().get_quote(symbol)
 
 
+@router.get("/spread-stats")
+def spread_stats(days: float = Query(default=30.0, ge=1.0, le=365.0)) -> dict:
+    """Median and 90th-percentile quote spread per session over the last `days`, and the cost multipliers they imply
+    (None for a session with too few snapshots). The measurement behind VINU_SIM_SESSION_COST_MULT."""
+    return get_service().spread_stats(days)
+
+
 @router.get("/events/{symbol}")
 def events(
     symbol: str,

@@ -1,0 +1,1 @@
+"""Quote-derived measurements."""

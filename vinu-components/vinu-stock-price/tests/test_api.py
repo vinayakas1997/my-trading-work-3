@@ -300,3 +300,53 @@ def test_quote_route_serves_provider_payload_and_caches(client, monkeypatch) -> 
     # second call inside the 5s TTL must not hit the provider again
     client.get("/stock/quote/AAPL")
     assert calls["n"] == 1
+
+
+# ---- quote spreads by session (problem log O10) ----------------------------------------------------------------------------
+
+def _fake_quote(monkeypatch, spread):
+    from vinu_stock.providers.quote import QuoteResult
+
+    monkeypatch.setattr(
+        "vinu_stock.providers.quote.AlpacaQuoteProvider.get_quote",
+        lambda self, symbol: QuoteResult(True, symbol.upper(), bid=99.9, ask=100.1, mid=100.0, spread_bps=spread, ts=time.time()),
+    )
+
+
+def test_a_snapshot_pass_files_the_spread_under_the_current_session_and_the_route_reports_it(client, monkeypatch) -> None:
+    _fake_quote(monkeypatch, 4.0)
+    service = client.app.state.service if hasattr(client.app.state, "service") else None
+    assert client.get("/stock/spread-stats").json()["stats"]["regular"]["snapshots"] == 0
+    from vinu_stock.server.routes_read import get_service
+
+    assert get_service().snapshot_spreads() == 1                      # the one watchlist symbol
+    body = client.get("/stock/spread-stats?days=1").json()
+    assert sum(v["snapshots"] for v in body["stats"].values()) == 1
+    assert body["suggested_multipliers"]["regular"] is None           # one snapshot is not enough to suggest anything
+
+
+def test_an_unusable_quote_is_not_filed(client, monkeypatch) -> None:
+    from vinu_stock.providers.quote import QuoteResult
+    from vinu_stock.server.routes_read import get_service
+
+    monkeypatch.setattr("vinu_stock.providers.quote.AlpacaQuoteProvider.get_quote",
+                        lambda self, symbol: QuoteResult(False, symbol.upper(), error="no quote"))
+    assert get_service().snapshot_spreads() == 0
+
+
+def test_suggested_multipliers_are_session_median_over_regular_median_only_with_enough_samples(tmp_path) -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from vinu_stock.quotes.spread_store import MIN_SAMPLES, SpreadStore
+
+    ny = ZoneInfo("America/New_York")
+    store = SpreadStore(str(tmp_path / "spreads.db"))
+    base = datetime(2026, 10, 7, tzinfo=ny)
+    for i in range(MIN_SAMPLES):
+        store.record("SPY", {"ok": True, "spread_bps": 2.0}, now=base.replace(hour=11, minute=i).timestamp())     # regular
+        store.record("SPY", {"ok": True, "spread_bps": 7.0}, now=base.replace(hour=22, minute=i).timestamp())     # overnight
+    store.record("SPY", {"ok": True, "spread_bps": 9.0}, now=base.replace(hour=6, minute=0).timestamp())         # one pre-market
+    m = store.suggested_multipliers(days=3650, now=base.replace(hour=23, minute=59).timestamp())
+    assert m["regular"] == 1.0 and m["overnight"] == 3.5 and m["premarket"] is None
+    store.close()

@@ -17,6 +17,7 @@ from vinu_stock.config import VinuStockConfig, load_config
 from vinu_stock.events.finnhub_provider import FinnhubCalendarProvider
 from vinu_stock.events.poller import refresh_calendar
 from vinu_stock.events.store import EventsStore
+from vinu_stock.quotes.spread_store import SpreadStore
 from vinu_stock.live.ingest_cycle import LiveIngestSummary, run_live_cycle
 from vinu_stock.providers.quote import AlpacaQuoteProvider
 from vinu_stock.providers.registry import ProviderRegistry
@@ -63,6 +64,9 @@ class StockService:
         # read at order time by vinu-live via /stock/events/{symbol}.
         self._events_store = EventsStore(str(self._config.data_root / "vinu_events.db"))
         self._calendar_provider = FinnhubCalendarProvider(self._config.finnhub_api_key)
+        # Quote spreads by session (problem log O10): the measurement behind the backtest's per-session cost multipliers.
+        self._spread_store = SpreadStore(str(self._config.data_root / "vinu_spreads.db"))
+        self._spread_cursor = 0
         self._duckdb_conn = duckdb.connect()
         # data_root is resolved from the environment (VINU_STOCK_DATA_ROOT via
         # load_config()) -- the environment is the source of truth, NOT the
@@ -86,6 +90,11 @@ class StockService:
         if hasattr(self, "_events_store"):
             try:
                 self._events_store.close()
+            except Exception:
+                pass
+        if hasattr(self, "_spread_store"):
+            try:
+                self._spread_store.close()
             except Exception:
                 pass
         if self._owns_backend:
@@ -290,6 +299,31 @@ class StockService:
         return out
 
     _QUOTE_TTL_SEC = 5.0
+    SPREAD_SNAPSHOTS_PER_CYCLE = 5      # watchlist symbols quoted per ingest cycle; the list is walked round and round
+
+    def snapshot_spreads(self) -> int:
+        """Quote the next few watchlist symbols and file each spread under the session it was taken in. Returns how many
+        were filed. Never raises: a quote problem must not disturb the ingest cycle."""
+        try:
+            symbols = self.get_watchlist()
+            if not symbols:
+                return 0
+            take = min(self.SPREAD_SNAPSHOTS_PER_CYCLE, len(symbols))
+            start = self._spread_cursor % len(symbols)
+            self._spread_cursor += take
+            filed = 0
+            for i in range(take):
+                sym = symbols[(start + i) % len(symbols)]
+                if self._spread_store.record(sym, self.get_quote(sym)):
+                    filed += 1
+            return filed
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("spread snapshot failed (non-fatal): %s", exc)
+            return 0
+
+    def spread_stats(self, days: float = 30.0) -> dict[str, Any]:
+        return {"days": days, "stats": self._spread_store.stats(days),
+                "suggested_multipliers": self._spread_store.suggested_multipliers(days)}
 
     def get_quote(self, symbol: str) -> dict[str, Any]:
         """Latest bid/ask/spread for `symbol` (how-to-make-it-live.md #13).
