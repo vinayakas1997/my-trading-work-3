@@ -346,7 +346,7 @@ class TradeTool(BaseTool):
 
         result = guard.check(
             symbol, side, qty, price=(limit_price or None),
-            estimated_value=estimated_value, reduce_only=reduce_only,
+            estimated_value=estimated_value, reduce_only=reduce_only, order_type=order_type,
         )
         # missing-pieces-of-system/startegy-enhancer/01-plan.md section 2.
         # Real fix (2026-09-21, was a synthetic f"order:{symbol}" id):
@@ -448,7 +448,7 @@ class TradeTool(BaseTool):
             with kill_switch_lock():
                 pre_result = guard.pre_approve(
                     symbol, side, qty, price=(limit_price or None),
-                    estimated_value=estimated_value, reduce_only=reduce_only,
+                    estimated_value=estimated_value, reduce_only=reduce_only, order_type=order_type,
                 )
                 if not pre_result:
                     AuditLogger.log("order_rejected", {

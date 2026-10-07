@@ -390,8 +390,79 @@ def test_stale_check_sees_a_changed_file_that_git_considers_unchanged(tmp_path, 
     mtime, which = mod.newest_mtime(["pkg"])
     assert which.endswith("entrypoint.sh") and mtime >= f.stat().st_mtime - 1
     # tests and docs never reach a running service, so changing them must not make an image look stale
+    # (the folders and files exist before the baseline: ADDING an entry to a source folder is a change to what a build
+    # copies and is caught by the directory check; editing a test or a doc that is already there is not)
     (sub / "pkg" / "tests").mkdir()
     (sub / "pkg" / "tests" / "test_x.py").write_text("x")
     (sub / "pkg" / "README.md").write_text("x")
-    assert mod.newest_mtime(["pkg"])[1].endswith("entrypoint.sh")
+    baseline_mtime = mod.newest_mtime(["pkg"])[0]
+    time.sleep(1.1)
+    (sub / "pkg" / "tests" / "test_x.py").write_text("changed")
+    (sub / "pkg" / "README.md").write_text("changed")
+    assert mod.newest_mtime(["pkg"])[0] == baseline_mtime
     assert mod.newest_change(["pkg"])[0] >= mtime
+
+
+def test_moving_or_deleting_a_file_makes_an_image_stale(tmp_path, monkeypatch):
+    """A stray package folder was created, built into images, then moved away: no remaining file changed, so the stale
+    check said 'nothing is stale' over images built with the wrong layout. A directory's modification time changes when an
+    entry is added, removed or renamed in it, so the check now watches directories too."""
+    import importlib.util
+    import os
+    import time
+
+    spec = importlib.util.spec_from_file_location("stale_images", Path(__file__).resolve().parents[2] / "scripts" / "stale_images.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    pkg = tmp_path / "pkg"
+    (pkg / "inner").mkdir(parents=True)
+    keep = pkg / "keep.py"
+    keep.write_text("x = 1\n")
+    (pkg / "inner" / "stray.py").write_text("y = 1\n")
+    old = time.time() - 1000
+    for f in (keep, pkg / "inner" / "stray.py", pkg / "inner", pkg):
+        os.utime(f, (old, old))
+    monkeypatch.setattr(mod, "ROOT", tmp_path)
+    before, _ = mod.newest_mtime(["pkg"])
+    (pkg / "inner" / "stray.py").unlink()                    # no remaining file is touched
+    after, which = mod.newest_mtime(["pkg"])
+    assert after > before and "directory changed" in which
+
+
+def test_every_shared_module_the_code_imports_exists_where_the_package_expects_it():
+    """`vinu_infra` is the folder vinu-infra/ itself (pyproject maps the package name to "."), so `from vinu_infra.sessions import X`
+    needs vinu-infra/sessions.py. A new module put under vinu-infra/vinu_infra/ imports fine in a unit test and crash-loops the container."""
+    import re
+
+    root = Path(__file__).resolve().parents[2]
+    shared = root / "vinu-infra"
+    pattern = re.compile(r"^\s*(?:from|import)\s+vinu_infra\.([A-Za-z_][A-Za-z0-9_]*)", re.M)
+    missing: dict[str, str] = {}
+    for py in root.glob("vinu-*/**/*.py"):
+        if "tests" in py.parts or "__pycache__" in py.parts or ".venv" in py.parts:
+            continue
+        for name in pattern.findall(py.read_text(encoding="utf-8", errors="replace")):
+            if not ((shared / f"{name}.py").is_file() or (shared / name / "__init__.py").is_file()):
+                missing[name] = str(py.relative_to(root))
+    assert not missing, f"imported from vinu_infra but not found in vinu-infra/: {missing}"
+
+
+def test_the_angle_counts_written_in_the_requirements_pack_match_the_code():
+    """The pack says how many analysis angles are in scope (models are off, so model angles are out of scope). A count written in a
+    document must not drift from the angle specs, or "how many angles ran" gets answered against the wrong number again."""
+    root = Path(__file__).resolve().parents[2]
+    specs = list((root / "vinu-initial-analysis" / "vinu_initial_analysis" / "angles").glob("*/spec.yaml"))
+    categories = [re.search(r"^category:\s*(\w+)", p.read_text(encoding="utf-8"), re.M).group(1) for p in specs]
+    registered, models = len(categories), categories.count("model")
+    import ast
+
+    manifest = (root / "vinu-infra" / "system_manifest.py").read_text(encoding="utf-8")
+    switched_off = len(ast.literal_eval(re.search(r"^PERMANENTLY_DISABLED_ANGLES[^=]*=\s*frozenset\((\{.*?\}|)\)", manifest, re.M | re.S).group(1) or "set()"))
+    doc = root.parent / "Proper-Project-Implementation" / "00-project-understanding" / "analysis-angles-in-scope.md"
+    if not doc.is_file():
+        pytest.skip("requirements pack not present in this checkout")
+    text = doc.read_text(encoding="utf-8")
+    keys = ("REGISTERED ANGLES", "MODEL ANGLES", "SWITCHED-OFF ANGLES", "IN-SCOPE ANGLES")
+    written = {k: int(re.search(rf"^{k}:\s*(\d+)", text, re.M).group(1)) for k in keys}
+    assert written == {"REGISTERED ANGLES": registered, "MODEL ANGLES": models, "SWITCHED-OFF ANGLES": switched_off,
+                       "IN-SCOPE ANGLES": registered - models - switched_off}

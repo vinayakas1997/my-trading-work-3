@@ -110,7 +110,7 @@ class TestPinnedContractVersion:
     # Confirmed 2026-09-28 -- update these two values (and re-verify
     # vinu-research's own request/response handling still matches)
     # whenever this test fails, don't just paste in the new hash.
-    _EXPECTED_REQUEST_VERSION = "1a9ff283ff1a"
+    _EXPECTED_REQUEST_VERSION = "ecadb41ee551"        # bumped on purpose: CustomSimulateRequest gained `session`
     _EXPECTED_RESPONSE_VERSION = "002ce5e717d7"
 
     def test_request_schema_version_is_pinned(self) -> None:

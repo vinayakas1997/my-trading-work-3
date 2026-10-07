@@ -223,3 +223,37 @@ def test_a_null_strategy_code_is_no_strategy_not_the_text_none(store) -> None:
         content, strategy_store=store, bar_validator=lambda *a: called.append(a),
     ) is None
     assert called == [] and store.list_artifacts() == []
+
+
+def _all_session_row(hints, *, interval="1h"):
+    return {"interval": interval, "session": "all", "tested": True, "eligible": True, "reasons": [], "sharpe": 1.3,
+            "max_drawdown": -0.1, "deflated_sharpe": 1.4, "holdout_passed": True, "stress_test_passed": True, "pbo": None,
+            "pbo_waived": True, "trade_count": 90, "session_hints": hints}
+
+
+class TestTradingSessionsFromTheMeasurement:
+    def test_a_regular_hours_pass_approves_the_regular_session_only(self, store) -> None:
+        row = _row("1d", eligible=True)
+        evidence = {"bars": [row], "passing_bars": ["1d"], "chosen": row, "chosen_bar": "1d"}
+        a = store.get_artifact(write_artifact_from_research_pass(_PASS_CONTENT, strategy_store=store, source_run_id="t1",
+                                                                  bar_validator=lambda *x: evidence))
+        assert a.trading_sessions == "regular"
+
+    def test_an_all_session_pass_approves_the_sessions_whose_verdict_is_trade_or_reduce(self, store) -> None:
+        hints = {"premarket": {"verdict": "avoid", "size_multiplier": 0.0}, "regular": {"verdict": "trade", "size_multiplier": 1.0},
+                 "afterhours": {"verdict": "insufficient_data", "size_multiplier": 0.0},
+                 "overnight": {"verdict": "reduce", "size_multiplier": 0.5}}
+        row = _all_session_row(hints)
+        evidence = {"bars": [row], "passing_bars": ["1h"], "chosen": row, "chosen_bar": "1h", "chosen_session": "all"}
+        a = store.get_artifact(write_artifact_from_research_pass(_PASS_CONTENT, strategy_store=store, source_run_id="t2",
+                                                                  bar_validator=lambda *x: evidence))
+        assert a.trading_sessions == "regular,overnight" and a.bar_interval == "1h"
+        import json
+        assert json.loads(a.bar_evidence)["chosen_session"] == "all"
+
+    def test_an_all_session_pass_that_approves_no_session_is_rejected(self, store) -> None:
+        row = _all_session_row({s: {"verdict": "avoid", "size_multiplier": 0.0} for s in ("premarket", "regular", "afterhours", "overnight")})
+        evidence = {"bars": [row], "passing_bars": ["1h"], "chosen": row, "chosen_bar": "1h", "chosen_session": "all"}
+        a = store.get_artifact(write_artifact_from_research_pass(_PASS_CONTENT, strategy_store=store, source_run_id="t3",
+                                                                  bar_validator=lambda *x: evidence))
+        assert a.status == ArtifactStatus.DISABLED and a.trading_sessions == ""

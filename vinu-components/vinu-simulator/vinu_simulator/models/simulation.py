@@ -27,6 +27,9 @@ class SimulationConfig:
     # Bar granularity of price_data/weight_signals — drives annualization
     # (periods-per-year) in metrics.py. "1d" preserves prior behavior.
     interval: str = "1d"
+    # Which trading sessions the bars cover ("regular", "extended", "all" or a comma list; vinu_infra.sessions). Decides the
+    # annualisation factor of the metrics; the price service already returned only these sessions' bars.
+    sessions: str = "regular"
 
     # "fixed" = today's behavior (strategy's own weights used as-is). "vol_target"
     # scales exposure to hold realized volatility roughly constant. "kelly" scales

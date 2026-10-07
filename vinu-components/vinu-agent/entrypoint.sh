@@ -63,6 +63,7 @@ max_capital_utilization_pct: 1.0
 # turning this guard off.
 require_active_artifact: true
 require_market_open: false
+allowed_sessions: [premarket, regular, afterhours, overnight]
 max_symbol_concentration_pct: 1.0
 max_pairwise_correlation: 1.0
 require_confirmation: false

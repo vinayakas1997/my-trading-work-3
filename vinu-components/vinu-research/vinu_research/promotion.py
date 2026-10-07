@@ -40,8 +40,10 @@ def _chosen_bar_row(artifact: Artifact) -> dict | None:
         return None
     if not isinstance(evidence, dict) or evidence.get("verified") is not True:
         return None
+    chosen_session = evidence.get("chosen_session") or "regular"
     for row in evidence.get("bars") or []:
-        if isinstance(row, dict) and row.get("interval") == artifact.bar_interval:
+        if isinstance(row, dict) and row.get("interval") == artifact.bar_interval \
+                and (row.get("session") or "regular") == chosen_session:
             return row
     return None
 

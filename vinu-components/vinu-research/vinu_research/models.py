@@ -257,6 +257,9 @@ class Artifact:
     # backtest records by code, never typed by a model).
     bar_interval: str = ""
     bar_evidence: str = ""
+    # The trading sessions this strategy is approved to trade (comma list of premarket / regular / afterhours / overnight),
+    # from the per-session measurement. "" = never measured per session (an older artifact): not restricted.
+    trading_sessions: str = ""
 
     @classmethod
     def create(cls, type_: str, name: str, universe: list[str] | None = None) -> Artifact:

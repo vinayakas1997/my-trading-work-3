@@ -68,6 +68,17 @@ def validate_on_all_bars(symbol: str, strategy_code: str, services_config: Any) 
         return None
 
 
+def _approved_sessions(chosen: dict[str, Any]) -> list[str]:
+    """The trading sessions a chosen measurement approves. A regular-hours test approves the regular session only. An
+    all-sessions test approves the sessions whose per-session verdict is trade or reduce (session_stats); a session with
+    too few bars, or one the strategy loses money in, is NOT approved: no evidence, no trading there."""
+    if (chosen.get("session") or "regular") == "regular":
+        return ["regular"]
+    from vinu_research.session_stats import approved_sessions
+
+    return approved_sessions(chosen.get("session_hints") or {})
+
+
 def apply_bar_evidence(artifact: Any, evidence: Optional[dict[str, Any]]) -> str:
     """Copy the measured numbers onto the artifact and decide, in code, whether it may go on. Returns the decision:
     "verified" (a bar size cleared the promotion bar; the artifact keeps that bar size and its numbers), "rejected" (every
@@ -95,10 +106,14 @@ def apply_bar_evidence(artifact: Any, evidence: Optional[dict[str, Any]]) -> str
         artifact.holdout_passed = show.get("holdout_passed")
         artifact.stress_test_passed = show.get("stress_test_passed")
         artifact.pbo = show.get("pbo")
+    sessions = _approved_sessions(chosen) if chosen else []
     artifact.bar_evidence = json.dumps({"verified": True, "passing_bars": evidence.get("passing_bars", []),
-                                        "chosen_bar": (chosen or {}).get("interval", ""), "bars": rows}, default=str)
-    if chosen:
+                                        "chosen_bar": (chosen or {}).get("interval", ""),
+                                        "chosen_session": (chosen or {}).get("session", "regular"),
+                                        "trading_sessions": sessions, "bars": rows}, default=str)
+    if chosen and sessions:
         artifact.bar_interval = str(chosen["interval"])
+        artifact.trading_sessions = ",".join(sessions)
         return "verified"
     artifact.status = ArtifactStatus.DISABLED
     return "rejected"

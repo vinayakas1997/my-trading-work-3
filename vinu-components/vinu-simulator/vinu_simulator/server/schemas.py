@@ -98,6 +98,7 @@ class CustomSimulateRequest(BaseModel):
     allow_short: bool = True
     deviation_threshold: float | None = None
     interval: Literal["1m", "5m", "15m", "30m", "1h", "4h", "1d"] = "1d"
+    session: str = Field(default="regular", description="Trading sessions of the bars to backtest: regular (default), extended, all, or a comma list of premarket,regular,afterhours,overnight.")
     indicators: list[str] | None = None
     run_validation: bool = Field(default=False, description="Run full validation suite (Monte Carlo, block-bootstrap, price-path resample, bootstrap CI, walk-forward, attribution). Results are returned in the API response and persisted on the run record (queryable later via GET /results/{run_id} and GET /runs).")
     full_metrics: bool = Field(default=True, description="Compute extended metrics (VaR, CVaR, drawdown, win/loss ratios, Sharpe CI, turnover). When False, only basic metrics are returned.")

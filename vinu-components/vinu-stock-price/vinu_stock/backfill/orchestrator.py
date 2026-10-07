@@ -88,6 +88,7 @@ def _backfill_symbol(
     summary_lock: threading.Lock,
     summary: BackfillSummary,
     shared_root: Path | None = None,
+    refresh: bool = False,
 ) -> None:
     # Resolve the catalog store in *this* worker thread — SQLiteBackend
     # hands out one connection per thread via threading.local(), but only
@@ -118,7 +119,7 @@ def _backfill_symbol(
 
     for year in range(start_year, end_year + 1):
         existing = catalog.get_job_status(sym, year)
-        if existing and existing["status"] == "done":
+        if existing and existing["status"] == "done" and not refresh:
             with summary_lock:
                 summary.symbols_skipped += 1
             continue
@@ -261,7 +262,10 @@ def run_backfill(
     from_year: int | None = None,
     to_year: int | None = None,
     shared_root: Path | None = None,
+    refresh: bool = False,
 ) -> BackfillSummary:
+    """`refresh`: fetch the requested years again even where a job is already marked done. The write merges by timestamp, so
+    this only ADDS what was missing (used to bring in the overnight session for history stored before it was fetched)."""
     summary = BackfillSummary(symbols=[s.strip().upper() for s in symbols])
     if not summary.symbols:
         return summary
@@ -293,6 +297,7 @@ def run_backfill(
                 summary_lock=summary_lock,
                 summary=summary,
                 shared_root=shared_root,
+                refresh=refresh,
             ): sym
             for sym in summary.symbols
         }

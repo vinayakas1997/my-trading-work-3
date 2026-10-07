@@ -30,6 +30,7 @@ class CandlesBatchRequest(BaseModel):
     limit: int = Field(default=5000, ge=1, le=50000)
     indicators: list[str] | None = None
     adjusted: bool = True
+    session: str | None = None
 
     model_config = {"populate_by_name": True}
 

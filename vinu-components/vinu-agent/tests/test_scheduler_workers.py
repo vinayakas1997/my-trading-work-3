@@ -982,5 +982,6 @@ class TestPlannerResearchesOneStrategyPerTicker:
         assert "Interval: 1d" in task and "Window: " in task
         assert "SEPARATELY, on each of these bar sizes: 1d, 4h, 1h, 15m" in task
         assert "do NOT combine bar sizes" in task
+        assert "around the clock" in task and "all 24 hours" in task
         assert mock_run.call_args[1]["session_id"] == "planner-AAPL"
         triage.on_propose.assert_called_once_with("AAPL", result, ref_id="r1", debate_run_id="")

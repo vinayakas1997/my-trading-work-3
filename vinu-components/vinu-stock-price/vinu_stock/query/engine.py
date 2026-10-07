@@ -19,6 +19,7 @@ from typing import Any
 import duckdb
 import pyarrow.parquet as pq
 
+from vinu_infra.sessions import TRADABLE_SESSIONS, parse_sessions, session_mask, spec_of
 from vinu_stock.query.aggregate import aggregate_bars, bucket_end, interval_to_seconds
 from vinu_stock.query.cache import get_cache
 from vinu_stock.query.indicators import apply_adjusted_prices, apply_indicators
@@ -168,8 +169,12 @@ def fetch_candles(
     tail: bool | None = None,
     closed_only: bool = False,
     now_ts: int | None = None,
+    sessions: str | None = None,
 ) -> list[dict]:
-    """`tail`: which `limit` bars to keep. True = the most recent ones, False = the oldest. Default (None):
+    """`sessions`: which trading sessions' bars to return: `regular` (default, 09:30-16:00 ET), `extended`, `all`, or a
+    comma list of premarket / regular / afterhours / overnight (vinu_infra.sessions). Applied to the 1-minute bars BEFORE
+    they are aggregated, so a 15m/1h/4h/1d bar is built only from the sessions asked for.
+    `tail`: which `limit` bars to keep. True = the most recent ones, False = the oldest. Default (None):
     the most recent when the window has no explicit start (`from_ts` is None), the oldest when it does
     (forward pagination from `from_ts`). Before this, an open-ended request with a `limit` silently got the OLDEST
     bars of the whole history (v2 audit S1).
@@ -191,6 +196,9 @@ def fetch_candles(
         mask &= df["bar_ts"] <= to_ts
     if provider:
         mask &= df["provider"] == provider.strip().lower()
+    wanted = parse_sessions(sessions or os.environ.get("VINU_STOCK_DEFAULT_SESSION") or "regular")
+    if not frozenset(TRADABLE_SESSIONS) <= wanted:
+        mask &= session_mask(df["bar_ts"].to_numpy(), wanted)
     sub = df[mask].sort_values("bar_ts")
     if tail is None:
         tail = from_ts is None
@@ -236,7 +244,7 @@ def fetch_candles(
         indicator_set = frozenset(indicators)
         cache = get_cache()
         # limit / tail / closed_only change which rows come back, so they belong in the key (v2 audit S3)
-        ckey = f"{interval}#{limit}#{int(bool(tail))}#{int(closed_only)}"
+        ckey = f"{interval}#{limit}#{int(bool(tail))}#{int(closed_only)}#{spec_of(wanted)}"
         cached = cache.get(sym, ckey, from_ts, to_ts, indicator_set, adjusted)
         if cached is not None:
             records, age = cached

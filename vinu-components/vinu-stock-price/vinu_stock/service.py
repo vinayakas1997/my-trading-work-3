@@ -172,6 +172,7 @@ class StockService:
         from_year: int | None = None,
         to_year: int | None = None,
         dry_run: bool = False,
+        refresh: bool = False,
     ) -> BackfillCycleResult:
         if dry_run:
             LOG.info("DRY RUN: run_backfill(%s) — skipping", symbols)
@@ -186,6 +187,7 @@ class StockService:
             from_year=from_year,
             to_year=to_year,
             shared_root=self._config.shared_root,
+            refresh=refresh,
         )
         return BackfillCycleResult(summary=summary)
 
@@ -217,6 +219,7 @@ class StockService:
         adjusted: bool = True,
         cache_info: dict | None = None,
         closed_only: bool = False,
+        sessions: str | None = None,
     ) -> list[dict[str, Any]]:
         end_ts = to_ts
         start_ts = from_ts
@@ -241,6 +244,7 @@ class StockService:
             cache_info=cache_info,
             tail=tail,
             closed_only=closed_only,
+            sessions=sessions,
         )
 
     # A full-market scanner (vinu-screener) polling ~8000 symbols with no
@@ -264,6 +268,7 @@ class StockService:
         limit: int = 5000,
         indicators: list[str] | None = None,
         adjusted: bool = True,
+        sessions: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Same per-symbol semantics as `get_candles()`, called once per
         symbol under the hood (the per-symbol storage layer isn't changed
@@ -277,7 +282,7 @@ class StockService:
             try:
                 out[symbol.upper()] = self.get_candles(
                     symbol, interval=interval, from_ts=from_ts, to_ts=to_ts, days=days,
-                    provider=provider, limit=limit, indicators=indicators, adjusted=adjusted,
+                    provider=provider, limit=limit, indicators=indicators, adjusted=adjusted, sessions=sessions,
                 )
             except Exception:
                 LOG.exception("candles batch: %s failed, returning empty for this symbol only", symbol.upper())

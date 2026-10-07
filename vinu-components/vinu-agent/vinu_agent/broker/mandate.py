@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 
 from vinu_infra.runtime_settings import RuntimeSettings
+from vinu_infra.sessions import TRADABLE_SESSIONS, parse_sessions
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,9 @@ class TradingMandate:
     # safety default, not a hard technical requirement — set False for
     # strategies that intentionally queue orders outside market hours.
     require_market_open: bool = True
+    # Which trading sessions orders may be sent in (vinu_infra.sessions): the system trades around the clock, so the
+    # default is all four. Outside `regular` the broker accepts only limit orders (enforced by OrderGuard).
+    allowed_sessions: tuple[str, ...] = TRADABLE_SESSIONS
     # Portfolio-level checks, independent of max_position_pct (which only
     # reasons about this one order). Re-checked against vinu-portfolio's
     # current target weights and correlation matrix at order time, so target
@@ -140,6 +144,8 @@ class TradingMandate:
                 max_capital_utilization_pct=float(raw.get("max_capital_utilization_pct", 1.0)),
                 require_active_artifact=bool(raw.get("require_active_artifact", True)),
                 require_market_open=bool(raw.get("require_market_open", True)),
+                allowed_sessions=tuple(sorted(parse_sessions(raw.get("allowed_sessions", "all")),
+                                              key=TRADABLE_SESSIONS.index)),
                 max_symbol_concentration_pct=float(raw.get("max_symbol_concentration_pct", 1.0)),
                 max_pairwise_correlation=float(raw.get("max_pairwise_correlation", 1.0)),
                 require_confirmation=bool(raw.get("require_confirmation", True)),
@@ -204,6 +210,7 @@ class TradingMandate:
             "max_capital_utilization_pct": self.max_capital_utilization_pct,
             "require_active_artifact": self.require_active_artifact,
             "require_market_open": self.require_market_open,
+            "allowed_sessions": list(self.allowed_sessions),
             "max_symbol_concentration_pct": self.max_symbol_concentration_pct,
             "max_pairwise_correlation": self.max_pairwise_correlation,
             "require_confirmation": self.require_confirmation,

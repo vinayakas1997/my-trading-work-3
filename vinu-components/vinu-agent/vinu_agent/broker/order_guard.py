@@ -16,6 +16,7 @@ from .factory import get_live_broker
 from .guard_codes import GuardOutcome, ReasonCode
 from .kill_switch import is_trading_halted
 from .mandate import TradingMandate
+from vinu_infra.sessions import CLOSED, OVERNIGHT, REGULAR, session_of
 
 def _record_edge(edge_id: str, status: str, detail: str = "", **kw) -> None:
     """Observe-only pipeline-edge recording (vinu_infra.pipeline_edge_recorder); never raises, never affects an order.
@@ -181,6 +182,7 @@ class OrderGuard:
         price: float | None = None,
         estimated_value: float | None = None,
         reduce_only: bool = False,
+        order_type: str = "market",
     ) -> GuardResult:
         # Phase 3 (New-talk-agents/new-thinking/new-restructure/phases/
         # phase-3-kill-switch/): scope convention is the ticker symbol --
@@ -439,10 +441,13 @@ class OrderGuard:
             if not active_result:
                 return active_result
 
-        if mandate.require_market_open:
-            market_result = self._check_market_open()
-            if not market_result:
-                return market_result
+        session_result = self._check_session(symbol, order_type, require_open=mandate.require_market_open)
+        if not session_result:
+            return session_result
+        if mandate.require_active_artifact and not reduce_only:
+            strategy_session_result = self._check_strategy_session(symbol)
+            if not strategy_session_result:
+                return strategy_session_result
 
         if mandate.max_symbol_concentration_pct < 1.0 or mandate.max_pairwise_correlation < 1.0:
             concentration_result = self._check_portfolio_concentration(symbol, side, value)
@@ -608,6 +613,16 @@ class OrderGuard:
         if rb is not None:
             comps["risk_budget"] = max(0.0, min(1.0, rb))
 
+        # Risk hint from the per-session test: outside the regular session the strategy's measured volatility is higher, so
+        # it trades smaller there (session_stats.risk_hints).
+        if getattr(self, "_session", None) is None:
+            self._check_session(symbol, "limit", require_open=False)       # only to learn which session it is now
+        current = getattr(self, "_session", None)
+        if current and current != REGULAR:
+            _, session_mult = self._strategy_session_profile(symbol)
+            if current in session_mult:
+                comps["session"] = max(0.0, min(1.0, session_mult[current]))
+
         if not comps:
             return MultiplierResult(1.0, {}, None)
         m = max(0.0, min(1.0, min(comps.values())))
@@ -721,6 +736,99 @@ class OrderGuard:
         except Exception as e:
             logger.warning("Could not look up blocked-artifact ids for %s: %s", symbol, e)
             return []
+
+    def _check_session(self, symbol: str, order_type: str, *, require_open: bool) -> GuardResult:
+        """The system trades around the clock (vinu_infra.sessions). What is enforced, from the BROKER's clock time (so a
+        replay broker and a live one both judge by their own `now`):
+          * the weekend gap (`closed`): refused only when the mandate says require_market_open (otherwise the order queues);
+          * a session the mandate does not allow (`allowed_sessions`): refused;
+          * outside the regular session: LIMIT orders only (the broker refuses market orders there), and the overnight
+            session also needs the symbol flagged `overnight_tradable` (checked with the broker, fail CLOSED);
+          * the regular session: the broker clock decides (a holiday), when the mandate requires an open market.
+        """
+        clock: dict = {}
+        try:
+            clock = self._broker.get_clock() or {}
+        except Exception as e:
+            logger.warning("Could not read the market clock, judging the session by the system time: %s", e)
+        ts = time.time()
+        raw_ts = clock.get("timestamp")
+        if raw_ts:
+            try:
+                from datetime import datetime, timezone
+                ts = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00")).astimezone(timezone.utc).timestamp()
+            except ValueError:
+                pass
+        session = session_of(ts)
+        self._session = session
+        if session == CLOSED:
+            if require_open:
+                return GuardResult(False, "The market is closed for the weekend (Friday 20:00 to Sunday 20:00 ET).",
+                                   code=ReasonCode.MARKET_CLOSED)
+            return GuardResult(True)
+        if session not in self._mandate.allowed_sessions:
+            return GuardResult(False, f"Orders are not allowed in the {session} session (mandate allowed_sessions: "
+                               f"{', '.join(self._mandate.allowed_sessions)}).", code=ReasonCode.SESSION_NOT_ALLOWED)
+        if session == REGULAR:
+            if require_open and not clock.get("is_open", True):
+                return GuardResult(False, f"Market is closed (next open: {clock.get('next_open', 'unknown')}).",
+                                   code=ReasonCode.MARKET_CLOSED)
+            return GuardResult(True)
+        if str(order_type).lower() != "limit":
+            return GuardResult(
+                False, f"It is the {session} session: only limit orders are accepted outside 09:30-16:00 ET. Resend as a "
+                       f"limit order priced at or through the current quote.", code=ReasonCode.LIMIT_ONLY_OUTSIDE_REGULAR)
+        if session == OVERNIGHT and not clock.get("replay"):
+            try:
+                attrs = self._broker.get_asset(symbol).get("attributes") or []
+            except Exception as e:
+                return GuardResult(False, f"Cannot confirm that {symbol} trades overnight ({type(e).__name__}: {e}); refusing.",
+                                   code=ReasonCode.NOT_OVERNIGHT_TRADABLE)
+            if "overnight_tradable" not in attrs:
+                return GuardResult(False, f"{symbol} is not overnight_tradable at the broker.",
+                                   code=ReasonCode.NOT_OVERNIGHT_TRADABLE)
+        return GuardResult(True)
+
+    def _strategy_session_profile(self, symbol: str) -> tuple[set[str] | None, dict[str, float]]:
+        """(sessions the symbol's ACTIVE strategies may trade, size multiplier per session): the union over them. (None, {})
+        when an artifact was never measured per session (older ones): not restricted. Best effort: an unreadable store is
+        already refused by _check_active_artifact."""
+        import json
+
+        try:
+            from vinu_research.models import ArtifactStatus
+
+            from .research_link import get_strategy_store
+
+            arts = get_strategy_store().list_artifacts_for_symbol(symbol, statuses=[ArtifactStatus.ACTIVE])
+        except Exception:
+            return None, {}
+        sessions: set[str] = set()
+        mult: dict[str, float] = {}
+        for a in arts:
+            if not getattr(a, "trading_sessions", ""):
+                return None, {}
+            sessions.update(s for s in a.trading_sessions.split(",") if s)
+            try:
+                hints = (json.loads(a.bar_evidence or "{}").get("bars") or [])
+                chosen = next((r for r in hints if r.get("interval") == a.bar_interval
+                               and (r.get("session") or "regular") == (json.loads(a.bar_evidence).get("chosen_session") or "regular")), {})
+                for s, h in (chosen.get("session_hints") or {}).items():
+                    mult[s] = max(mult.get(s, 0.0), float(h.get("size_multiplier", 1.0)))
+            except (ValueError, TypeError):
+                continue
+        return sessions, mult
+
+    def _check_strategy_session(self, symbol: str) -> GuardResult:
+        """A strategy trades only in the sessions its per-session test approved (an unmeasured session is not approved)."""
+        session = getattr(self, "_session", None)
+        if session is None or session == CLOSED:
+            return GuardResult(True)
+        allowed, _ = self._strategy_session_profile(symbol)
+        if allowed is not None and session not in allowed:
+            return GuardResult(False, f"{symbol}'s ACTIVE strategy is approved for the {', '.join(sorted(allowed))} session(s), "
+                               f"not {session}.", code=ReasonCode.SESSION_NOT_ALLOWED)
+        return GuardResult(True)
 
     def _check_market_open(self) -> GuardResult:
         """Reject orders while the market is closed, per Alpaca's clock endpoint.
@@ -892,6 +1000,7 @@ class OrderGuard:
         price: float | None = None,
         estimated_value: float | None = None,
         reduce_only: bool = False,
+        order_type: str = "market",
     ) -> GuardResult:
         # situation-test/28-pre-approve-drops-price-rechecks-with-zero-value.md:
         # found by real end-to-end testing that `estimated_value` (and,
@@ -906,7 +1015,8 @@ class OrderGuard:
         # path mocked `pre_approve` directly (`guard.pre_approve.return_value
         # = GuardResult(True)`), so nothing had ever driven this method's
         # own internal `self.check(...)` call with real arguments before.
-        result = self.check(symbol, side, qty, price, estimated_value=estimated_value, reduce_only=reduce_only)
+        result = self.check(symbol, side, qty, price, estimated_value=estimated_value, reduce_only=reduce_only,
+                            order_type=order_type)
         if result:
             value = max(estimated_value or 0.0, qty * (price or 0.0))
             self._increment_daily_count(symbol, value)

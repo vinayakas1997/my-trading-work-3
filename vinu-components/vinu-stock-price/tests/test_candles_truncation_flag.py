@@ -18,7 +18,7 @@ class _Service:
     """Honours `limit` the way the engine does: forward from an explicit start keeps the oldest, open-ended the newest."""
 
     def get_candles(self, symbol, *, interval, from_ts, to_ts, days, provider, limit, indicators, adjusted, cache_info,
-                    closed_only):
+                    closed_only, sessions=None):
         rows = [b for b in BARS if (from_ts is None or b["bar_ts"] >= from_ts)]
         return rows[:limit] if from_ts is not None else rows[-limit:]
 

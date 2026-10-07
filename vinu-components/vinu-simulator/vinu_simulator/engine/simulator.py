@@ -405,7 +405,7 @@ class WeightSimulator:
             portfolio_values_s, daily_returns_s,
             trades=trades,
             risk_free_rate=config.risk_free_rate_annual,
-            periods_per_year=periods_per_year_for_interval(config.interval),
+            periods_per_year=periods_per_year_for_interval(config.interval, getattr(config, "sessions", None)),
             full=config.full_metrics,
         )
         # A28/A30: execution-realism diagnostics — how volume-constrained the
@@ -589,5 +589,5 @@ class SimulatorEnv:
     def metrics(self) -> dict[str, float]:
         return compute_performance_metrics(
             self.equity_curve, self.daily_returns,
-            periods_per_year=periods_per_year_for_interval(self.config.interval),
+            periods_per_year=periods_per_year_for_interval(self.config.interval, getattr(self.config, "sessions", None)),
         )

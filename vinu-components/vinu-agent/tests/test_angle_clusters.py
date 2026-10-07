@@ -35,3 +35,11 @@ class TestAngleClusters:
     def test_no_duplicate_angle_within_a_single_cluster(self) -> None:
         for cluster, angles in ANGLE_CLUSTERS.items():
             assert len(angles) == len(set(angles)), f"cluster {cluster} has a duplicate"
+
+
+    def test_no_cluster_lists_an_angle_that_is_switched_off(self) -> None:
+        # a switched-off angle never produces data, so a digest that waits for it can never be complete
+        from vinu_infra.system_manifest import PERMANENTLY_DISABLED_ANGLES
+
+        listed = {a for angles in ANGLE_CLUSTERS.values() for a in angles}
+        assert not (listed & PERMANENTLY_DISABLED_ANGLES), sorted(listed & PERMANENTLY_DISABLED_ANGLES)

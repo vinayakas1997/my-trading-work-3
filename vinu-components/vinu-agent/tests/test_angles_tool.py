@@ -478,63 +478,63 @@ class TestGetClusterAnglesTool:
         assert "Z" in result["error"]
 
     def test_only_fetches_the_named_clusters_real_members(self) -> None:
-        """Structural isolation check: Cluster C has exactly 2 real
-        members (garch, drawdown_deep_dive) -- this must never fetch or
-        return any angle outside that list, e.g. kalman_filters (a real
+        """Structural isolation check: Cluster E has exactly 2 real
+        members (shock_clustering, shock_personality) -- this must never fetch or
+        return any angle outside that list, e.g. arima (a real
         Cluster A member)."""
         angle_responses = {
-            "garch": {"symbol": "AAPL", "angle": "garch", "row_count": 1, "data": [{"forecast_volatility": 0.02}]},
-            "drawdown_deep_dive": {"symbol": "AAPL", "angle": "drawdown_deep_dive", "row_count": 1, "data": [{"current_drawdown_pct": -0.03}]},
+            "shock_clustering": {"symbol": "AAPL", "angle": "shock_clustering", "row_count": 1, "data": [{"forecast_volatility": 0.02}]},
+            "shock_personality": {"symbol": "AAPL", "angle": "shock_personality", "row_count": 1, "data": [{"current_drawdown_pct": -0.03}]},
         }
         client = _mock_fallback_only_client(angle_responses)
         tool = _cluster_tool()
 
         with patch("httpx.Client", return_value=client):
-            result = json.loads(tool.execute(ticker="AAPL", cluster="C"))
+            result = json.loads(tool.execute(ticker="AAPL", cluster="E"))
 
-        assert result["cluster"] == "C"
-        assert set(result["cluster_members"]) == {"garch", "drawdown_deep_dive"}
-        assert set(result["angles"].keys()) == {"garch", "drawdown_deep_dive"}
-        assert "kalman_filters" not in result["angles"]
+        assert result["cluster"] == "E"
+        assert set(result["cluster_members"]) == {"shock_clustering", "shock_personality"}
+        assert set(result["angles"].keys()) == {"shock_clustering", "shock_personality"}
+        assert "arima" not in result["angles"]
         assert result["angle_count"] == 2
         assert result["angles_with_data"] == 2
 
     def test_lowercase_cluster_letter_is_normalized(self) -> None:
         angle_responses = {
-            "garch": {"symbol": "AAPL", "angle": "garch", "row_count": 0, "data": []},
-            "drawdown_deep_dive": {"symbol": "AAPL", "angle": "drawdown_deep_dive", "row_count": 0, "data": []},
+            "shock_clustering": {"symbol": "AAPL", "angle": "shock_clustering", "row_count": 0, "data": []},
+            "shock_personality": {"symbol": "AAPL", "angle": "shock_personality", "row_count": 0, "data": []},
         }
         client = _mock_fallback_only_client(angle_responses)
         tool = _cluster_tool()
 
         with patch("httpx.Client", return_value=client):
-            result = json.loads(tool.execute(ticker="AAPL", cluster="c"))
+            result = json.loads(tool.execute(ticker="AAPL", cluster="e"))
 
-        assert result["cluster"] == "C"
+        assert result["cluster"] == "E"
 
     def test_angles_with_data_only_counts_real_rows(self) -> None:
         angle_responses = {
-            "garch": {"symbol": "AAPL", "angle": "garch", "row_count": 1, "data": [{"forecast_volatility": 0.02}]},
-            "drawdown_deep_dive": {"symbol": "AAPL", "angle": "drawdown_deep_dive", "row_count": 0, "data": []},
+            "shock_clustering": {"symbol": "AAPL", "angle": "shock_clustering", "row_count": 1, "data": [{"forecast_volatility": 0.02}]},
+            "shock_personality": {"symbol": "AAPL", "angle": "shock_personality", "row_count": 0, "data": []},
         }
         client = _mock_fallback_only_client(angle_responses)
         tool = _cluster_tool()
 
         with patch("httpx.Client", return_value=client):
-            result = json.loads(tool.execute(ticker="AAPL", cluster="C"))
+            result = json.loads(tool.execute(ticker="AAPL", cluster="E"))
 
         assert result["angles_with_data"] == 1
 
     def test_time_format_defaults_to_1D(self) -> None:
         angle_responses = {
-            "garch": {"symbol": "AAPL", "angle": "garch", "row_count": 0, "data": []},
-            "drawdown_deep_dive": {"symbol": "AAPL", "angle": "drawdown_deep_dive", "row_count": 0, "data": []},
+            "shock_clustering": {"symbol": "AAPL", "angle": "shock_clustering", "row_count": 0, "data": []},
+            "shock_personality": {"symbol": "AAPL", "angle": "shock_personality", "row_count": 0, "data": []},
         }
         client = _mock_fallback_only_client(angle_responses)
         tool = _cluster_tool()
 
         with patch("httpx.Client", return_value=client):
-            result = json.loads(tool.execute(ticker="AAPL", cluster="C"))
+            result = json.loads(tool.execute(ticker="AAPL", cluster="E"))
 
         assert result["time_format"] == "1D"
 
@@ -563,42 +563,42 @@ class TestGetClusterAnglesTool:
         test_only_fetches_the_named_clusters_real_members above still
         holds in ALL mode."""
         angles_list = {"angles": [
-            {"name": "garch", "spec": {"time_formats": ["1D", "1H"]}},
-            {"name": "drawdown_deep_dive", "spec": {"time_formats": ["1D"]}},
-            {"name": "kalman_filters", "spec": {"time_formats": ["1D", "1H"]}},  # Cluster A, not C
+            {"name": "shock_clustering", "spec": {"time_formats": ["1D", "1H"]}},
+            {"name": "shock_personality", "spec": {"time_formats": ["1D"]}},
+            {"name": "arima", "spec": {"time_formats": ["1D", "1H"]}},  # Cluster A, not E
         ]}
         angle_format_responses = {
-            ("garch", "1D"): {"symbol": "AAPL", "angle": "garch", "row_count": 1, "data": [{"x": 1}]},
-            ("garch", "1H"): {"symbol": "AAPL", "angle": "garch", "row_count": 1, "data": [{"x": 1}]},
-            ("drawdown_deep_dive", "1D"): {"symbol": "AAPL", "angle": "drawdown_deep_dive", "row_count": 1, "data": [{"x": 1}]},
+            ("shock_clustering", "1D"): {"symbol": "AAPL", "angle": "shock_clustering", "row_count": 1, "data": [{"x": 1}]},
+            ("shock_clustering", "1H"): {"symbol": "AAPL", "angle": "shock_clustering", "row_count": 1, "data": [{"x": 1}]},
+            ("shock_personality", "1D"): {"symbol": "AAPL", "angle": "shock_personality", "row_count": 1, "data": [{"x": 1}]},
         }
         client = _mock_multi_format_client(angles_list, angle_format_responses)
         tool = _cluster_tool()
 
         with patch("httpx.Client", return_value=client):
-            result = json.loads(tool.execute(ticker="AAPL", cluster="C", time_format="ALL"))
+            result = json.loads(tool.execute(ticker="AAPL", cluster="E", time_format="ALL"))
 
         assert result["time_format"] == "ALL"
-        assert set(result["angles"].keys()) == {"garch", "drawdown_deep_dive"}
-        assert "kalman_filters" not in result["angles"]
-        assert set(result["angles"]["garch"].keys()) == {"1D", "1H"}
-        assert set(result["angles"]["drawdown_deep_dive"].keys()) == {"1D"}
+        assert set(result["angles"].keys()) == {"shock_clustering", "shock_personality"}
+        assert "arima" not in result["angles"]
+        assert set(result["angles"]["shock_clustering"].keys()) == {"1D", "1H"}
+        assert set(result["angles"]["shock_personality"].keys()) == {"1D"}
 
     def test_all_mode_is_cached_separately_per_cluster(self) -> None:
         angles_list = {"angles": [
-            {"name": "garch", "spec": {"time_formats": ["1D"]}},
-            {"name": "drawdown_deep_dive", "spec": {"time_formats": ["1D"]}},
+            {"name": "shock_clustering", "spec": {"time_formats": ["1D"]}},
+            {"name": "shock_personality", "spec": {"time_formats": ["1D"]}},
         ]}
         angle_format_responses = {
-            ("garch", "1D"): {"symbol": "AAPL", "angle": "garch", "row_count": 1, "data": [{"x": 1}]},
-            ("drawdown_deep_dive", "1D"): {"symbol": "AAPL", "angle": "drawdown_deep_dive", "row_count": 1, "data": [{"x": 1}]},
+            ("shock_clustering", "1D"): {"symbol": "AAPL", "angle": "shock_clustering", "row_count": 1, "data": [{"x": 1}]},
+            ("shock_personality", "1D"): {"symbol": "AAPL", "angle": "shock_personality", "row_count": 1, "data": [{"x": 1}]},
         }
         client = _mock_multi_format_client(angles_list, angle_format_responses)
         tool = _cluster_tool()
 
         with patch("httpx.Client", return_value=client) as mock_client_cls:
-            first = tool.execute(ticker="AAPL", cluster="C", time_format="ALL")
-            second = tool.execute(ticker="AAPL", cluster="C", time_format="ALL")
+            first = tool.execute(ticker="AAPL", cluster="E", time_format="ALL")
+            second = tool.execute(ticker="AAPL", cluster="E", time_format="ALL")
 
         assert first == second
         assert mock_client_cls.call_count == 1

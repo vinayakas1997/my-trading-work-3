@@ -34,13 +34,14 @@ class PriceClient(BaseClient):
         to_date: str,
         resolution: str = "1d",
         indicators: list[str] | None = None,
+        session: str = "regular",
     ) -> dict[str, pd.DataFrame]:
         # Not case-normalized: `sym` is passed through verbatim into the
         # real `/candles/{sym}` request, so a case difference is a
         # different real request, not a cache-equivalent one.
         cache_key = (
             tuple(sorted(symbols)), from_date, to_date,
-            resolution, tuple(sorted(indicators or [])),
+            resolution, tuple(sorted(indicators or [])), session,
         )
         cached = self._ohclv_cache.get(cache_key)
         if cached is not None:
@@ -54,6 +55,7 @@ class PriceClient(BaseClient):
             "from": from_ts,
             "to": to_ts,
             "adjusted": True,
+            "session": session,
         }
         if indicators:
             params_template["indicators"] = ",".join(indicators)

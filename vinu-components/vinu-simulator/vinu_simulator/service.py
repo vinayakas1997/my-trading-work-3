@@ -80,6 +80,7 @@ class SimulatorService:
         end_date: str,
         resolution: str,
         indicators: list[str] | None,
+        session: str = "regular",
     ) -> dict[str, pd.DataFrame]:
         """Same contract as PriceClient.get_ohclv, fronted by a short-TTL
         in-process cache keyed on the full call signature. Sweep-grid runs
@@ -94,6 +95,7 @@ class SimulatorService:
             end_date,
             resolution,
             tuple(sorted(indicators)) if indicators else None,
+            session,
         )
         def _cached():
             with self._ohclv_cache_lock:
@@ -117,8 +119,9 @@ class SimulatorService:
             if hit is not None:
                 return hit
             now = time.monotonic()
+            extra = {} if session == "regular" else {"session": session}
             data = self._price_client.get_ohclv(
-                symbols, start_date, end_date, resolution=resolution, indicators=indicators,
+                symbols, start_date, end_date, resolution=resolution, indicators=indicators, **extra,
             )
 
             with self._ohclv_cache_lock:
@@ -368,6 +371,10 @@ class SimulatorService:
             "max_pct_of_volume": req.max_pct_of_volume,
             "execution_reject_prob": req.execution_reject_prob,
             "random_seed": req.random_seed,
+            # The trading sessions of the bars are part of the question: without this a request for all 24 hours was answered
+            # with the stored regular-hours run of the same strategy (identical results). Left out when it is the default so
+            # every existing run keeps its hash.
+            **({} if req.session == "regular" else {"session": req.session}),
         })
         cached = self._meta_storage.get_run_by_config_hash(config_hash)
         if cached is not None:
@@ -414,7 +421,7 @@ class SimulatorService:
         requested_indicators = req.indicators or ["sma_20", "sma_50", "rsi_14"]
         ohclv_data = self._get_ohclv_cached(
             req.symbols, start_date, end_date,
-            resolution=req.interval, indicators=requested_indicators,
+            resolution=req.interval, indicators=requested_indicators, session=req.session,
         )
         missing = [s for s in req.symbols if s not in ohclv_data or ohclv_data[s].empty]
         if missing:
@@ -441,6 +448,7 @@ class SimulatorService:
             allow_short=req.allow_short,
             deviation_threshold=req.deviation_threshold if req.deviation_threshold is not None else self._config.deviation_threshold,
             interval=req.interval,
+            sessions=req.session,
             full_metrics=req.full_metrics,
             position_sizing_model=req.position_sizing_model,
             **_optional_sizing_kwargs(req),
@@ -537,7 +545,7 @@ class SimulatorService:
             returns = values.pct_change().dropna()
             bm = compute_performance_metrics(
                 values, returns,
-                periods_per_year=periods_per_year_for_interval(config.interval),
+                periods_per_year=periods_per_year_for_interval(config.interval, getattr(config, "sessions", None)),
             )
             benchmark_metrics[ticker] = bm
         return benchmark_metrics
@@ -564,7 +572,13 @@ class SimulatorService:
         # Match get_weights' date format (date-only string) — otherwise callers
         # joining the two endpoints on `date` silently get zero matches, since
         # this would default to a full ISO datetime string instead.
-        df["date"] = df["date"].dt.strftime("%Y-%m-%d") if hasattr(df["date"], "dt") else df["date"].astype(str)
+        # An intraday curve keeps its time of day ("2024-10-07 14:30:00", the same text get_weights gives): with date-only text
+        # a day's 26 or 96 bars all read as the same instant, and nothing can tell which session a return belongs to.
+        if hasattr(df["date"], "dt"):
+            intraday = bool((df["date"] != df["date"].dt.normalize()).any())
+            df["date"] = df["date"].dt.strftime("%Y-%m-%d %H:%M:%S" if intraday else "%Y-%m-%d")
+        else:
+            df["date"] = df["date"].astype(str)
         return df.to_dict(orient="records")
 
     def get_weights(self, run_id: str) -> list[dict[str, Any]] | None:
@@ -638,7 +652,7 @@ class SimulatorService:
         from vinu_simulator.engine.regime import classify_regime, per_regime_performance
         
         sim_config = result.config
-        periods_per_year = periods_per_year_for_interval(sim_config.interval)
+        periods_per_year = periods_per_year_for_interval(sim_config.interval, getattr(sim_config, "sessions", None))
         
         # Validation
         round_trips = match_trades(result.trades)

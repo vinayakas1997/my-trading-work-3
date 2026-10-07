@@ -145,6 +145,12 @@ the cross and zero all the other bars, so the "strategy" holds for one bar
 and trades on noise. Equities only: stay between 0.0 and 1.0 unless the
 task says shorting is allowed.
 
+**The market trades around the clock.** The bars your code receives cover the sessions the backtest was asked for:
+regular hours (09:30-16:00 ET) only, or all 24 hours (pre-market 04:00-09:30, after-hours 16:00-20:00 and overnight
+20:00-04:00 ET). Outside regular hours volume is thin and moves are larger, so rules built on bar counts and indicators
+travel across sessions better than rules built on clock times. Never assume bar number 1 is 09:30. The strategy is tested
+under regular hours and under all sessions and approved only for the sessions where it works.
+
 The class MUST subclass BaseStrategy -- a bare `class Strategy:` with no
 base class is rejected by the real backtest engine. Do not write your own
 import line for BaseStrategy/pandas/numpy (pd, np, BaseStrategy are

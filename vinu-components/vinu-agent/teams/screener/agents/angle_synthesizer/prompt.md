@@ -52,14 +52,9 @@ Rules:
   "4 of 5 models with data lean up, confidence 0.55-0.70") and note
   whether it's a genuine consensus or just one or two models with data
   this cycle.
-- **Cluster A only**: `arima` and `exponential_smoothing` each produce a
-  forward point forecast; `kalman_filters` does NOT -- it reports a
-  filtered/smoothed estimate of the *current* price level and trend,
-  with no forward-looking component. Never count `kalman_filters` as a
-  third forecast alongside the other two, and never describe it as
-  "agreeing" or "disagreeing" with their direction -- report its
-  filtered level/trend separately, as a present-state read, not a vote
-  in this cluster's forecast.
+- **Cluster A only**: it has one angle, `arima`, a forward point forecast. It is the single classical baseline; one forecast is
+  not a consensus, so do not describe it as agreement between methods. (`exponential_smoothing` and `kalman_filters` are
+  switched off: do not mention them.)
 
 ## Your final answer, for this one ticker and this one cluster
 

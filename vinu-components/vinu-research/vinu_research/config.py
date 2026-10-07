@@ -70,6 +70,8 @@ class ResearchConfig:
     # Bar granularity fed to the simulator ("1m","5m","15m","30m","1h","4h","1d").
     # Daily by default; matches vinu-simulator's CustomSimulateRequest.interval.
     interval: str = "1d"
+    # Trading sessions the backtest bars cover (vinu_infra.sessions): "regular" (default), "extended", "all" or a comma list.
+    session: str = "regular"
     # A run that tests fixed rules (strategy validation) is not idea generation: it must not be skipped because the ticker is
     # "exhausted" by earlier idea runs, and it does not count toward exhausting it. Set per run, never from the environment.
     ignore_symbol_exhaustion: bool = False
@@ -413,6 +415,7 @@ def load_config(*, force_reload: bool = False) -> ResearchConfig:
         slippage_pct=float(os.environ.get("VINU_RESEARCH_SLIPPAGE_PCT", "0.0005")),
         allow_short=os.environ.get("VINU_RESEARCH_ALLOW_SHORT", "true").lower() == "true",
         interval=os.environ.get("VINU_RESEARCH_INTERVAL", "1d"),
+        session=os.environ.get("VINU_RESEARCH_SESSION", "regular"),
         data_root=data_root,
         max_drawdown_threshold=float(os.environ.get("VINU_RESEARCH_MAX_DRAWDOWN_THRESHOLD", "-0.25")),
         llm_enabled=os.environ.get("VINU_RESEARCH_LLM_ENABLED", "false").lower() == "true",

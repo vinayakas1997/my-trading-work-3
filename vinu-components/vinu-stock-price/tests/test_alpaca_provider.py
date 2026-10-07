@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
+import pytest
+
 from vinu_stock.config import VinuStockConfig
 from vinu_stock.providers.alpaca import AlpacaProvider
+
+
+@pytest.fixture(autouse=True)
+def _no_overnight_feed(monkeypatch):
+    """These tests pin the number of HTTP calls of the main feed; the overnight feed has its own tests (test_session_filter)."""
+    monkeypatch.setenv("VINU_STOCK_OVERNIGHT_FEED", "")
 
 
 def _config(*, api_key: str = "key", api_secret: str = "secret") -> VinuStockConfig:

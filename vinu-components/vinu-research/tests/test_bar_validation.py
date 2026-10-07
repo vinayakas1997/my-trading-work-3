@@ -15,6 +15,12 @@ from vinu_research.config import ResearchConfig
 from vinu_research.models import Artifact
 from vinu_research.server.app import create_app
 
+@pytest.fixture(autouse=True)
+def _one_session_set(monkeypatch):
+    """These tests count the runs per bar size; the regular+all pairing has its own tests (test_session_stats.py)."""
+    monkeypatch.setenv("VINU_VALIDATION_SESSIONS", "regular")
+
+
 CODE = "class UserStrategy:\n    pass\n"
 
 

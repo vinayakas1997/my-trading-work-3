@@ -138,3 +138,11 @@ class TestRealKillSwitchReduceOnlyExemption:
 
         assert entry.allowed is True
         assert exit_.allowed is True
+
+
+@pytest.fixture(autouse=True)
+def _regular_session_whatever_the_wall_clock_says(monkeypatch):
+    """The guard now judges the trading session from the broker clock (`vinu_infra.sessions`). These tests were written for the
+    regular session and must not depend on what time of day they run; the session rules have their own tests
+    (test_session_orders.py)."""
+    monkeypatch.setattr("vinu_agent.broker.order_guard.session_of", lambda ts: "regular")

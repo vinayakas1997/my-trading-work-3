@@ -50,9 +50,13 @@ FIXED_EVIDENCE_COLUMNS: list[str] = [
 # MODELS switch -- an angle pinned to a statistical fallback proxy by design
 # (a real dependency conflict, not a temporary error path) would otherwise
 # silently masquerade as an independent model opinion in the evidence table.
-# Empty since moirai, moment and lag_llama were removed outright (2026-10-04);
-# the mechanism stays for any future angle that has to be switched off for good.
-PERMANENTLY_DISABLED_ANGLES: frozenset[str] = frozenset()
+# Switched off 2026-10-07 because they repeat another angle or nobody reads them (the code stays; delete a name here to switch one back on):
+#   garch                 the same GARCH fit shock_personality already reports (its own spec says it was extracted from it)
+#   exponential_smoothing }  both estimate a level and trend from close prices (same model family); arima is kept as the one
+#   kalman_filters        }  classical baseline
+#   search_trends         nothing reads it, and it depends on an unofficial Google API
+# (moirai, moment and lag_llama were removed outright on 2026-10-04.)
+PERMANENTLY_DISABLED_ANGLES: frozenset[str] = frozenset({"garch", "exponential_smoothing", "kalman_filters", "search_trends"})
 
 
 def _category(angle: dict[str, Any]) -> str:

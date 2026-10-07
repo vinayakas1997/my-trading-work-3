@@ -7,6 +7,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query, Response
 
 from vinu_infra.point_in_time import clamp_to_as_of
+from vinu_infra.sessions import parse_sessions
 from vinu_stock.catalog.gap_validation import count_session_gaps
 from vinu_stock.query.indicators import parse_indicator_names
 from vinu_stock.server.schemas import CandlesBatchRequest, CandlesBatchResponse, CandlesResponse, DataResponse
@@ -88,6 +89,12 @@ def candles(
     limit: int = Query(default=5000, ge=1, le=50000),
     indicators: str | None = Query(default=None, description="Comma-separated indicator names"),
     adjusted: bool = Query(default=True),
+    session: str | None = Query(
+        default=None,
+        description="Trading sessions to include: regular, extended, all, or a comma list of "
+                    "premarket,regular,afterhours,overnight. Bars of the other sessions are dropped before aggregation. "
+                    "Default: VINU_STOCK_DEFAULT_SESSION (regular).",
+    ),
     closed_only: bool = Query(
         default=False,
         description="Drop a trailing bar whose interval has not ended yet (a still-forming candle).",
@@ -106,6 +113,7 @@ def candles(
     service = get_service()
     try:
         indicator_list = parse_indicator_names(indicators)
+        parse_sessions(session) if session else None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     to_ts, clamped_to_as_of = clamp_to_as_of(to_ts, as_of)
@@ -124,6 +132,7 @@ def candles(
         adjusted=adjusted,
         cache_info=cache_info,
         closed_only=closed_only,
+        sessions=session,
     )
     truncated = len(rows) > limit
     next_from: int | None = None
@@ -186,6 +195,7 @@ def candles_batch(body: CandlesBatchRequest) -> CandlesBatchResponse:
         )
     try:
         indicator_list = parse_indicator_names(",".join(body.indicators)) if body.indicators else None
+        parse_sessions(body.session) if body.session else None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -199,6 +209,7 @@ def candles_batch(body: CandlesBatchRequest) -> CandlesBatchResponse:
         limit=body.limit,
         indicators=indicator_list,
         adjusted=body.adjusted,
+        sessions=body.session,
     )
     results = {symbol: DataResponse(count=len(rows), data=rows) for symbol, rows in raw.items()}
     empty = sorted(sym for sym, rows in raw.items() if not rows)

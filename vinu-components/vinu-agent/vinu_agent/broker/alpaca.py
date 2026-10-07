@@ -188,6 +188,7 @@ class AlpacaBroker:
         stop_loss_price: float | None = None,
         stop_loss_limit_price: float | None = None,
         client_order_id: str | None = None,
+        extended_hours: bool | None = None,
     ) -> dict:
         """Submit an order. Passing take_profit_price and/or stop_loss_price
         attaches Alpaca's native bracket-order legs (order_class "bracket" when
@@ -203,6 +204,20 @@ class AlpacaBroker:
         field) and never reached here, so the "idempotency" protection
         never actually ran. Now plumbed all the way through.
         """
+        # Outside the regular session (pre-market, after-hours, overnight) Alpaca takes only DAY LIMIT orders flagged
+        # extended_hours, with no bracket legs. `extended_hours=None` decides from the current session; the weekend gap
+        # keeps the old behaviour (the order queues for the next session).
+        from vinu_infra.sessions import EXTENDED_SESSIONS, session_of
+        import time as _time
+
+        if extended_hours is None:
+            extended_hours = session_of(_time.time()) in EXTENDED_SESSIONS
+        if extended_hours:
+            if order_type != "limit" or limit_price is None:
+                raise ValueError("outside the regular session only limit orders with a limit_price are accepted")
+            if take_profit_price is not None or stop_loss_price is not None:
+                raise ValueError("bracket / oto exits cannot be attached to an extended-hours order")
+            time_in_force = "day"
         payload: dict[str, object] = {
             "symbol": symbol.upper(),
             "qty": str(qty),
@@ -210,6 +225,8 @@ class AlpacaBroker:
             "type": order_type,
             "time_in_force": time_in_force,
         }
+        if extended_hours:
+            payload["extended_hours"] = True
         if client_order_id:
             payload["client_order_id"] = client_order_id
         if limit_price is not None:

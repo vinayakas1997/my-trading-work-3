@@ -12,14 +12,16 @@ updating alongside the prompt text.
 
 from __future__ import annotations
 
+# 2026-10-07: garch, exponential_smoothing, kalman_filters and search_trends are switched off (vinu_infra.system_manifest
+# .PERMANENTLY_DISABLED_ANGLES), so they are not members here; a test fails if one of them is listed again.
 ANGLE_CLUSTERS: dict[str, list[str]] = {
-    "A": ["arima", "exponential_smoothing", "kalman_filters"],
+    "A": ["arima"],
     "B": [
         "chronos", "dlinear", "itransformer", "kronos",
         "lpatchtst", "lstm", "patchtst", "tft",
         "timer_timerxl", "timesfm", "tips_regime_aware_transformer",
     ],
-    "C": ["garch", "drawdown_deep_dive"],
+    "C": ["drawdown_deep_dive"],
     "D": ["regime_analysis", "trend_lifecycle", "trend_session_structure"],
     "E": ["shock_clustering", "shock_personality"],
     "F": ["peer_relative_strength", "news_price_causality"],

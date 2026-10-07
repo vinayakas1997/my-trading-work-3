@@ -24,9 +24,20 @@ _BARS_PER_DAY = {
 }
 
 
-def periods_per_year_for_interval(interval: str) -> float:
-    bars_per_day = _BARS_PER_DAY.get((interval or "1d").strip().lower(), 1.0)
-    return bars_per_day * 252.0
+_BAR_HOURS = {"1m": 1 / 60, "5m": 5 / 60, "15m": 0.25, "30m": 0.5, "1h": 1.0, "4h": 4.0}
+_SESSION_HOURS = {"premarket": 5.5, "regular": 6.5, "afterhours": 4.0, "overnight": 8.0}
+
+
+def periods_per_year_for_interval(interval: str, sessions: str | None = None) -> float:
+    """Bars per 252-trading-day year. `sessions` (default regular hours) decides how many hours of each day are traded:
+    15m bars over regular hours are 26 a day, over all four sessions 96 (24 hours). A daily bar is one a day."""
+    key = (interval or "1d").strip().lower()
+    if sessions is None or sessions == "regular" or key not in _BAR_HOURS:
+        return _BARS_PER_DAY.get(key, 1.0) * 252.0
+    from vinu_infra.sessions import parse_sessions
+
+    hours = sum(_SESSION_HOURS[s] for s in parse_sessions(sessions) if s in _SESSION_HOURS)
+    return hours / _BAR_HOURS[key] * 252.0
 
 
 # Sentinel for a ratio whose mathematically correct value is "undefined" (a

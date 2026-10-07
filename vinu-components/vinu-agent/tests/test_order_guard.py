@@ -619,15 +619,17 @@ class TestRequireMarketOpen:
 
         assert result
 
-    def test_disabled_via_mandate_skips_clock_call(self) -> None:
+    def test_disabled_via_mandate_does_not_refuse_a_closed_market(self) -> None:
+        """The clock is still read (the guard needs the session), but with require_market_open false a closed regular
+        session does not refuse the order: it queues."""
         mandate = TradingMandate(max_position_pct=1.0, require_active_artifact=False, require_market_open=False)
         broker = MagicMock()
         broker.get_account.return_value = _account()
+        broker.get_clock.return_value = {"is_open": False, "next_open": "tomorrow"}
         guard = OrderGuard(mandate=mandate, broker=broker, daily_limit_store=DailyLimitStore(":memory:"))
 
         result = guard.check("AAPL", "buy", qty=10, price=100.0)
 
-        broker.get_clock.assert_not_called()
         assert result
 
     def test_fails_open_when_clock_call_errors(self) -> None:
@@ -1402,3 +1404,11 @@ class TestTickerAllowlistExemptsReduceOnlyButBlockedTickersDoesNot:
 
         assert not result
         assert result.code == ReasonCode.BLOCKED_TICKER
+
+
+@pytest.fixture(autouse=True)
+def _regular_session_whatever_the_wall_clock_says(monkeypatch):
+    """The guard now judges the trading session from the broker clock (`vinu_infra.sessions`). These tests were written for the
+    regular session and must not depend on what time of day they run; the session rules have their own tests
+    (test_session_orders.py)."""
+    monkeypatch.setattr("vinu_agent.broker.order_guard.session_of", lambda ts: "regular")

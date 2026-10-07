@@ -122,9 +122,12 @@ def main() -> int:
         ("10  risk gatekeeper", "TESTED", chain + "; never run on a real strategy"),
         ("11  capital allocator", "TESTED", chain + "; never run on a real strategy"),
         ("12  order guard, kill switch", "TESTED", chain + "; fails closed if the store is unreadable"),
-        ("12b paper order at the broker", "UNPROVEN", "no order has been placed on the Alpaca paper account"),
+        ("12b paper order at the broker", "PROVEN", "live: real 1-share SPY paper round trip, overnight session, filled and reconciled (placed directly through the broker connection)"),
+        ("12c order via guard + live-api", "UNPROVEN", "no real order has gone through the order guard from the live scheduler"),
         ("13  live feedback", "UNPROVEN", "needs a funded strategy trading and closing; never run"),
         ("14  observability", "PARTLY", "this report; about half of the service-to-service connections have not carried real data"),
+        ("15  24-hour sessions", "PARTLY", "live: regular + overnight bars stored (overnight from 2024-09-16); per-session approval and risk hints TESTED; pre/after-hours data thin; backtest spread is 0"),
+        ("16  problem log guards", "PROVEN", "run: python scripts/check_problem_log.py (every logged fix names a test that exists)"),
     ]
     for name, state, why in board:
         print(f"  {state:9} {name:30} {why}")

@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import MagicMock, patch
 
 from vinu_agent.broker.alpaca import AlpacaBroker
@@ -85,3 +86,10 @@ class TestGetClock:
         assert clock["is_open"] is True
         broker._session.get.assert_called_once()
         assert broker._session.get.call_args.args[0].endswith("/v2/clock")
+
+
+@pytest.fixture(autouse=True)
+def _regular_session_whatever_the_wall_clock_says(monkeypatch):
+    """submit_order decides extended-hours handling from the current session; pin it so these tests do not depend on the
+    time of day (the extended-hours rules are tested in test_session_orders.py)."""
+    monkeypatch.setattr("vinu_infra.sessions.session_of", lambda ts: "regular")

@@ -26,9 +26,9 @@ def _seed_full(store: TickerSummaryStore) -> None:
     store.upsert_summary(
         "AAPL", "summary text",
         source_run_id="run_aapl_1",
-        angle_digest={"arima": {"forecast_price": 187.42}, "garch": {"forecast_volatility": 0.02}},
+        angle_digest={"arima": {"forecast_price": 187.42}, "drawdown_deep_dive": {"forecast_volatility": 0.02}},
         cluster_digest={"A": "arima leans up.", "C": "volatility calm."},
-        cluster_anomalies={"C": ["garch NaN at 1H"]},
+        cluster_anomalies={"C": ["drawdown_deep_dive NaN at 1H"]},
         cross_cluster={"corroborations": ["A", "B"]},
     )
 
@@ -58,7 +58,7 @@ class TestAnglesChapter:
 
         assert clusters["A"]["title"] == "Classical statistical forecasts"
         assert clusters["A"]["synthesis"] == "arima leans up."
-        assert clusters["C"]["anomalies"] == ["garch NaN at 1H"]
+        assert clusters["C"]["anomalies"] == ["drawdown_deep_dive NaN at 1H"]
         assert clusters["A"]["anomalies"] == []
 
     def test_cluster_param_narrows_to_one_letter(self, store) -> None:
@@ -76,9 +76,9 @@ class TestAnglesChapter:
         _seed_full(store)
         glossary = _ask(_tool(store), chapter="angles", ticker="AAPL", sub="glossary")["glossary"]["data"]
 
-        assert set(glossary) == {"arima", "garch"}
+        assert set(glossary) == {"arima", "drawdown_deep_dive"}
         assert glossary["arima"]["cluster"] == "A"
-        assert glossary["garch"]["cluster_title"] == "Volatility & drawdown risk"
+        assert glossary["drawdown_deep_dive"]["cluster_title"] == "Volatility & drawdown risk"
         assert glossary["arima"]["explanation"]
 
     def test_stale_row_reports_each_sub_chapter_independently(self, store) -> None:

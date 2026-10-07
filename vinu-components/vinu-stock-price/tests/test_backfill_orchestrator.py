@@ -195,3 +195,26 @@ def test_run_summary_persistence_failure_does_not_break_run(monkeypatch, tmp_pat
         to_year=datetime.now(timezone.utc).year,
     )
     assert summary.years_ok >= 1
+
+
+def test_a_year_already_marked_done_is_skipped_unless_a_refresh_is_asked_for(monkeypatch, tmp_path):
+    """History stored before the overnight feed existed was marked done, so a plain backfill never fetched the overnight bars.
+    `refresh` fetches the requested years again (the write merges by timestamp, so it only adds what was missing)."""
+    fetched: list[int] = []
+
+    def fake_year_job(sym, year, **kw):
+        fetched.append(year)
+        return True, 5, "alpaca", ""
+
+    monkeypatch.setattr(orchestrator, "run_year_job", fake_year_job)
+
+    def run(refresh):
+        catalog = _FakeCatalog()
+        catalog.job_statuses[("AAPL", 2025)] = {"status": "done"}
+        orchestrator.run_backfill(["AAPL"], data_root=tmp_path, backend=_FakeBackend(catalog), registry=_no_op_registry(),
+                                  from_year=2025, to_year=2025, refresh=refresh)
+
+    run(False)
+    assert fetched == []                    # done stays done
+    run(True)
+    assert fetched == [2025]                # refresh goes back for it

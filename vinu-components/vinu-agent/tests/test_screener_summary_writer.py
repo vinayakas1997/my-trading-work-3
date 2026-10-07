@@ -118,7 +118,7 @@ class TestWriteTickerSummaries:
   "tickers": {
     "AAPL": {
       "summary": "some summary",
-      "cluster_digest": {"B": "Kalman Filters and PatchTST both lean up."}
+      "cluster_digest": {"B": "ARIMA and PatchTST both lean up."}
     }
   }
 }
@@ -129,8 +129,8 @@ class TestWriteTickerSummaries:
         with caplog.at_level(logging.WARNING):
             written = write_ticker_summaries(content, ticker_summary_store=store)
         assert written == ["AAPL"]
-        assert store.get_summary("AAPL").cluster_digest == {"B": "Kalman Filters and PatchTST both lean up."}
-        assert any("kalman_filters" in r.message for r in caplog.records)
+        assert store.get_summary("AAPL").cluster_digest == {"B": "ARIMA and PatchTST both lean up."}
+        assert any("arima" in r.message for r in caplog.records)
 
     def test_cluster_anomalies_are_persisted_separately_from_cluster_digest(self, store: TickerSummaryStore) -> None:
         content = """

@@ -85,6 +85,21 @@ def newest_mtime(paths: list[str]) -> tuple[float, str]:
             for root, dirs, names in os.walk(p):
                 dirs[:] = [d for d in dirs if d not in _SKIP_DIRS and not d.endswith(".egg-info")]
                 files.extend(Path(root) / n for n in names)
+        # A directory's own modification time changes when an entry is added, removed or renamed in it, which no remaining
+        # file's time does: moving or deleting a file (a stray package folder, a renamed module) changes what a build
+        # copies without touching any file left behind.
+        dir_paths = [p] if p.is_dir() else []
+        if p.is_dir():
+            for root, dirs, _names in os.walk(p):
+                dirs[:] = [d for d in dirs if d not in _SKIP_DIRS and not d.endswith(".egg-info")]
+                dir_paths.extend(Path(root) / d for d in dirs)
+        for d in dir_paths:
+            try:
+                m = d.stat().st_mtime
+            except OSError:
+                continue
+            if m > best:
+                best, which = m, f"directory changed {d.relative_to(ROOT) if ROOT in d.parents else d}"
         for f in files:
             if f.name.startswith("test_") or f.name.endswith((".md", ".pyc")):
                 continue

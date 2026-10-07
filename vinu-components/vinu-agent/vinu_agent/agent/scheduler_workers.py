@@ -823,7 +823,10 @@ def make_planner_on_yes(service: Any, triage: PlannerTriage, run_log_reader: Any
             f"\n\nInterval: {design}\nWindow: {from_date} to {to_date}\n"
             f"Final check: after you finish, code runs your strategy unchanged, SEPARATELY, on each of these bar sizes: "
             f"{', '.join(bars)}. Write ONE strategy that reads only the bars it is given (one bar size at a time); do "
-            "NOT combine bar sizes, resample, or request other timeframes' data. Count bars, not days, in your rules.\n"
+            "NOT combine bar sizes, resample, or request other timeframes' data. Count bars, not days, in your rules. "
+            "The market trades around the clock (pre-market, regular, after-hours, overnight): the check runs it over regular "
+            "hours and over all 24 hours and approves it only for the sessions where it earns money. Do not hard-code "
+            "regular-hours clock times (for example 'the first 30 minutes after 09:30').\n"
         )
         handoff = run_team_for_ticker(service, "research", task, session_id=f"planner-{ticker}")
 

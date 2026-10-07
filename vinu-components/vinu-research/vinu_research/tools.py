@@ -111,6 +111,7 @@ class ResearchTools:
         allow_short: bool = True,
         interval: str | None = None,
         run_validation: bool = True,
+        session: str | None = None,
     ) -> BacktestResult | None:
         body: dict[str, Any] = {
             "strategy_code": strategy_code,
@@ -131,6 +132,9 @@ class ResearchTools:
             body["indicators"] = indicators
         if interval is not None:
             body["interval"] = interval
+        session = session or getattr(getattr(self, "_config", None), "session", "regular")
+        if isinstance(session, str) and session and session != "regular":
+            body["session"] = session
         try:
             # item #17 finding #1: ResilientClient.post() used to swallow
             # every exception (including HTTPStatusError) behind its own
@@ -385,8 +389,11 @@ class ResearchTools:
             return None
         return data
 
-    async def fetch_equity_returns(self, run_id: str) -> pd.Series | None:
-        """Fetch equity curve for a completed run and return daily returns."""
+    async def fetch_equity_returns(self, run_id: str, *, keep_dates: bool = False) -> pd.Series | None:
+        """Fetch equity curve for a completed run and return daily returns.
+
+        `keep_dates=True` indexes the returns by bar time (what per-session attribution needs). The default keeps the row-number
+        index every older caller was written against (the correlation gate and PBO align by position)."""
         try:
             data = await self._simulator_client.get(f"/results/{run_id}/equity")
         except Exception as e:
@@ -397,6 +404,8 @@ class ResearchTools:
         df = pd.DataFrame(data)
         df["date"] = pd.to_datetime(df["date"])
         df = df.sort_values("date")
+        if keep_dates:
+            df = df.set_index("date")
         returns = df["portfolio_value"].pct_change().dropna()
         return returns
 

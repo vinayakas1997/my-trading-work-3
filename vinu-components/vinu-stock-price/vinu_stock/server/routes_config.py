@@ -98,6 +98,9 @@ def sync_watchlist() -> dict:
 class BackfillRequest(BaseModel):
     symbols: list[str] | None = None
     force: bool = False
+    # Re-download from this calendar year (inclusive) instead of only the missing years. Used to add the overnight session
+    # (Alpaca has it from late 2024) to history that was stored from the main feed alone; the write merges by timestamp.
+    from_year: int | None = None
 
 
 @router.post("/backfill/trigger", response_model=TriggerResponse)
@@ -117,8 +120,9 @@ def trigger_backfill(req: BackfillRequest = Body(default=None)) -> TriggerRespon
         try:
             symbols = req.symbols if req is not None else None
             force = req.force if req is not None else False
-            from_year = 2022 if force else None
-            result = get_service().run_backfill(symbols=symbols, from_year=from_year)
+            from_year = req.from_year if (req is not None and req.from_year) else (2022 if force else None)
+            result = get_service().run_backfill(symbols=symbols, from_year=from_year,
+                                                refresh=bool(req is not None and req.from_year))
             with _jobs_lock:
                 _background_jobs[job_id] = {
                     "type": "backfill",

@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS artifacts (
     timeframe TEXT NOT NULL DEFAULT 'daily',
     strategy_family TEXT NOT NULL DEFAULT '',
     bar_interval TEXT NOT NULL DEFAULT '',
-    bar_evidence TEXT NOT NULL DEFAULT ''
+    bar_evidence TEXT NOT NULL DEFAULT '',
+    trading_sessions TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS bench_history (
@@ -193,6 +194,7 @@ class SqliteStrategyStore:
             ("strategy_family", "TEXT NOT NULL DEFAULT ''"),
             ("bar_interval", "TEXT NOT NULL DEFAULT ''"),
             ("bar_evidence", "TEXT NOT NULL DEFAULT ''"),
+            ("trading_sessions", "TEXT NOT NULL DEFAULT ''"),
         ]
         for name, typedef in migrations:
             if name not in cols:
@@ -226,8 +228,8 @@ class SqliteStrategyStore:
                 holdout_passed, stress_test_passed, pbo,
                 last_validated_ts, revalidation_count, last_revalidation_verdict,
                 trade_plan_data, approved_size, origin_angles, regime_tag, freeze_hash, timeframe,
-                strategy_family, bar_interval, bar_evidence)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                strategy_family, bar_interval, bar_evidence, trading_sessions)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 artifact.artifact_id,
                 artifact.type,
@@ -260,6 +262,7 @@ class SqliteStrategyStore:
                 artifact.strategy_family or "",
                 artifact.bar_interval or "",
                 artifact.bar_evidence or "",
+                artifact.trading_sessions or "",
             ),
         )
         conn.commit()
@@ -667,6 +670,7 @@ class SqliteStrategyStore:
             strategy_family=row["strategy_family"] if "strategy_family" in row.keys() and row["strategy_family"] else "",
             bar_interval=row["bar_interval"] if "bar_interval" in row.keys() and row["bar_interval"] else "",
             bar_evidence=row["bar_evidence"] if "bar_evidence" in row.keys() and row["bar_evidence"] else "",
+            trading_sessions=row["trading_sessions"] if "trading_sessions" in row.keys() and row["trading_sessions"] else "",
         )
 
     @staticmethod

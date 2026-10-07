@@ -223,3 +223,11 @@ def test_a_bad_strategy_forced_through_the_gatekeeper_still_cannot_be_funded(sto
     assert apply_capital_allocator_decision(_allocator(art_id), strategy_store=store) is None
     assert store.get_artifact(art_id).status != ArtifactStatus.ACTIVE
     assert not _order(store)
+
+
+@pytest.fixture(autouse=True)
+def _regular_session_whatever_the_wall_clock_says(monkeypatch):
+    """The guard now judges the trading session from the broker clock (`vinu_infra.sessions`). These tests were written for the
+    regular session and must not depend on what time of day they run; the session rules have their own tests
+    (test_session_orders.py)."""
+    monkeypatch.setattr("vinu_agent.broker.order_guard.session_of", lambda ts: "regular")

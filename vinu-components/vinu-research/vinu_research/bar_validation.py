@@ -163,8 +163,9 @@ def _eligibility(run: dict[str, Any], config: Any) -> tuple[bool, list[str], boo
     return not reasons, reasons, waived
 
 
-def _row(interval: str, window: tuple[str, str], run: dict[str, Any] | None, config: Any, error: str = "") -> dict[str, Any]:
-    base: dict[str, Any] = {"interval": interval, "from_date": window[0], "to_date": window[1]}
+def _row(interval: str, window: tuple[str, str], run: dict[str, Any] | None, config: Any, error: str = "",
+         session: str = "regular") -> dict[str, Any]:
+    base: dict[str, Any] = {"interval": interval, "session": session, "from_date": window[0], "to_date": window[1]}
     if run is None or not run.get("total_iterations"):
         reason = error or "the research run did not execute the strategy"
         return {**base, "tested": False, "eligible": False, "reasons": [reason]}
@@ -177,6 +178,7 @@ def _row(interval: str, window: tuple[str, str], run: dict[str, Any] | None, con
         "win_rate": attempt.get("win_rate"), "deflated_sharpe": run.get("deflated_sharpe"),
         "holdout_passed": run.get("holdout_passed"), "stress_test_passed": run.get("stress_test_passed"),
         "pbo": run.get("pbo"), "pbo_waived": waived, "diagnosis": run.get("diagnosis", ""),
+        "session_breakdown": run.get("session_breakdown"), "session_hints": run.get("session_hints"),
     }
 
 
@@ -188,12 +190,24 @@ def choose_bar(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     return max(eligible, key=lambda r: (float(r.get("deflated_sharpe") or 0.0), float(r.get("sharpe") or 0.0)))
 
 
+def validation_sessions() -> list[str]:
+    """Session sets every bar size is tested under (env VINU_VALIDATION_SESSIONS, default `regular,all`): first on regular
+    hours alone, then over all 24 hours, so a strategy that only works in the regular session is approved for that session
+    only and one that also works around the clock is approved for the hours it works in (session_stats)."""
+    import os
+
+    raw = os.environ.get("VINU_VALIDATION_SESSIONS", "regular,all")
+    return [s.strip() for s in raw.split(",") if s.strip()] or ["regular"]
+
+
 async def validate_across_bars(
     service: Any, *, symbol: str, strategy_code: str, bars: list[str] | None = None, to_date: str | None = None,
-    catalog_lookup: Any = None,
+    catalog_lookup: Any = None, sessions: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Run `strategy_code` unchanged on each bar size and return a comparison table plus the chosen bar size."""
+    """Run `strategy_code` unchanged on each bar size, under each session set, and return a comparison table plus the
+    chosen (bar size, sessions)."""
     config = service.config
+    session_sets = sessions or validation_sessions()
     end = date.fromisoformat(to_date) if to_date else date.today()
     rows: list[dict[str, Any]] = []
     entry = (catalog_lookup or catalog_entry)(config, symbol)
@@ -202,7 +216,8 @@ async def validate_across_bars(
         reason = (f"the strategy reads column(s) the backtest cannot supply: {', '.join(unknown)}. "
                   f"Available columns: {MERGEABLE_HELP}")
         rows = [_row(b, ("", ""), None, config, error=reason) for b in (bars or bars_from_config(config))]
-        return {"symbol": symbol, "bars": rows, "passing_bars": [], "chosen_bar": None, "chosen": None}
+        return {"symbol": symbol, "bars": rows, "passing_bars": [], "passing": [], "chosen_bar": None,
+                "chosen_session": None, "chosen": None}
     for interval in (bars or bars_from_config(config)):
         if interval not in BAR_WINDOW_DAYS:
             rows.append(_row(interval, ("", ""), None, config, error=f"bar size {interval!r} is not testable"))
@@ -212,16 +227,21 @@ async def validate_across_bars(
         if problem:
             rows.append(_row(interval, window, None, config, error=f"data not ready: {problem}"))
             continue
-        try:
-            run = await service.run_research(
-                user_idea=f"validate {symbol} strategy on {interval} bars", symbol=symbol, from_date=window[0],
-                to_date=window[1], strategy_code=strategy_code, interval=interval, max_iterations=1, validation=True,
-                indicators=indicators or None,
-            )
-            rows.append(_row(interval, window, run, config))
-        except Exception as exc:  # noqa: BLE001 -- one bar size failing must not hide the others
-            LOG.warning("bar validation %s %s failed: %s", symbol, interval, exc)
-            rows.append(_row(interval, window, None, config, error=f"{type(exc).__name__}: {exc}"))
+        for session in session_sets:
+            try:
+                kwargs = {} if session == "regular" else {"session": session}
+                run = await service.run_research(
+                    user_idea=f"validate {symbol} strategy on {interval} bars ({session})", symbol=symbol, from_date=window[0],
+                    to_date=window[1], strategy_code=strategy_code, interval=interval, max_iterations=1, validation=True,
+                    indicators=indicators or None, **kwargs,
+                )
+                rows.append(_row(interval, window, run, config, session=session))
+            except Exception as exc:  # noqa: BLE001 -- one bar size failing must not hide the others
+                LOG.warning("bar validation %s %s %s failed: %s", symbol, interval, session, exc)
+                rows.append(_row(interval, window, None, config, error=f"{type(exc).__name__}: {exc}", session=session))
     best = choose_bar(rows)
-    return {"symbol": symbol, "bars": rows, "passing_bars": [r["interval"] for r in rows if r["eligible"]],
-            "chosen_bar": best["interval"] if best else None, "chosen": best}
+    passing = [r["interval"] for r in rows if r["eligible"]]
+    return {"symbol": symbol, "bars": rows, "passing_bars": list(dict.fromkeys(passing)),
+            "passing": [f"{r['interval']}/{r['session']}" for r in rows if r["eligible"]],
+            "chosen_bar": best["interval"] if best else None, "chosen_session": best["session"] if best else None,
+            "chosen": best}

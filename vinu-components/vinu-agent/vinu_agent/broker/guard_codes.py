@@ -46,6 +46,9 @@ class ReasonCode(str, Enum):
     TICKER_NOT_ALLOWED = "ticker_not_allowed"
     SHORT_NOT_PERMITTED = "short_not_permitted"
     MARKET_CLOSED = "market_closed"
+    SESSION_NOT_ALLOWED = "session_not_allowed"          # the mandate's allowed_sessions excludes the current session
+    LIMIT_ONLY_OUTSIDE_REGULAR = "limit_only_outside_regular"   # the broker accepts only limit orders outside 09:30-16:00 ET
+    NOT_OVERNIGHT_TRADABLE = "not_overnight_tradable"
     NO_ACTIVE_ARTIFACT = "no_active_artifact"
     MANDATE_EXPIRED = "mandate_expired"          # C18
     # --- mandate: numeric limits ---

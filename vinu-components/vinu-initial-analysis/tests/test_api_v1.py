@@ -162,7 +162,7 @@ def test_factsheet_returns_the_real_generated_document(client_and_service) -> No
 def test_trigger_and_poll_flow(client_and_service) -> None:
     client, service = client_and_service
 
-    resp = client.post(f"/v1/stage1/vinu-initial-analysis/trigger/AAPL/1day/{_range()}/garch")
+    resp = client.post(f"/v1/stage1/vinu-initial-analysis/trigger/AAPL/1day/{_range()}/arima")
     assert resp.status_code == 202
     body = resp.json()
     assert body["status"] == "computing"
@@ -177,7 +177,7 @@ def test_trigger_and_poll_flow(client_and_service) -> None:
     deadline = time.time() + 30
     status = None
     while time.time() < deadline:
-        poll = client.get(f"/v1/stage1/vinu-initial-analysis/fetch/AAPL/1day/{_range()}/garch/{run_id}")
+        poll = client.get(f"/v1/stage1/vinu-initial-analysis/fetch/AAPL/1day/{_range()}/arima/{run_id}")
         status = poll.json()["status"]
         if status != "computing":
             break
@@ -187,12 +187,12 @@ def test_trigger_and_poll_flow(client_and_service) -> None:
     assert poll.json()["run_id"] == run_id
 
     # The triggered (tier3) run is now the actual current record for
-    # garch/1D/tier2's exact-match fetch too? No — trigger wrote tier3,
+    # arima/1D/tier2's exact-match fetch too? No — trigger wrote tier3,
     # plain fetch (tier2 default) should NOT see it.
-    plain = client.get(f"/v1/stage1/vinu-initial-analysis/fetch/AAPL/1day/{_range()}/garch")
+    plain = client.get(f"/v1/stage1/vinu-initial-analysis/fetch/AAPL/1day/{_range()}/arima")
     assert plain.status_code == 404
 
 
 def test_trigger_unknown_run_id_is_404(client: TestClient) -> None:
-    resp = client.get(f"/v1/stage1/vinu-initial-analysis/fetch/AAPL/1day/{_range()}/garch/not-a-real-run-id")
+    resp = client.get(f"/v1/stage1/vinu-initial-analysis/fetch/AAPL/1day/{_range()}/arima/not-a-real-run-id")
     assert resp.status_code == 404

@@ -50,6 +50,7 @@ def _best_attempt_numbers(result: Any) -> dict[str, Any]:
     if best is None:
         return {}
     return {
+        "run_id": best.run_id,
         "sharpe": best.metrics.sharpe_ratio, "max_drawdown": best.metrics.max_drawdown,
         "total_return": best.metrics.total_return, "trade_count": best.trade_count,
         "win_rate": getattr(best.metrics, "win_rate", None),
@@ -157,6 +158,7 @@ class ResearchService:
         interval: str | None = None,
         max_iterations: int | None = None,
         validation: bool = False,
+        session: str | None = None,
     ) -> dict[str, Any]:
         # `RunResearchRequest.user_idea` (the /research/run request model) is
         # documented as "If None, auto-proposed from angle context" -- that
@@ -229,6 +231,8 @@ class ResearchService:
                 overrides["interval"] = interval
             if max_iterations:
                 overrides["max_iterations"] = max_iterations      # 1 = test the rules exactly as written, no refinement
+            if session:
+                overrides["session"] = session                    # which trading sessions' bars this run is judged on
             if validation:
                 overrides["ignore_symbol_exhaustion"] = True      # testing fixed rules is not idea generation
             run_config = replace(self._config, **overrides) if overrides else self._config
@@ -377,7 +381,10 @@ class ResearchService:
                 # What was measured, copied from the simulator's own result (the best attempt when none passed), so a
                 # caller never has to parse report text to learn the numbers.
                 "attempt": _best_attempt_numbers(result),
+                "session": run_config.session,
             }
+            if run_config.session != "regular":
+                response.update(await self._session_profile(tools, result, run_config))
             if result.portfolio is not None:
                 response["portfolio"] = {
                     "symbols": result.portfolio.symbols,
@@ -393,6 +400,31 @@ class ResearchService:
             record.error_message = str(e)
             await self._run_in_thread(self._storage.update_run, record)
             raise
+
+    async def _session_profile(self, tools, result, run_config) -> dict[str, Any]:
+        """Where the best attempt earned its return, session by session, and the risk hints that follow (session_stats).
+        Best-effort: no equity curve means no profile, never a failed run."""
+        try:
+            from vinu_research.session_stats import risk_hints, session_breakdown
+
+            best = result.best_result or max(
+                (r.result for r in result.iterations if not str(r.result.run_id).startswith("infra_failure")),
+                key=lambda r: r.metrics.sharpe_ratio, default=None)
+            if best is None:
+                return {}
+            returns = await tools.fetch_equity_returns(best.run_id, keep_dates=True)   # dated: each bar is attributed by its time
+            if returns is None:
+                return {}
+            try:
+                from vinu_simulator.engine.metrics import periods_per_year_for_interval
+                ppy = periods_per_year_for_interval(run_config.interval, run_config.session)
+            except Exception:  # noqa: BLE001 -- the simulator package is optional here; fall back to the daily factor
+                ppy = 252.0
+            breakdown = session_breakdown(returns, periods_per_year=ppy)
+            return {"session_breakdown": breakdown, "session_hints": risk_hints(breakdown)}
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("session profile failed: %s", exc)
+            return {}
 
     async def _explain_failure(
         self, tools, result, symbol: str, from_date: str, to_date: str, indicators, initial_capital, universe,

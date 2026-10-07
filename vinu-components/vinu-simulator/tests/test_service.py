@@ -182,9 +182,9 @@ class TestComputeBenchmarkMetrics:
         assert service._compute_benchmark_metrics(price_data, config) == {}
 
 
-def _seed_run(service: SimulatorService, run_id: str, symbols: list[str]) -> None:
+def _seed_run(service: SimulatorService, run_id: str, symbols: list[str], *, start: str = "2023-01-02", freq: str = "D") -> None:
     from vinu_simulator.models.simulation import SimulationConfig
-    dates = pd.date_range("2023-01-02", periods=3, freq="D")
+    dates = pd.date_range(start, periods=3, freq=freq)
     result = SimulationResult(
         run_id=run_id, strategy_name="s", timestamp=datetime.now(timezone.utc),
         config=SimulationConfig(strategy_name="s", start_date="2023-01-02", end_date="2023-01-04"),
@@ -231,6 +231,13 @@ class TestReadAndDeleteMethods:
         equity = service.get_equity("run-1")
         weights = service.get_weights("run-1")
         assert equity[0]["date"] == weights[0]["date"]
+
+    def test_an_intraday_equity_curve_keeps_its_time_of_day(self, service) -> None:
+        # date-only text made a day's 26 or 96 bars read as one instant, so no return could be attributed to a session
+        _seed_run(service, "run-h", ["AAPL"], start="2024-10-07 14:30", freq="h")
+        dates = [row["date"] for row in service.get_equity("run-h")]
+        assert dates == ["2024-10-07 14:30:00", "2024-10-07 15:30:00", "2024-10-07 16:30:00"]
+        assert len(set(dates)) == 3
 
     def test_get_equity_unknown_run_returns_none(self, service) -> None:
         assert service.get_equity("ghost") is None
@@ -368,3 +375,46 @@ class TestSimulateCustomValidation:
         )
         with pytest.raises(ValueError, match="must be a subclass"):
             service.simulate_custom(req)
+
+
+class TestSessionIsPartOfTheQuestion:
+    """A request for all 24 hours must not be answered with the stored regular-hours run of the same strategy."""
+
+    CODE = ("class UserStrategy(BaseStrategy):\n    def generate_weights(self, data):\n"
+            "        return (data['close'] > data['close'].rolling(5).mean()).astype(int) * 0.98\n")
+
+    @staticmethod
+    def _frames(n):
+        import numpy as np
+        import pandas as pd
+
+        idx = pd.date_range("2026-01-05 14:30", periods=n, freq="h")
+        close = 100 + np.cumsum(np.random.default_rng(1).normal(0, 0.5, n))
+        return {"AAA": pd.DataFrame({"open": close, "high": close + 0.1, "low": close - 0.1, "close": close, "volume": 1e6}, index=idx)}
+
+    def test_a_different_session_is_a_different_run_and_reaches_the_price_service(self, service) -> None:
+        calls = []
+
+        def fake(symbols, start, end, resolution="1d", indicators=None, session="regular"):
+            calls.append(session)
+            return self._frames(60 if session == "regular" else 150)
+
+        service._price_client.get_ohclv = fake
+        mk = lambda sess: CustomSimulateRequest(strategy_code=self.CODE, class_name="UserStrategy", symbols=["AAA"],
+                                                start_date="2026-01-05", end_date="2026-03-01", interval="1h", session=sess,
+                                                allow_short=False, run_validation=False)
+        regular = service.simulate_custom(mk("regular"))
+        everything = service.simulate_custom(mk("all"))
+        assert regular.run_id != everything.run_id
+        assert len(regular.portfolio_values) < len(everything.portfolio_values)
+        assert calls == ["regular", "all"] and everything.config.sessions == "all"
+
+    def test_the_default_session_keeps_its_old_hash(self, service) -> None:
+        # a regular-hours request is looked up exactly as before this change (the stored runs stay reusable)
+        calls = []
+        service._price_client.get_ohclv = lambda *a, **k: (calls.append(k), self._frames(60))[1]
+        req = CustomSimulateRequest(strategy_code=self.CODE, class_name="UserStrategy", symbols=["AAA"], start_date="2026-01-05",
+                                    end_date="2026-03-01", interval="1h", allow_short=False, run_validation=False)
+        first = service.simulate_custom(req)
+        second = service.simulate_custom(req)
+        assert first.run_id == second.run_id and len(calls) == 1 and "session" not in calls[0]

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timedelta, timezone
 
 import requests
 
+from vinu_infra.sessions import OVERNIGHT, session_of
 from vinu_stock.config import VinuStockConfig, load_config
 from vinu_stock.providers.base import EarliestResult, FetchBarsResult
 from vinu_stock.providers.config.settings import REQUEST_TIMEOUT_SEC
@@ -15,6 +17,8 @@ from vinu_infra.retry import http_get_with_retry
 from vinu_stock.storage.models import BarRecord
 
 LOG = logging.getLogger(__name__)
+
+OVERNIGHT_DELAY_MINUTES = 16
 
 
 def _parse_bar_row(sym: str, provider_id: str, row: dict) -> BarRecord:
@@ -51,6 +55,50 @@ class AlpacaProvider:
 
     def is_configured(self) -> bool:
         return bool(self._config.alpaca_api_key and self._config.alpaca_api_secret)
+
+    @staticmethod
+    def overnight_feed() -> str:
+        """The Alpaca feed that carries the overnight session (20:00-04:00 ET, Blue Ocean venue): `boats`. The default IEX
+        feed has essentially no trades then. Empty (VINU_STOCK_OVERNIGHT_FEED=) switches overnight bars off."""
+        return os.environ.get("VINU_STOCK_OVERNIGHT_FEED", "boats").strip()
+
+    def _fetch_overnight(self, symbols: list[str], start_iso: str, end_iso: str) -> dict[str, list[BarRecord]]:
+        """Overnight-session 1m bars for `symbols`, only those whose open time is really in the overnight session (the
+        other sessions come from the main feed, so nothing is double counted). Never raises: a failure here costs the
+        overnight bars of this fetch, not the regular-session bars the caller already has."""
+        feed = self.overnight_feed()
+        out: dict[str, list[BarRecord]] = {s: [] for s in symbols}
+        if not feed:
+            return out
+        # The plan delays this feed by 15 minutes and answers 403 to a window that reaches into them, so stop short of now.
+        latest = datetime.now(timezone.utc) - timedelta(minutes=OVERNIGHT_DELAY_MINUTES)
+        end_dt = datetime.fromisoformat(end_iso.replace("Z", "+00:00"))
+        if end_dt > latest:
+            end_iso = latest.strftime("%Y-%m-%dT%H:%M:%SZ")
+        if datetime.fromisoformat(start_iso.replace("Z", "+00:00")) >= datetime.fromisoformat(end_iso.replace("Z", "+00:00")):
+            return out
+        url = f"{self._config.alpaca_data_base_url.rstrip('/')}/v2/stocks/bars"
+        base = {"symbols": ",".join(symbols), "timeframe": "1Min", "start": start_iso, "end": end_iso, "limit": "10000",
+                "feed": feed, "adjustment": "all"}
+        try:
+            token: str | None = None
+            while True:
+                params = dict(base)
+                if token:
+                    params["page_token"] = token
+                data = http_get_with_retry(url, params=params, headers=self._headers(), timeout=REQUEST_TIMEOUT_SEC).json()
+                for sym, rows in (data.get("bars") or {}).items():
+                    for row in rows or []:
+                        bar = _parse_bar_row(sym, self.provider_id, row)
+                        if session_of(bar.bar_ts) == OVERNIGHT and sym in out:
+                            out[sym].append(bar)
+                token = data.get("next_page_token")
+                if not token:
+                    break
+        except Exception as exc:  # noqa: BLE001 -- see the docstring
+            LOG.warning("Alpaca overnight bars (%s feed) unavailable for %s..: %s", feed, symbols[:3], exc)
+            return {s: [] for s in symbols}
+        return out
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -100,6 +148,8 @@ class AlpacaProvider:
                 page_token = data.get("next_page_token")
                 if not page_token:
                     break
+            all_bars.extend(self._fetch_overnight([sym], start_iso, end_iso).get(sym, []))
+            all_bars.sort(key=lambda b: b.bar_ts)
             return FetchBarsResult(True, all_bars)
         except requests.RequestException as exc:
             return FetchBarsResult(False, [], str(exc))
@@ -176,6 +226,9 @@ class AlpacaProvider:
                 page_token = data.get("next_page_token")
                 if not page_token:
                     break
+            for sym, extra in self._fetch_overnight(chunk, start_iso, end_iso).items():
+                bars_by_symbol[sym].extend(extra)
+                bars_by_symbol[sym].sort(key=lambda b: b.bar_ts)
             return {s: FetchBarsResult(True, bars) for s, bars in bars_by_symbol.items()}
         except requests.RequestException as exc:
             err = str(exc)

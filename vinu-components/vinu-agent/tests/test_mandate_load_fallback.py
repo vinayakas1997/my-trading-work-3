@@ -8,6 +8,8 @@ notice it by. See broker/mandate.py's TradingMandate.load().
 
 from __future__ import annotations
 
+import pytest
+
 from pathlib import Path
 
 from vinu_agent.broker.mandate import TradingMandate
@@ -84,3 +86,11 @@ class TestCorruptedMandateFileFailsClosed:
 
         assert not new_buy
         assert reduce_only_sell
+
+
+@pytest.fixture(autouse=True)
+def _regular_session_whatever_the_wall_clock_says(monkeypatch):
+    """The guard now judges the trading session from the broker clock (`vinu_infra.sessions`). These tests were written for the
+    regular session and must not depend on what time of day they run; the session rules have their own tests
+    (test_session_orders.py)."""
+    monkeypatch.setattr("vinu_agent.broker.order_guard.session_of", lambda ts: "regular")
