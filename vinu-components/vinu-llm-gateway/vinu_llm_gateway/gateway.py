@@ -26,6 +26,7 @@ from vinu_llm_gateway.store import QueueStore, dedupe_key
 LOG = logging.getLogger("vinu_llm_gateway")
 
 _TRANSIENT_STATUS = {408, 425, 429, 500, 502, 503, 504}
+STALL_STREAK = 2    # this many timeouts in a row means a stalled model server: later timeouts are not retried
 
 
 @dataclass
@@ -92,6 +93,7 @@ class Gateway:
         self._tasks: list[asyncio.Task] = []
         self._running_calls: dict[str, asyncio.Task] = {}
         self._stop = False
+        self._timeout_streak = 0    # upstream timeouts in a row; any answer resets it
         self.counters = {"max_tokens_defaulted": 0, "shared_with_identical": 0, "cancelled_by_caller": 0}
 
     # ---- lifecycle -----------------------------------------------------------------------------------------------
@@ -252,6 +254,7 @@ class Gateway:
         error, transient = "", True
         try:
             resp = await self._http.post(url, headers=headers, content=row["request_json"], timeout=row["timeout_sec"])
+            self._timeout_streak = 0
             if resp.status_code == 200:
                 data = resp.json()
                 usage = data.get("usage") or {}
@@ -262,6 +265,12 @@ class Gateway:
             transient = resp.status_code in _TRANSIENT_STATUS
         except httpx.TimeoutException:
             error = f"upstream did not answer within {row['timeout_sec']:.0f}s"
+            self._timeout_streak += 1
+            if self._timeout_streak > STALL_STREAK:
+                # The model server is stalled, not slow (normal calls end well inside the timeout). Retrying would hold the
+                # one slot for 3 x the timeout per call while everything behind it expires; fail now so callers can react.
+                transient = False
+                error += " (the model server is stalled; not retried)"
         except httpx.RequestError as exc:
             error = f"upstream unreachable: {type(exc).__name__}: {exc}"
         except ValueError as exc:

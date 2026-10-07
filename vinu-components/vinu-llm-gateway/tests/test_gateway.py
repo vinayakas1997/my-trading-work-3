@@ -90,6 +90,45 @@ async def test_transient_failure_is_retried_then_succeeds(tmp_path):
         await gw.stop()
 
 
+class _Silent:
+    """A model server that takes the request and never answers (the stall seen in production, 2026-10-07 10:21 to 11:37)."""
+
+    def __init__(self):
+        self.asked = 0
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.asked += 1
+        raise httpx.ReadTimeout("no answer", request=request)
+
+
+async def test_a_stalled_model_server_is_not_retried_so_it_cannot_hold_the_slot(tmp_path):
+    """Each call used to try three times at 300 s: 15 minutes of the one slot per call while the queue behind it expired."""
+    from vinu_llm_gateway.gateway import STALL_STREAK
+
+    silent = _Silent()
+    gw = _gw(tmp_path, silent)
+    gw._timeout_streak = STALL_STREAK                  # the server has already timed out STALL_STREAK times in a row
+    gw.start()
+    try:
+        with pytest.raises(GatewayFailure) as e:
+            await asyncio.wait_for(gw.submit(_body(), _hdr()), 15)
+        assert silent.asked == 1 and "stalled" in e.value.message
+    finally:
+        await gw.stop()
+
+
+async def test_an_answer_clears_the_timeout_streak(tmp_path):
+    up = Upstream()
+    gw = _gw(tmp_path, up)
+    gw._timeout_streak = 1
+    gw.start()
+    try:
+        assert await asyncio.wait_for(gw.submit(_body(), _hdr()), 15) == REPLY
+        assert gw._timeout_streak == 0
+    finally:
+        await gw.stop()
+
+
 async def test_permanent_failure_is_reported_not_retried(tmp_path):
     up = Upstream(fail_first=99, status=400)
     gw = _gw(tmp_path, up)
