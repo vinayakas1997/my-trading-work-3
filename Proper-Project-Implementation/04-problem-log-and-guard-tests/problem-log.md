@@ -299,10 +299,10 @@ Read `how-to-use-this-log.md` for the rules.
 
 ### P45 A backtest charged the same trading cost at 3 a.m. as at noon
 - **Seen:** (O3, O10) every trade paid the same slippage and spread in every session, so overnight and pre-market results were flattered and session approval rested on them.
-- **Fix:** the cost models take a per-bar `session_multiplier` that scales slippage and spread (not the commission). For bars with a time of day the engine sets it from the bar's session: `VINU_SIM_SESSION_COST_MULT`, default `premarket=2,regular=1,afterhours=2,overnight=3`. Daily bars are stamped at midnight and are never scaled. Both cost models (flat and Almgren-Chriss) use it.
-- **Guard:** `vinu-simulator/tests/test_costs.py::TestSessionScaledCosts::test_an_overnight_round_trip_costs_more_than_the_same_one_in_the_regular_session`, `vinu-simulator/tests/test_costs.py::TestSessionScaledCosts::test_the_multiplier_follows_the_session_of_the_bar`, `vinu-simulator/tests/test_costs.py::TestSessionScaledCosts::test_the_commission_is_not_scaled`
+- **Fix:** the cost models take a per-bar `session_multiplier` that scales slippage and spread (not the commission). For bars with a time of day the engine sets it from the bar's session: `VINU_SIM_SESSION_COST_MULT`, default `premarket=5,regular=1,afterhours=7,overnight=3` (first set as guesses 2, 1, 2, 3; replaced on 2026-10-08 by a base from published spread figures, see `03-guards-configs-and-settings/session-cost-evidence.md`). Daily bars are stamped at midnight and are never scaled. Both cost models (flat and Almgren-Chriss) use it.
+- **Guard:** `vinu-simulator/tests/test_costs.py::TestSessionScaledCosts::test_an_overnight_round_trip_costs_more_than_the_same_one_in_the_regular_session`, `vinu-simulator/tests/test_costs.py::TestSessionScaledCosts::test_the_multiplier_follows_the_session_of_the_bar`, `vinu-simulator/tests/test_costs.py::TestSessionScaledCosts::test_the_commission_is_not_scaled`, `vinu-simulator/tests/test_costs.py::TestSessionCostBase::test_the_default_table_is_the_documented_one`
 - **Must agree with:** `vinu_infra/sessions.py` (the session names); the live order guard (it does not use these numbers).
-- **Status:** GUARDED (the 2, 1, 2, 3 are GUESSES, not measurements: nobody has measured quote spreads per session. Strategies tested after this change see higher night costs, so earlier overnight verdicts are not comparable)
+- **Status:** GUARDED (the base is rough: after-hours 7 is measured in one earnings-based study, overnight 3 holds for stocks that trade consistently, pre-market 5 has no direct figure. Strategies tested after the changes see higher night costs, so earlier overnight verdicts are not comparable)
 
 ### P46 Nobody was measuring quote spreads, so the cost multipliers had nothing to be fitted to
 - **Seen:** (O10) the stock service only answered live quotes at order time and kept no history; there was no way to see what a spread costs in each session.
@@ -337,14 +337,14 @@ Read `how-to-use-this-log.md` for the rules.
 |---|---|---|---|
 | O1 | CLOSED. Fixed: P38. | | |
 | O2 | CLOSED. Fixed: P37 (the switches did nothing). | | |
-| O3 | Mostly fixed (P45): costs now scale by session. The multipliers are guesses | night results are only as honest as the guess | measure quote spreads per session (O10) and replace the guess |
+| O3 | Fixed as far as the evidence goes (P45): costs scale by session from a base taken from published spread figures. Thin stocks overnight are still flattered (they can cost 10 to 20 times regular, the base is 3) | overnight results for thin names | per-name liquidity scaling, or restrict overnight trading to liquid names |
 | O4 | No alert channel configured (Telegram or Discord) | at night a halt reaches nobody | set one, with quiet hours |
 | O5 | CLOSED. Fixed: P33 (not yet seen on a real fill). | | |
 | O6 | DECIDED, not built: the allocator does not carry approved sessions or size multipliers; the order guard stays the single place that enforces them (two places would drift apart) | a strategy approved only for the regular session still gets capital allocated overnight, which sits idle | revisit only if idle overnight capital turns out to matter |
 | O7 | Fixed: P41 stops deploys from killing runs, P43 carries a killed run's finished work into the next run. A run killed mid-conversation still loses that conversation (the model is re-briefed, not resumed) | | |
 | O8 | Gatekeeper, allocator and live feedback never run on a real strategy | still synthetic only | needs the first real ACTIVE strategy |
 | O9 | CLOSED. Fixed: P34 (not yet seen on a real night exit). | | |
-| O10 | Measuring has started (P46): spreads are recorded per session. Wait for 30 or more snapshots in every session (pre-market, after-hours and overnight will take days), then set `VINU_SIM_SESSION_COST_MULT` from `/stock/spread-stats`. Caveat: the quotes are IEX-only and look far too wide (median 31 bps for liquid names), and overnight quotes may not exist at all on this feed | the cost multipliers stay guesses until then | check `/stock/spread-stats?days=7` in a few days |
+| O10 | Base set from published figures (2026-10-08, `session-cost-evidence.md`): pre-market 5, after-hours 7, overnight 3. Our own recorder keeps collecting (P46) but its feed is IEX-only and reads too wide, so it can only refine the ratios | the base is rough: one study per session, none direct for pre-market | after a few days, compare `/stock/spread-stats` ratios with the base; do not use its absolute level |
 | O11 | CLOSED. Already fixed earlier: `vinu-reflection/entrypoint.sh` runs the API and the worker; checked live on 2026-10-07 (the agent reads `/reflection/synthesis/latest` and `/reflection/beliefs/notable`). Guard: `vinu-infra/tests/test_stack_guards.py::test_the_reflection_container_serves_its_api_as_well_as_running_the_worker`. | | |
 | O12 | CLOSED. Fixed: P35. | | |
 | O13 | CLOSED. Fixed: P36 (thresholds are guessed). | | |

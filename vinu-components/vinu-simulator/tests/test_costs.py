@@ -84,8 +84,8 @@ class TestSessionScaledCosts:
 
         wed = pd.Timestamp("2026-10-07")                              # naive = UTC; New York is UTC-4 in October
         assert session_cost_multiplier(wed + pd.Timedelta(hours=15)) == 1.0    # 11:00 New York, regular
-        assert session_cost_multiplier(wed + pd.Timedelta(hours=10)) == 2.0    # 06:00, pre-market
-        assert session_cost_multiplier(wed + pd.Timedelta(hours=21)) == 2.0    # 17:00, after-hours
+        assert session_cost_multiplier(wed + pd.Timedelta(hours=10)) == 5.0    # 06:00, pre-market
+        assert session_cost_multiplier(wed + pd.Timedelta(hours=21)) == 7.0    # 17:00, after-hours
         assert session_cost_multiplier(wed + pd.Timedelta(hours=1)) == 3.0     # 21:00 the evening before, overnight
 
     def test_a_larger_multiplier_makes_a_buy_dearer_and_a_sell_pay_less(self):
@@ -118,3 +118,28 @@ class TestSessionScaledCosts:
         regular = final_value("2026-10-07 14:00")        # 10:00 to 14:00 New York
         overnight = final_value("2026-10-08 00:00")      # 20:00 to 00:00 New York
         assert overnight < regular < 100_000.0
+
+
+class TestSessionCostBase:
+    """The default multipliers come from published spread figures, not guesses (problem log O10); a change must be deliberate."""
+
+    def test_the_default_table_is_the_documented_one(self):
+        from vinu_simulator.engine.costs import DEFAULT_SESSION_COST_MULT, parse_session_multipliers
+
+        assert parse_session_multipliers(DEFAULT_SESSION_COST_MULT) == {"premarket": 5.0, "regular": 1.0, "afterhours": 7.0, "overnight": 3.0}
+
+    def test_no_session_is_cheaper_than_the_regular_session(self):
+        from vinu_simulator.engine.costs import SESSION_COST_MULT
+
+        assert SESSION_COST_MULT["regular"] == 1.0 and all(v >= 1.0 for v in SESSION_COST_MULT.values())
+
+    def test_the_evidence_file_exists_and_names_every_session(self):
+        from pathlib import Path
+
+        doc = Path(__file__).resolve().parents[2].parent / "Proper-Project-Implementation" / "03-guards-configs-and-settings" / "session-cost-evidence.md"
+        if not doc.exists():
+            import pytest
+
+            pytest.skip("repo-level documents are not in the image")
+        text = doc.read_text(encoding="utf-8")
+        assert all(name in text for name in ("premarket", "afterhours", "overnight", "arxiv.org/pdf/2601.08962"))

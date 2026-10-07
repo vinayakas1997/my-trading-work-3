@@ -11,10 +11,14 @@ import numpy as np
 DEFAULT_SPREAD_BPS = float(_os.environ.get("VINU_SIM_SPREAD_BPS", "0"))
 DEFAULT_QUEUE_PCT = float(_os.environ.get("VINU_SIM_QUEUE_PCT", "0"))
 
-# Outside the regular session spreads are wider and books thinner, so slippage and spread cost more. These multipliers are
-# GUESSED starting values (nothing has measured quote spreads per session yet, problem log O10): they scale the slippage and the
-# spread part of a trade's cost, not the commission. Daily bars carry no time of day and are never scaled.
-DEFAULT_SESSION_COST_MULT = "premarket=2,regular=1,afterhours=2,overnight=3"
+# Outside the regular session spreads are wider and books thinner, so slippage and spread cost more. The multipliers scale the
+# slippage and the spread part of a trade's cost, not the commission. Daily bars carry no time of day and are never scaled.
+# BASE FROM PUBLISHED FIGURES (2026-10-08; Proper-Project-Implementation/03-guards-configs-and-settings/session-cost-evidence.md):
+#   after-hours 7  : quoted spread 58.1 bps against 8.4 bps in regular trading (arXiv 2601.08962); median 4 to 10 times regular elsewhere
+#   pre-market  5  : no direct figure found; the middle of the same 4 to 10 times band
+#   overnight   3  : about 3 times regular for stocks that trade consistently on Blue Ocean; 10 to 20 times for thin ones (BMLL, Eaton)
+# Our own quote recorder (/stock/spread-stats) will refine these, but its feed is IEX-only and reads too wide in absolute terms.
+DEFAULT_SESSION_COST_MULT = "premarket=5,regular=1,afterhours=7,overnight=3"
 
 
 def parse_session_multipliers(spec: str) -> dict[str, float]:
