@@ -662,10 +662,12 @@ class OrderGuard:
 
         Reads vinu-research's real strategy_store.db directly, in-process
         (see .research_link) -- no network call, since vinu-research is no
-        longer assumed to be running as a separate service. Still fails
-        open (allows the order, logs a warning) on any exception: a
-        missing/corrupt local DB shouldn't silently block all trading any
-        more than a downstream outage used to.
+        longer assumed to be running as a separate service. FAILS CLOSED:
+        if the store cannot be read the guard cannot know the strategy was
+        approved, so the order is refused (NO_ACTIVE_ARTIFACT, with the
+        reason). It used to allow the order on any exception, which let an
+        unverifiable order through at the one boundary that exists to stop
+        unapproved trading.
         """
         try:
             from vinu_research.models import ArtifactStatus
@@ -675,8 +677,12 @@ class OrderGuard:
             store = get_strategy_store()
             artifacts = store.list_artifacts_for_symbol(symbol, statuses=[ArtifactStatus.ACTIVE])
         except Exception as e:
-            logger.warning("Could not check active-artifact status for %s: %s", symbol, e)
-            return GuardResult(True)
+            logger.error("Could not check active-artifact status for %s, refusing the order: %s", symbol, e)
+            return GuardResult(
+                False,
+                f"Cannot verify that {symbol} has an ACTIVE strategy artifact ({type(e).__name__}: {e}); refusing the order.",
+                code=ReasonCode.NO_ACTIVE_ARTIFACT,
+            )
 
         if artifacts:
             return GuardResult(True)

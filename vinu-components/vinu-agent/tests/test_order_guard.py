@@ -558,7 +558,7 @@ class TestRequireActiveArtifact:
         mock_get_store.assert_not_called()
         assert result
 
-    def test_fails_open_when_store_raises(self) -> None:
+    def test_fails_closed_when_store_raises(self) -> None:
         mandate = TradingMandate(max_position_pct=1.0)
         guard = _guard(mandate)
 
@@ -568,7 +568,7 @@ class TestRequireActiveArtifact:
         ):
             result = guard.check("AAPL", "buy", qty=10, price=100.0)
 
-        assert result
+        assert not result and "Cannot verify" in result.reason
 
     def test_reduce_only_exit_allowed_with_no_active_artifact(self) -> None:
         """situation-test/29-active-artifact-check-blocks-reduce-only-exits.md:

@@ -98,6 +98,39 @@ def main() -> int:
     for r in ok or []:
         print("   live candidate:", r)
 
+    section("scoreboard (a checkpoint is PROVEN only with evidence; everything else is UNPROVEN)")
+    verified = rows("research-api", "/research-data/strategy_store.db",
+                    "select count(*) n from artifacts where type='strategy' and bar_evidence like '%\"verified\": true%'")
+    n_verified = (verified or [{"n": 0}])[0]["n"]
+    active = rows("research-api", "/research-data/strategy_store.db",
+                  "select count(*) n from artifacts where type='strategy' and status='ACTIVE'")
+    n_active = (active or [{"n": 0}])[0]["n"]
+    done_runs = rows("agent-api", "/data/team_runs.db", "select count(*) n from team_runs where team_name='research' and status='done'")
+    n_runs = (done_runs or [{"n": 0}])[0]["n"]
+    chain = "test: vinu-agent/tests/test_chain_planted_edge.py (synthetic prices, real code)"
+    board = [
+        ("D0  data readiness", "PROVEN", "live: price catalog checked per bar size before every test; tests in test_bar_validation.py"),
+        ("1   screener top 10", "PROVEN", "live: planner works through its picks (see research runs above)"),
+        ("2   initial analysis", "PARTLY", "live; window ends at the last ingest, thin news history, model angles off by design"),
+        ("3   strategy intake", "PROVEN", "live + tests: code, output contract and column checks"),
+        ("4   all bar sizes", "PROVEN", "live: validate-code on AMD (4 bar sizes, 4m42s) + tests"),
+        ("5   optimise", "PROVEN", "live: sweeps run; recipe templates fixed 2026-10-07"),
+        ("6   statistical bar", "PROVEN", "live + " + chain),
+        ("7   critic advisory", "PROVEN", "tests: a STOP with a runnable strategy is still tested by code"),
+        ("8   retry loop", "PROVEN", "live: nudges and 3-candidate minimum observed in agent logs"),
+        ("9   approved candidate", "PROVEN" if n_verified else "TESTED", f"{n_verified} real artifact(s) with a verified measurement; " + chain),
+        ("10  risk gatekeeper", "TESTED", chain + "; never run on a real strategy"),
+        ("11  capital allocator", "TESTED", chain + "; never run on a real strategy"),
+        ("12  order guard, kill switch", "TESTED", chain + "; fails closed if the store is unreadable"),
+        ("12b paper order at the broker", "UNPROVEN", "no order has been placed on the Alpaca paper account"),
+        ("13  live feedback", "UNPROVEN", "needs a funded strategy trading and closing; never run"),
+        ("14  observability", "PARTLY", "this report; about half of the service-to-service connections have not carried real data"),
+    ]
+    for name, state, why in board:
+        print(f"  {state:9} {name:30} {why}")
+    proven = sum(1 for _, st, _ in board if st == "PROVEN")
+    print(f"  -> {proven} of {len(board)} proven on the real system; research runs done: {n_runs}; ACTIVE strategies: {n_active}")
+
     section("price data freshness")
     cat = get("http://127.0.0.1:8081/stock/catalog")
     if cat:
