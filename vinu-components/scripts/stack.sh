@@ -74,6 +74,8 @@ deploy() {
   docker compose build $names
   # --force-recreate: plain `up -d` left containers on the old image ("Running") after a rebuild; these are exactly the stale ones
   docker compose up -d --force-recreate --no-deps $names
+  # a recreated service whose dependency was still starting can be left stopped: a plain `up -d` starts whatever is not running
+  docker compose up -d || true
   python scripts/stale_images.py
 }
 

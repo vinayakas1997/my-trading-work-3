@@ -146,7 +146,12 @@ def run(
             findings.append(finding)
 
     # X -- condition-rule alert fires vs. independent pipeline interest.
-    watch_store = WatchAuditStore(str(screener_root / "screener_audit.db"))
+    # The audit file only exists once a screener RULE has fired (this system mostly uses rankers). Opening a missing file on
+    # the read-only mount raised, which made the whole analyst skip every cycle and kept the ranker half (I) from ever running.
+    audit_path = screener_root / "screener_audit.db"
+    if not audit_path.exists():
+        return findings
+    watch_store = WatchAuditStore(str(audit_path))
     fires_by_rule: dict[str, list] = {}
     for record in reversed(watch_store.history(limit=MAX_EVENTS_SCANNED)):
         fires_by_rule.setdefault(record.rule_id, []).append(record)

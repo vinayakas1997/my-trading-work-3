@@ -45,9 +45,6 @@ for svc in $SERVICES; do
       args="tests -q --no-header -p no:cacheprovider --tb=line -rfE"
       # these read repo-level files (docker-compose.yml, the edge manifest, the source tree) that no image carries
       [ "$(basename $d)" = "vinu-infra" ] && args="$args --ignore=tests/test_stack_guards.py --ignore=tests/test_compose_wiring.py --ignore=tests/test_edge_contracts.py --ignore=tests/test_pipeline_edges.py --ignore=tests/test_model_guard.py"
-      # two ProcessPool tests in test_arima_backtest.py never finish in a throwaway container (problem log O14); the rest of the
-      # package runs, and those two are named here so the exclusion cannot grow unnoticed
-      [ "$(basename $d)" = "vinu-initial-analysis" ] && args="$args --deselect=tests/test_arima_backtest.py::test_parallel_output_is_row_for_row_identical_to_sequential_at_cadence_1 --deselect=tests/test_arima_backtest.py::test_parallel_at_cadence_greater_than_1_runs_but_is_not_identical_to_sequential"
       res=$(python -m pytest $args 2>&1)
       echo "### $(basename $d): $(echo "$res" | grep -E "passed|failed|error" | tail -1)"
       echo "$res" | grep -E "^FAILED|^ERROR" | cut -c1-200 | head -60

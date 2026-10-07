@@ -132,3 +132,32 @@ class TestScreenerAgreementRun:
             {"vinu_screener": data_root / "screener", "vinu_agent": data_root / "agent"}
         )
         assert findings == []
+
+
+class TestRuleAuditFileMissing:
+    """The rule-fire audit file exists only after a screener rule has fired. Its absence used to make the whole analyst skip
+    every cycle (opening it on a read-only mount raised), so the ranker half never ran (problem log O15)."""
+
+    def test_the_ranker_half_still_reports_when_no_rule_has_ever_fired(self, data_root):
+        ranker_store = RankerStore(str(data_root / "screener" / "screener_rankers.db"))
+        churn_store = RankerChurnStore(str(data_root / "screener" / "screener_ranker_churn.db"))
+        ticker_ledger = TickerLedgerStore(data_root / "agent" / "ticker_ledger.db")
+        _seed_ranker(ranker_store, "core_starter")
+        now = time.time()
+        events = []
+        for i in range(30):
+            at = now - 100_000 + i * 100
+            events.append(ChurnEvent("core_starter", f"REF{i}", "entered", at, to_rank=1))
+            _propose_candidate(ticker_ledger, f"REF{i}", at)
+        for i in range(10):
+            events.append(ChurnEvent("core_starter", f"CUR{i}", "entered", now - 1000 + i * 10, to_rank=1))
+        churn_store.record(events)
+        assert not (data_root / "screener" / "screener_audit.db").exists()
+        findings = screener_agreement.run({"vinu_screener": data_root / "screener", "vinu_agent": data_root / "agent"})
+        assert [f.scope_key for f in findings] == ["core_starter"]
+
+    def test_nothing_at_all_still_returns_no_findings_without_error(self, data_root):
+        RankerStore(str(data_root / "screener" / "screener_rankers.db"))
+        RankerChurnStore(str(data_root / "screener" / "screener_ranker_churn.db"))
+        TickerLedgerStore(data_root / "agent" / "ticker_ledger.db")
+        assert screener_agreement.run({"vinu_screener": data_root / "screener", "vinu_agent": data_root / "agent"}) == []

@@ -159,7 +159,21 @@ def test_factsheet_returns_the_real_generated_document(client_and_service) -> No
     assert "not available" in body["data"]  # other 5 declared time formats have no real run
 
 
-def test_trigger_and_poll_flow(client_and_service) -> None:
+def _synthetic_candles(n: int = 400) -> list[dict]:
+    import numpy as np
+
+    rng = np.random.default_rng(3)
+    close = 150.0 * np.cumprod(1 + rng.normal(0.0003, 0.01, n))
+    return [{"bar_ts": BASE_TS - (n - i) * 86400, "open": float(c), "high": float(c) * 1.005, "low": float(c) * 0.995,
+             "close": float(c), "volume": 1_000_000} for i, c in enumerate(close)]
+
+
+def test_trigger_and_poll_flow(client_and_service, monkeypatch) -> None:
+    # The price service is not running in a test, and a refused call used to fall back to the LIVE stack through
+    # host.docker.internal, so this test silently depended on real AAPL history (problem log O14). Give it its own bars.
+    from vinu_initial_analysis.clients.price_client import PriceClient
+
+    monkeypatch.setattr(PriceClient, "get_candles", lambda self, *a, **k: _synthetic_candles())
     client, service = client_and_service
 
     resp = client.post(f"/v1/stage1/vinu-initial-analysis/trigger/AAPL/1day/{_range()}/arima")

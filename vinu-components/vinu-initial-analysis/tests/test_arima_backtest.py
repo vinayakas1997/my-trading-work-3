@@ -95,7 +95,7 @@ def test_parallel_output_is_row_for_row_identical_to_sequential_at_cadence_1():
     )
 
 
-def test_parallel_at_cadence_greater_than_1_runs_but_is_not_identical_to_sequential():
+def test_parallel_at_cadence_greater_than_1_runs_but_is_not_identical_to_sequential(monkeypatch):
     # 1min has REFIT_CADENCE > 1: sequential mode only fully refits every
     # Nth step and cheaply extends the fit in between; the parallel path
     # has no refit_cadence/prior_state support at all and fully refits
@@ -103,6 +103,9 @@ def test_parallel_at_cadence_greater_than_1_runs_but_is_not_identical_to_sequent
     # This proves it runs successfully (no crash) and that it genuinely
     # differs from sequential, rather than silently claiming identical
     # output it can't actually produce for this cadence.
+    # The real 1min cadence made this test take 8 minutes (a full AIC search at every one of ~60 steps); any cadence above 1 shows
+    # the same difference, so use a small one (problem log O14).
+    monkeypatch.setitem(arima_backtest.REFIT_CADENCE, "1min", 4)
     cadence = arima_backtest.REFIT_CADENCE["1min"]
     n_steps = cadence * 2 + 3
     bars = _make_bars(n=MIN_OBSERVATIONS + n_steps)

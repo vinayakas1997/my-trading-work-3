@@ -98,3 +98,17 @@ def _no_real_news_service(monkeypatch):
     from vinu_initial_analysis.clients.news_client import NewsClient
 
     monkeypatch.setattr(NewsClient, "get_ticker_news", lambda self, *a, **k: [])
+
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch):
+    """No test may reach another service. A refused call to localhost is retried against host.docker.internal
+    (net.request), which inside the test container reaches the LIVE stack's published ports: the tests were pulling real
+    market data and some waited minutes on it (problem log O14). A test that needs HTTP patches the client's `request` itself."""
+    import requests
+
+    def _blocked(*args, **kwargs):
+        raise requests.ConnectionError("network is blocked in tests")
+
+    monkeypatch.setattr("vinu_initial_analysis.clients.price_client.request", _blocked)
+    monkeypatch.setattr("vinu_initial_analysis.clients.news_client.request", _blocked)
