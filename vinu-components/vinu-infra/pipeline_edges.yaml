@@ -295,18 +295,18 @@ edges:
     producer:
       service: vinu-live
       files: [vinu-live/vinu_live/book/positions.py]
-      defines: ['def open_position', 'def close_position']
+      defines: ['def apply_fill']
     consumer:
       service: vinu-live
       files: [vinu-live/vinu_live/scheduler.py]
-      references: ['open_position(self._book', 'close_position(self._book', 'reduce_position(self._book']
+      references: ['apply_fill(self._book']
       purpose: scheduler-placed orders recorded in the book the breaker checks
     cadence: per fill
     empty_ok: false
-    status: gap
-    contract_none: "known gap: nothing is sent yet"
-    gap_ref: logic-audit-2026-10-02 A6
-    note: scheduler reads the book for check_limits() but never writes its own positions to it
+    status: wired
+    contract_none: "an in-process write into the book, not a payload"
+    instrumented: true
+    note: wired 2026-10-07 (problem log O5); a filled scheduler order is applied to the book once, only the part not yet written
 
   - id: precondition_held->live.scheduler
     producer:

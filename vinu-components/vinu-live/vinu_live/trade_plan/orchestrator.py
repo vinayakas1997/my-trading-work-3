@@ -44,6 +44,7 @@ from vinu_live.signal_translator import OrderInstruction
 from vinu_live.trade_plan.condition_evaluator import find_triggered_rules
 from vinu_live.trade_plan.guards import (
     event_blackout_reason,
+    extended_hours_route,
     fetch_spread_bps,
     symbol_lockout_active,
     halt_reason as _halt_reason,
@@ -2438,6 +2439,12 @@ class TradePlanOrchestrator:
             base = artifact_id or "no-artifact"
             client_order_id = f"{base}-{symbol}-{side}-{qty:.4f}-{bucket}"
         try:
+            # Pre-market, after-hours and overnight take only limit orders and no stop leg (the order guard refuses the rest).
+            order_type, limit_price, _extended = await extended_hours_route(
+                self._http, self._config.stock_price_api_url, symbol, side, order_type, limit_price,
+            )
+            if _extended:
+                stop_loss_price = None
             payload: dict[str, Any] = {
                 "symbol": symbol, "side": side, "qty": qty, "order_type": order_type,
                 "reduce_only": reduce_only,

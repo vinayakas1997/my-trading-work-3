@@ -269,3 +269,60 @@ def test_flags_default_on_and_read_env(monkeypatch):
     monkeypatch.setenv("VINU_LIVE_EXECUTION_FILL_ENRICHMENT_BATCH", "5")
     c = LiveConfig.from_env()
     assert c.execution_fill_enrichment_enabled is False and c.execution_fill_enrichment_batch == 5
+
+
+# ------------------------------------------------------------------ the fill reaches the book (problem log O5)
+
+def _book_rows(s):
+    from vinu_live.book.positions import list_closed_positions, list_open_positions
+    return list_open_positions(s._book), list_closed_positions(s._book)
+
+
+def _fill_answer(qty, price, status="filled"):
+    return _resp(200, {"status": "ok", "order_status": status, "filled_qty": qty, "filled_avg_price": price})
+
+
+def test_a_filled_buy_and_sell_land_in_the_book_so_the_breaker_sees_the_loss(tmp_path):
+    s = _sched(tmp_path)
+    s._execution_log.record(symbol="AAPL", side="buy", qty=5.0, outcome="submitted", order_id="b", quote_mid=100.0)
+    s._http.get = AsyncMock(return_value=_fill_answer(5.0, 100.0))
+    asyncio.run(s._enrich_execution_fills())
+    opened, closed = _book_rows(s)
+    assert [(p.symbol, p.qty) for p in opened] == [("AAPL", 5.0)] and not closed
+    s._execution_log.record(symbol="AAPL", side="sell", qty=5.0, outcome="submitted", order_id="s", quote_mid=90.0)
+    s._http.get = AsyncMock(return_value=_fill_answer(5.0, 90.0))
+    asyncio.run(s._enrich_execution_fills())
+    opened, closed = _book_rows(s)
+    assert not opened and len(closed) == 1
+    assert closed[0]["realized_pnl"] == pytest.approx(-50.0)       # the loss the cooldown and symbol lockout read
+
+
+def test_a_partial_fill_that_grows_is_written_once_not_twice(tmp_path):
+    s = _sched(tmp_path)
+    s._execution_log.record(symbol="AAPL", side="buy", qty=10.0, outcome="submitted", order_id="o", quote_mid=100.0)
+    s._http.get = AsyncMock(return_value=_fill_answer(4.0, 100.0, "partially_filled"))
+    asyncio.run(s._enrich_execution_fills())
+    asyncio.run(s._enrich_execution_fills())                    # same 4 asked again: nothing new to write
+    s._http.get = AsyncMock(return_value=_fill_answer(10.0, 100.0))
+    asyncio.run(s._enrich_execution_fills())
+    opened, _ = _book_rows(s)
+    assert [(p.symbol, p.qty) for p in opened] == [("AAPL", 10.0)]
+
+
+def test_a_sell_with_nothing_open_invents_no_position_and_is_reported(tmp_path):
+    s = _sched(tmp_path)
+    s._execution_log.record(symbol="AAPL", side="sell", qty=3.0, outcome="submitted", order_id="o", quote_mid=100.0)
+    s._http.get = AsyncMock(return_value=_fill_answer(3.0, 100.0))
+    with patch("vinu_live.scheduler.record_edge") as edge:
+        asyncio.run(s._enrich_execution_fills())
+    opened, closed = _book_rows(s)
+    assert not opened and not closed
+    assert any(c.args[:2] == ("book.writes->live.scheduler", "missing") for c in edge.call_args_list)
+
+
+def test_an_unfilled_order_writes_nothing_to_the_book(tmp_path):
+    s = _sched(tmp_path)
+    s._execution_log.record(symbol="AAPL", side="buy", qty=3.0, outcome="submitted", order_id="o", quote_mid=100.0)
+    s._http.get = AsyncMock(return_value=_fill_answer(0.0, None, "new"))
+    asyncio.run(s._enrich_execution_fills())
+    assert _book_rows(s) == ([], [])

@@ -163,3 +163,48 @@ def test_the_session_breakdown_of_a_real_shaped_equity_curve_lands_each_bar_in_i
 def test_the_default_still_returns_the_row_number_index_the_older_callers_align_on():
     returns = asyncio.run(_tools_with_equity(_equity_rows()).fetch_equity_returns("run-1"))
     assert not isinstance(returns.index, pd.DatetimeIndex) and len(returns) == 7
+
+
+# ---- thin and gappy sessions cannot earn approval (problem log O13) -----------------------------------------------------
+
+def _thin_premarket(period=8):
+    """The regular series with only 2 of every `period` pre-market bars kept, in pairs (a source that barely covers pre-market)."""
+    s = _series(premarket=0.002, over_vol=0.002)
+    keep = []
+    for i, t in enumerate(s.index):
+        local = pd.Timestamp(t, tz="UTC").tz_convert(NY)
+        h = local.hour + local.minute / 60
+        keep.append(not (4 <= h < 9.5) or i % period in (0, 1))
+    return s[np.array(keep)]
+
+
+def test_a_session_that_looks_great_on_thin_data_is_not_approved():
+    thin = _thin_premarket()
+    b = session_breakdown(thin, periods_per_year=96 * 252.0)
+    assert b["premarket"]["valid_bars"] >= 200                    # plenty of bars, so the old bar-count floor passed
+    h = risk_hints(b)
+    assert h["premarket"]["verdict"] == "insufficient_data" and "too thin" in h["premarket"]["reason"]
+    assert "premarket" not in approved_sessions(h)
+
+
+def test_full_density_data_is_still_judged_on_its_returns():
+    h = risk_hints(session_breakdown(_series(premarket=0.0004), periods_per_year=96 * 252.0))
+    assert h["premarket"]["verdict"] in ("trade", "reduce")
+
+
+def test_the_first_bar_after_a_gap_is_not_credited_to_the_session_it_lands_in():
+    """A 2% jump in the first bar after a missing stretch used to count as that session's return."""
+    s = _series(n_days=30, premarket=0.0, overnight=0.0, over_vol=0.0005, vol=0.0005)
+    s = s.copy()
+    day = pd.Timestamp(s.index[0]).normalize() + pd.Timedelta(days=7)
+    window = (s.index >= day + pd.Timedelta(hours=11)) & (s.index < day + pd.Timedelta(hours=14))   # 07:00-10:00 New York, removed
+    first_after = np.where(window)[0][-1] + 1
+    values = s.to_numpy().copy()
+    plain = pd.Series(values, index=s.index)[~window]
+    values[first_after] = 0.02
+    gappy = pd.Series(values, index=s.index)[~window]
+    with_jump = session_breakdown(gappy, periods_per_year=96 * 252.0)
+    without = session_breakdown(plain, periods_per_year=96 * 252.0)
+    assert sum(v["gap_bars"] for v in with_jump.values()) >= 1
+    for name in with_jump:                                         # the jump is in no session's return
+        assert with_jump[name]["total_return"] == pytest.approx(without[name]["total_return"])

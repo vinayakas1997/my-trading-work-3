@@ -11,7 +11,7 @@ import httpx
 
 from vinu_infra.maturity_consultation import MaturityConsultationStore
 from vinu_infra.pipeline_edge_recorder import record_edge
-from vinu_live.book.positions import daily_realized_pnl, init_book
+from vinu_live.book.positions import apply_fill, daily_realized_pnl, init_book
 from vinu_live.breaker.engine import BreakerVerdict, check_limits
 from vinu_live.breaker.limits import DEFAULT_LIMITS, BreakerLimits, BreakerState
 from vinu_live.config import LiveConfig, load_config
@@ -31,6 +31,7 @@ from vinu_live.reconciliation import ReconciliationEngine
 from vinu_live.signal_translator import SignalTranslator
 from vinu_live.trade_plan.guards import (
     event_blackout_reason,
+    extended_hours_route,
     fetch_quote_snapshot,
     halt_reason,
     instruction_increases_exposure,
@@ -335,10 +336,32 @@ class LiveScheduler:
                         row["id"], fill_status=body.get("order_status"),
                         fill_price=body.get("filled_avg_price"), filled_qty=body.get("filled_qty"),
                     )
+                    self._write_fill_to_book(row, body.get("filled_qty"), body.get("filled_avg_price"))
                 except Exception as e:  # noqa: BLE001 -- one order's lookup must not stop the others
                     LOG.debug("fill lookup failed for order %s: %s", row.get("order_id"), e)
         except Exception as e:  # noqa: BLE001
             LOG.debug("fill enrichment failed: %s", e)
+
+    def _write_fill_to_book(self, row: dict[str, Any], filled_qty: Any, fill_price: Any) -> None:
+        """Put what the broker filled into the trade-plan book, so the breaker, cooldown and symbol lockout see the
+        scheduler's own trades (they read only the book). Only the part of the fill not yet written is applied, so a
+        partial fill that grows is counted once. Never raises: a book problem must not stop the cycle, but it is
+        recorded on the edge `book.writes->live.scheduler`."""
+        edge = "book.writes->live.scheduler"
+        try:
+            qty, price = float(filled_qty or 0), float(fill_price or 0)
+            new = qty - float(row.get("book_applied_qty") or 0)
+            if new <= 1e-9 or price <= 0:
+                return
+            outcome = apply_fill(self._book, str(row["symbol"]), str(row["side"]), new, price)
+            if outcome in ("opened", "added", "reduced", "closed"):
+                self._execution_log.mark_book_applied(row["id"], qty)
+                record_edge(edge, "received", f"{row['side']} {new:g} {row['symbol']} -> {outcome}")
+            else:
+                record_edge(edge, "missing", f"{row['side']} {new:g} {row['symbol']}: not written ({outcome})")
+        except Exception as e:  # noqa: BLE001
+            LOG.warning("could not write the fill of %s %s to the book: %s", row.get("side"), row.get("symbol"), e)
+            record_edge(edge, "missing", f"{row.get('symbol')}: {e}")
 
     async def _finish_broker_health(self, cycle_id: str, result: dict[str, Any]) -> None:
         """Loud failure reporting for the broker. Called once at the end of every cycle that reached the broker
@@ -1213,6 +1236,12 @@ class LiveScheduler:
                     _limit_price = _price * (1 - _offset) if slice_.side == "buy" else _price * (1 + _offset)
                 else:
                     _order_type = "market"
+            # Pre-market, after-hours and overnight take only limit orders: an exit or a market entry becomes a limit
+            # set a little through the quote (the order guard refuses a market order there, which would trap exits).
+            _order_type, _limit_price, _ = await extended_hours_route(
+                self._http, self._config.stock_price_api_url, slice_.symbol, slice_.side, _order_type, _limit_price,
+                reference_price=prices.get(slice_.symbol),
+            )
 
             # Idempotency (16): same minute-bucket key as orchestrator so a
             # retried slice dedupes on broker instead of double-filling.

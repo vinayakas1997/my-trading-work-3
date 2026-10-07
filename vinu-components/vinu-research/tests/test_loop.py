@@ -594,7 +594,7 @@ class TestUniverseBacktesting:
         async def fake_get_benchmark_data(sym, from_date, to_date):
             return self._synthetic_returns(sym)
 
-        async def fake_fetch_equity_returns(run_id):
+        async def fake_fetch_equity_returns(run_id, keep_dates=False):
             return self._synthetic_returns("PORTFOLIO_EQUITY")
 
         async def fake_none(*args, **kwargs):

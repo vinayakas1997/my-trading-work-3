@@ -68,6 +68,24 @@ def compute_benchmark_returns_metrics(
     }
 
 
+def daily_returns_by_date(returns: pd.Series) -> pd.Series:
+    """Compound a return series indexed by time (bars of any size) into one return per calendar date, so it lines up with
+    a daily benchmark. Timezone is dropped first: a daily candle is stamped at an exchange-time hour, a backtest bar at
+    its own time, and only the date is common to both."""
+    idx = pd.DatetimeIndex(returns.index)
+    if idx.tz is not None:
+        idx = idx.tz_localize(None)
+    day = idx.normalize()
+    return (1.0 + pd.Series(returns.to_numpy(), index=day)).groupby(level=0).prod() - 1.0
+
+
+def compute_benchmark_comparison_by_date(strategy_returns: pd.Series, benchmark_returns: pd.Series, **kw) -> dict[str, float]:
+    """compute_benchmark_comparison for two series that are both indexed by time. The plain function aligns whatever indexes
+    it is given and drops the rest; fed a row-number index on one side and dates on the other it silently found nothing in
+    common (problem log O12). Both sides go through daily_returns_by_date first."""
+    return compute_benchmark_comparison(daily_returns_by_date(strategy_returns), daily_returns_by_date(benchmark_returns), **kw)
+
+
 def compute_benchmark_comparison(
     strategy_returns: pd.Series,
     benchmark_returns: pd.Series,

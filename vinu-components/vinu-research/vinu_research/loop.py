@@ -37,7 +37,11 @@ from vinu_research.models import (
     WalkForwardResult,
 )
 from vinu_research.report import generate_report
-from vinu_research.benchmark import compute_benchmark_comparison, compute_benchmark_returns_metrics
+from vinu_research.benchmark import (
+    compute_benchmark_comparison,
+    compute_benchmark_comparison_by_date,
+    compute_benchmark_returns_metrics,
+)
 from vinu_research.portfolio import analyze_portfolio
 from vinu_research.tools import InfrastructureError, ResearchTools, StrategyCrashed, timestamps_from_dates
 from vinu_research.walk_forward import (
@@ -867,8 +871,12 @@ class StrategyResearchLoop:
         if best_result and self._benchmark_returns is not None and len(self._benchmark_returns) >= 20:
             equity_rets = await self._tools.fetch_equity_returns(best_result.run_id)
             if equity_rets is not None and len(equity_rets) >= 20:
-                comparison = compute_benchmark_comparison(
-                    equity_rets, self._benchmark_returns
+                # the benchmark is indexed by date and `equity_rets` by row number (other steps align by position), so the
+                # comparison gets its own dated copy of the strategy returns; they used to share no index and match nothing
+                dated_rets = await self._tools.fetch_equity_returns(best_result.run_id, keep_dates=True)
+                comparison = (
+                    compute_benchmark_comparison_by_date(dated_rets, self._benchmark_returns)
+                    if dated_rets is not None else {}
                 )
                 if comparison:
                     bm_dict = best_result.benchmark_metrics.setdefault(benchmark_symbol, {})

@@ -216,25 +216,68 @@ Read `how-to-use-this-log.md` for the rules.
 - **Must agree with:** `VINU_LLM_GATEWAY_ATTEMPT_TIMEOUT_SEC` and `VINU_LLM_GATEWAY_MAX_ATTEMPTS`; the research retry rule (3 attempts per strategy run).
 - **Status:** GUARDED (the cause of the stall itself is on the host model server, outside this repo; not found)
 
+### P33 The live scheduler's own trades never reached the book the breaker, cooldown and symbol lockout read
+- **Seen:** the edge `book.writes->live.scheduler` was a declared gap since 2026-10-02: a filled scheduler order was recorded only in `scheduler_executions`, so a loss on the scheduler path could not trip the daily-loss breaker, the cooldown or the 72-hour symbol lockout (O5).
+- **Root cause:** the fill-enrichment pass wrote fill price and quantity to the ledger and stopped; nothing turned a fill into a book position.
+- **Fix:** `apply_fill` in `book/positions.py` (long-only: a buy opens or adds, a sell reduces and closes at zero, a sell with nothing open is reported and invents nothing). The enrichment pass calls it through `_write_fill_to_book`; the ledger column `book_applied_qty` makes a growing partial fill count once. The edge is now `wired` and instrumented, so `/research/pipeline-edges` shows whether it flows.
+- **Guard:** `vinu-live/tests/test_execution_fill_enrichment.py::test_a_filled_buy_and_sell_land_in_the_book_so_the_breaker_sees_the_loss`, `vinu-live/tests/test_execution_fill_enrichment.py::test_a_partial_fill_that_grows_is_written_once_not_twice`, `vinu-live/tests/test_execution_fill_enrichment.py::test_a_sell_with_nothing_open_invents_no_position_and_is_reported`, `vinu-live/tests/test_execution_fill_enrichment.py::test_an_unfilled_order_writes_nothing_to_the_book`
+- **Must agree with:** `vinu-infra/pipeline_edges.yaml` (the edge entry names `apply_fill`); the orchestrator's own book writes (one book, one position per symbol).
+- **Status:** GUARDED (not yet seen on a real fill: that needs the first real ACTIVE strategy, O8; shorts are not handled)
+
+### P34 At night the live code chose market orders, which the order guard refuses: exits would have been blocked
+- **Seen:** `_choose_entry_order_type` returns "market" unless the spread is wide or unknown, and every scheduler exit is a market order. Pre-market, after-hours and overnight the broker takes only limit orders with no stop leg, so those orders were refused (O9).
+- **Root cause:** routing knew about spreads, not sessions.
+- **Fix:** `extended_hours_route` in `guards.py`, called by the scheduler and by the orchestrator's `_submit_order`: outside the regular session the order becomes a limit set `EXTENDED_MARKETABLE_BPS` (30, `VINU_LIVE_EXTENDED_MARKETABLE_BPS`) through the price (the caller's price, else the live quote mid), and any stop leg is dropped. With no price at all it is left unchanged, so the guard refuses it visibly. The weekend gap is left as before (the order queues).
+- **Guard:** `vinu-live/tests/test_extended_hours_routing.py::test_an_exit_at_night_becomes_a_limit_a_little_below_the_price`, `vinu-live/tests/test_extended_hours_routing.py::test_the_scheduler_sends_a_limit_exit_at_night`, `vinu-live/tests/test_extended_hours_routing.py::test_the_orchestrator_sends_a_limit_and_no_stop_leg_at_night`, `vinu-live/tests/test_extended_hours_routing.py::test_with_no_price_the_order_is_left_for_the_guard_to_refuse_not_invented`. `vinu-live/tests/conftest.py` fixes the clock to a regular session so older tests do not depend on when they run.
+- **Must agree with:** `vinu-agent/vinu_agent/broker/order_guard.py` and `alpaca.py` (what they refuse and accept outside regular hours); `vinu_infra/sessions.py`.
+- **Status:** GUARDED (the 30 bps is a guessed starting value; not yet seen on a real night exit)
+
+### P35 The benchmark comparison (alpha, beta, tracking error) was never computed in the research loop
+- **Seen:** (O12) the strategy's equity returns have a row-number index and the benchmark's has dates; the comparison aligned on index and dropped what it could not match, so it returned nothing and the loop skipped it silently.
+- **Fix:** `compute_benchmark_comparison_by_date` in `benchmark.py` compounds both series to one return per calendar date first (timezone dropped), and the loop calls it with a dated copy of the strategy returns. Other steps (correlation gate, PBO, portfolio) keep the row-number series they align on.
+- **Guard:** `vinu-research/tests/test_benchmark.py::TestComparisonByDate::test_the_plain_function_finds_nothing_in_common_across_a_row_index_and_dates`, `vinu-research/tests/test_benchmark.py::TestComparisonByDate::test_hourly_strategy_bars_are_compounded_to_dates_and_compared`, `vinu-research/tests/test_benchmark.py::TestComparisonByDate::test_the_research_loop_uses_the_dated_comparison`
+- **Must agree with:** `fetch_equity_returns(keep_dates=True)`; `loop.py` where alpha is read for suggestions and the report.
+- **Status:** GUARDED (the numbers are informational: nothing in promotion reads alpha or beta; not yet seen in a real run)
+
+### P36 A session could be approved on thin data, or on the gap between sessions
+- **Seen:** (O13) real AMD 1h: pre-market had 549 bars in 1.3 years (about 2 a day) yet showed Sharpe 3.4 and was approved at 0.30 size, while the regular session lost money. The first bar after a gap also carried the whole gap.
+- **Fix:** `session_stats.py`: a bar whose gap from the previous bar is over `GAP_FACTOR` (2x) the usual spacing is counted as `gap_bars` and left out of every session's statistics; a non-regular session's bars per day must reach `MIN_DENSITY` (0.5) of what the regular session's density implies for its length, else `insufficient_data` ("too thin"). `bars` still counts every bar; `valid_bars` is what the statistics and the 200-bar floor use.
+- **Guard:** `vinu-research/tests/test_session_stats.py::test_a_session_that_looks_great_on_thin_data_is_not_approved`, `vinu-research/tests/test_session_stats.py::test_the_first_bar_after_a_gap_is_not_credited_to_the_session_it_lands_in`, `vinu-research/tests/test_session_stats.py::test_full_density_data_is_still_judged_on_its_returns`
+- **Must agree with:** `vinu_infra/sessions.py` (session lengths in `SESSION_MINUTES`); `promotion.py` (reads the chosen session's row).
+- **Status:** GUARDED (2x and 0.5 are guessed values, not fitted; the AMD run was not re-run, so that breakdown is not yet re-checked)
+
+### P37 The env template listed 17 settings that nothing reads, among them the two "market hours only" switches
+- **Seen:** (O2) `VINU_CORRELATION_MARKET_HOURS_ONLY` and `..._SESSION_BREAK_ON_CLOSE` looked like they limited analysis to regular hours. No code reads them or any other `VINU_CORRELATION_*` setting except the API address: they belonged to a service that no longer exists. Five other unread names (`VINU_DECAY_*`, `VINU_LLM_ANALYSIS_*`, `VINU_LLM_TTL_SEC`) were also dead.
+- **Fix:** removed from `.env-example` (the live `.env` still carries them; they do nothing). A general guard now fails when the template lists a setting no code, compose file or script reads.
+- **Guard:** `vinu-infra/tests/test_stack_guards.py::test_every_setting_in_the_env_example_is_read_by_something`
+- **Status:** GUARDED (no setting limits the 2022 analysis windows to regular hours; whether they should be is a design question for the angles, not a switch)
+
+### P38 A two-week test override of the analysis start date was still deployed
+- **Seen:** (O1) `VINU_STAGE1_START_DATE=2026-06-17` in `.env` and the template: every analysis window was a few months long, so angles were judged on tiny samples.
+- **Fix:** both set to `2022-01-01` (history from 2022 exists: 248 backfill years done, 2 failed in 2022); the agent and analysis containers were recreated and show the new value. Analyses will be recomputed on the longer windows over the next scheduler cycles.
+- **Guard:** `vinu-infra/tests/test_stack_guards.py::test_the_env_example_keeps_the_full_history_start_date_not_the_short_test_override`
+- **Must agree with:** `quarters.py` (the start must stay before the current period's start)
+- **Status:** GUARDED (the guard covers the template; the live `.env` was set by hand and has no test)
+
 ---
 
 ## E. Open problems (found, not fixed)
 
 | # | Problem | Why it matters | Next step |
 |---|---|---|---|
-| O1 | `VINU_STAGE1_START_DATE=2026-06-17` is a temporary test override still deployed | analysis windows are a few months long | revert to 2022-01-01 after confirming history exists; add a guard test |
-| O2 | `VINU_CORRELATION_MARKET_HOURS_ONLY` and `..._SESSION_BREAK_ON_CLOSE` are `true` | regular-hours assumption in analysis | read what they filter, then decide |
+| O1 | CLOSED. Fixed: P38. | | |
+| O2 | CLOSED. Fixed: P37 (the switches did nothing). | | |
 | O3 | Backtest spread is 0 (`VINU_SIM_SPREAD_BPS`) | overnight results are flattered; session approval rests on them | measure spreads per session |
 | O4 | No alert channel configured (Telegram or Discord) | at night a halt reaches nobody | set one, with quiet hours |
-| O5 | Live scheduler does not write its orders into the book the breaker checks (`book.writes->live.scheduler`) | breaker misses its own orders | wire and test |
+| O5 | CLOSED. Fixed: P33 (not yet seen on a real fill). | | |
 | O6 | Portfolio allocation does not carry approved sessions or size multipliers | only the order guard enforces them | decide whether the allocator must too |
 | O7 | A deploy kills a running research run | work lost silently | make the kill visible and restartable |
 | O8 | Gatekeeper, allocator and live feedback never run on a real strategy | still synthetic only | needs the first real ACTIVE strategy |
-| O9 | `VINU_LIVE_ORDER_ROUTING_MODE` default is `market` | guard refuses market orders outside regular hours | confirm session-aware routing |
+| O9 | CLOSED. Fixed: P34 (not yet seen on a real night exit). | | |
 | O10 | Per-session spread and liquidity not measured | risk hint uses return volatility only | quote-based spread per session |
-| O11 | Reflection tool may still point at an address with no HTTP port | feedback link unproven | check against the container that now serves its API |
-| O12 | Benchmark comparison (alpha and beta against SPY) probably never computed: `compute_benchmark_comparison` joins the strategy returns (row-number index) with benchmark returns (date index) and drops missing values, which leaves nothing | the research loop silently skips it (`if comparison:`) | prove with a real run, then give both series the same date index (intraday needs daily compounding first); do not change promotion behaviour without a test |
-| O13 | Per-session approval can be earned on thin or gappy data. Real AMD 1h run: premarket had 549 bars in about 1.3 years (about 2 a day, IEX is sparse then) yet showed Sharpe 3.4 and was approved at 0.30 size, while regular hours lost money (Sharpe -1.3). The first bar of a thin session also carries the whole gap since the previous bar, so a session can seem to earn what really happened between sessions | a strategy could be approved to trade a session on noise or on gap artefacts | require data density (bars per day against the bars the session should have), and attribute gap returns to the session where they happened, not the session of the next bar |
+| O11 | CLOSED. Already fixed earlier: `vinu-reflection/entrypoint.sh` runs the API and the worker; checked live on 2026-10-07 (the agent reads `/reflection/synthesis/latest` and `/reflection/beliefs/notable`). Guard: `vinu-infra/tests/test_stack_guards.py::test_the_reflection_container_serves_its_api_as_well_as_running_the_worker`. | | |
+| O12 | CLOSED. Fixed: P35. | | |
+| O13 | CLOSED. Fixed: P36 (thresholds are guessed). | | |
 | O14 | The initial-analysis tests are not hermetic. In the container harness the full suite never finishes: `test_pnl_attribution.py::test_run_with_angle_names_does_not_error` waits on a news fetch to a service that is not there, and `test_arima_backtest.py` parallel-fit tests take many minutes. With every service URL set to a refusing port, everything except the arima backtest file ran in 103 s (378 passed, 1 failed: `test_api_v1.py::test_trigger_and_poll_flow`, which needs the default URLs and passes under them) | the suite cannot be run as one command, so regressions in this package can hide | make the tests fake the news and bar clients (or set refusing URLs only where the test does not need them), and time-box the arima parallel tests |
 | O15 | Reflection worker: 5 of its 6 analysts still skip each cycle. One was a real bug (P31, fixed). The other five wait on files that their producers write only when an event happens, and nothing has happened yet: `injected_context_log.db` (agent, when context is injected), `rebalance_requests.db` (live, on a rebalance request), `paper_performance.db` (shadow evaluator, on paper trades), `market_regime_history.db` (research, when a trade plan is analysed). `screener_agreement` reads the screener's rule-fire audit, which fills only when a screener RULE fires; this system uses rankers, so it may stay inert for good. A reflection reader on a read-only mount also cannot open a WAL database whose owner has it closed (seen on research telemetry, llm_cache, signal_evidence, sweep_grid) | the learning loop has little to learn from until trades exist; cross-container SQLite reads are fragile | after the first paper trades, confirm the four files appear and the analysts run; decide whether screener_agreement is worth keeping; add a health check to the reflection worker; longer term, give reflection a read path that does not depend on the owner having the file open |
 | O16 | Partly fixed (P32). The backlog came from a 76-minute stall of the host model server, not from ordering. Still open: the cause of the stall (host side, unknown); a stall still costs 300 s per call, so a quick probe-and-pause would be better; the planner still queues summaries (5 waiting, 4 with 1,300 s or more) while the model is stalled | a stall wastes research runs; nothing tells the user it happened (see O4) | find why the model server stopped answering (its log on the host); add a cheap probe before each call, and an alert (O4) |

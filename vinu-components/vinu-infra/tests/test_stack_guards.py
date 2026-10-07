@@ -466,3 +466,31 @@ def test_the_angle_counts_written_in_the_requirements_pack_match_the_code():
     written = {k: int(re.search(rf"^{k}:\s*(\d+)", text, re.M).group(1)) for k in keys}
     assert written == {"REGISTERED ANGLES": registered, "MODEL ANGLES": models, "SWITCHED-OFF ANGLES": switched_off,
                        "IN-SCOPE ANGLES": registered - models - switched_off}
+
+
+def test_every_setting_in_the_env_example_is_read_by_something():
+    """A setting nothing reads is a switch that does nothing: the correlation block (market-hours-only, session-break-on-close
+    and ten more) belonged to a service that no longer exists, yet it looked like it controlled analysis hours (problem log O2).
+    A name is read when it appears in a service's code, the compose file or a script."""
+    names = set(re.findall(r"^#?\s*(VINU_[A-Z0-9_]+)=", (ROOT / ".env-example").read_text(encoding="utf-8"), re.M))
+    assert len(names) > 100, "the scan found too few settings; the pattern needs updating"
+    blob = []
+    for base in [p for p in ROOT.iterdir() if p.is_dir() and p.name.startswith("vinu-")] + [ROOT / "scripts"]:
+        blob += [f.read_text(encoding="utf-8", errors="ignore") for f in base.rglob("*")
+                 if f.suffix in (".py", ".sh", ".yml", ".yaml") and "tests" not in f.parts and "__pycache__" not in f.parts]
+    blob += [f.read_text(encoding="utf-8", errors="ignore") for f in ROOT.glob("*") if f.is_file() and f.suffix in (".py", ".yml", ".sh")]
+    text = "\n".join(blob)
+    unread = sorted(n for n in names if n not in text and n not in READ_ONLY_BY_THE_TEST_HARNESS)
+    assert not unread, f".env-example lists settings no code reads: {unread}"
+
+
+# read by scripts/test_in_containers.sh, which greps the template for every *_DATA_ROOT name
+READ_ONLY_BY_THE_TEST_HARNESS = {"VINU_NEWS_DATA_ROOT"}
+
+
+def test_the_env_example_keeps_the_full_history_start_date_not_the_short_test_override():
+    """VINU_STAGE1_START_DATE=2026-06-17 was a two-week plumbing check left in place: every analysis window became a few months
+    long (problem log O1). The template must carry the real origin."""
+    text = (ROOT / ".env-example").read_text(encoding="utf-8")
+    values = re.findall(r"^VINU_STAGE1_START_DATE=(\S+)", text, re.M)
+    assert values == ["2022-01-01"], values

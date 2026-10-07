@@ -54,7 +54,7 @@ Real system means: Alpaca **paper** account, equities only, around the clock, un
 ## D. Guards: deployed on, and the target
 Deployed profile (seen earlier): entry guards, precondition enforcing, daily allocation, breaker uses broker account, abort on equity-read failure, runtime correlation trim, CVaR gate, volatility targeting, execution idempotency, maturity gating, symbol lockout after 3 losses are all **on**. Target: keep them all on. The connection manifest still labels several as "default off"; that is the code default, and the manifest note should be updated to say "on in the deployed profile".
 
-Open guard gap: the live scheduler does not record its own orders in the book that the breaker checks (`book.writes->live.scheduler`, gap). Target: wired, then verified on a real paper order.
+Guard gap closed 2026-10-07 (problem log P33): the live scheduler now writes its filled orders into the book that the breaker, cooldown and symbol lockout read (`book.writes->live.scheduler`, wired). Still to do: verify on a real paper order.
 
 ## E. Mandate limits to confirm against the account
 `max_position_pct 0.25`, `max_order_value 50000`, `max_daily_orders 10`, `max_daily_trade_volume 200000` (code defaults; the seeded values in `entrypoint.sh` should be checked). Target: set from the paper account's actual equity, then written here with the numbers. Not yet checked.

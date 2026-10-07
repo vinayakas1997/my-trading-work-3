@@ -37,8 +37,9 @@ def test_every_manifest_edge_is_reported_with_a_state(client) -> None:
 
 def test_known_gaps_and_uninstrumented_edges_are_not_called_broken(client) -> None:
     by_id = _by_id(client.get("/research/pipeline-edges").json())
-    assert by_id["book.writes->live.scheduler"]["state"] == "known_gap"
-    assert by_id["book.writes->live.scheduler"]["gap_ref"]
+    # the last declared gap (book.writes->live.scheduler) was wired on 2026-10-07: it is instrumented and nothing has recorded yet
+    assert by_id["book.writes->live.scheduler"]["state"] == "never_seen"
+    assert not [e for e in by_id.values() if e["state"] == "known_gap"]
     # every wired edge in the manifest is now instrumented, so none can report `not_instrumented` any more
     # (that state itself is covered against synthetic edges in vinu-infra's test_pipeline_edge_recorder.py)
     assert not [e for e in by_id.values() if e["state"] == "not_instrumented"]
@@ -67,7 +68,6 @@ def test_only_problems_returns_just_what_needs_attention(client) -> None:
     states = {e["edge_id"]: e["state"] for e in body["edges"]}
     assert states["research.active_trade_plans->live.orchestrator"] == "missing"
     assert "halt_flag->live.scheduler" not in states  # healthy
-    assert "book.writes->live.scheduler" not in states  # a known gap is not a problem
     assert body["not_flowing"] == len(body["edges"])
 
 

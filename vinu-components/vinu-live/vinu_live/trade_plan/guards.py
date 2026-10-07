@@ -23,6 +23,42 @@ LOG = logging.getLogger(__name__)
 
 HALT_FILE_PATH = Path.home() / ".vinu-live" / "HALT"
 
+# Outside the regular session the broker takes only limit orders. An order that must go through (every exit, and any entry
+# that would have gone as a market order) becomes a limit this far THROUGH the quote, so it fills like a market order but
+# cannot run away on a thin extended-hours book.
+EXTENDED_MARKETABLE_BPS = float(_os.environ.get("VINU_LIVE_EXTENDED_MARKETABLE_BPS", "30"))
+
+
+def _now() -> float:
+    import time
+
+    return time.time()
+
+
+async def extended_hours_route(
+    http: Any, stock_price_api_url: str, symbol: str, side: str, order_type: str, limit_price: float | None,
+    *, reference_price: float | None = None, now: float | None = None,
+) -> tuple[str, float | None, bool]:
+    """(order_type, limit_price, extended) for an order about to be sent. In the regular session, and on the weekend gap
+    (where the order queues), nothing changes. In pre-market, after-hours and overnight the order is made a LIMIT: an
+    existing limit price is kept, otherwise one is set EXTENDED_MARKETABLE_BPS through the reference price (the caller's
+    price, else the live quote mid). With no price at all it is returned unchanged, so the order guard refuses it
+    visibly instead of the code inventing a price. The caller must also drop any bracket or stop leg when `extended`."""
+    from vinu_infra.sessions import EXTENDED_SESSIONS, session_of
+
+    if session_of(_now() if now is None else now) not in EXTENDED_SESSIONS:
+        return order_type, limit_price, False
+    if order_type == "limit" and limit_price is not None:
+        return order_type, limit_price, True
+    base = reference_price if reference_price and reference_price > 0 else None
+    if base is None:
+        _, base = await fetch_quote_snapshot(http, stock_price_api_url, symbol)
+    if base is None:
+        LOG.warning("%s %s outside the regular session but no price known: sending unchanged (the order guard will refuse it)", side, symbol)
+        return order_type, limit_price, True
+    through = EXTENDED_MARKETABLE_BPS / 10_000.0
+    return "limit", round(base * (1 + through) if side == "buy" else base * (1 - through), 2), True
+
 
 def instruction_increases_exposure(side: str, qty: float, current_qty: float) -> bool:
     """True when filling this instruction moves the position FURTHER from flat

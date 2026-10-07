@@ -402,6 +402,25 @@ def list_closed_positions(
     return [dict(r) for r in rows]
 
 
+def apply_fill(backend: BookBackend, symbol: str, side: str, qty: float, price: float) -> str:
+    """Record a broker fill that came from the scheduler path in the book (long-only: a buy opens or adds to the long
+    position, a sell reduces it and closes it at zero). Returns what happened: opened | added | reduced | closed |
+    no_position (a sell with nothing open: nothing is invented) | ignored (bad side, quantity or price)."""
+    if qty is None or price is None or qty <= 0 or price <= 0 or side not in ("buy", "sell"):
+        return "ignored"
+    open_longs = [p for p in list_open_positions(backend, symbol) if p.side == "long"]
+    if side == "buy":
+        if open_longs:
+            add_to_position(backend, open_longs[0].position_id, qty, price)
+            return "added"
+        open_position(backend, symbol, "long", qty, price)
+        return "opened"
+    if not open_longs:
+        return "no_position"
+    left = reduce_position(backend, open_longs[0].position_id, qty, price)
+    return "reduced" if left is not None else "closed"
+
+
 def mark_feedback_processed(backend: BookBackend, position_id: str) -> None:
     conn = _conn(backend)
     conn.execute(

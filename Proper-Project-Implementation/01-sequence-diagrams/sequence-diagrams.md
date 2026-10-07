@@ -157,7 +157,7 @@ sequenceDiagram
         AG->>AP: order status and fill
     end
 ```
-Status: the Alpaca side is PROVEN by a real 1-share SPY overnight round trip (placed directly through the broker connection, reconciled). The guard chain is TESTED in code only. UNPROVEN: a real order through live-api and the guard. Gaps: the scheduler does not write its own positions into the book the breaker checks (manifest entry `book.writes->live.scheduler`, status gap). Several guards are default off: entry guards (cooldown, turbulence, data freshness), exits exempt from halts, precondition enforcing.
+Status: the Alpaca side is PROVEN by a real 1-share SPY overnight round trip (placed directly through the broker connection, reconciled). The guard chain is TESTED in code only. UNPROVEN: a real order through live-api and the guard. Gaps: the scheduler now writes its filled orders into the book the breaker checks (manifest entry `book.writes->live.scheduler`, wired 2026-10-07, not yet seen on a real fill); outside regular hours orders are routed as limits with no stop leg (problem log P34). Several guards are default off: entry guards (cooldown, turbulence, data freshness), exits exempt from halts, precondition enforcing.
 
 ## D6. The live decision loop (24 hours)
 Answers: how a live signal is noticed, judged and handed to execution at any hour.

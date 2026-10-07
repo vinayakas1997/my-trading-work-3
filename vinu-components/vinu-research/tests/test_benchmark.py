@@ -407,3 +407,45 @@ class TestGeometricCagrCorrectness:
         comparison = compute_benchmark_comparison(strat, bench)
         implied_strat_cagr = comparison["excess_cagr"] + _geometric_cagr(bench)
         assert implied_strat_cagr == pytest.approx(direct_cagr, rel=1e-9)
+
+
+class TestComparisonByDate:
+    """Problem log O12: the strategy's equity returns (row-number index) and the benchmark's (dates) shared no index, so the
+    comparison silently found nothing in common and was skipped."""
+
+    def test_the_plain_function_finds_nothing_in_common_across_a_row_index_and_dates(self):
+        rng = np.random.default_rng(1)
+        dates = pd.date_range("2025-01-01", periods=120, freq="D")
+        bench = pd.Series(rng.normal(0.0005, 0.01, 120), index=dates)
+        strat = pd.Series(bench.to_numpy() * 0.5)                   # row-number index
+        assert compute_benchmark_comparison(strat, bench) == {}
+
+    def test_hourly_strategy_bars_are_compounded_to_dates_and_compared(self):
+        from vinu_research.benchmark import compute_benchmark_comparison_by_date
+
+        rng = np.random.default_rng(2)
+        days = pd.date_range("2025-01-01", periods=120, freq="D")
+        bench = pd.Series(rng.normal(0.0005, 0.01, 120), index=days + pd.Timedelta(hours=5))      # a daily candle's own hour
+        hourly = pd.date_range("2025-01-01 10:00", periods=120 * 3, freq="h")
+        per_day = (1 + bench.to_numpy() * 2) ** (1 / 3) - 1             # three bars per day compounding to twice the benchmark move
+        strat = pd.Series(np.repeat(per_day, 3), index=days.repeat(3) + pd.to_timedelta(np.tile([10, 11, 12], 120), unit="h"))
+        out = compute_benchmark_comparison_by_date(strat, bench)
+        assert out and out["beta"] == pytest.approx(2.0, abs=0.05)
+        assert hourly is not None
+
+    def test_a_timezone_on_one_side_does_not_hide_the_overlap(self):
+        from vinu_research.benchmark import compute_benchmark_comparison_by_date
+
+        rng = np.random.default_rng(3)
+        days = pd.date_range("2025-01-01", periods=60, freq="D")
+        bench = pd.Series(rng.normal(0.0005, 0.01, 60), index=days)
+        strat = pd.Series(bench.to_numpy(), index=days.tz_localize("UTC"))
+        assert compute_benchmark_comparison_by_date(strat, bench)["beta"] == pytest.approx(1.0, abs=0.01)
+
+    def test_the_research_loop_uses_the_dated_comparison(self):
+        from pathlib import Path
+
+        import vinu_research.loop as loop
+
+        src = Path(loop.__file__).read_text(encoding="utf-8")
+        assert "compute_benchmark_comparison_by_date(dated_rets" in src and "keep_dates=True" in src

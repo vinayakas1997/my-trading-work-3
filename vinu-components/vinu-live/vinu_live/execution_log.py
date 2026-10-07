@@ -52,8 +52,9 @@ class ExecutionLog(SQLiteBackend):
         );
         CREATE INDEX IF NOT EXISTS idx_sched_exec_symbol ON scheduler_executions(symbol, id);
     """
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
     # v2: fill enrichment (the quote mid at decision time, and what the broker later reported).
+    # v3: how much of the fill is already in the trade-plan book (a partial fill grows, so only the new part is applied).
     MIGRATIONS = [
         ("ALTER TABLE scheduler_executions ADD COLUMN quote_mid REAL", "decision-time quote mid"),
         ("ALTER TABLE scheduler_executions ADD COLUMN fill_price REAL", "broker average fill price"),
@@ -62,7 +63,16 @@ class ExecutionLog(SQLiteBackend):
         ("ALTER TABLE scheduler_executions ADD COLUMN fill_checked_at TEXT", "when the fill was last looked up"),
         ("ALTER TABLE scheduler_executions ADD COLUMN slippage_bps REAL", "cost vs reference in bps (positive = worse)"),
         ("ALTER TABLE scheduler_executions ADD COLUMN slippage_ref TEXT", "what slippage was measured against: mid | close"),
+        ("ALTER TABLE scheduler_executions ADD COLUMN book_applied_qty REAL NOT NULL DEFAULT 0", "filled quantity already written to the book"),
     ]
+
+    def mark_book_applied(self, row_id: int, qty: float) -> None:
+        try:
+            conn = self._get_conn()
+            conn.execute("UPDATE scheduler_executions SET book_applied_qty = ? WHERE id = ?", (qty, row_id))
+            conn.commit()
+        except Exception as e:  # noqa: BLE001
+            LOG.debug("execution ledger book mark failed: %s", e)
 
     def record(self, **row: Any) -> None:
         """Insert one row. Unknown keys are ignored; any error is logged at debug and swallowed."""
