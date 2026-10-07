@@ -4,6 +4,11 @@ Run INSIDE the agent container (it holds the broker keys; they are never printed
 
     docker compose exec -T agent-api python - < scripts/paper_order_test.py            # waits for the market to open
     docker compose exec -T agent-api python - --now < scripts/paper_order_test.py      # refuse if the market is closed
+    docker compose exec -T agent-api python - --extended < scripts/paper_order_test.py # trade NOW outside regular hours
+
+--extended: the symbol must carry the `overnight_tradable` attribute and a live overnight quote must exist (feed=overnight,
+under a minute old). Orders are marketable LIMIT orders with extended_hours=true (the only kind accepted outside the
+regular session), priced EXTENDED_PAD through the quote so they fill like a market order without an unbounded price.
 
 It deliberately skips the strategy gate (this tests the broker connection: submit, status changes, fill price, positions,
 fill activities), refuses to run on anything but the paper URL, refuses if the symbol already has a position or an open
@@ -23,6 +28,8 @@ from vinu_agent.broker.order_config_alpaca import observe
 
 SYMBOL, QTY = "SPY", 1
 NOW_ONLY = "--now" in sys.argv
+EXTENDED = "--extended" in sys.argv
+EXTENDED_PAD = 0.25
 MAX_WAIT_OPEN_S = 14 * 3600
 POLL_S, MAX_ORDER_S = 2, 180
 
@@ -43,9 +50,30 @@ def position_qty(b: AlpacaBroker) -> float:
     return sum(float(p.qty) for p in b.get_positions() if p.symbol == SYMBOL)
 
 
+def overnight_quote() -> dict:
+    import httpx
+
+    r = httpx.get(f"https://data.alpaca.markets/v2/stocks/{SYMBOL}/quotes/latest", params={"feed": "overnight"},
+                  headers={"APCA-API-KEY-ID": alpaca.API_KEY, "APCA-API-SECRET-KEY": alpaca.API_SECRET}, timeout=15)
+    r.raise_for_status()
+    q = r.json()["quote"]
+    age = (datetime.now(timezone.utc) - datetime.fromisoformat(q["t"].replace("Z", "+00:00"))).total_seconds()
+    if age > 60 or not q["ap"] or not q["bp"]:
+        fail(f"no live overnight quote (age {age:.0f}s, bid {q['bp']}, ask {q['ap']})")
+    return q
+
+
 def run_order(b: AlpacaBroker, side: str, label: str) -> dict:
     cid = f"vinu-paper-roundtrip-{label}-{uuid.uuid4().hex[:10]}"
-    submitted = b.submit_order(SYMBOL, QTY, side, order_type="market", time_in_force="day", client_order_id=cid)
+    if EXTENDED:
+        q = overnight_quote()
+        price = round(q["ap"] + EXTENDED_PAD, 2) if side == "buy" else round(q["bp"] - EXTENDED_PAD, 2)
+        step(f"{label}_quote", quote=q, limit_price=price)
+        payload = {"symbol": SYMBOL, "qty": str(QTY), "side": side, "type": "limit", "limit_price": str(price),
+                   "time_in_force": "day", "extended_hours": True, "client_order_id": cid}
+        submitted = b._post("/v2/orders", payload)
+    else:
+        submitted = b.submit_order(SYMBOL, QTY, side, order_type="market", time_in_force="day", client_order_id=cid)
     oid = submitted["id"]
     step(f"{label}_submitted", client_order_id=cid, order_id=oid, response=submitted, observed=observe(submitted).__dict__)
     seen, t0, last = [], time.time(), None
@@ -83,6 +111,12 @@ def main() -> None:
 
     clock = b.get_clock()
     waited = 0
+    if EXTENDED:
+        attrs = b.get_asset(SYMBOL).get("attributes") or []
+        step("asset_attributes", attributes=attrs)
+        if "overnight_tradable" not in attrs and clock["is_open"] is False:
+            fail(f"{SYMBOL} is not overnight_tradable")
+        clock = {**clock, "is_open": True}          # the broker's regular-session clock does not apply to this mode
     while not clock["is_open"]:
         if NOW_ONLY:
             fail(f"market closed (next open {clock['next_open']})")

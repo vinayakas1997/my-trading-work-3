@@ -11,7 +11,14 @@ HOW TO IDENTIFY AN ORDER
   replaced_by / replaces   link a replaced order to its successor.
   legs             child orders of a bracket / oto order (each has its own id).
 
+OUTSIDE THE REGULAR SESSION (verified on the paper account at 02:13 ET)
+  Alpaca accepts only LIMIT orders with `extended_hours: true` and `time_in_force: day`. SPY carries the asset attribute
+  `overnight_tradable`; a live overnight quote exists at GET data.alpaca.markets/v2/stocks/{symbol}/quotes/latest?feed=overnight.
+  A marketable limit (buy above the ask, sell below the bid) filled within about 5 seconds in the overnight session.
+  Each fill also appears in GET /v2/account/activities/FILL under the same `order_id` (price, qty, side, transaction_time).
+
 STAGES (the `status` field, plus which timestamp fields fill in)
+  pending_new                      the immediate answer to an extended-hours submit; a moment later it is `new`.
   accepted / new / pending_new     OPEN, resting at the broker (an order sent while the market is closed is `accepted`).
                                    filled_qty 0, filled_avg_price None, only created/submitted/updated timestamps set.
   partially_filled                 OPEN, filled_qty > 0 and < qty, filled_avg_price is the average so far.

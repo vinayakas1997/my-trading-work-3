@@ -41,3 +41,29 @@ def test_inconsistent_responses_are_reported_not_trusted():
 
 def test_open_and_closed_status_sets_do_not_overlap():
     assert not OPEN_STATUSES & CLOSED_STATUSES
+
+
+FILLED = json.loads((Path(__file__).parent / "fixtures" / "alpaca_order_filled.json").read_text(encoding="utf-8"))
+
+
+def test_a_real_overnight_fill_is_closed_with_its_price_and_time():
+    for key in ("buy_filled", "sell_filled"):
+        raw = FILLED[key]
+        o = observe(raw)
+        assert (o.status, o.is_closed, o.problems) == ("filled", True, ())
+        assert o.filled_qty == o.qty == 1.0 and o.filled_avg_price and o.closed_at == raw["filled_at"]
+        assert raw["extended_hours"] is True and raw["type"] == "limit" and raw["time_in_force"] == "day"
+        assert missing_response_fields(raw) == []
+
+
+def test_the_submit_response_of_an_extended_hours_order_is_still_pending():
+    o = observe(FILLED["buy_submitted"])
+    assert o.status == "pending_new" and o.is_open and o.filled_avg_price is None
+
+
+def test_each_fill_appears_in_the_account_activities_under_the_order_id():
+    ids = {a["order_id"] for a in FILLED["fill_activities"]}
+    assert {FILLED["buy_filled"]["id"], FILLED["sell_filled"]["id"]} <= ids
+    for a in FILLED["fill_activities"]:
+        if a["order_id"] == FILLED["buy_filled"]["id"]:
+            assert float(a["price"]) == float(FILLED["buy_filled"]["filled_avg_price"]) and a["side"] == "buy"
