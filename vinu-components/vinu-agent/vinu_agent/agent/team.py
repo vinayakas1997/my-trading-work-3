@@ -491,7 +491,8 @@ class TeamManager:
             ],
             required=needs_verdict,
             max_nudges=MAX_VERDICT_NUDGES + min_attempts,
-            attempts=lambda: delegate_tool.delegations.get("idea_generator", 0),
+            # a candidate counts once it has actually been TESTED; an idea that was only proposed has not been tried
+            attempts=lambda: delegate_tool.delegations.get("backtest_runner", 0),
             min_attempts=min_attempts,
             budget=self._max_iterations,
         )

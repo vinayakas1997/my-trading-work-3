@@ -209,3 +209,46 @@ def test_a_bar_size_with_stale_or_thin_data_is_not_tested_and_says_why_while_the
 def test_an_unreachable_price_service_means_nothing_is_tested():
     svc, out = _validate({b: _run() for b in BAR_WINDOW_DAYS}, catalog_lookup=lambda *a: None)
     assert svc.calls == [] and out["passing_bars"] == []
+
+
+# ---- the promotion bar honours the stored per-bar measurement ---------------------------------------------------------
+
+def _measured_artifact(*, pbo_waived=True, trades=60, pbo=None, verified=True, bar="4h"):
+    import json
+
+    a = Artifact.create("strategy", "AMD-x", universe=["AMD"])
+    a.deflated_sharpe, a.holdout_passed, a.stress_test_passed, a.pbo = 1.2, True, True, pbo
+    a.bar_interval = bar
+    a.bar_evidence = json.dumps({"verified": verified, "chosen_bar": bar,
+                                 "bars": [{"interval": bar, "pbo_waived": pbo_waived, "trade_count": trades}]})
+    return a
+
+
+def test_a_fixed_rule_with_a_verified_measurement_clears_the_bar_without_a_pbo():
+    from vinu_research.promotion import meets_promotion_bar
+
+    assert meets_promotion_bar(_measured_artifact(), ResearchConfig()).eligible
+
+
+def test_the_pbo_waiver_needs_a_verified_measurement_for_that_bar_size():
+    from vinu_research.promotion import meets_promotion_bar
+
+    cfg = ResearchConfig()
+    assert not meets_promotion_bar(_measured_artifact(verified=False), cfg).eligible       # unverified: PBO still required
+    unmeasured = _measured_artifact()
+    unmeasured.bar_interval = "1d"                                                        # no stored row for this bar size
+    assert not meets_promotion_bar(unmeasured, cfg).eligible
+    assert not meets_promotion_bar(_measured_artifact(pbo_waived=False), cfg).eligible
+    plain = Artifact.create("strategy", "AMD-y", universe=["AMD"])
+    plain.deflated_sharpe, plain.holdout_passed, plain.stress_test_passed = 1.2, True, True
+    assert not meets_promotion_bar(plain, cfg).eligible                                   # old-style artifact: unchanged
+
+
+def test_the_stored_trade_count_is_rechecked_at_promotion_and_a_real_high_pbo_still_blocks():
+    from vinu_research.promotion import meets_promotion_bar
+
+    cfg = ResearchConfig()
+    low = meets_promotion_bar(_measured_artifact(trades=12), cfg)
+    assert not low.eligible and "12 trades" in " ".join(low.reasons)
+    high_pbo = meets_promotion_bar(_measured_artifact(pbo_waived=False, pbo=0.9), cfg)
+    assert not high_pbo.eligible and "PBO" in " ".join(high_pbo.reasons)

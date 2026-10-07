@@ -27,8 +27,34 @@ class PromotionVerdict:
     reasons: list[str]
 
 
+def _chosen_bar_row(artifact: Artifact) -> dict | None:
+    """The per-bar-size measurement code stored for this artifact's bar size (bar_validation), or None for an artifact
+    that was never measured per bar size."""
+    import json
+
+    if not getattr(artifact, "bar_evidence", "") or not getattr(artifact, "bar_interval", ""):
+        return None
+    try:
+        evidence = json.loads(artifact.bar_evidence)
+    except ValueError:
+        return None
+    if not isinstance(evidence, dict) or evidence.get("verified") is not True:
+        return None
+    for row in evidence.get("bars") or []:
+        if isinstance(row, dict) and row.get("interval") == artifact.bar_interval:
+            return row
+    return None
+
+
 def meets_promotion_bar(artifact: Artifact, config: ResearchConfig, correlation_verdict: CorrelationVerdict | None = None) -> PromotionVerdict:
     reasons: list[str] = []
+    row = _chosen_bar_row(artifact)
+    # PBO needs a set of parameter trials; a fixed rule has none and its measurement says so (`pbo_waived`). That waiver
+    # holds only with a stored, verified per-bar measurement, and the stored trade count is re-checked here.
+    pbo_waived = bool(row and row.get("pbo_waived") and artifact.pbo is None)
+    if row is not None and int(row.get("trade_count") or 0) < config.min_trades_for_pass:
+        reasons.append(f"only {int(row.get('trade_count') or 0)} trades on {artifact.bar_interval} bars; "
+                       f"at least {config.min_trades_for_pass} are needed")
 
     if artifact.deflated_sharpe < config.promotion_deflated_sharpe_threshold:
         reasons.append(
@@ -56,7 +82,7 @@ def meets_promotion_bar(artifact: Artifact, config: ResearchConfig, correlation_
         elif artifact.stress_test_passed is False:
             reasons.append("failed at least one historical stress window")
 
-    if config.promotion_pbo_required:
+    if config.promotion_pbo_required and not pbo_waived:
         if artifact.pbo is None:
             reasons.append(
                 "PBO required but was never computed for this artifact "

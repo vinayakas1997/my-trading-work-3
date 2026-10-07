@@ -95,7 +95,8 @@ def apply_bar_evidence(artifact: Any, evidence: Optional[dict[str, Any]]) -> str
         artifact.holdout_passed = show.get("holdout_passed")
         artifact.stress_test_passed = show.get("stress_test_passed")
         artifact.pbo = show.get("pbo")
-    artifact.bar_evidence = json.dumps({"verified": True, "passing_bars": evidence.get("passing_bars", []), "bars": rows}, default=str)
+    artifact.bar_evidence = json.dumps({"verified": True, "passing_bars": evidence.get("passing_bars", []),
+                                        "chosen_bar": (chosen or {}).get("interval", ""), "bars": rows}, default=str)
     if chosen:
         artifact.bar_interval = str(chosen["interval"])
         return "verified"
@@ -123,7 +124,8 @@ def write_artifact_from_research_pass(
         stopped = data.get("verdict") == "STOP"
 
         symbol = str(data.get("symbol", "")).strip().upper()
-        strategy_code = str(data.get("strategy_code", "")).strip()
+        raw_code = data.get("strategy_code")
+        strategy_code = raw_code.strip() if isinstance(raw_code, str) else ""      # null is "no strategy", not "None"
         if not symbol or not strategy_code:
             LOG.warning(
                 "research PASS json block missing symbol/strategy_code, skipping artifact write"

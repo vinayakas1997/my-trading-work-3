@@ -79,3 +79,19 @@ Six recipe templates (crossover, ADX crossover, supertrend, MACD, VWAP, momentum
 - The model prompts (`idea_generator/prompt.md`, `llm_generator.py`) now say what the weights mean, with the crossover example, so a model does not write the one-bar form either.
 - Tests run each recipe's generated code and check the average holding length is above one bar and nothing goes short.
 - Results computed with the old templates are not evidence of anything. The pre-fix AMD "PASS" (Sharpe 0.61, win rate 1.8%) is void.
+
+### Step 3 (done): the critic is advice, code decides
+- The planner now asks the research team for ONE strategy per ticker, designed on the first configured bar size and told it will be re-tested unchanged on all of them (it was four separate team runs, one per bar size, with four different strategies).
+- A team STOP that left a runnable strategy is still tested by code; it becomes an artifact only if a bar size clears the promotion bar. A PASS whose strategy clears no bar size is written as DISABLED with the whole table (an audit trail), never BENCHING.
+
+### Step 4 (done): intake and data readiness
+- Columns the strategy reads are checked before any run: indicator columns the backtest can merge (`sma_N`, `rsi_14`, `macd`, `macd_signal`, `daily_return`, `volatility_20d`, `adx_14`) are requested for it (validation requested none, so a strategy reading `sma_20` would have crashed on every bar size); a column it cannot supply is rejected up front with the list of real names.
+- Data readiness per bar size from the price catalog: symbol present, backfill complete, newest bar within 7 days, history covering about 90% of the window. A bar size that fails is not tested and says why; an unreachable price service means nothing is tested.
+- The promotion check at the allocator (`meets_promotion_bar`) honours the stored per-bar measurement: the PBO waiver for fixed rules only with a verified measurement for that bar size, and the stored trade count is re-checked. The ready-made-strategy validation (`strategy_validation._eligible`) has the same PBO treatment.
+
+### Tooling fixes found on the way
+- `scripts/stale_images.py` crashed ("Invalid isoformat string") when a container's image id had been removed, and judged by commit time, so committing what an image was built from made every service look stale. Both fixed, with tests.
+
+### Open (found, not fixed)
+- `get_reflection_synthesis` calls `VINU_REFLECTION_API_URL=http://reflection-worker:8092`; the reflection worker has no HTTP port and 8092 is the local model server, so this edge can never work (the research agent sees a DNS error on every call). Needs the synthesis exposed (a read route or a shared file) before the tool can be useful. The reflection worker itself is not running in this stack.
+- Every deploy restarts the agent and fails the in-flight research run; batch edits and deploy once.

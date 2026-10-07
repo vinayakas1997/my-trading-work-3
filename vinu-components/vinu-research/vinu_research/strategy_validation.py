@@ -160,6 +160,11 @@ def _eligible(record: Any, config: Any) -> tuple[bool, list[str]]:
     a.holdout_passed = record.holdout_passed
     a.stress_test_passed = record.stress_test_passed
     a.pbo = record.pbo
+    if record.pbo is None:
+        # A fixed rule (one parameter set, one iteration) has no trial set to compute PBO over; "not applicable" is not
+        # "missing". Same treatment as bar_validation. A real PBO above the threshold still blocks.
+        from dataclasses import replace
+        config = replace(config, promotion_pbo_required=False)
     verdict = meets_promotion_bar(a, config)
     return verdict.eligible, list(verdict.reasons)
 

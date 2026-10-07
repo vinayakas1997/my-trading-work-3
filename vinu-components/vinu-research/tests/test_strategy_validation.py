@@ -248,3 +248,13 @@ async def test_a_rejection_reports_the_failed_checks_and_the_real_numbers(tmp_pa
     out = await validate_strategy(svc, DEFINITION, "2022-01-03", "2026-10-02")
     t = out["detail"]["per_ticker"]["AAPL"]
     assert t["attempt"]["sharpe"] == 0.70 and t["reasons"][0].startswith("Bootstrap Sharpe CI lower bound")
+
+
+@pytest.mark.asyncio
+async def test_a_fixed_rule_has_no_pbo_and_is_judged_on_the_other_checks_but_a_high_pbo_still_blocks(tmp_path):
+    no_pbo = {**GOOD, "pbo": None}
+    high_pbo = {**GOOD, "pbo": 0.9}
+    svc = FakeService(tmp_path, {"AAPL": no_pbo, "MSFT": no_pbo, "GOOGL": no_pbo, "AMZN": high_pbo, "META": high_pbo})
+    out = await validate_strategy(svc, DEFINITION, "2022-01-03", "2026-10-02")
+    assert out["detail"]["eligible_tickers"] == ["AAPL", "GOOGL", "MSFT"]
+    assert any("PBO" in r for r in out["detail"]["per_ticker"]["AMZN"]["reasons"])

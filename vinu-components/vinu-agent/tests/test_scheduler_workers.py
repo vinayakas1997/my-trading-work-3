@@ -980,6 +980,7 @@ class TestPlannerResearchesOneStrategyPerTicker:
         assert mock_run.call_count == 1
         task = mock_run.call_args[0][2]
         assert "Interval: 1d" in task and "Window: " in task
-        assert "re-tested unchanged on 1d, 4h, 1h, 15m bars" in task
+        assert "SEPARATELY, on each of these bar sizes: 1d, 4h, 1h, 15m" in task
+        assert "do NOT combine bar sizes" in task
         assert mock_run.call_args[1]["session_id"] == "planner-AAPL"
         triage.on_propose.assert_called_once_with("AAPL", result, ref_id="r1", debate_run_id="")

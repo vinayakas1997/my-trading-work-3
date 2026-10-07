@@ -821,8 +821,9 @@ def make_planner_on_yes(service: Any, triage: PlannerTriage, run_log_reader: Any
         from_date, to_date = window_for(design)
         task += (
             f"\n\nInterval: {design}\nWindow: {from_date} to {to_date}\n"
-            f"Final check: the strategy you pass is re-tested unchanged on {', '.join(bars)} bars. Write rules that "
-            "make sense on all of them (count bars, not days) and return the same weight on a bar as on any other.\n"
+            f"Final check: after you finish, code runs your strategy unchanged, SEPARATELY, on each of these bar sizes: "
+            f"{', '.join(bars)}. Write ONE strategy that reads only the bars it is given (one bar size at a time); do "
+            "NOT combine bar sizes, resample, or request other timeframes' data. Count bars, not days, in your rules.\n"
         )
         handoff = run_team_for_ticker(service, "research", task, session_id=f"planner-{ticker}")
 

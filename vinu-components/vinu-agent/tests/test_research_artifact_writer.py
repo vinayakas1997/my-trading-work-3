@@ -214,3 +214,12 @@ class TestCriticIsAdviceCodeDecides:
         assert write_artifact_from_research_pass(
             _STOP_CONTENT, strategy_store=store, source_run_id="s3", bar_validator=lambda *a: None,
         ) is None
+
+
+def test_a_null_strategy_code_is_no_strategy_not_the_text_none(store) -> None:
+    content = '```json\n{"verdict": "STOP", "symbol": "AMD", "sharpe": null, "max_drawdown": null, "strategy_code": null}\n```'
+    called = []
+    assert write_artifact_from_research_pass(
+        content, strategy_store=store, bar_validator=lambda *a: called.append(a),
+    ) is None
+    assert called == [] and store.list_artifacts() == []
