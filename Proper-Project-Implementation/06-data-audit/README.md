@@ -29,13 +29,13 @@ Findings are numbered `DA-<component letter><n>` in `findings.md` and each one i
 | Component | File | Status |
 |---|---|---|
 | news | `news.md` | DONE 2026-10-08 (pilot) |
-| stock-price | | not started |
-| screener | | not started |
-| initial-analysis | | not started |
-| research | | not started |
-| simulator | | not started |
-| portfolio | | not started |
-| live | | not started |
-| agent | | not started |
+| stock-price | `stock-price.md` | DONE 2026-10-08 |
+| screener | `screener.md` | DONE 2026-10-08 |
+| initial-analysis | `initial-analysis.md` | DONE 2026-10-08 |
+| research | `research.md` | DONE 2026-10-08 |
+| simulator and strategy | `simulator-and-strategy.md` | DONE 2026-10-08 |
+| portfolio | `portfolio.md` | DONE 2026-10-08 |
+| live | `live.md` | DONE 2026-10-08 |
+| agent | `agent.md` | DONE 2026-10-08 |
 
 `findings.md` is the running list across components.

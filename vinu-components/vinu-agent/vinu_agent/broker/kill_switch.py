@@ -169,11 +169,22 @@ class AuditLogger:
         session_id: str = "",
         symbol: str = "",
         metadata: dict | None = None,
-        paper_trading: bool = False,
+        paper_trading: bool | None = None,
     ) -> None:
-        """Write a structured audit entry."""
+        """Write a structured audit entry. Every entry carries the money mode it was made under (`account_mode`);
+        `paper_trading` follows it unless the caller states otherwise (it used to default to False on a paper stack, so
+        all 1,289 entries of 2026-10-08 claimed real trading)."""
         import uuid
         from datetime import datetime, timezone
+
+        try:
+            from vinu_infra.account_mode import current_account_mode
+
+            account_mode = current_account_mode()
+        except Exception:  # noqa: BLE001 -- an unreadable setting must not stop the audit write
+            account_mode = "unknown"
+        if paper_trading is None:
+            paper_trading = account_mode == "paper"
 
         entry: dict = {
             "id": uuid.uuid4().hex[:16],
@@ -183,6 +194,7 @@ class AuditLogger:
             "details": details or {},
             "metadata": metadata or {},
             "paper_trading": paper_trading,
+            "account_mode": account_mode,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         # situation-test/18-audit-logger-unwritable-path-crashes-order-pipeline.md:

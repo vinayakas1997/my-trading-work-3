@@ -51,3 +51,31 @@ class TestFormatMetricsTable:
         assert "Total Return" in table
         assert "Sharpe" in table
         assert "Max DD" in table
+
+
+class TestCrashCauseReachesTheReport:
+    """24 of 44 stored reports said "Fix the error above" and did not contain the error: the cause sits in the critique's
+    reasoning, and the report printed only the suggestions."""
+
+    def _crashed(self, reasoning: str) -> IterationRecord:
+        rec = _make_record(1, 0.0, 0.0, 0.0, "REFINE")
+        rec.critique = CriticFeedback(
+            verdict="REFINE", reasoning=reasoning,
+            suggestions=["Fix the error above; the code must run on plain OHLCV data without exceptions."],
+        )
+        return rec
+
+    def test_the_crash_message_is_in_the_report(self):
+        rec = self._crashed("The strategy code crashed when it ran: NameError: name 'ta' is not defined")
+        report = generate_report("MSFT", "2025-10-07", "2026-10-07", "validate", [rec], rec.result, 1)
+        assert "NameError: name 'ta' is not defined" in report
+        assert "Fix the error above" in report
+
+    def test_ordinary_reasoning_is_not_added_and_order_is_stable(self):
+        r1 = _make_record(1, 0.5, -0.2, 0.3, "REFINE")
+        report_a = generate_report("AAPL", "2024-01-01", "2024-12-31", "t", [r1], r1.result, 1)
+        report_b = generate_report("AAPL", "2024-01-01", "2024-12-31", "t", [r1], r1.result, 1)
+        assert report_a == report_b
+        assert report_a.index("improve X") < report_a.index("add Y")
+        findings = report_a.split("Key Findings:")[1].split("Optimized")[0]
+        assert "1. improve X" in findings and "2. add Y" in findings and "test" not in findings

@@ -12,6 +12,10 @@ from vinu_research.models import (
 from vinu_research.portfolio import PortfolioAnalysisResult
 
 
+# Critique reasons that carry the actual cause of a failed candidate (the suggestion beside them is generic).
+CAUSE_IN_REASONING_PREFIXES = ("The strategy code crashed", "Static AST Verification failed")
+
+
 def generate_report(
     symbol: str,
     from_date: str,
@@ -302,10 +306,15 @@ def generate_report(
     lines.append("Key Findings:")
     if history:
         all_critiques = [rec.critique for rec in history]
-        all_findings = set()
+        # An ordered, de-duplicated list (a set made the order change from run to run). When the strategy's own code failed,
+        # the cause is in the critique's reasoning and the suggestion is only "fix the error above"; without the reasoning
+        # the stored report pointed at an error it did not contain (24 of 44 runs on 2026-10-08).
+        all_findings: dict[str, None] = {}
         for c in all_critiques:
+            if (c.reasoning or "").startswith(CAUSE_IN_REASONING_PREFIXES):
+                all_findings[" ".join(c.reasoning.split())[:400]] = None
             for s in c.suggestions:
-                all_findings.add(s)
+                all_findings[s] = None
         if all_findings:
             for i, finding in enumerate(all_findings, 1):
                 lines.append(f"  {i}. {finding}")
