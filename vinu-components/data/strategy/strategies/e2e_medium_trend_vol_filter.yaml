@@ -1,0 +1,42 @@
+name: e2e_medium_trend_vol_filter
+description: "Stage 1 E2E medium tier — SMA trend direction, gated by ADX trend strength and volatility_20d regime filter"
+schedule: daily
+features_required:
+  - sma_20
+  - sma_50
+  - adx_14
+  - volatility_20d
+angles_required:
+  - regime_analysis
+universe:
+  source: inline
+  inline: [AAPL, TSLA, JNJ]
+pipeline:
+  selection:
+    method: all
+  allocation:
+    method: signal_scaled
+    signal: "sma_20 / sma_50 - 1"
+  timing:
+    method: rules
+    rules:
+      - name: weak_trend_halve
+        when:
+          - {source: features, key: adx_14, lte: 20}
+        then: {action: weight_multiply, value: 0.5}
+      - name: elevated_volatility_halve
+        when:
+          - {source: features, key: volatility_20d, gt: 0.03}
+        then: {action: weight_multiply, value: 0.5}
+      - name: high_vol_regime_halve
+        when:
+          - {source: angles, key: regime_analysis.regime, eq: "high_vol"}
+        then: {action: weight_multiply, value: 0.5}
+      - name: bear_exit
+        when:
+          - {source: angles, key: regime_analysis.regime, eq: "bear"}
+        then: {action: weight_set, value: 0.0}
+  risk:
+    method: normalize
+    max_weight: 0.25
+    cash_floor: 0.10

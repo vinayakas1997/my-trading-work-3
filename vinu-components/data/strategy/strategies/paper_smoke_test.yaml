@@ -1,0 +1,22 @@
+name: paper_smoke_test
+description: "PAPER SMOKE TEST ONLY. Fires on every new daily bar for AAPL (25% weight so the order survives cold-start scaling and whole-share rounding) so the whole live chain (trigger, agent decision, position, order, exit) can be exercised once. Delete or leave unused; it is not a trading idea."
+schedule: daily
+universe:
+  source: inline
+  inline: [AAPL]
+must_conditions:
+  - {source: live_indicators, key: sma_5, operator: gt, value: 0}
+confirmation_conditions: []
+grace_window_bars: 2
+precondition:
+  description: "None. This is a plumbing test, not a thesis."
+  defined: true
+live_decision_position_size: 0.25
+live_decision_stop_pct: 0.05
+live_decision_max_hold_bars: 1
+features_required: []
+pipeline:
+  selection: {method: all}
+  allocation: {method: equal}
+  timing: {method: none}
+  risk: {max_weight: 0.25, cash_floor: 0.10, method: normalize}

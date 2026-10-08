@@ -1,0 +1,50 @@
+name: news_aware_momentum
+description: "Momentum with news impact boost and drawdown protection"
+schedule: daily
+features_required:
+  - MOM_20
+  - ADX_14
+correlation_required:
+  - impact
+  - granger
+  - drawdown
+angles_required:
+  - regime_analysis
+  - shock_personality
+pipeline:
+  selection:
+    method: threshold
+    on: "MOM_20"
+    min: 0.0
+  allocation:
+    method: signal_scaled
+    signal: "MOM_20"
+  timing:
+    method: rules
+    rules:
+      - name: news_bullish_boost
+        when:
+          - {source: correlation, key: high_impact_bullish_events, gt: 1}
+          - {source: correlation, key: granger_causes_prices, eq: true}
+          - {source: features, key: ADX_14, gt: 25}
+        then: {action: weight_multiply, value: 1.20}
+      - name: news_bearish_caution
+        when:
+          - {source: correlation, key: high_impact_bearish_events, gt: 2}
+        then: {action: weight_multiply, value: 0.50}
+      - name: drawdown_cash
+        when:
+          - {source: correlation, key: drawdown_count, gt: 1}
+        then: {action: weight_set, value: 0.0}
+      - name: regime_high_vol_cut
+        when:
+          - {source: angles, key: regime_analysis.regime, eq: "high_vol"}
+        then: {action: weight_multiply, value: 0.50}
+      - name: regime_bear_exit
+        when:
+          - {source: angles, key: regime_analysis.regime, eq: "bear"}
+        then: {action: weight_set, value: 0.0}
+  risk:
+    max_weight: 0.25
+    cash_floor: 0.10
+    method: shock_aware

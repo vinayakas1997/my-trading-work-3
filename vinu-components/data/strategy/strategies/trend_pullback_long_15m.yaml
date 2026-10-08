@@ -1,0 +1,31 @@
+name: trend_pullback_long_15m
+description: "15-minute version of trend_pullback_long, run next to the daily one to compare which timeframe suits. Buy a short pullback inside an established uptrend. The conditions fire the setup; the agent decides whether to act on it."
+schedule: 15m
+universe:
+  source: inline
+  inline: [AAPL, MSFT, GOOGL, AMZN, META]
+# Must-conditions are a hard AND: price above its 50-bar average (uptrend), pulled back below the 5-bar average,
+# with a trend strong enough to matter (ADX above 20).
+must_conditions:
+  - {source: live_indicators, key: dist_from_sma_50, operator: gt, value: 0}
+  - {source: live_indicators, key: dist_from_sma_5, operator: lt, value: 0}
+  - {source: live_indicators, key: adx_14, operator: gt, value: 20}
+# Confirmation, checked on a later bar inside the grace window: the pullback has not turned into a rout.
+confirmation_conditions:
+  - {source: live_indicators, key: rsi_14, operator: between, value: [35, 60]}
+grace_window_bars: 3
+precondition:
+  description: "The broad trend is up and volatility is not abnormal; a pullback in a falling or panicking market is not this setup."
+  defined: true
+# Same rules on 15-minute bars. The conditions are identical, so every moving average, ADX and RSI now spans 15-minute bars and the
+# strategy means something different. Sizing and exits are choices (no safe invented default): 5% of equity per position,
+# a 1.5% stop (scaled to the bar size) and a 20-bar maximum hold.
+live_decision_position_size: 0.05
+live_decision_stop_pct: 0.015
+live_decision_max_hold_bars: 20
+features_required: []
+pipeline:
+  selection: {method: all}
+  allocation: {method: equal}
+  timing: {method: none}
+  risk: {max_weight: 0.25, cash_floor: 0.10, method: normalize}
