@@ -15,7 +15,7 @@ from vinu_news.server.schemas import (
     WatchlistAddRequest,
     WatchlistResponse,
 )
-from vinu_news.server.schemas import BackfillToggleRequest, IngestTriggerResponse
+from vinu_news.server.schemas import BackfillToggleRequest, IngestTriggerResponse, SourceSwitchRequest
 from vinu_news.service import NewsService
 
 router = APIRouter(tags=["config"])
@@ -119,6 +119,23 @@ def ingest_ticker_news(days: int = 7) -> dict:
         "inserted": result.inserted,
         "watchlist_size": result.watchlist_size,
     }
+
+
+@router.get("/sources")
+def list_sources() -> dict:
+    """Every news source (RSS feed or ticker-news API) with its state in plain words: ok, failing, off by the operator,
+    off automatically (until when and why), off in the configuration. `attention` lists what a person should look at."""
+    return get_service().get_sources()
+
+
+@router.patch("/sources/{source_id}")
+def switch_source(source_id: str, body: SourceSwitchRequest) -> dict:
+    """The operator's on/off switch for one source. It is kept in the database (the packaged yaml is read-only in the
+    container). Turning a source on also clears an automatic switch-off so it is tried at the next poll."""
+    try:
+        return get_service().set_source_off(source_id, body.off)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/feeds")

@@ -96,6 +96,9 @@ class NewsRepository(SQLiteBackend):
                 conn.execute(
                     f"ALTER TABLE articles ADD COLUMN {col_name} {col_def}"
                 )
+        from vinu_news.sources.health import migrate as migrate_feed_health
+
+        migrate_feed_health(conn)
 
     @property
     def conn(self) -> Any:

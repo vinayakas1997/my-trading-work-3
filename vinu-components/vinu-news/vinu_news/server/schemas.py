@@ -62,3 +62,7 @@ class ToggleEnabledRequest(BaseModel):
 
 class BackfillToggleRequest(BaseModel):
     enabled: bool
+
+
+class SourceSwitchRequest(BaseModel):
+    off: bool

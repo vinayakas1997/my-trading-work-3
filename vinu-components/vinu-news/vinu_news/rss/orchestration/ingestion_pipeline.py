@@ -60,6 +60,12 @@ def run_ingestion(
 ) -> IngestionSummary:
     """Fetch all feeds, enrich, post-process, and optionally persist to SQLite."""
     feeds = load_feeds(feed_ids=feed_ids)
+    if not dry_run:
+        from vinu_news.sources.health import SourceHealth
+
+        with NewsRepository(db_path) as repo:
+            health = SourceHealth(repo)
+            feeds = [f for f in feeds if health.is_pollable(f.id)]
     raw_articles, feed_results = poll_all_feeds(feeds)
 
     feeds_failed = sum(1 for r in feed_results if r.article_count == 0)

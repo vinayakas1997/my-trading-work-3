@@ -203,7 +203,7 @@ class NewsService:
 
     def run_backfill_single(self, ticker: str) -> dict:
         ticker = ticker.upper()
-        registry = TickerNewsRegistry(self._config)
+        registry = TickerNewsRegistry(self._config, health=self.source_health)
         watchlist = set(self._storage.get_watchlist())
         settings = self._storage.get_settings()
 
@@ -302,6 +302,53 @@ class NewsService:
                 results.append(self.run_backfill_single(entry.ticker))
         return results
 
+    @property
+    def source_health(self):
+        """Health and switches of every news source (layer 1 of the news plan)."""
+        from vinu_news.sources.health import SourceHealth
+
+        return SourceHealth(self._storage.repo)
+
+    def _pollable_feeds(self, feeds: list) -> list:
+        """Drop feeds the operator or the automatic switch-off has turned off; say how many were skipped."""
+        health = self.source_health
+        keep = [f for f in feeds if health.is_pollable(f.id)]
+        if len(keep) < len(feeds):
+            LOG.info("skipping %d switched-off feed(s): %s", len(feeds) - len(keep),
+                     sorted({f.id for f in feeds} - {f.id for f in keep}))
+        return keep
+
+    def _configured_sources(self) -> list[dict[str, Any]]:
+        from vinu_news.providers.config.loader import load_ticker_news_providers
+        from vinu_news.sources.health import KIND_API, KIND_RSS
+
+        rows: list[dict[str, Any]] = []
+        for f in load_feeds(only_enabled=False):
+            rows.append({"id": f.id, "kind": KIND_RSS, "enabled": f.enabled, "source": f.source, "tier": f.tier, "url": f.url})
+        for p in load_ticker_news_providers():
+            rows.append({"id": p.id, "kind": KIND_API, "enabled": p.enabled, "priority": p.priority})
+        return rows
+
+    def get_sources(self) -> dict[str, Any]:
+        """Every source with its state in plain words, plus the list that needs attention."""
+        health = self.source_health
+        snapshot = health.snapshot(self._configured_sources())
+        counts: dict[str, int] = {}
+        for s in snapshot:
+            counts[s["state"]] = counts.get(s["state"], 0) + 1
+        return {"sources": snapshot, "counts": counts, "attention": health.attention(snapshot)}
+
+    def set_source_off(self, source_id: str, off: bool) -> dict[str, Any]:
+        configured = {c["id"]: c for c in self._configured_sources()}
+        known = source_id in configured or self._storage.repo.conn.execute(
+            "SELECT 1 FROM feed_health WHERE feed_id = ?", (source_id,)
+        ).fetchone()
+        if not known:
+            raise ValueError(f"Source not found: {source_id}")
+        kind = configured.get(source_id, {}).get("kind", "rss")
+        self.source_health.set_operator_off(source_id, off, kind=kind)
+        return next(s for s in self.get_sources()["sources"] if s["id"] == source_id)
+
     def run_ingestion_cycle(
         self,
         *,
@@ -326,6 +373,7 @@ class NewsService:
         # --- Fetch phase (source-specific) ---
         if source == "rss":
             feeds = load_feeds(feed_ids=feed_ids, tiers=settings.active_tiers)
+            feeds = self._pollable_feeds(feeds)
             raw_articles, feed_results = poll_all_feeds(feeds)
             feeds_polled = len(feeds)
             feeds_failed = sum(1 for r in feed_results if r.article_count == 0)
@@ -342,7 +390,7 @@ class NewsService:
                 )
             from_ts = self.ts_days_ago(days)
             to_ts = int(datetime.now(timezone.utc).timestamp())
-            registry = TickerNewsRegistry(self._config)
+            registry = TickerNewsRegistry(self._config, health=self.source_health)
             raw_articles: list[dict] = []
             feeds_failed = 0
             for symbol in active_tickers:

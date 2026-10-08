@@ -431,6 +431,14 @@ Read `how-to-use-this-log.md` for the rules.
 - **Must agree with:** `vinu-infra/account_mode.py`; the safety ledger tag (P59); readers of the audit log in reflection (none used the flag).
 - **Status:** GUARDED
 
+### P66 A news source failed on every poll and nobody was told or acted
+- **Seen:** (data audit, news, 2026-10-08) the feed `ap_top_news` answered `http_403` on 252 of 252 polls. The failure was written to `feed_health` but nothing read it, nothing switched the feed off, and the provider side (Alpaca, FMP, Yahoo) recorded no health at all. The operator switches wrote into the packaged yaml, which is read-only in the container.
+- **Root cause:** health was recorded for RSS feeds only, had no policy and no read-out, and the on/off flag lived in a file that cannot be written at run time.
+- **Fix:** layer 1 of the news plan (`07-news-layers/plan.md`): `vinu-news/vinu_news/sources/health.py` records every poll of every source (feeds and providers) with an error kind, switches a source off after `VINU_NEWS_SOURCE_AUTO_OFF_AFTER` (10) errors in a row and retries after 1 h, 6 h, then 24 h, keeps the operator switch in the database, and reads all of it out at `GET /news/sources` (state in words, `attention` list); `PATCH /news/sources/{id}` is the switch. A quiet feed with no error is never switched off. The migration of the old table is safe when two threads start at once (it failed with `duplicate column name` on first start).
+- **Guard:** `vinu-news/tests/test_source_health.py::test_a_source_that_keeps_failing_is_switched_off_and_the_reason_is_kept`, `vinu-news/tests/test_source_health.py::test_the_retry_window_grows_and_a_success_switches_the_source_back_on`, `vinu-news/tests/test_source_health.py::test_a_quiet_feed_with_no_error_is_never_switched_off`, `vinu-news/tests/test_source_health.py::test_providers_are_recorded_and_a_failing_one_is_skipped_once_switched_off`, `vinu-news/tests/test_source_health.py::test_two_connections_migrating_at_once_do_not_fail`
+- **Must agree with:** `feeds.yaml` and `ticker_news.yaml` (the configured sources); the old toggles `PATCH /news/feeds/{id}` and `/providers/{id}` still write the yaml and cannot persist in the container (use `/news/sources/{id}`).
+- **Status:** GUARDED (live: `GET /news/sources` shows `ap_top_news` switched off automatically after 264 errors in a row, blocked: http_403, next try in 1 h; news suite in the image 159 passed, 0 failures)
+
 ---
 
 ## E. Open problems (found, not fixed)
