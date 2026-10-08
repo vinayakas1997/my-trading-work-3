@@ -25,6 +25,8 @@ class Position:
     artifact_id: str = ""
     # Bracket 50% at 1R (15 step3): once taken, never again for this position.
     partial_taken: bool = False
+    # Which money the position was made under: "paper" or "real" (never mixed; see vinu_infra.account_mode).
+    account_mode: str = "paper"
 
     def current_value(self, current_price: float) -> float:
         return self.qty * current_price * (1 if self.side == "long" else -1)

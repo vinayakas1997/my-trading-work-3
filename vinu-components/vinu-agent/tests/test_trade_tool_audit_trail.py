@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-from vinu_agent.broker.order_guard import GuardResult
+from vinu_agent.broker.order_guard import GuardResult, MultiplierResult
 from vinu_agent.tools.trade_tool import TradeTool
 
 
@@ -33,6 +33,7 @@ class TestSessionIdIsCarriedOnEveryAuditEntry:
     def test_successful_submission_logs_order_placed_with_session_and_order_id(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
 
@@ -57,6 +58,7 @@ class TestSessionIdIsCarriedOnEveryAuditEntry:
     def test_rejection_at_initial_check_still_carries_session_id(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(False, "Trading is halted by kill switch")
 
         with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
@@ -74,6 +76,7 @@ class TestSessionIdIsCarriedOnEveryAuditEntry:
     def test_rejection_at_pre_approve_carries_session_id(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(False, "halted between check and submit")
 
@@ -92,6 +95,7 @@ class TestSessionIdIsCarriedOnEveryAuditEntry:
         broker = _configured_broker()
         broker.submit_order.side_effect = RuntimeError("broker down")
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
 
@@ -212,6 +216,7 @@ class TestStrategyEvaluationWrite:
         monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
 
@@ -247,6 +252,7 @@ class TestStrategyEvaluationWrite:
 
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
 
@@ -267,6 +273,7 @@ class TestStrategyEvaluationWrite:
         monkeypatch.setenv("VINU_STRATEGY_EVAL_DATA_ROOT", str(tmp_path))
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(False, reason="daily order cap reached")
 
         with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
@@ -288,6 +295,7 @@ class TestStrategyEvaluationWrite:
         monkeypatch.delenv("VINU_STRATEGY_EVAL_DATA_ROOT", raising=False)
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
 

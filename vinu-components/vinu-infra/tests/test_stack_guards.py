@@ -527,3 +527,23 @@ def test_deploy_recreates_the_rebuilt_containers_instead_of_leaving_them_on_the_
 def test_the_starting_mandate_is_long_only_because_the_book_is_long_only():
     text = (Path(__file__).resolve().parents[2] / "vinu-agent" / "entrypoint.sh").read_text(encoding="utf-8")
     assert "allow_short: false" in text and "allow_short: true" not in text
+
+
+def test_the_capital_settings_are_documented_for_every_service_that_reads_them():
+    text = (Path(__file__).resolve().parents[2] / ".env-example").read_text(encoding="utf-8")
+    for key in ("VINU_ACCOUNT_MODE", "VINU_REAL_CAPITAL", "VINU_CAPITAL_RESERVE_FRACTION", "VINU_CAPITAL_KELLY_SCALE",
+                "VINU_CAPITAL_MAX_POSITION_PCT", "VINU_CAPITAL_MIN_HISTORY", "VINU_CAPITAL_FRACTIONAL_SHARES"):
+        assert re.search(rf"^{key}=", text, re.M), key
+
+
+def test_the_money_tables_carry_the_account_mode_tag():
+    root = Path(__file__).resolve().parents[2]
+    for rel in ("vinu-live/vinu_live/book/positions.py", "vinu-live/vinu_live/execution_log.py",
+                "vinu-portfolio/vinu_portfolio/storage/allocation_history.py"):
+        assert "account_mode" in (root / rel).read_text(encoding="utf-8"), rel
+
+
+def test_the_test_harness_counts_failures_even_when_a_log_looks_binary_to_grep():
+    """The agent-api run once logged 21 failures while the summary said 0: grep treated the log as binary and counted nothing."""
+    text = (Path(__file__).resolve().parents[2] / "scripts" / "test_in_containers.sh").read_text(encoding="utf-8")
+    assert "grep -acE" in text and 'grep -a "^###"' in text

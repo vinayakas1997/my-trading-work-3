@@ -84,3 +84,28 @@ class TestHonestWinRate:
 
     def test_kelly_is_zero_or_less_without_an_edge(self):
         assert kelly_position_fraction(_cand(win=0.01, loss=0.02), 0.4) <= 0
+
+
+class TestHeldMoney:
+    def test_only_the_gap_to_the_target_is_funded(self):
+        def plan(held):
+            c = Candidate("AAA", None, 0.6, 50, 0.04, 0.02, 0.001, True, "a", held=held)
+            return allocate(CapitalState("real", 20.0, committed=held), [c], max_position_pct=0.2, kelly_scale=1.0).funded[0]
+        fresh, topped = plan(0.0), plan(1.0)
+        assert topped.target_total == pytest.approx(fresh.target_total)
+        assert topped.amount == pytest.approx(fresh.amount - 1.0)
+
+    def test_a_position_already_at_its_target_is_kept_and_nothing_is_added(self):
+        c = Candidate("AAA", None, 0.6, 50, 0.04, 0.02, 0.001, True, "a", held=5.0)
+        f = allocate(CapitalState("real", 20.0, committed=5.0), [c], max_position_pct=0.1, kelly_scale=1.0).funded[0]
+        assert f.amount == 0.0 and f.target_total == 5.0
+
+    def test_the_free_cash_scale_shrinks_what_may_be_spent(self):
+        full = allocate(CapitalState("real", 20.0), [_cand(price=None)], max_position_pct=1.0, kelly_scale=1.0)
+        half = allocate(CapitalState("real", 20.0), [_cand(price=None)], max_position_pct=1.0, kelly_scale=1.0, free_cash_scale=0.5)
+        assert half.free_cash_before == pytest.approx(full.free_cash_before / 2)
+        assert sum(f.amount for f in half.funded) <= half.free_cash_before + 1e-9
+
+    def test_an_unknown_price_skips_the_share_check(self):
+        f = allocate(CapitalState("real", 20.0), [_cand(price=None)]).funded[0]
+        assert f.shares is None and f.amount > 0

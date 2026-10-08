@@ -55,8 +55,8 @@ echo "package results by image (the shared packages are identical in every image
 total=0
 for svc in $SERVICES; do
   echo "== $svc"
-  grep "^###" "$OUT/$svc.txt"
-  total=$((total + $(grep -cE "^FAILED|^ERROR" "$OUT/$svc.txt")))
+  grep -a "^###" "$OUT/$svc.txt"
+  total=$((total + $(grep -acE "^FAILED|^ERROR" "$OUT/$svc.txt")))
 done
 echo "failing tests recorded: $total  (details in $OUT/<service>.txt)"
 [ "$total" = "0" ] || status=1

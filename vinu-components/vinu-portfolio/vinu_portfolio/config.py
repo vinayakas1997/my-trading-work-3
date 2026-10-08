@@ -12,6 +12,7 @@ DEFAULT_SIMULATOR_API_URL = "http://127.0.0.1:8085"
 DEFAULT_AGENT_API_URL = "http://127.0.0.1:8086"
 DEFAULT_ANALYSIS_API_URL = "http://127.0.0.1:8083"
 DEFAULT_STOCK_API_URL = "http://127.0.0.1:8081"
+DEFAULT_LIVE_API_URL = "http://127.0.0.1:8091"
 DEFAULT_DATA_ROOT = Path.cwd() / "data"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8090
@@ -40,6 +41,12 @@ class PortfolioConfig:
     agent_api_url: str = DEFAULT_AGENT_API_URL
     # The YAML registry strategies were never research-validated; by default only ACTIVE research artifacts get capital.
     include_yaml_strategies: bool = False
+    # Capital allocator (capital_allocator.py), used only when VINU_REAL_CAPITAL is set (see vinu_infra.account_mode).
+    live_api_url: str = DEFAULT_LIVE_API_URL
+    capital_kelly_scale: float = 0.25        # a quarter of full Kelly: the edge estimates are noisy
+    capital_max_position_pct: float = 0.25   # no position above this share of the real capital (matches the mandate)
+    capital_min_history: int = 20            # periods of return history a strategy needs before it can be funded
+    capital_fractional_shares: bool = False  # whole shares: the scheduler rounds down, and extended hours cannot do fractions
     data_root: Path = DEFAULT_DATA_ROOT
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
@@ -138,6 +145,11 @@ class PortfolioConfig:
             research_api_url=os.getenv("VINU_RESEARCH_API_URL", DEFAULT_RESEARCH_API_URL),
             simulator_api_url=os.getenv("VINU_SIMULATOR_API_URL", DEFAULT_SIMULATOR_API_URL),
             agent_api_url=os.getenv("VINU_AGENT_API_URL", DEFAULT_AGENT_API_URL),
+            live_api_url=os.getenv("VINU_LIVE_API_URL", DEFAULT_LIVE_API_URL),
+            capital_kelly_scale=float(os.getenv("VINU_CAPITAL_KELLY_SCALE", "0.25")),
+            capital_max_position_pct=float(os.getenv("VINU_CAPITAL_MAX_POSITION_PCT", "0.25")),
+            capital_min_history=int(os.getenv("VINU_CAPITAL_MIN_HISTORY", "20")),
+            capital_fractional_shares=os.getenv("VINU_CAPITAL_FRACTIONAL_SHARES", "false").strip().lower() in ("1", "true", "yes", "on"),
             include_yaml_strategies=os.getenv("VINU_PORTFOLIO_INCLUDE_YAML_STRATEGIES", "false").strip().lower() in ("1", "true", "yes", "on"),
             data_root=Path(os.getenv("VINU_PORTFOLIO_DATA_ROOT", str(DEFAULT_DATA_ROOT))),
             host=os.getenv("VINU_PORTFOLIO_HOST", DEFAULT_HOST),

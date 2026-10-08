@@ -11,7 +11,9 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from vinu_infra.account_mode import current_account_mode
 from vinu_infra.ticker_profile import write_ticker_profile_key
+from vinu_portfolio.capital_plan import build_capital_plan
 from vinu_portfolio.config import PortfolioConfig, load_config
 from vinu_portfolio.game_plan import DailyGamePlan, SymbolPlan
 from vinu_portfolio.regime import classify_current_regime
@@ -101,7 +103,9 @@ class PortfolioService:
         # Dated allocation history -- vinu-portfolio's first piece of
         # persistent storage of its own; see storage/allocation_history.py.
         from vinu_portfolio.storage.allocation_history import AllocationHistoryStore
-        self._allocation_history = AllocationHistoryStore(self._config.data_root / "allocation_history.db")
+        # A real-money stack writes its own file: paper and real allocations are never in one table.
+        _history_file = "allocation_history.db" if current_account_mode() == "paper" else "allocation_history_real.db"
+        self._allocation_history = AllocationHistoryStore(self._config.data_root / _history_file)
         # item #23 findings #2/#3 (system-wide-audit-and-design/
         # 02-open-questions-strategy-and-simulation.md): cross-process
         # read of the drawdown monitor's real halve/flat/halt state -- see
@@ -541,6 +545,22 @@ class PortfolioService:
         allocation the way OrderGuard's checks correctly block orders.
         """
         return await self._fetch_symbol_regime(self._config.benchmark_symbol)
+
+    async def _fetch_last_price(self, symbol: str) -> float | None:
+        """Last daily close of `symbol` from the price service, or None when it cannot be read (the allocator then skips
+        its whole-share check; the order guard still enforces free cash)."""
+        try:
+            resp = await self._http.get(
+                f"{self._config.stock_api_url}/stock/candles/{symbol}", params={"interval": "1d", "adjusted": True},
+            )
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            records = data.get("data") if isinstance(data, dict) else None
+            return float(records[-1]["close"]) if records else None
+        except Exception as e:  # noqa: BLE001
+            LOG.warning("Failed to fetch last price for %s: %s", symbol, e)
+            return None
 
     async def _fetch_symbol_regime(self, symbol: str) -> dict[str, Any]:
         """Per-symbol regime (19 step2): same classifier as benchmark, run
@@ -1199,6 +1219,31 @@ class PortfolioService:
 
         self._last_weights = {t["name"]: t["target_weight"] for t in tilted}
 
+        # Real-money base (VINU_REAL_CAPITAL): the capital allocator sizes from the real capital, free cash and what the
+        # open trades already hold, not from the paper balance. Unset = this block does nothing.
+        capital = await build_capital_plan(
+            http=self._http, config=self._config, tilted=tilted, strategies_by_name=by_name,
+            returns_for=self._fetch_strategy_returns, price_for=self._fetch_last_price,
+            free_cash_scale=drawdown_mult * maturity_mult,
+        )
+        if capital["status"] not in ("not_capped", "ok"):
+            # Fail closed: without a readable ledger of the right money mode nothing is allocated this time.
+            return {**base, "status": capital["status"], "weights": [], "capital_plan": capital}
+        if capital["status"] == "ok":
+            # The drawdown ladder acts on everything held ("halve" holds half, "flat" holds none); the maturity ladder
+            # only limits new money (it went into free_cash_scale above).
+            dollars = {k: v * min(1.0, drawdown_mult) for k, v in capital["target_dollars"].items()}
+            capital["target_dollars"] = {k: round(v, 4) for k, v in dollars.items()}
+            capital["deployable_total"] = round(sum(dollars.values()), 4)
+            if capital["deployable_total"] > 0:
+                for t in tilted:
+                    t["capital_target_dollars"] = capital["target_dollars"].get(t["name"], 0.0)
+                    t["target_weight"] = round(dollars.get(t["name"], 0.0) / capital["deployable_total"], 4)
+            else:
+                for t in tilted:
+                    t["capital_target_dollars"] = 0.0
+                    t["target_weight"] = 0.0
+
         # Reserve fund (restart/safety capital ordinary sizing can't touch):
         # apply_position_sizing sizes against deployable_equity, never raw
         # equity, once reserve_fraction is configured. Default 0.0 makes
@@ -1220,6 +1265,9 @@ class PortfolioService:
             equity * (1.0 - self._config.reserve_fraction) * drawdown_mult * maturity_mult
             if equity is not None else None
         )
+        if capital["status"] == "ok":
+            # dollars, not a share of the paper balance: the scheduler turns this into weight x deployable / equity
+            deployable_equity = capital["deployable_total"]
         if deployable_equity is not None:
             tilted = apply_position_sizing(tilted, deployable_equity, target_vol=self._config.target_volatility)
 
@@ -1283,6 +1331,7 @@ class PortfolioService:
             # when the feature is disabled, the same value drawdown's own
             # "ok" no-op reports) rather than only appearing once enabled.
             "maturity_capital_multiplier": round(maturity_mult, 4),
+            "capital_plan": capital,
         }
 
         # Dated history (19 foundation-fixes follow-up): nothing calls this
@@ -1296,6 +1345,8 @@ class PortfolioService:
                 account_equity=equity, reserve_fraction=self._config.reserve_fraction,
                 reserve_amount=reserve_amount, deployable_equity=deployable_equity_rounded,
                 not_funded=not_funded,
+                account_mode=capital.get("account_mode") or current_account_mode(),
+                capital_base=capital.get("capital_base"), committed=capital.get("committed"),
             )
         except Exception as exc:  # noqa: BLE001 -- best-effort, never blocks the response
             LOG.warning("Allocation history write failed: %s", exc)

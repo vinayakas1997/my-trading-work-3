@@ -67,16 +67,16 @@ Rule: a join or sum across the two modes is a bug. A guard test per table checks
 
 | # | Step | Status |
 |---|---|---|
-| 1 | Setting `real_capital` and `account_mode` (env, validated, default paper) | not started |
+| 1 | Setting `real_capital` and `account_mode` (env, validated, default paper) | BUILT 2026-10-08: `vinu-infra/account_mode.py` (mode, `VINU_REAL_CAPITAL`, reserve), `.env-example` |
 | 2 | Pure allocator module with the maths above and unit tests on plain numbers | BUILT 2026-10-08, not wired in: `vinu-portfolio/vinu_portfolio/capital_allocator.py`, 15 tests in `tests/test_capital_allocator.py` |
-| 3 | Capital ledger: committed money from open positions, free cash, refusal above free cash | not started |
-| 4 | Tag columns and mode filters (order ledger, book, allocation history, safety ledger) | not started |
-| 5 | Adapter in portfolio-api: gathers inputs, calls the entity, uses the allocator `amount` per artifact (closes O20) | not started |
-| 5b | Read-only allocator summary (free cash, committed, scenario table, tagged results) that the agent reads; nothing is pushed to it | not started |
-| 6 | Order guard: refuse orders above free cash in real mode | not started |
-| 7 | Scenario table (fail / win) in the allocation response, so the user sees the reasoning | not started |
-| 8 | Paper-to-real scaling and a report that shows both bases | not started |
-| 9 | Live drill on paper with `real_capital` = 20 (sizes small, committed money tracked) | not started |
+| 3 | Capital ledger: committed money from open positions, free cash, refusal above free cash | BUILT: `vinu-live/vinu_live/capital_ledger.py`, `GET /live/capital`; buys still filling count as committed; `book/sync.py` frees money of positions closed outside the scheduler |
+| 4 | Tag columns and mode filters (order ledger, book, allocation history, safety ledger) | BUILT for book, order ledger, allocation history and safety ledger. NOT yet: reflection and research statistics split by mode (O23) |
+| 5 | Adapter in portfolio-api: gathers inputs, calls the entity, uses the allocator `amount` per artifact (closes O20) | BUILT: `vinu-portfolio/vinu_portfolio/capital_plan.py` in `compute_daily_allocation`; the capital allocator team's budget is the free cash; YAML strategies off (P53) |
+| 5b | Read-only allocator summary (free cash, committed, scenario table, tagged results) that the agent reads; nothing is pushed to it | BUILT: `get_capital_summary` agent tool and `GET /portfolio/capital-plan` |
+| 6 | Order guard: refuse orders above free cash in real mode | BUILT: `order_guard.py` refuses entries above free cash, fails closed; exits exempt |
+| 7 | Scenario table (fail / win) in the allocation response, so the user sees the reasoning | BUILT in the plan output (`cash_after_loss`, `cash_after_win` per funded strategy) |
+| 8 | Paper-to-real scaling and a report that shows both bases | PARTLY: results by mode are in the ledger (`results`); the side-by-side report is not built |
+| 9 | Live drill on paper with `real_capital` = 20 (sizes small, committed money tracked) | PARTLY 2026-10-08: ledger, guard refusal and book sync checked live with `VINU_REAL_CAPITAL=20`; a funded plan not seen yet (no strategy history) |
 
 Already in place and reused: reserve fraction setting (default 0, `vinu-portfolio`), drawdown scale-down, mandate caps (`max_position_pct`, `max_order_value`), session cost base, the book and its fill write-back (P33).
 

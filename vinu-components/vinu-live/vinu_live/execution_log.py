@@ -22,6 +22,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from vinu_infra.account_mode import current_account_mode
 from vinu_infra.sqlite import SQLiteBackend
 
 LOG = logging.getLogger(__name__)
@@ -52,9 +53,10 @@ class ExecutionLog(SQLiteBackend):
         );
         CREATE INDEX IF NOT EXISTS idx_sched_exec_symbol ON scheduler_executions(symbol, id);
     """
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
     # v2: fill enrichment (the quote mid at decision time, and what the broker later reported).
     # v3: how much of the fill is already in the trade-plan book (a partial fill grows, so only the new part is applied).
+    # v4: which money the order was for (paper or real); rows from before were all Alpaca paper.
     MIGRATIONS = [
         ("ALTER TABLE scheduler_executions ADD COLUMN quote_mid REAL", "decision-time quote mid"),
         ("ALTER TABLE scheduler_executions ADD COLUMN fill_price REAL", "broker average fill price"),
@@ -64,6 +66,7 @@ class ExecutionLog(SQLiteBackend):
         ("ALTER TABLE scheduler_executions ADD COLUMN slippage_bps REAL", "cost vs reference in bps (positive = worse)"),
         ("ALTER TABLE scheduler_executions ADD COLUMN slippage_ref TEXT", "what slippage was measured against: mid | close"),
         ("ALTER TABLE scheduler_executions ADD COLUMN book_applied_qty REAL NOT NULL DEFAULT 0", "filled quantity already written to the book"),
+        ("ALTER TABLE scheduler_executions ADD COLUMN account_mode TEXT NOT NULL DEFAULT 'paper'", "paper or real money"),
     ]
 
     def mark_book_applied(self, row_id: int, qty: float) -> None:
@@ -85,6 +88,7 @@ class ExecutionLog(SQLiteBackend):
             data = {k: v for k, v in row.items() if k in cols}
             data["reduce_only"] = int(bool(data.get("reduce_only")))
             data["recorded_at"] = datetime.now(timezone.utc).isoformat()
+            data["account_mode"] = current_account_mode()
             names = ", ".join(data)
             marks = ", ".join("?" for _ in data)
             conn = self._get_conn()
@@ -95,12 +99,16 @@ class ExecutionLog(SQLiteBackend):
 
     def recent(self, limit: int = 100, symbol: str | None = None) -> list[dict[str, Any]]:
         conn = self._get_conn()
+        mode = current_account_mode()
         if symbol:
             rows = conn.execute(
-                "SELECT * FROM scheduler_executions WHERE symbol = ? ORDER BY id DESC LIMIT ?", (symbol.upper(), int(limit)),
+                "SELECT * FROM scheduler_executions WHERE symbol = ? AND account_mode = ? ORDER BY id DESC LIMIT ?",
+                (symbol.upper(), mode, int(limit)),
             ).fetchall()
         else:
-            rows = conn.execute("SELECT * FROM scheduler_executions ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+            rows = conn.execute(
+                "SELECT * FROM scheduler_executions WHERE account_mode = ? ORDER BY id DESC LIMIT ?", (mode, int(limit)),
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def bought_symbols(self) -> set[str]:
@@ -110,7 +118,8 @@ class ExecutionLog(SQLiteBackend):
         conn = self._get_conn()
         return {
             str(r["symbol"]).upper() for r in conn.execute(
-                "SELECT DISTINCT symbol FROM scheduler_executions WHERE side = 'buy' AND outcome = 'submitted'",
+                "SELECT DISTINCT symbol FROM scheduler_executions WHERE side = 'buy' AND outcome = 'submitted' "
+                "AND account_mode = ?", (current_account_mode(),),
             ).fetchall()
         }
 
@@ -124,8 +133,9 @@ class ExecutionLog(SQLiteBackend):
         marks = ",".join("?" for _ in self.FINAL_FILL_STATUSES)
         rows = conn.execute(
             f"SELECT * FROM scheduler_executions WHERE outcome = 'submitted' AND order_id IS NOT NULL AND order_id != '' "
-            f"AND recorded_at >= ? AND (fill_status IS NULL OR fill_status NOT IN ({marks})) ORDER BY id ASC LIMIT ?",
-            [cutoff, *sorted(self.FINAL_FILL_STATUSES), int(limit)],
+            f"AND recorded_at >= ? AND account_mode = ? AND (fill_status IS NULL OR fill_status NOT IN ({marks})) "
+            f"ORDER BY id ASC LIMIT ?",
+            [cutoff, current_account_mode(), *sorted(self.FINAL_FILL_STATUSES), int(limit)],
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -162,17 +172,19 @@ class ExecutionLog(SQLiteBackend):
     def summary(self) -> dict[str, Any]:
         """Counts by outcome, plus the reference-price and spread coverage a later parity check will depend on."""
         conn = self._get_conn()
+        mode = (current_account_mode(),)
         by_outcome = {r["outcome"]: r["n"] for r in conn.execute(
-            "SELECT outcome, COUNT(*) AS n FROM scheduler_executions GROUP BY outcome").fetchall()}
+            "SELECT outcome, COUNT(*) AS n FROM scheduler_executions WHERE account_mode = ? GROUP BY outcome", mode).fetchall()}
         cov = conn.execute(
             "SELECT COUNT(*) AS n, SUM(reference_price IS NOT NULL) AS with_price, SUM(spread_bps IS NOT NULL) AS with_spread "
-            "FROM scheduler_executions").fetchone()
+            "FROM scheduler_executions WHERE account_mode = ?", mode).fetchone()
         fills = conn.execute(
-            "SELECT COUNT(*) AS n, AVG(slippage_bps) AS mean_slip FROM scheduler_executions WHERE fill_price IS NOT NULL").fetchone()
+            "SELECT COUNT(*) AS n, AVG(slippage_bps) AS mean_slip FROM scheduler_executions WHERE fill_price IS NOT NULL AND account_mode = ?", mode).fetchone()
         slips = sorted(r[0] for r in conn.execute(
-            "SELECT slippage_bps FROM scheduler_executions WHERE slippage_bps IS NOT NULL").fetchall())
+            "SELECT slippage_bps FROM scheduler_executions WHERE slippage_bps IS NOT NULL AND account_mode = ?", mode).fetchall())
         median = (slips[len(slips) // 2] if len(slips) % 2 else (slips[len(slips) // 2 - 1] + slips[len(slips) // 2]) / 2) if slips else None
         return {
+            "account_mode": mode[0],
             "total": cov["n"], "by_outcome": by_outcome,
             "with_reference_price": cov["with_price"] or 0, "with_spread": cov["with_spread"] or 0,
             "filled": fills["n"] or 0, "with_slippage": len(slips),

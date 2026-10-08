@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from vinu_infra.account_mode import require_mode
 from vinu_infra.sqlite import SQLiteBackend
 
 SCHEMA = """
@@ -33,7 +34,7 @@ CREATE TABLE IF NOT EXISTS allocation_history (
 );
 """
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MIGRATIONS: list[tuple[str, str]] = [
     (
         "ALTER TABLE allocation_history ADD COLUMN not_funded TEXT NOT NULL DEFAULT '[]'",
@@ -43,6 +44,12 @@ MIGRATIONS: list[tuple[str, str]] = [
         "shared shape item #18 finding #3 already used for the screener's "
         "own instance of this pattern.",
     ),
+    (
+        "ALTER TABLE allocation_history ADD COLUMN account_mode TEXT NOT NULL DEFAULT 'paper'",
+        "paper or real money; rows from before were all paper. A real stack also writes a separate file.",
+    ),
+    ("ALTER TABLE allocation_history ADD COLUMN capital_base REAL", "the real-money base the sizes came from"),
+    ("ALTER TABLE allocation_history ADD COLUMN committed REAL", "money already in open trades, at cost"),
 ]
 
 
@@ -68,6 +75,9 @@ class DailyAllocation:
     # item #23 finding #5: RejectionRecord dicts (vinu_infra.rejection_log)
     # for candidates that were evaluated but ended up unfunded.
     not_funded: list[dict[str, Any]] = None  # type: ignore[assignment]
+    account_mode: str = "paper"
+    capital_base: float | None = None
+    committed: float | None = None
 
     def __post_init__(self) -> None:
         if self.weights is None:
@@ -102,6 +112,9 @@ class DailyAllocation:
             # at all -- fail open to [], same convention
             # RankedSnapshotStore.get_latest() already uses for trace_json.
             not_funded=_load("not_funded", []) if "not_funded" in row.keys() else [],
+            account_mode=(row.get("account_mode") if "account_mode" in row.keys() else None) or "paper",
+            capital_base=row.get("capital_base") if "capital_base" in row.keys() else None,
+            committed=row.get("committed") if "committed" in row.keys() else None,
         )
 
 
@@ -122,6 +135,9 @@ class AllocationHistoryStore(SQLiteBackend):
         reserve_amount: float | None = None,
         deployable_equity: float | None = None,
         not_funded: list[dict[str, Any]] | None = None,
+        account_mode: str = "paper",
+        capital_base: float | None = None,
+        committed: float | None = None,
     ) -> DailyAllocation:
         """Idempotent per allocation_date: repeated on-demand calls the same
         day upsert that day's row rather than accumulating duplicates --
@@ -148,6 +164,9 @@ class AllocationHistoryStore(SQLiteBackend):
                 "deployable_equity": deployable_equity,
                 "created_at": created_at,
                 "not_funded": json.dumps(not_funded),
+                "account_mode": require_mode(account_mode),
+                "capital_base": capital_base,
+                "committed": committed,
             },
             conflict_columns=["allocation_date"],
         )
@@ -156,7 +175,7 @@ class AllocationHistoryStore(SQLiteBackend):
             interval_sleeves=interval_sleeves, account_equity=account_equity,
             reserve_fraction=reserve_fraction, reserve_amount=reserve_amount,
             deployable_equity=deployable_equity, created_at=created_at,
-            not_funded=not_funded,
+            not_funded=not_funded, account_mode=account_mode, capital_base=capital_base, committed=committed,
         )
 
     def get_allocation(self, allocation_date: str) -> Optional[DailyAllocation]:

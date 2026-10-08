@@ -10,7 +10,7 @@ depends_on: []
 # a gap -- register a dedicated tool here only once one exists, not
 # before, since an unregistered tool name would break this agent's tool
 # resolution.
-tools: [get_live_decision_context, get_signal_evidence, get_reflection_synthesis]
+tools: [get_live_decision_context, get_signal_evidence, get_reflection_synthesis, get_capital_summary]
 skills: []
 ---
 

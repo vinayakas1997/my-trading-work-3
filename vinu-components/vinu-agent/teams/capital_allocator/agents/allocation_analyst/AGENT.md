@@ -3,7 +3,7 @@ name: allocation_analyst
 role: allocation-analyst
 prompt_file: prompt.md
 depends_on: []
-tools: [compute_allocation_candidates, list_active_artifacts_for_rebalance]
+tools: [compute_allocation_candidates, list_active_artifacts_for_rebalance, get_capital_summary]
 skills: []
 ---
 

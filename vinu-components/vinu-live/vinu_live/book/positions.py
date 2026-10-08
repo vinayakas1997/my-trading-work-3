@@ -5,6 +5,7 @@ import logging
 import os
 from typing import Any
 
+from vinu_infra.account_mode import current_account_mode, require_mode
 from vinu_infra.sqlite import SQLiteBackend
 from vinu_infra.ticker_profile import write_ticker_profile_key
 from vinu_live.book.quantize import (
@@ -64,7 +65,7 @@ class BookBackend(SQLiteBackend):
             commission REAL DEFAULT 0
         );
     """
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
     # Phase 7: link positions back to the trade-plan artifact that authored them, and track
     # which closed positions the feedback loop has already fed back upstream.
     MIGRATIONS = [
@@ -76,6 +77,12 @@ class BookBackend(SQLiteBackend):
          "add feedback_processed_at to closed_positions"),
         (f"ALTER TABLE {OPEN_POSITIONS_TABLE} ADD COLUMN partial_taken INTEGER DEFAULT 0",
          "add partial_taken to open_positions"),
+        # Paper and real money never mix: every position says which money it was made under. Rows from before this
+        # column were all Alpaca paper trades.
+        (f"ALTER TABLE {OPEN_POSITIONS_TABLE} ADD COLUMN account_mode TEXT NOT NULL DEFAULT 'paper'",
+         "add account_mode to open_positions"),
+        (f"ALTER TABLE {CLOSED_POSITIONS_TABLE} ADD COLUMN account_mode TEXT NOT NULL DEFAULT 'paper'",
+         "add account_mode to closed_positions"),
     ]
 
 
@@ -145,10 +152,10 @@ def open_position(
     conn = _conn(backend)
     conn.execute(
         f"INSERT INTO {OPEN_POSITIONS_TABLE} "
-        f"(position_id, symbol, side, qty, avg_entry, realized_pnl, stop_loss, take_profit, opened_at, updated_at, artifact_id) "
-        f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        f"(position_id, symbol, side, qty, avg_entry, realized_pnl, stop_loss, take_profit, opened_at, updated_at, artifact_id, "
+        f"account_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [pid, symbol.upper(), side_lit, qty_float(qty), money_float(price), 0.0,
-         stop_loss, take_profit, opened, opened, artifact_id],
+         stop_loss, take_profit, opened, opened, artifact_id, current_account_mode()],
     )
     fid = _fill_id(symbol, opened, qty, price)
     conn.execute(
@@ -296,10 +303,10 @@ def _close_position(conn, pos: Position, close_price: float, total_realized: flo
     closed_at = now_iso()
     conn.execute(
         f"INSERT INTO {CLOSED_POSITIONS_TABLE} "
-        f"(position_id, symbol, side, qty, avg_entry, realized_pnl, stop_loss, take_profit, opened_at, closed_at, close_price, artifact_id) "
-        f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        f"(position_id, symbol, side, qty, avg_entry, realized_pnl, stop_loss, take_profit, opened_at, closed_at, close_price, artifact_id, "
+        f"account_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [pos.position_id, pos.symbol, pos.side, qty_float(pos.qty), money_float(pos.avg_entry),
-         float(quantize_money(total_realized)), pos.stop_loss, pos.take_profit, pos.opened_at, closed_at, money_float(close_price), pos.artifact_id],
+         float(quantize_money(total_realized)), pos.stop_loss, pos.take_profit, pos.opened_at, closed_at, money_float(close_price), pos.artifact_id, pos.account_mode],
     )
     conn.execute(
         f"DELETE FROM {OPEN_POSITIONS_TABLE} WHERE position_id = ?",
@@ -325,15 +332,18 @@ def get_position(
 def list_open_positions(
     backend: BookBackend,
     symbol: str | None = None,
+    account_mode: str | None = None,
 ) -> list[Position]:
+    """Open positions of one money mode (the stack's own mode unless told otherwise): paper and real are never mixed."""
+    mode = require_mode(account_mode or current_account_mode())
     conn = _conn(backend)
     if symbol:
         rows = conn.execute(
-            f"SELECT * FROM {OPEN_POSITIONS_TABLE} WHERE symbol = ?",
-            [symbol.upper()],
+            f"SELECT * FROM {OPEN_POSITIONS_TABLE} WHERE symbol = ? AND account_mode = ?",
+            [symbol.upper(), mode],
         ).fetchall()
     else:
-        rows = conn.execute(f"SELECT * FROM {OPEN_POSITIONS_TABLE}").fetchall()
+        rows = conn.execute(f"SELECT * FROM {OPEN_POSITIONS_TABLE} WHERE account_mode = ?", [mode]).fetchall()
     return [_row_to_position(dict(r)) for r in rows]
 
 
@@ -372,8 +382,8 @@ def daily_realized_pnl(backend: BookBackend) -> float:
     today = now_iso()[:10]
     closed_total = conn.execute(
         f"SELECT COALESCE(SUM(realized_pnl), 0) FROM {CLOSED_POSITIONS_TABLE} "
-        f"WHERE closed_at LIKE ?",
-        [f"{today}%"],
+        f"WHERE closed_at LIKE ? AND account_mode = ?",
+        [f"{today}%", current_account_mode()],
     ).fetchone()[0]
     return money_float(closed_total)
 
@@ -387,8 +397,8 @@ def list_closed_positions(
     open-position `Position` dataclass doesn't carry) -- Phase 7's feedback loop reads this.
     """
     conn = _conn(backend)
-    conditions: list[str] = []
-    params: list[Any] = []
+    conditions: list[str] = ["account_mode = ?"]
+    params: list[Any] = [current_account_mode()]
     if symbol:
         conditions.append("symbol = ?")
         params.append(symbol.upper())
@@ -444,4 +454,5 @@ def _row_to_position(row: dict[str, Any]) -> Position:
         updated_at=row["updated_at"],
         artifact_id=row.get("artifact_id", "") or "",
         partial_taken=bool(row.get("partial_taken", 0) or 0),
+        account_mode=row.get("account_mode") or "paper",
     )

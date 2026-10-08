@@ -57,6 +57,31 @@ def create_app() -> FastAPI:
     async def get_daily_allocation() -> dict[str, Any]:
         return await _service.compute_daily_allocation()
 
+    @router.get("/capital-plan")
+    async def get_capital_plan() -> dict[str, Any]:
+        """The capital allocator's answer, for the agent and for people (read-only, nothing is pushed anywhere): the real-money
+        base, committed money, free cash, what each strategy should hold in dollars, who was refused and why, the fail/win
+        cash scenarios, and the closed-trade results, all tagged with `account_mode`. `capped: false` when no VINU_REAL_CAPITAL."""
+        a = await _service.compute_daily_allocation()
+        cap = a.get("capital_plan") or {"status": "not_capped"}
+        if cap.get("status") == "not_capped":
+            # Nothing to allocate this time (or no capital base): still show the ledger, so the figures are never missing.
+            from vinu_infra.account_mode import real_capital
+            from vinu_portfolio.capital_plan import fetch_capital_ledger
+
+            if real_capital() is not None:
+                ledger = await fetch_capital_ledger(_service._http, _service._config.live_api_url)
+                cap = {"status": "no_allocation" if ledger else "capital_ledger_unavailable", "ledger": ledger}
+        return {
+            "status": cap.get("status") if a.get("status") == "ok" else a.get("status"),
+            "capital_plan": cap,
+            "weights": [
+                {"name": w.get("name"), "symbol": w.get("symbol"), "target_weight": w.get("target_weight"),
+                 "capital_target_dollars": w.get("capital_target_dollars")}
+                for w in a.get("weights", [])
+            ],
+        }
+
     @router.get("/allocation-history")
     async def get_allocation_history(limit: int = 30) -> dict[str, Any]:
         """Persisted daily allocations, newest first (one summary line each). Read-only."""

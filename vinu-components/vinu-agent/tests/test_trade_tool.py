@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-from vinu_agent.broker.order_guard import GuardResult
+from vinu_agent.broker.order_guard import GuardResult, MultiplierResult
 from vinu_agent.tools.trade_tool import TradeTool
 
 
@@ -43,6 +43,7 @@ class TestSymbolGroundingCheck:
     def test_ungrounded_symbol_is_held_for_confirmation(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         tool = _tool()
         tool._grounding_context = "the user asked about MSFT and TSLA today"
 
@@ -58,6 +59,7 @@ class TestSymbolGroundingCheck:
     def test_grounded_symbol_proceeds_normally(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
         tool = _tool()
@@ -79,6 +81,7 @@ class TestSymbolGroundingCheck:
         reduce_only."""
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
         tool = _tool()
@@ -97,6 +100,7 @@ class TestSymbolGroundingCheck:
         mode) must mean 'no check', not 'reject everything'."""
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
         tool = _tool()
@@ -113,6 +117,7 @@ class TestSymbolGroundingCheck:
     def test_grounding_check_is_case_insensitive(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
         tool = _tool()
@@ -134,6 +139,7 @@ class TestSymbolGroundingCheck:
         this, the exact case #6 exists to catch."""
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         tool = _tool()
         tool._grounding_context = "what's the outlook for caterpillar's heavy machinery division"
 
@@ -152,6 +158,7 @@ class TestSymbolGroundingCheck:
         appearing as its own word (not just inside a longer word)."""
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
         tool = _tool()
@@ -177,6 +184,7 @@ class TestInvalidQtyRejectedBeforeGuard:
     def test_negative_qty_rejected(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
              patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard):
             result = json.loads(_tool().execute(symbol="AAPL", qty=-10, side="sell", reduce_only=True))
@@ -189,6 +197,7 @@ class TestInvalidQtyRejectedBeforeGuard:
     def test_zero_qty_rejected(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
              patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard):
             result = json.loads(_tool().execute(symbol="AAPL", qty=0, side="buy"))
@@ -200,6 +209,7 @@ class TestInvalidQtyRejectedBeforeGuard:
     def test_nan_qty_rejected(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
              patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard):
             result = json.loads(_tool().execute(symbol="AAPL", qty=float("nan"), side="buy"))
@@ -211,6 +221,7 @@ class TestInvalidQtyRejectedBeforeGuard:
     def test_infinite_qty_rejected(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
              patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard):
             result = json.loads(_tool().execute(symbol="AAPL", qty=float("inf"), side="buy"))
@@ -222,6 +233,7 @@ class TestInvalidQtyRejectedBeforeGuard:
     def test_positive_qty_still_proceeds_to_guard(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
         with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
@@ -248,6 +260,7 @@ class TestClientOrderIdIsLlmVisible:
     def test_llm_supplied_client_order_id_reaches_the_broker(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
 
@@ -262,6 +275,7 @@ class TestClientOrderIdIsLlmVisible:
     def test_omitted_client_order_id_still_works(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
 
@@ -279,6 +293,7 @@ class TestTradeToolPreApproveResultChecked:
     def test_successful_order_submission(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
 
@@ -294,6 +309,7 @@ class TestTradeToolPreApproveResultChecked:
     def test_rejected_at_initial_check_never_reaches_broker(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(False, "Trading is halted by kill switch")
 
         with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
@@ -312,6 +328,7 @@ class TestTradeToolPreApproveResultChecked:
         fix, pre_approve()'s GuardResult was computed and then thrown away."""
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(False, "Trading is halted by kill switch")
 
@@ -332,6 +349,7 @@ class TestTradeToolPreApproveResultChecked:
 
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
         guard.position_size_multiplier.return_value = MultiplierResult(
@@ -358,6 +376,7 @@ class TestTradeToolPreApproveResultChecked:
 
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.position_size_multiplier.return_value = MultiplierResult(
             0.004, {"risk_budget": 0.004}, "risk_budget",
         )
@@ -379,6 +398,7 @@ class TestTradeToolPreApproveResultChecked:
 
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
         guard.session_size_multiplier.return_value = MultiplierResult(0.5, {"session": 0.5}, "session")
@@ -398,6 +418,7 @@ class TestTradeToolPreApproveResultChecked:
 
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
         guard.session_size_multiplier.return_value = MultiplierResult(0.5, {"session": 0.5}, "session")
@@ -416,6 +437,7 @@ class TestTradeToolPreApproveResultChecked:
 
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
         guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
@@ -433,6 +455,7 @@ class TestTradeToolPreApproveResultChecked:
     def test_pre_approve_and_submit_order_both_run_inside_the_kill_switch_lock(self) -> None:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(True)
         guard.pre_approve.return_value = GuardResult(True)
 
@@ -468,6 +491,7 @@ class TestRejectedPayloadCarriesOrderIdentity:
     def _rejected(self, **kwargs) -> dict:
         broker = _configured_broker()
         guard = MagicMock()
+        guard.session_size_multiplier.return_value = MultiplierResult(1.0, {}, None)
         guard.check.return_value = GuardResult(False, "Trading is halted by kill switch")
         with patch("vinu_agent.tools.trade_tool.get_live_broker", return_value=broker), \
              patch("vinu_agent.tools.trade_tool.OrderGuard", return_value=guard), \

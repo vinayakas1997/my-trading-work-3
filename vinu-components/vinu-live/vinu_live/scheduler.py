@@ -205,6 +205,18 @@ class LiveScheduler:
             except Exception as e:  # noqa: BLE001 -- visibility only
                 LOG.debug("needs-sizing count unavailable: %s", e)
 
+            # A position closed outside this loop (a manual exit, a stop) must not stay in the book as committed money,
+            # so this runs even when there is nothing to trade this cycle.
+            try:
+                from vinu_live.book.sync import sync_book_to_broker
+
+                synced = sync_book_to_broker(self._book, await self._fetch_positions())
+                if synced:
+                    result["book_synced"] = synced
+                    LOG.warning("[%s] Book cut down to what the broker holds: %s", cycle_id, synced)
+            except Exception as e:  # noqa: BLE001 -- a sync problem must not stop the cycle
+                LOG.warning("[%s] Book/broker sync failed: %s", cycle_id, e)
+
             if not target_weights:
                 LOG.info("[%s] No target weights — skipping", cycle_id)
                 result["status"] = "skipped_no_weights"

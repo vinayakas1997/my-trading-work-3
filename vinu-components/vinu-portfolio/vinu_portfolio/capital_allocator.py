@@ -1,6 +1,6 @@
 """Capital allocator: the self-isolated money maths (plan: Proper-Project-Implementation/05-handling-system-portfolio-allocator).
 
-A pure calculation. It imports nothing from the rest of the package, reads no database and calls no service, so the same
+A pure calculation. It imports nothing from the rest of this package (only the shared free-cash definition in vinu-infra), reads no database and calls no service, so the same
 inputs always give the same answer. The capital base is `real_capital` (for example 20 dollars), never the paper balance.
 Every plan carries the `account_mode` tag it was computed for; a paper plan and a real plan are never combined.
 """
@@ -9,40 +9,13 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-ACCOUNT_MODES = ("paper", "real")
-
-
-@dataclass(frozen=True)
-class CapitalState:
-    account_mode: str            # "paper" or "real"
-    real_capital: float          # the money the sizes are computed from
-    committed: float = 0.0       # money in open trades, at cost
-    reserve_fraction: float = 0.4  # share of real_capital never allocated
-
-    def __post_init__(self) -> None:
-        if self.account_mode not in ACCOUNT_MODES:
-            raise ValueError(f"account_mode must be one of {ACCOUNT_MODES}, got {self.account_mode!r}")
-        if not (self.real_capital > 0):
-            raise ValueError("real_capital must be positive")
-        if self.committed < 0:
-            raise ValueError("committed cannot be negative")
-        if not (0.0 <= self.reserve_fraction < 1.0):
-            raise ValueError("reserve_fraction must be in [0, 1)")
-
-    @property
-    def reserve(self) -> float:
-        return self.real_capital * self.reserve_fraction
-
-    @property
-    def free_cash(self) -> float:
-        """real capital, minus what open trades already hold, minus the reserve; never below zero."""
-        return max(0.0, self.real_capital - self.committed - self.reserve)
+from vinu_infra.capital import CapitalState  # noqa: F401 -- the shared free-cash definition, re-exported
 
 
 @dataclass(frozen=True)
 class Candidate:
     ticker: str
-    price: float
+    price: float | None  # None = unknown: no whole-share check, the amount stands
     p_win: float                 # raw win rate of the strategy's trades
     n_trades: int                # how many trades that rate comes from
     avg_win: float               # average winning trade, as a fraction of the position (0.03 = 3 %)
@@ -50,14 +23,17 @@ class Candidate:
     round_trip_cost: float = 0.0  # fraction of the position lost to spread and slippage per round trip
     fractional: bool = True      # can this ticker be bought in fractions of a share
     artifact_id: str = ""
+    held: float = 0.0            # money already held in this candidate's symbol, at cost
 
 
 @dataclass(frozen=True)
 class Funded:
     ticker: str
     artifact_id: str
-    amount: float
-    shares: float
+    amount: float                # NEW money to put in (0 when the position is already at or above its target)
+    shares: float | None         # whole or fractional shares for the new money; None when the price is unknown
+    held: float                  # money already held at cost
+    target_total: float          # held + amount: what the position should hold after this plan
     edge: float                  # expected return per dollar after costs
     kelly_position_fraction: float
     cash_after_loss: float       # free cash left if this trade loses its average loss
@@ -111,15 +87,16 @@ def allocate(
     kelly_scale: float = 0.25,
     max_position_pct: float = 0.25,
     prior_trades: int = 20,
+    free_cash_scale: float = 1.0,
 ) -> AllocationPlan:
     """Fund the candidates with the best expected return per dollar first, each sized by fractional Kelly and capped
     by the position limit and by the free cash that is left. Nothing here can spend more than the free cash."""
-    free = state.free_cash
+    free = state.free_cash * max(0.0, min(1.0, free_cash_scale))
     plan_funded: list[Funded] = []
     refused: list[dict] = []
     ranked: list[tuple[float, float, Candidate]] = []
     for c in candidates:
-        if c.price <= 0 or c.avg_win <= 0 or c.avg_loss <= 0:
+        if (c.price is not None and c.price <= 0) or c.avg_win <= 0 or c.avg_loss <= 0:
             refused.append({"ticker": c.ticker, "reason": "invalid_inputs"})
             continue
         p = shrunk_p_win(c.p_win, c.n_trades, prior_trades)
@@ -137,19 +114,30 @@ def allocate(
     remaining = free
     for edge, f, c in ranked:
         target = min(f * kelly_scale, max_position_pct) * state.real_capital
-        amount = min(target, remaining)
-        if c.fractional:
-            shares = math.floor(amount / c.price * 1e6) / 1e6
+        amount = min(max(0.0, target - c.held), remaining)
+        if c.price is None:
+            shares, spend = None, amount
         else:
-            shares = float(math.floor(amount / c.price))
-        spend = shares * c.price
-        if shares <= 0 or spend <= 0:
-            refused.append({"ticker": c.ticker, "reason": "price_above_available_funds",
-                            "price": c.price, "available": round(remaining, 2)})
+            if c.fractional:
+                shares = math.floor(amount / c.price * 1e6) / 1e6
+            else:
+                shares = float(math.floor(amount / c.price))
+            spend = shares * c.price
+        if spend <= 0:
+            if c.held > 0:   # already holding as much as the target allows: keep it, add nothing
+                plan_funded.append(Funded(
+                    ticker=c.ticker, artifact_id=c.artifact_id, amount=0.0, shares=0.0 if c.price else None,
+                    held=round(c.held, 4), target_total=round(c.held, 4), edge=round(edge, 6),
+                    kelly_position_fraction=round(f, 6), cash_after_loss=round(remaining, 4), cash_after_win=round(remaining, 4),
+                ))
+            else:
+                refused.append({"ticker": c.ticker, "reason": "price_above_available_funds" if amount > 0 else "no_free_cash",
+                                "price": c.price, "available": round(remaining, 2)})
             continue
         win, loss = net_payoffs(c)
         plan_funded.append(Funded(
-            ticker=c.ticker, artifact_id=c.artifact_id, amount=round(spend, 4), shares=shares, edge=round(edge, 6),
+            ticker=c.ticker, artifact_id=c.artifact_id, amount=round(spend, 4), shares=shares,
+            held=round(c.held, 4), target_total=round(c.held + spend, 4), edge=round(edge, 6),
             kelly_position_fraction=round(f, 6),
             cash_after_loss=round(remaining - spend + spend * (1.0 - loss), 4),
             cash_after_win=round(remaining - spend + spend * (1.0 + win), 4),

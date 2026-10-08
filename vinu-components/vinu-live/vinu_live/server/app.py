@@ -224,6 +224,26 @@ def create_app() -> FastAPI:
             book.close()
         return {"enabled": True, "losses": guards.SYMBOL_LOCKOUT_LOSSES, "hours": guards.SYMBOL_LOCKOUT_HOURS, "count": len(rows), "lockouts": rows}
 
+    @router.get("/capital")
+    async def capital() -> dict[str, Any]:
+        """The capital ledger (capital_ledger.py): the real-money base, what open trades hold at cost, the reserve, the free
+        cash, and the closed-trade results, all for this stack's money mode (`account_mode`). Read-only. Without
+        VINU_REAL_CAPITAL the answer says `capped: false`. The allocator, the order guard and the agent read this."""
+        from vinu_live.book.positions import init_book
+        from vinu_live.capital_ledger import capital_snapshot
+        from vinu_live.execution_log import ExecutionLog
+
+        config = load_config()
+        book = init_book(str(config.data_root / "trade_plan_book.db"))
+        log_path = config.data_root / "execution_log.db"
+        log = ExecutionLog(log_path) if log_path.exists() else None
+        try:
+            return {"status": "ok", **capital_snapshot(book, log)}
+        finally:
+            book.close()
+            if log is not None:
+                log.close()
+
     @router.get("/executions")
     async def executions(limit: int = 100, symbol: str | None = None) -> dict[str, Any]:
         """The scheduler's order ledger (execution_log.py): every slice it tried to place or skipped, with the

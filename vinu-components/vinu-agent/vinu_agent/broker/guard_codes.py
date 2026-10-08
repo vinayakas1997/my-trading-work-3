@@ -54,6 +54,9 @@ class ReasonCode(str, Enum):
     # --- mandate: numeric limits ---
     ORDER_VALUE_UNKNOWN = "order_value_unknown"
     MAX_ORDER_VALUE = "max_order_value"
+    EXCEEDS_FREE_CASH = "exceeds_free_cash"                    # an entry larger than the real-money base has left to spend
+    CAPITAL_LEDGER_UNAVAILABLE = "capital_ledger_unavailable"  # real-money base set but the ledger cannot be read
+    ACCOUNT_MODE_MISMATCH = "account_mode_mismatch"            # the ledger belongs to the other money mode
     MAX_DAILY_ORDERS = "max_daily_orders"
     MAX_DAILY_ORDERS_PORTFOLIO = "max_daily_orders_portfolio"
     MAX_DAILY_TRADE_VOLUME = "max_daily_trade_volume"

@@ -620,6 +620,19 @@ def run_capital_allocator_cycle(service: Any, *, budget: float, cycle: int = 0) 
         }
 
     artifact_ids = [a.artifact_id for a in pend]
+    # With a real-money base the budget is the ledger's free cash, never the configured paper-sized figure. Without a
+    # readable ledger nothing is funded this time (fail closed).
+    from vinu_infra.account_mode import real_capital
+
+    if real_capital() is not None:
+        from ..broker.capital_ledger_client import fetch_capital_ledger
+
+        ledger = fetch_capital_ledger()
+        if ledger is None or not ledger.get("capped"):
+            return {"status": "skipped", "reason": "capital ledger unavailable: free cash unknown", "pend_candidates": len(pend)}
+        budget = float(ledger.get("free_cash") or 0.0)
+        if budget <= 0:
+            return {"status": "skipped", "reason": "no free cash left in the real-money base", "pend_candidates": len(pend)}
     task = (
         "Run your capital-allocation cycle for the whole current PEND batch.\n"
         f"PEND artifact ids: {', '.join(artifact_ids)}\n"

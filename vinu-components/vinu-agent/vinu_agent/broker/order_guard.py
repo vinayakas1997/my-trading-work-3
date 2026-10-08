@@ -16,6 +16,8 @@ from .factory import get_live_broker
 from .guard_codes import GuardOutcome, ReasonCode
 from .kill_switch import is_trading_halted
 from .mandate import TradingMandate
+from .capital_ledger_client import fetch_capital_ledger
+from vinu_infra.account_mode import current_account_mode, real_capital
 from vinu_infra.sessions import CLOSED, OVERNIGHT, REGULAR, session_of
 
 def _record_edge(edge_id: str, status: str, detail: str = "", **kw) -> None:
@@ -326,6 +328,25 @@ class OrderGuard:
                 code=ReasonCode.MAX_ORDER_VALUE,
                 blocked_artifact_ids=self._blocked_artifact_ids(symbol),
             )
+        # Real-money base: an entry may not exceed the free cash (real capital - committed - reserve). Fails closed:
+        # with a base set and no readable ledger, or a ledger of the other money mode, no entry goes out. Exits
+        # (reduce_only) are never held back by this.
+        if not reduce_only and real_capital() is not None:
+            ledger = fetch_capital_ledger()
+            if ledger is None:
+                return GuardResult(False, "Capital ledger unavailable: an entry cannot be checked against the free cash",
+                                   code=ReasonCode.CAPITAL_LEDGER_UNAVAILABLE)
+            if ledger.get("account_mode") != current_account_mode() or not ledger.get("capped"):
+                return GuardResult(False, f"Capital ledger is for {ledger.get('account_mode')!r} money, this stack trades "
+                                          f"{current_account_mode()!r}", code=ReasonCode.ACCOUNT_MODE_MISMATCH)
+            free_cash = float(ledger.get("free_cash") or 0.0)
+            if value > free_cash + 1e-9:
+                return GuardResult(
+                    False,
+                    f"Order value {value:.2f} exceeds the free cash {free_cash:.2f} "
+                    f"(real capital {ledger.get('real_capital')}, committed {ledger.get('committed')}, reserve {ledger.get('reserve')})",
+                    code=ReasonCode.EXCEEDS_FREE_CASH,
+                )
         # C17: within the top band below the hard cap -> hold for confirmation.
         if (
             not reduce_only

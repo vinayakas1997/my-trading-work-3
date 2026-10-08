@@ -81,3 +81,40 @@ class TestCapitalAllocatorWorkerConfig:
 
     def test_default_budget_is_100000(self) -> None:
         assert AgentConfig().capital_allocator_budget == 100000.0
+
+class TestBudgetFromTheRealMoneyLedger:
+    def _service(self):
+        service = _fake_service()
+        service._strategy_store.list_artifacts_by_statuses.return_value = [_fake_pend_artifact("art_1")]
+        return service
+
+    def test_with_a_capital_base_the_budget_is_the_ledgers_free_cash_not_the_configured_figure(self, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_ACCOUNT_MODE", "real")
+        monkeypatch.setenv("VINU_REAL_CAPITAL", "20")
+        ledger = {"status": "ok", "capped": True, "free_cash": 10.24}
+        with patch("vinu_agent.broker.capital_ledger_client.fetch_capital_ledger", return_value=ledger), patch(
+            "vinu_agent.agent.scheduler_workers.run_team_for_ticker", return_value={"run_id": "r", "artifact_id": ""},
+        ) as mock_run:
+            run_capital_allocator_cycle(self._service(), budget=100000.0, cycle=1)
+        task_text = mock_run.call_args[0][2]
+        assert "$10.24" in task_text and "100000" not in task_text
+
+    def test_an_unreadable_ledger_funds_nothing(self, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_ACCOUNT_MODE", "real")
+        monkeypatch.setenv("VINU_REAL_CAPITAL", "20")
+        with patch("vinu_agent.broker.capital_ledger_client.fetch_capital_ledger", return_value=None), patch(
+            "vinu_agent.agent.scheduler_workers.run_team_for_ticker",
+        ) as mock_run:
+            result = run_capital_allocator_cycle(self._service(), budget=100000.0, cycle=1)
+        assert result["status"] == "skipped" and "ledger" in result["reason"]
+        mock_run.assert_not_called()
+
+    def test_no_free_cash_funds_nothing(self, monkeypatch) -> None:
+        monkeypatch.setenv("VINU_ACCOUNT_MODE", "real")
+        monkeypatch.setenv("VINU_REAL_CAPITAL", "20")
+        with patch("vinu_agent.broker.capital_ledger_client.fetch_capital_ledger", return_value={"capped": True, "free_cash": 0.0}), patch(
+            "vinu_agent.agent.scheduler_workers.run_team_for_ticker",
+        ) as mock_run:
+            result = run_capital_allocator_cycle(self._service(), budget=100000.0, cycle=1)
+        assert result["status"] == "skipped"
+        mock_run.assert_not_called()

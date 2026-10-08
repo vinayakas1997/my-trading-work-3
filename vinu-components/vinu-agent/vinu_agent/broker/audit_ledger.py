@@ -75,6 +75,10 @@ class HashChainedLedger:
         it logs and returns the entry it *tried* to write."""
         with self._lock:
             try:
+                # Every event says which money it concerns; paper and real events are never read as one history.
+                from vinu_infra.account_mode import current_account_mode
+
+                payload = {"account_mode": current_account_mode(), **(payload or {})}
                 self._path.parent.mkdir(parents=True, exist_ok=True)
                 prev_hash, seq = self._tail()
                 core = {
