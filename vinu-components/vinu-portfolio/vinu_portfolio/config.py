@@ -38,6 +38,8 @@ class PortfolioConfig:
     research_api_url: str = DEFAULT_RESEARCH_API_URL
     simulator_api_url: str = DEFAULT_SIMULATOR_API_URL
     agent_api_url: str = DEFAULT_AGENT_API_URL
+    # The YAML registry strategies were never research-validated; by default only ACTIVE research artifacts get capital.
+    include_yaml_strategies: bool = False
     data_root: Path = DEFAULT_DATA_ROOT
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
@@ -136,6 +138,7 @@ class PortfolioConfig:
             research_api_url=os.getenv("VINU_RESEARCH_API_URL", DEFAULT_RESEARCH_API_URL),
             simulator_api_url=os.getenv("VINU_SIMULATOR_API_URL", DEFAULT_SIMULATOR_API_URL),
             agent_api_url=os.getenv("VINU_AGENT_API_URL", DEFAULT_AGENT_API_URL),
+            include_yaml_strategies=os.getenv("VINU_PORTFOLIO_INCLUDE_YAML_STRATEGIES", "false").strip().lower() in ("1", "true", "yes", "on"),
             data_root=Path(os.getenv("VINU_PORTFOLIO_DATA_ROOT", str(DEFAULT_DATA_ROOT))),
             host=os.getenv("VINU_PORTFOLIO_HOST", DEFAULT_HOST),
             port=int(os.getenv("VINU_PORTFOLIO_PORT", str(DEFAULT_PORT))),

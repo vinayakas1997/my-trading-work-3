@@ -133,8 +133,11 @@ class PortfolioService:
             ...
           ]
         """
+        async def _no_yaml() -> list[dict[str, Any]]:
+            return []
+
         yaml_strategies, llm_strategies = await asyncio.gather(
-            self._list_yaml_strategies(),
+            self._list_yaml_strategies() if self._config.include_yaml_strategies else _no_yaml(),
             self._list_llm_strategies(),
             return_exceptions=True,
         )

@@ -67,7 +67,7 @@ allowed_sessions: [premarket, regular, afterhours, overnight]
 max_symbol_concentration_pct: 1.0
 max_pairwise_correlation: 1.0
 require_confirmation: false
-allow_short: true
+allow_short: false
 allow_margin: false
 YAML
 fi

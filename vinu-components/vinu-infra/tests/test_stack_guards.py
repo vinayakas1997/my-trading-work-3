@@ -522,3 +522,8 @@ def test_deploy_recreates_the_rebuilt_containers_instead_of_leaving_them_on_the_
     script = (ROOT / "scripts" / "stack.sh").read_text(encoding="utf-8")
     assert "up -d --force-recreate --no-deps $names" in script
     assert script.index("--force-recreate") < script.index("docker compose up -d || true")   # then start anything left stopped
+
+
+def test_the_starting_mandate_is_long_only_because_the_book_is_long_only():
+    text = (Path(__file__).resolve().parents[2] / "vinu-agent" / "entrypoint.sh").read_text(encoding="utf-8")
+    assert "allow_short: false" in text and "allow_short: true" not in text

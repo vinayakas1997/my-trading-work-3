@@ -927,10 +927,8 @@ class LiveScheduler:
         try:
             from vinu_live.book.positions import list_open_positions as _book_open_positions
 
-            owned = {p.symbol.upper() for p in _book_open_positions(self._book)}
+            book_symbols = {p.symbol.upper() for p in _book_open_positions(self._book)}
             plan_symbols = await self._fetch_trade_plan_symbols()
-            if plan_symbols is not None:
-                owned |= plan_symbols
             targeted = {str(tw.get("symbol", "")).upper() for tw in target_weights}
             scheduler_owned = {
                 s.strip().upper() for s in (self._config.scheduler_adopted_symbols or "").split(",") if s.strip()
@@ -940,6 +938,10 @@ class LiveScheduler:
                     scheduler_owned |= self._execution_log.bought_symbols()
                 except Exception as e:  # noqa: BLE001 -- unknown ownership means "leave alone"
                     LOG.warning("Could not read the order ledger for scheduler ownership: %s", e)
+            # The scheduler writes its own fills into the book, so a book position is not proof that the
+            # trade-plan orchestrator owns it: a symbol the scheduler bought (and no active plan claims) stays the
+            # scheduler's, otherwise it could never be resized or closed after its first fill.
+            owned = (book_symbols - (scheduler_owned - (plan_symbols or set()))) | (plan_symbols or set())
             held_untargeted = {s for s in current_positions if s.upper() not in targeted and s.upper() not in owned}
             if plan_symbols is None:
                 held_unowned_unknown = held_untargeted

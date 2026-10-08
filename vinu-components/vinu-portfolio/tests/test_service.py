@@ -351,7 +351,7 @@ class TestBuildPortfolio:
 
 class TestListActiveStrategies:
     def test_merges_yaml_and_llm_strategies(self) -> None:
-        svc = _service()
+        svc = _service(include_yaml_strategies=True)
         svc._http.get = AsyncMock(
             side_effect=[
                 _resp(200, [{"name": "yaml_strat", "symbol": "AAPL"}]),
@@ -1576,3 +1576,18 @@ def test_portfolio_state_matches_the_edge_contract() -> None:
     empty = asyncio.run(svc.build_portfolio())
     assert empty["status"] == "empty"
     assert check_payload("portfolio.state->live.scheduler", empty) == []
+
+
+class TestYamlStrategiesAreNotAllocatedByDefault:
+    def test_the_unvalidated_yaml_strategies_get_no_capital_unless_switched_on(self):
+        yaml_row = [{"name": "momo", "kind": "yaml", "symbol": "SPY"}]
+        art_row = [{"name": "art_a", "kind": "llm_python", "symbol": "AAPL"}]
+
+        async def run(include):
+            svc = _service(include_yaml_strategies=include)
+            svc._list_yaml_strategies = AsyncMock(return_value=yaml_row)
+            svc._list_llm_strategies = AsyncMock(return_value=art_row)
+            return [s["name"] for s in await svc.list_active_strategies()]
+
+        assert asyncio.run(run(False)) == ["art_a"]
+        assert asyncio.run(run(True)) == ["momo", "art_a"]

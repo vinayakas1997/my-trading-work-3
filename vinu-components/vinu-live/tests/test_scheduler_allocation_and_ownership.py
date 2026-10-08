@@ -334,3 +334,26 @@ def test_adopted_symbols_flag_defaults_empty_and_reads_env(monkeypatch):
     assert LiveConfig().scheduler_adopted_symbols == ""
     monkeypatch.setenv("VINU_LIVE_SCHEDULER_ADOPTED_SYMBOLS", "XYZ,ABC")
     assert LiveConfig.from_env().scheduler_adopted_symbols == "XYZ,ABC"
+
+
+def test_a_position_the_scheduler_bought_stays_the_schedulers_after_its_fill_reaches_the_book(tmp_path, monkeypatch):
+    """Found in the live drill: once fill enrichment wrote the fill into the book, the symbol counted as
+    orchestrator-owned and the scheduler skipped it, so a retired strategy's position was never closed."""
+    s = _sched(tmp_path, twap_slices=1, scheduler_respect_trade_plan_symbols=True)
+    _bought(s, "OLD")
+    open_position(s._book, "OLD", "long", 10.0, 100.0)
+    s._http.get = _router(state={"status": "ok", "weights": [{"symbol": "AAPL", "target_weight": 0.5}]},
+                          positions=[("OLD", 10.0)], plans=[])
+    r = _run(s, monkeypatch)
+    assert any(o["symbol"] == "OLD" and o["side"] == "sell" for o in _orders(s))
+    assert r["ownership"]["orphans_to_liquidate"] == ["OLD"]
+
+
+def test_a_book_position_with_an_active_plan_is_still_the_orchestrators(tmp_path, monkeypatch):
+    s = _sched(tmp_path, twap_slices=1, scheduler_respect_trade_plan_symbols=True)
+    _bought(s, "OLD")
+    open_position(s._book, "OLD", "long", 10.0, 100.0)
+    s._http.get = _router(state={"status": "ok", "weights": [{"symbol": "AAPL", "target_weight": 0.5}]},
+                          positions=[("OLD", 10.0)], plans=["old"])
+    _run(s, monkeypatch)
+    assert not any(o["symbol"] == "OLD" for o in _orders(s))

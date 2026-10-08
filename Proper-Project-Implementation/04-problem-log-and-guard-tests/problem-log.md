@@ -347,6 +347,24 @@ Read `how-to-use-this-log.md` for the rules.
 - **Guard:** the P50 and P51 guard tests; the drill itself is a manual script, not repeatable in the suite because it spends paper money.
 - **Status:** GUARDED (by P50 and P51; open findings O20 to O22)
 
+### P53 Capital could go to 11 unvalidated YAML strategies
+- **Seen:** (O20) portfolio-api put equal weights on the 11 YAML registry strategies, which no research run ever validated, next to the ACTIVE research artifacts.
+- **Fix:** `include_yaml_strategies` in `vinu-portfolio/vinu_portfolio/config.py` (env `VINU_PORTFOLIO_INCLUDE_YAML_STRATEGIES`, default off) and `list_active_strategies` in `vinu-portfolio/vinu_portfolio/service.py`: only ACTIVE artifacts get capital unless it is switched on.
+- **Guard:** `vinu-portfolio/tests/test_service.py::TestYamlStrategiesAreNotAllocatedByDefault::test_the_unvalidated_yaml_strategies_get_no_capital_unless_switched_on`
+- **Status:** GUARDED (portfolio suite in the image: 0 failures). The allocator's `amount` is still ignored by portfolio-api (O20).
+
+### P54 The starting mandate allowed shorts although the book is long-only
+- **Seen:** (O22, decided with the user 2026-10-08: long only for now, shorts later as their own feature) `vinu-agent/entrypoint.sh` wrote `allow_short: true` into the mandate.
+- **Fix:** the entrypoint now writes `allow_short: false`; the running container's mandate file was changed to match. Exits are reduce-only sells and are not affected.
+- **Guard:** `vinu-infra/tests/test_stack_guards.py::test_the_starting_mandate_is_long_only_because_the_book_is_long_only`
+- **Status:** GUARDED (stack guards 38 passed)
+
+### P55 After its first fill the scheduler stopped managing its own position
+- **Seen:** (live drill) P33 writes scheduler fills into the book, but the ownership check treated every book position as the trade-plan orchestrator's. The cycle after the AAPL fill reported AAPL as "orchestrator-owned" and skipped it, so a retired strategy's position would never have been closed by the scheduler.
+- **Fix:** the ownership split in `vinu-live/vinu_live/scheduler.py`: a book position in a symbol the scheduler bought stays the scheduler's unless an active trade plan claims it.
+- **Guard:** `vinu-live/tests/test_scheduler_allocation_and_ownership.py::test_a_position_the_scheduler_bought_stays_the_schedulers_after_its_fill_reaches_the_book`, `vinu-live/tests/test_scheduler_allocation_and_ownership.py::test_a_book_position_with_an_active_plan_is_still_the_orchestrators`
+- **Status:** GUARDED (live suite in the image: 0 failures)
+
 ---
 
 ## E. Open problems (found, not fixed)
@@ -372,6 +390,6 @@ Read `how-to-use-this-log.md` for the rules.
 | O17 | Fixed as far as it can be: P41 and P43 (see O7) | | |
 | O18 | CLOSED. Fixed: P39. | | |
 | O19 | Recovery is automatic now (P44). Still open: why the model freezes (a 2,810-token prompt with thinking on; try capping thinking or `max_tokens`), and the task only exists on this PC | a freeze still costs up to 5 minutes plus the restart | find the cause in the model server's own log; reinstall the task on a new machine |
-| O20 | Portfolio-api allocates equal weights across 11 strategies from YAML (never research-validated) plus any ACTIVE artifact, and ignores the allocator's `amount` | capital can go to unvalidated strategies, and the allocator's size has no effect | decide: allocate only to ACTIVE artifacts and use the allocator amount |
+| O20 | Partly fixed (P53): YAML strategies get no capital by default. Still open: portfolio-api ignores the allocator's `amount` | the allocator's size has no effect on the daily allocation | decide whether the daily allocation should use the allocator amount per artifact |
 | O21 | The safety ledger holds only kill-switch events; the sequence diagram (D5) says more | docs and behaviour disagree | either log breaker, lockout and refusals there or correct the diagram |
-| O22 | The mandate has `allow_short: true` but the book (`apply_fill`) is long-only; and a sell sent straight to the agent endpoint (not through the scheduler) is not written to the book, so the book still showed 2 AAPL after the exit while Alpaca was flat, and reconciliation reported no drift (AAPL was skipped as orchestrator-owned) | a short or a manual exit would leave the book wrong | route manual exits through the book, or have reconciliation check orchestrator-owned symbols too |
+| O22 | Long only for now (P54); shorts are a later feature that needs the book, reconciliation, breaker exposure maths and the backtests to handle shorts first. Fixed: P55 (the scheduler's own positions). Still open: a sell sent straight to the agent endpoint does not reach the book, and reconciliation skips book-owned symbols | a manual exit leaves the book showing a position Alpaca no longer holds | route manual exits through the book, or have reconciliation compare book and broker for every symbol |
