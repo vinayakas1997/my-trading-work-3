@@ -68,10 +68,11 @@ Rule: a join or sum across the two modes is a bug. A guard test per table checks
 | # | Step | Status |
 |---|---|---|
 | 1 | Setting `real_capital` and `account_mode` (env, validated, default paper) | not started |
-| 2 | Pure allocator module with the maths above and unit tests on plain numbers | not started |
+| 2 | Pure allocator module with the maths above and unit tests on plain numbers | BUILT 2026-10-08, not wired in: `vinu-portfolio/vinu_portfolio/capital_allocator.py`, 15 tests in `tests/test_capital_allocator.py` |
 | 3 | Capital ledger: committed money from open positions, free cash, refusal above free cash | not started |
 | 4 | Tag columns and mode filters (order ledger, book, allocation history, safety ledger) | not started |
 | 5 | Adapter in portfolio-api: gathers inputs, calls the entity, uses the allocator `amount` per artifact (closes O20) | not started |
+| 5b | Read-only allocator summary (free cash, committed, scenario table, tagged results) that the agent reads; nothing is pushed to it | not started |
 | 6 | Order guard: refuse orders above free cash in real mode | not started |
 | 7 | Scenario table (fail / win) in the allocation response, so the user sees the reasoning | not started |
 | 8 | Paper-to-real scaling and a report that shows both bases | not started |
