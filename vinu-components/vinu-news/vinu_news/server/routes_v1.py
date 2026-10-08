@@ -199,7 +199,7 @@ def fetch(
     # being fast, standalone, live-feed-compatible methods. Go straight to
     # the storage layer instead, same underlying query get_ticker_news()
     # itself delegates to before enrichment.
-    articles = service._storage.get_news_for_ticker(ticker.upper(), start_ts, end_ts, limit)
+    articles = service.store_for(ticker.upper()).get_news_for_ticker(ticker.upper(), start_ts, end_ts, limit)
 
     if not articles:
         response.status_code = 404

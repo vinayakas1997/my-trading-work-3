@@ -17,3 +17,4 @@ outputs:
 - column: angle_data
   type: dict
   description: Angle-specific results
+uses_news: true

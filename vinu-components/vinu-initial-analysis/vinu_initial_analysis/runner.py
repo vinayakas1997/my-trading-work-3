@@ -255,6 +255,12 @@ class AngleRunner:
             time_formats = declared_time_formats
         needs_bars = angle["spec"].get("needs_bars", True)
         news = self._fetch_news(symbol, from_ts, to_ts)
+        news_err = self._news_errors.get((symbol.upper(), from_ts, to_ts))
+        if news_err and not news and angle["spec"].get("uses_news"):
+            # The news service failed: an angle that reads news must not run on an empty list and save the result as a
+            # completed run (it replaced real results with an empty placeholder for 12% of the news-price results).
+            # Raising records an error run, which is retried later.
+            raise RuntimeError(f"news fetch failed for {symbol}: {news_err}")
 
         total_rows = 0
         skipped: list[str] = []
@@ -305,6 +311,15 @@ class AngleRunner:
             if not isinstance(df, pd.DataFrame) or df.empty:
                 continue
 
+            if self._is_placeholder(df) and self._richer_result_exists(symbol, angle["name"], tf, tier):
+                # A "nothing to report" row must not replace a stored result that has real rows: the newest completed
+                # run is the one that is read, so a placeholder would hide the better one.
+                LOG.warning(
+                    "%s for %s at %s: new result is only a placeholder; keeping the existing richer result",
+                    angle["name"], symbol, tf,
+                )
+                continue
+
             df = df.copy()
             if "time_format" in df.columns:
                 df = df.drop(columns=["time_format"])
@@ -352,6 +367,14 @@ class AngleRunner:
             total_rows += len(df)
 
         return total_rows, skipped
+
+    @staticmethod
+    def _is_placeholder(df: pd.DataFrame) -> bool:
+        return len(df) == 1 and "type" in df.columns and str(df.iloc[0].get("type")) == "status"
+
+    def _richer_result_exists(self, symbol: str, angle_name: str, tf: str, tier: str) -> bool:
+        previous = self._run_log.get_latest_run(symbol, angle_name, granularity=tf, tier=tier)
+        return bool(previous and (previous.get("row_count") or 0) > 1)
 
     def _compute_remote(
         self, angle_name: str, symbol: str, bars: pd.DataFrame, news: list[dict],

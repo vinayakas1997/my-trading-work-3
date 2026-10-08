@@ -35,10 +35,10 @@ class TestTickerNewsAsOfClamp:
         response = Response()
         routes_read.get_service = lambda: service
         routes_read.ticker_news(
-            "AAPL", response, days=7, limit=50, from_=None, to=5000, as_of=None,
+            "AAPL", response, days=7, limit=50, reaction=False, from_=None, to=5000, as_of=None,
         )
         service.get_ticker_news.assert_called_once_with(
-            "AAPL", from_ts=None, to_ts=5000, limit=50,
+            "AAPL", from_ts=None, to_ts=5000, limit=50, include_reaction=False,
         )
         assert "X-Clamped-To-As-Of" not in response.headers
 
@@ -47,10 +47,10 @@ class TestTickerNewsAsOfClamp:
         response = Response()
         routes_read.get_service = lambda: service
         routes_read.ticker_news(
-            "AAPL", response, days=7, limit=50, from_=None, to=5000, as_of=3000,
+            "AAPL", response, days=7, limit=50, reaction=False, from_=None, to=5000, as_of=3000,
         )
         service.get_ticker_news.assert_called_once_with(
-            "AAPL", from_ts=None, to_ts=3000, limit=50,
+            "AAPL", from_ts=None, to_ts=3000, limit=50, include_reaction=False,
         )
         assert response.headers.get("X-Clamped-To-As-Of") == "true"
 
@@ -59,10 +59,10 @@ class TestTickerNewsAsOfClamp:
         response = Response()
         routes_read.get_service = lambda: service
         routes_read.ticker_news(
-            "AAPL", response, days=7, limit=50, from_=None, to=1000, as_of=3000,
+            "AAPL", response, days=7, limit=50, reaction=False, from_=None, to=1000, as_of=3000,
         )
         service.get_ticker_news.assert_called_once_with(
-            "AAPL", from_ts=None, to_ts=1000, limit=50,
+            "AAPL", from_ts=None, to_ts=1000, limit=50, include_reaction=False,
         )
         assert "X-Clamped-To-As-Of" not in response.headers
 
@@ -75,10 +75,10 @@ class TestTickerNewsAsOfClamp:
         response = Response()
         routes_read.get_service = lambda: service
         routes_read.ticker_news(
-            "AAPL", response, days=7, limit=50, from_=None, to=None, as_of=3000,
+            "AAPL", response, days=7, limit=50, reaction=False, from_=None, to=None, as_of=3000,
         )
         service.get_ticker_news.assert_called_once_with(
-            "AAPL", from_ts=None, to_ts=3000, limit=50,
+            "AAPL", from_ts=None, to_ts=3000, limit=50, include_reaction=False,
         )
         assert response.headers.get("X-Clamped-To-As-Of") == "true"
 
@@ -87,7 +87,7 @@ class TestTickerNewsAsOfClamp:
         response = Response()
         routes_read.get_service = lambda: service
         routes_read.ticker_news(
-            "AAPL", response, days=7, limit=50, from_=None, to=None, as_of=None,
+            "AAPL", response, days=7, limit=50, reaction=False, from_=None, to=None, as_of=None,
         )
-        service.get_ticker_news.assert_called_once_with("AAPL", days=7, limit=50)
+        service.get_ticker_news.assert_called_once_with("AAPL", days=7, limit=50, include_reaction=False)
         assert "X-Clamped-To-As-Of" not in response.headers

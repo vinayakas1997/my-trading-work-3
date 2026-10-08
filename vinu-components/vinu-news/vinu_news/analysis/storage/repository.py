@@ -6,6 +6,7 @@ WAL mode, and schema lifecycle.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -26,6 +27,7 @@ ARTICLE_COLUMNS = (
     "entities_json", "cluster_id", "is_lead", "thread_id",
     "finbert_score", "finbert_label",
     "published_at", "ingested_at", "publish_time_is_estimated",
+    "content_hash", "first_seen_at", "last_seen_at", "seen_count", "revision_of", "is_current",
 )
 
 THREAD_COLUMNS = (
@@ -54,6 +56,12 @@ _MIGRATION_COLUMNS = (
     ("published_at", "INTEGER"),
     ("ingested_at", "INTEGER NOT NULL DEFAULT 0"),
     ("publish_time_is_estimated", "INTEGER NOT NULL DEFAULT 0"),
+    ("content_hash", "TEXT"),
+    ("first_seen_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("last_seen_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("seen_count", "INTEGER NOT NULL DEFAULT 1"),
+    ("revision_of", "TEXT"),
+    ("is_current", "INTEGER NOT NULL DEFAULT 1"),
 )
 
 
@@ -69,8 +77,10 @@ def normalize_link(link: str) -> str:
 
 
 class NewsRepository(SQLiteBackend):
-    def __init__(self, db_path: str | Path | None = None) -> None:
+    def __init__(self, db_path: str | Path | None = None, *, seed_reference: bool = True) -> None:
         path = str(Path(db_path) if db_path else DEFAULT_DB_PATH)
+        # The 63,000-row ticker reference list is seeded once, in the central database, not into every ticker file.
+        self._seed_reference = seed_reference
         super().__init__(path)
 
     @property
@@ -83,22 +93,56 @@ class NewsRepository(SQLiteBackend):
         self._migrate(conn)
         init_fts(conn)
         conn.commit()
-        from vinu_news.analysis.enrichment.ticker_db import sync_ticker_db_if_needed
-        sync_ticker_db_if_needed(conn)
+        if self._seed_reference:
+            from vinu_news.analysis.enrichment.ticker_db import sync_ticker_db_if_needed
+            sync_ticker_db_if_needed(conn)
 
     def _migrate(self, conn: Any) -> None:
         existing = {
             row[1]
             for row in conn.execute("PRAGMA table_info(articles)").fetchall()
         }
+        added: set[str] = set()
         for col_name, col_def in _MIGRATION_COLUMNS:
             if col_name not in existing:
+                try:
+                    conn.execute(
+                        f"ALTER TABLE articles ADD COLUMN {col_name} {col_def}"
+                    )
+                except sqlite3.OperationalError as exc:
+                    # another thread's connection added it first (first start opens several at once)
+                    if "duplicate column name" not in str(exc):
+                        raise
+                    continue
+                added.add(col_name)
+        if "first_seen_at" in added:
+            # rows from before layer 2: first seen when this system ingested them (publish time for the oldest rows)
+            conn.execute(
+                "UPDATE articles SET first_seen_at = CASE WHEN ingested_at > 0 THEN ingested_at ELSE sort_ts END, "
+                "last_seen_at = CASE WHEN ingested_at > 0 THEN ingested_at ELSE sort_ts END"
+            )
+        if "content_hash" in added:
+            from vinu_news.analysis.storage.dedup import content_hash
+
+            conn.create_function("vn_content_hash", 2, content_hash)
+            conn.commit()
+            # In small steps: one big UPDATE held the write lock for seconds while the ingest loop and the finbert worker
+            # started in the same container, and both gave up with 'database is locked' and exited.
+            last = conn.execute("SELECT COALESCE(MAX(rowid), 0) FROM articles").fetchone()[0]
+            step = 2000
+            for lo in range(0, last + 1, step):
                 conn.execute(
-                    f"ALTER TABLE articles ADD COLUMN {col_name} {col_def}"
+                    "UPDATE articles SET content_hash = vn_content_hash(headline, summary) "
+                    "WHERE content_hash IS NULL AND rowid > ? AND rowid <= ?",
+                    (lo, lo + step),
                 )
+                conn.commit()
         from vinu_news.sources.health import migrate as migrate_feed_health
 
         migrate_feed_health(conn)
+        from vinu_news.analysis.storage.stories import migrate_story_sources
+
+        migrate_story_sources(conn)
 
     @property
     def conn(self) -> Any:
@@ -121,6 +165,43 @@ class NewsRepository(SQLiteBackend):
         if row and row["thread_id"]:
             return row["thread_id"]
         return None
+
+    def current_by_link(self, link: str) -> dict[str, Any] | None:
+        """The current row for a link (the newest revision), or None."""
+        normalized = normalize_link(link)
+        row = self.conn.execute(
+            "SELECT id, content_hash, thread_id, first_seen_at, seen_count FROM articles "
+            "WHERE (link = ? OR link = ?) AND is_current = 1 ORDER BY first_seen_at DESC LIMIT 1",
+            (link, normalized),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def mark_seen(self, article_id: str, now: int) -> None:
+        """The source served the same item with the same text again: only the last-seen time and the count move."""
+        with self.conn:
+            self.conn.execute(
+                "UPDATE articles SET last_seen_at = MAX(last_seen_at, ?), seen_count = seen_count + 1 WHERE id = ?",
+                (now, article_id),
+            )
+
+    def add_revision(self, enriched: EnrichedArticle, previous: dict[str, Any]) -> str:
+        """Store changed text as a new row linked to the one it replaces; the old row stays, no longer current."""
+        from vinu_news.analysis.enrichment.article_splitter import _mention_id
+        from vinu_news.analysis.storage.dedup import revision_id
+
+        a = enriched.article
+        new_id = revision_id(previous["id"], a.content_hash or "")
+        for m in enriched.mentions:
+            m.article_id = new_id
+            m.id = _mention_id(new_id, m.ticker)
+        a.id = new_id
+        a.revision_of = previous["id"]
+        a.thread_id = previous.get("thread_id") or a.thread_id
+        a.is_current = 1
+        with self.conn:
+            self.conn.execute("UPDATE articles SET is_current = 0 WHERE id = ?", (previous["id"],))
+        self.upsert_article(enriched)
+        return new_id
 
     def upsert_article(self, enriched: EnrichedArticle) -> bool:
         """Insert article and mentions; returns True if article was inserted."""
@@ -183,7 +264,7 @@ class NewsRepository(SQLiteBackend):
         rows = self.conn.execute(
             f"""
             SELECT {_ARTICLE_COLS} FROM articles
-            WHERE thread_id = ?
+            WHERE thread_id = ? AND is_current = 1
             ORDER BY sort_ts DESC
             LIMIT ?
             """,
@@ -224,7 +305,7 @@ class NewsRepository(SQLiteBackend):
             SELECT {_ARTICLE_COLS_A}
             FROM articles a
             JOIN articles_fts ON a.rowid = articles_fts.rowid
-            WHERE articles_fts MATCH ?
+            WHERE articles_fts MATCH ? AND a.is_current = 1 AND a.is_lead = 1
             ORDER BY rank
             LIMIT ?
             """,
@@ -243,7 +324,7 @@ class NewsRepository(SQLiteBackend):
             SELECT {_ARTICLE_COLS_A}, m.ticker AS mention_ticker, m.dominance, m.is_primary
             FROM article_ticker_mentions m
             JOIN articles a ON a.id = m.article_id
-            WHERE m.ticker = ?
+            WHERE m.ticker = ? AND a.is_current = 1 AND a.is_lead = 1
         """
         params: list[Any] = [ticker.upper()]
 
@@ -270,7 +351,7 @@ class NewsRepository(SQLiteBackend):
         rows = self.conn.execute(
             f"""
             SELECT {_ARTICLE_COLS} FROM articles
-            WHERE sort_ts >= ? AND sort_ts <= ?
+            WHERE sort_ts >= ? AND sort_ts <= ? AND is_current = 1 AND is_lead = 1
             ORDER BY sort_ts DESC
             LIMIT ?
             """,
@@ -286,7 +367,7 @@ class NewsRepository(SQLiteBackend):
     ) -> list[dict[str, Any]]:
         query = f"""
             SELECT {_ARTICLE_COLS} FROM articles
-            WHERE impact = 'HIGH' AND sort_ts >= ?
+            WHERE impact = 'HIGH' AND sort_ts >= ? AND is_current = 1 AND is_lead = 1
         """
         params: list[Any] = [since_ts]
 

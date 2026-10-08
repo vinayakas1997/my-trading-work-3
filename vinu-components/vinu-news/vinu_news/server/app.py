@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,6 +21,15 @@ def create_app(service: NewsService | None = None):
 
     @asynccontextmanager
     async def lifespan(_app):
+        import threading
+
+        def _index() -> None:
+            try:
+                app_service.index_existing_stories()
+            except Exception:  # noqa: BLE001 -- retried on the next start; the live path indexes new stories itself
+                logging.getLogger(__name__).exception("indexing existing stories failed")
+
+        threading.Thread(target=_index, name="news-index-existing", daemon=True).start()
         yield
         if owns_service:
             app_service.close()

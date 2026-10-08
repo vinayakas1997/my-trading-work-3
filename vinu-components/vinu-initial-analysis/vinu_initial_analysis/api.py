@@ -5,6 +5,7 @@ from typing import Any
 
 from vinu_initial_analysis.cache import CorrelationCache
 from vinu_initial_analysis.clients.news_client import NewsClient
+from vinu_initial_analysis.clients.news_snapshot import SnapshotNewsClient
 from vinu_initial_analysis.clients.price_client import PriceClient
 from vinu_initial_analysis.config import VinuInitialAnalysisConfig, load_config
 from vinu_initial_analysis.runner import AngleRunner
@@ -17,7 +18,8 @@ class CorrelationAPI:
 
     def __init__(self, config: VinuInitialAnalysisConfig | None = None):
         self._config = config or load_config()
-        self._news_client = NewsClient(self._config.news_api_url)
+        # the analysis reads a frozen copy of the news for its range, not the live store (see news_snapshot.py)
+        self._news_client = SnapshotNewsClient(NewsClient(self._config.news_api_url), self._config.data_root / "news_inputs")
         self._price_client = PriceClient(self._config.stock_api_url)
         self._run_log = RunLog(self._config.runs_db_path)
         self._storage = AngleStorage(self._config.data_root, self._run_log)
@@ -34,6 +36,10 @@ class CorrelationAPI:
     @property
     def run_log(self) -> RunLog:
         return self._run_log
+
+    @property
+    def news_client(self) -> SnapshotNewsClient:
+        return self._news_client
 
     @property
     def runner(self) -> AngleRunner:

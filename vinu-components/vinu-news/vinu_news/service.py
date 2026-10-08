@@ -80,14 +80,29 @@ class NewsService:
         self,
         storage: StorageBackend | None = None,
         config: VinuConfig | None = None,
+        stores: Any = None,
     ) -> None:
         self._config = config or load_config()
-        self._storage = storage or create_storage(
-            storage=self._config.storage,
-            db_path=self._config.db_path,
-            database_url=self._config.database_url,
-        )
-        self._owns_storage = storage is None
+        self._stores = stores            # a TickerStores in the per_ticker layout, None for a single shared database
+        self._owns_stores = False
+        if storage is None and stores is None and self._config.layout == "per_ticker" and self._config.storage == "sqlite":
+            from vinu_news.storage.central_seed import seed_central_from_legacy
+            from vinu_news.storage.ticker_stores import TickerStores
+
+            first_start = not self._config.central_db_path.exists()
+            storage = create_storage(storage="sqlite", db_path=self._config.central_db_path)
+            self._stores, self._owns_stores = TickerStores(self._config.tickers_dir), True
+            if first_start:
+                seed_central_from_legacy(storage, self._config.db_path)
+            self._owns_storage = True
+            self._storage = storage
+        else:
+            self._storage = storage or create_storage(
+                storage=self._config.storage,
+                db_path=self._config.db_path,
+                database_url=self._config.database_url,
+            )
+            self._owns_storage = storage is None
         self._stock_client_instance: Any | None = None
 
     def _stock_client(self):
@@ -97,18 +112,78 @@ class NewsService:
             self._stock_client_instance = StockPriceClient(self._config.stock_api_url)
         return self._stock_client_instance
 
-    def _enrich_with_price_reaction(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _enrich_with_price_reaction(self, rows: list[dict[str, Any]], backend: Any = None) -> list[dict[str, Any]]:
         from vinu_news.analysis.post_enrichment.price_reaction import enrich_articles_with_reaction
 
         client = self._stock_client()
-        conn = self._storage.repo.conn
+        conn = (backend or self._storage).repo.conn
         return enrich_articles_with_reaction(conn, rows, client)
+
+    # ---- layout: one news database per ticker, or one shared database -------------------------------------------
+
+    @property
+    def layout(self) -> str:
+        return "per_ticker" if self._stores is not None else "single"
+
+    def store_for(self, ticker: str):
+        """The database that holds a ticker's news (its own file in the per_ticker layout)."""
+        return self._stores.get(ticker) if self._stores is not None else self._storage
+
+    def _backends(self) -> list[Any]:
+        if self._stores is None:
+            return [self._storage]
+        return [self._stores.get(t) for t in self._stores.tickers()]
+
+    @staticmethod
+    def _merge(chunks: list[list[dict[str, Any]]], limit: int, key: str = "sort_ts", ident: str = "id") -> list[dict[str, Any]]:
+        """Newest first, one row per id (the same article sits in the files of every ticker it mentions)."""
+        seen: set[Any] = set()
+        out: list[dict[str, Any]] = []
+        for row in sorted((r for c in chunks for r in c), key=lambda r: r.get(key) or 0, reverse=True):
+            if row.get(ident) in seen:
+                continue
+            seen.add(row.get(ident))
+            out.append(row)
+            if len(out) >= limit:
+                break
+        return out
+
+    def list_ticker_stores(self) -> list[dict[str, Any]]:
+        """Each ticker with data: what it holds, and where its backfill stands."""
+        if self._stores is None:
+            return []
+        backfill = {b.ticker: b.to_dict() for b in self._storage.get_backfill_status_all()}
+        out = []
+        for t in sorted(set(self._stores.tickers()) | set(self._storage.get_watchlist())):
+            row: dict[str, Any] = {"ticker": t, "has_data": self._stores.exists(t), "backfill": backfill.get(t)}
+            if row["has_data"]:
+                conn = self._stores.get(t).repo.conn
+                a = conn.execute(
+                    "SELECT COUNT(*), MIN(sort_ts), MAX(sort_ts) FROM articles WHERE is_current = 1").fetchone()
+                row.update(articles=a[0], oldest=a[1], newest=a[2],
+                           stories=conn.execute("SELECT COUNT(*) FROM story_threads").fetchone()[0])
+            out.append(row)
+        return out
+
+    def drop_ticker(self, ticker: str) -> bool:
+        """Delete one ticker's whole news dataset and mark its backfill pending again, so it can be refilled."""
+        if self._stores is None:
+            raise ValueError("drop_ticker needs the per_ticker layout")
+        removed = self._stores.drop(ticker)
+        conn = self._storage.repo.conn
+        with conn:
+            conn.execute(
+                "UPDATE backfill_status SET status = 'pending', backfilled_up_to_ts = NULL, oldest_ts = NULL, "
+                "article_count = 0, error_message = NULL WHERE ticker = ?", (ticker.upper(),))
+        return removed
 
     @property
     def storage(self) -> StorageBackend:
         return self._storage
 
     def close(self) -> None:
+        if self._owns_stores and self._stores is not None:
+            self._stores.close()
         if self._owns_storage:
             self._storage.close()
         if self._stock_client_instance is not None:
@@ -269,7 +344,7 @@ class NewsService:
             leads = filter_leads_for_mode(result.articles, "all", watchlist)
 
             if leads:
-                persist_result = self._storage.persist_leads(leads)
+                persist_result = self.store_for(ticker).persist_leads(leads, duplicates=getattr(result, "duplicates", None))
                 total_fetched += persist_result.inserted
                 if oldest_seen is None:
                     for a in leads:
@@ -301,6 +376,37 @@ class NewsService:
             if entry.enabled and entry.status != "completed":
                 results.append(self.run_backfill_single(entry.ticker))
         return results
+
+    def _with_story_tags(self, rows: list[dict[str, Any]], backend: Any = None) -> list[dict[str, Any]]:
+        """Layer 3: tell the reader how many sources told each article's story, which, and who was first."""
+        from vinu_news.analysis.storage.stories import story_tags
+
+        tags = story_tags((backend or self._storage).repo.conn, [r.get("thread_id") for r in rows])
+        for r in rows:
+            r.update(tags.get(r.get("thread_id"), {}))
+        return rows
+
+    def index_existing_stories(self) -> bool:
+        """Fill the story facts and the ticker table for stories stored before layers 4 and 5 (once per database)."""
+        from vinu_news.analysis.storage.ticker_news import rebuild_once
+
+        return any([rebuild_once(b.repo.conn) for b in self._backends()])
+
+    def get_ticker_stories(
+        self,
+        symbol: str,
+        *,
+        from_ts: int | None = None,
+        to_ts: int | None = None,
+        known_by: int | None = None,
+        event_tag: str | None = None,
+        min_sources: int | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        from vinu_news.analysis.storage.ticker_news import query
+
+        return query(self.store_for(symbol).repo.conn, symbol, from_ts=from_ts, to_ts=to_ts, known_by=known_by,
+                     event_tag=event_tag, min_sources=min_sources, limit=limit)
 
     @property
     def source_health(self):
@@ -349,6 +455,72 @@ class NewsService:
         self.source_health.set_operator_off(source_id, off, kind=kind)
         return next(s for s in self.get_sources()["sources"] if s["id"] == source_id)
 
+    def _persist_leads(self, leads: list, duplicates: list | None, watchlist: set[str]):
+        """Write leads where they belong. A shared database takes them as they are. In the per_ticker layout each lead goes
+        into the database of every watchlist ticker it is about (a copy per ticker, same article id)."""
+        if self._stores is None:
+            return self._storage.persist_leads(leads, duplicates=duplicates)
+        from copy import deepcopy
+
+        from vinu_news.analysis.storage.persist import PersistResult
+
+        total = PersistResult(inserted=0, url_skipped=0, thread_matched_skipped=0, threads_created=0, threads_updated=0,
+                              inserted_links=[])
+        by_ticker: dict[str, list] = {}
+        for lead in leads:
+            names = {m.ticker for m in lead.mentions} or set(lead.article.tickers_list())
+            for t in sorted(names & watchlist):
+                by_ticker.setdefault(t, []).append(lead)
+        for t, group in by_ticker.items():
+            clusters = {l.article.cluster_id for l in group if l.article.cluster_id}
+            dups = [deepcopy(d) for d in (duplicates or []) if d.article.cluster_id in clusters]
+            r = self.store_for(t).persist_leads([deepcopy(l) for l in group], duplicates=dups)
+            for f in ("inserted", "url_skipped", "thread_matched_skipped", "threads_created", "threads_updated",
+                      "seen_again", "revisions", "stories_joined", "members_stored"):
+                setattr(total, f, getattr(total, f) + getattr(r, f))
+            total.inserted_links.extend(r.inserted_links)
+        return total
+
+    def _run_ticker_news_per_ticker(self, *, tickers: list[str] | None, days: int, dry_run: bool, settings: Any,
+                                    watchlist: set[str]) -> IngestionCycleResult:
+        """Per-ticker layout: fetch, enrich and store one ticker at a time, each into its own database."""
+        active = tickers or self._storage.get_watchlist()
+        registry = TickerNewsRegistry(self._config, health=self.source_health)
+        from_ts = self.ts_days_ago(days)
+        to_ts = int(datetime.now(timezone.utc).timestamp())
+        n = dict(raw=0, enriched=0, before=0, after=0, inserted=0, clusters=0, dups=0, urls=0, skipped=0, joined=0,
+                 created=0, updated=0, failed=0)
+        for symbol in active:
+            articles, errors = registry.fetch_for_ticker(symbol, from_ts, to_ts)
+            n["raw"] += len(articles)
+            if errors:
+                n["failed"] += 1
+                LOG.warning("Ticker %s had provider errors: %s", symbol, errors)
+            if dry_run or not articles:
+                continue
+            result = process_batch(articles, watchlist=watchlist)
+            leads = filter_leads_for_mode(result.articles, settings.mode, watchlist)
+            n["enriched"] += result.enriched_count
+            n["clusters"] += result.clusters_found
+            n["dups"] += result.duplicates_dropped
+            n["urls"] += result.url_dedup_dropped
+            n["before"] += len(result.articles)
+            n["after"] += len(leads)
+            if leads:
+                p = self.store_for(symbol).persist_leads(leads, duplicates=getattr(result, "duplicates", None))
+                n["inserted"] += p.inserted
+                n["skipped"] += p.url_skipped
+                n["joined"] += p.thread_matched_skipped
+                n["created"] += p.threads_created
+                n["updated"] += p.threads_updated
+        return IngestionCycleResult(
+            feeds_polled=len(active), feeds_failed=n["failed"], raw_count=n["raw"], enriched_count=n["enriched"],
+            leads_before_filter=n["before"], leads_after_filter=n["after"], inserted=n["inserted"],
+            clusters_found=n["clusters"], duplicates_dropped=n["dups"], url_dedup_dropped=n["urls"],
+            url_skipped=n["skipped"], thread_matched_skipped=n["joined"], threads_created=n["created"],
+            threads_updated=n["updated"], mode=settings.mode, watchlist_size=len(watchlist), feed_results=[],
+        )
+
     def run_ingestion_cycle(
         self,
         *,
@@ -377,6 +549,9 @@ class NewsService:
             raw_articles, feed_results = poll_all_feeds(feeds)
             feeds_polled = len(feeds)
             feeds_failed = sum(1 for r in feed_results if r.article_count == 0)
+        elif source == "ticker_news" and self._stores is not None:
+            return self._run_ticker_news_per_ticker(tickers=tickers, days=days, dry_run=dry_run, settings=settings,
+                                                    watchlist=watchlist)
         elif source == "ticker_news":
             active_tickers = tickers or self._storage.get_watchlist()
             if not active_tickers:
@@ -437,7 +612,7 @@ class NewsService:
         threads_updated = 0
 
         if leads:
-            persist_result = self._storage.persist_leads(leads)
+            persist_result = self._persist_leads(leads, getattr(result, "duplicates", None), watchlist)
             inserted = persist_result.inserted
             url_skipped = persist_result.url_skipped
             thread_matched_skipped = persist_result.thread_matched_skipped
@@ -472,7 +647,11 @@ class NewsService:
         )
 
     def health(self) -> dict[str, Any]:
-        return self._storage.health_info()
+        info = self._storage.health_info()
+        info["layout"] = self.layout
+        if self._stores is not None:
+            info["tickers_with_data"] = len(self._stores.tickers())
+        return info
 
     @staticmethod
     def ts_days_ago(days: int) -> int:
@@ -492,10 +671,13 @@ class NewsService:
         provider: str | None = None,
         tiers: list[int] | None = None,
     ) -> list[dict[str, Any]]:
-        return self._storage.get_latest(limit, date=date, provider=provider, tiers=tiers)
+        chunks = [self._with_story_tags(b.get_latest(limit, date=date, provider=provider, tiers=tiers), b)
+                  for b in self._backends()]
+        return self._merge(chunks, limit)
 
     def get_articles_since(self, since_ts: int, limit: int = 100) -> list[dict[str, Any]]:
-        return self._storage.get_articles_since(since_ts, limit)
+        chunks = [self._with_story_tags(b.get_articles_since(since_ts, limit), b) for b in self._backends()]
+        return self._merge(chunks, limit)
 
     def get_ticker_news(
         self,
@@ -505,19 +687,31 @@ class NewsService:
         from_ts: int | None = None,
         to_ts: int | None = None,
         limit: int = 50,
+        include_reaction: bool = False,
     ) -> list[dict[str, Any]]:
         if from_ts is None:
             start_ts = self.ts_days_ago(days)
         else:
             start_ts = from_ts
-        rows = self._storage.get_news_for_ticker(symbol, start_ts, to_ts, limit)
-        return self._enrich_with_price_reaction(rows)
+        backend = self.store_for(symbol)
+        rows = self._with_story_tags(backend.get_news_for_ticker(symbol, start_ts, to_ts, limit), backend)
+        # The price reaction joins news with another service's candles (about 8 s per page of 500 articles; AAPL's 7,941
+        # articles took 137 s and a failure part-way turned into an empty analysis result, chain C1 of the data audit).
+        # Nothing reads it: the news-price angle computes its own from the candles. Opt-in only.
+        return self._enrich_with_price_reaction(rows, backend) if include_reaction else rows
 
     def backfill_finbert_sentiment(self, limit: int = 500) -> dict[str, Any]:
         """Score articles missing finbert_score with FinBERT (batched inference)."""
+        scored = remaining = 0
+        for b in self._backends():
+            r = self._finbert_one(b.repo.conn, limit)
+            scored += r["scored"]
+            remaining += r["remaining"]
+        return {"scored": scored, "remaining": remaining}
+
+    def _finbert_one(self, conn: Any, limit: int) -> dict[str, Any]:
         from vinu_news.analysis.enrichment.finbert_sentiment import score_finbert_batch
 
-        conn = self._storage.repo.conn
         rows = conn.execute(
             "SELECT id, headline, summary FROM articles WHERE finbert_score IS NULL "
             "ORDER BY sort_ts DESC LIMIT ?",
@@ -534,6 +728,10 @@ class NewsService:
             "UPDATE articles SET finbert_score = ?, finbert_label = ? WHERE id = ?",
             [(r["finbert_score"], r["finbert_label"], aid) for r, aid in zip(results, ids)],
         )
+        from vinu_news.analysis.storage.facts import refresh_sentiment_from_finbert
+
+        for r, aid in zip(results, ids):
+            refresh_sentiment_from_finbert(conn, aid, r["finbert_score"])
         conn.commit()
 
         remaining = conn.execute(
@@ -549,10 +747,15 @@ class NewsService:
     ) -> list[dict[str, Any]]:
         tickers = self._storage.get_watchlist()
         start_ts = self.ts_days_ago(days)
-        return self._storage.get_news_for_watchlist(tickers, start_ts, limit)
+        if self._stores is None:
+            return self._with_story_tags(self._storage.get_news_for_watchlist(tickers, start_ts, limit))
+        chunks = [self._with_story_tags(self.store_for(t).get_news_for_ticker(t, start_ts, None, limit), self.store_for(t))
+                  for t in tickers if self._stores.exists(t)]
+        return self._merge(chunks, limit)
 
     def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
-        return self._storage.search_articles(query, limit)
+        chunks = [self._with_story_tags(b.search_articles(query, limit), b) for b in self._backends()]
+        return self._merge(chunks, limit)
 
     def get_high_impact(
         self,
@@ -564,7 +767,8 @@ class NewsService:
         since_ts = int(
             (datetime.now(timezone.utc) - timedelta(hours=hours)).timestamp()
         )
-        return self._storage.get_high_impact(since_ts, sentiment, limit)
+        chunks = [self._with_story_tags(b.get_high_impact(since_ts, sentiment, limit), b) for b in self._backends()]
+        return self._merge(chunks, limit)
 
     def get_active_threads(
         self,
@@ -575,25 +779,36 @@ class NewsService:
         since_ts = int(
             (datetime.now(timezone.utc) - timedelta(hours=hours)).timestamp()
         )
-        return self._storage.get_active_threads(since_ts, limit)
+        return self._merge([b.get_active_threads(since_ts, limit) for b in self._backends()], limit,
+                           key="last_seen_at", ident="thread_id")
 
     def get_thread_detail(
         self,
         thread_id: str,
         *,
         limit: int = 50,
+        include_reaction: bool = False,
     ) -> dict[str, Any] | None:
-        thread = self._storage.get_thread(thread_id)
+        backend, thread = self._find_thread(thread_id)
         if not thread:
             return None
-        articles = self._enrich_with_price_reaction(
-            self._storage.get_thread_articles(thread_id, limit)
-        )
+        articles = backend.get_thread_articles(thread_id, limit)
+        if include_reaction:
+            articles = self._enrich_with_price_reaction(articles, backend)
         return {"thread": thread, "articles": articles}
 
-    def get_thread_timeline(self, thread_id: str) -> list[dict[str, Any]]:
-        rows = self._storage.get_thread_timeline(thread_id)
-        return self._enrich_with_price_reaction(rows)
+    def _find_thread(self, thread_id: str) -> tuple[Any, dict[str, Any] | None]:
+        """A story id is only unique inside one ticker's database: look in each until it is found."""
+        for b in self._backends():
+            thread = b.get_thread(thread_id)
+            if thread:
+                return b, thread
+        return self._storage, None
+
+    def get_thread_timeline(self, thread_id: str, include_reaction: bool = False) -> list[dict[str, Any]]:
+        backend, thread = self._find_thread(thread_id)
+        rows = backend.get_thread_timeline(thread_id) if thread else []
+        return self._enrich_with_price_reaction(rows, backend) if include_reaction else rows
 
     def get_ticker_stats(
         self,
@@ -602,4 +817,4 @@ class NewsService:
         days: int = 7,
     ) -> list[dict[str, Any]]:
         start_date, end_date = self.date_range_days(days)
-        return self._storage.get_ticker_daily_stats(symbol, start_date, end_date)
+        return self.store_for(symbol).get_ticker_daily_stats(symbol, start_date, end_date)

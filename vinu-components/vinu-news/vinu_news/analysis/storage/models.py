@@ -50,6 +50,15 @@ class ArticleRecord:
     published_at: int | None = None
     ingested_at: int = 0
     publish_time_is_estimated: bool = False
+    # Layer 2 (Proper-Project-Implementation/07-news-layers/plan.md): the same item from the same source is one row.
+    # `first_seen_at` is the "known at" time, `last_seen_at`/`seen_count` move when the source serves it again with the
+    # same text, and a changed text becomes a new row (`revision_of` = the row it replaces, which gets `is_current` 0).
+    content_hash: str | None = None
+    first_seen_at: int = 0
+    last_seen_at: int = 0
+    seen_count: int = 1
+    revision_of: str | None = None
+    is_current: int = 1
 
     def tickers_list(self) -> list[str]:
         return json.loads(self.tickers)

@@ -33,8 +33,8 @@ class SqliteBackend:
     pattern, and SettingsStore/WatchlistStore are lazily created per thread.
     """
 
-    def __init__(self, db_path: str | Path | None = None) -> None:
-        self._repo = NewsRepository(db_path)
+    def __init__(self, db_path: str | Path | None = None, *, seed_reference: bool = True) -> None:
+        self._repo = NewsRepository(db_path, seed_reference=seed_reference)
         self.db_path = self._repo.db_path
         self._local = threading.local()
         self._init_vinu_schema()
@@ -129,8 +129,8 @@ class SqliteBackend:
 
         return sync_from_shared(self._watchlist, path)
 
-    def persist_leads(self, leads: list[EnrichedArticle]) -> PersistResult:
-        return persist_leads(self._repo, leads)
+    def persist_leads(self, leads: list[EnrichedArticle], duplicates: list[EnrichedArticle] | None = None) -> PersistResult:
+        return persist_leads(self._repo, leads, duplicates)
 
     def get_latest(
         self,
@@ -142,7 +142,7 @@ class SqliteBackend:
         query = """
             SELECT a.*
             FROM articles a
-            WHERE a.is_lead = 1
+            WHERE a.is_lead = 1 AND a.is_current = 1
         """
         params = []
         if date:
@@ -167,7 +167,7 @@ class SqliteBackend:
         rows = self._repo.conn.execute(
             f"""
             SELECT {cols} FROM articles
-            WHERE sort_ts >= ? AND is_lead = 1
+            WHERE sort_ts >= ? AND is_lead = 1 AND is_current = 1
             ORDER BY sort_ts DESC
             LIMIT ?
             """,
@@ -197,7 +197,7 @@ class SqliteBackend:
             SELECT a.*, m.ticker AS mention_ticker, m.dominance, m.is_primary
             FROM article_ticker_mentions m
             JOIN articles a ON a.id = m.article_id
-            WHERE m.ticker IN ({placeholders})
+            WHERE m.ticker IN ({placeholders}) AND a.is_current = 1 AND a.is_lead = 1
         """
         params: list[Any] = [t.upper() for t in tickers]
         if start_ts is not None:

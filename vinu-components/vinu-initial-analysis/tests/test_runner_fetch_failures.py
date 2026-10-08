@@ -42,7 +42,7 @@ class _BadNews:
 def _runner(tmp, **clients):
     Path(tmp).mkdir(parents=True, exist_ok=True)
     r = AngleRunner(AngleStorage(tmp), RunLog(Path(tmp) / "runs.db"), **clients)
-    r._angles = [{"name": "fake", "spec": {"time_formats": ["1D"]}}]
+    r._angles = [{"name": "fake", "spec": {"time_formats": ["1D"], "uses_news": True}}]
     r._import_compute = lambda name: _Mod
     return r
 
@@ -59,11 +59,55 @@ def test_genuinely_no_bars_is_still_the_old_empty_completed_result(tmp_path):
     assert out["fake"]["status"] == "completed" and out["fake"]["row_count"] == 0
 
 
-def test_a_failed_news_fetch_is_flagged_on_the_result_and_a_good_one_is_not(tmp_path):
-    out = _runner(str(tmp_path / "a"), price_client=_GoodPrice(), news_client=_BadNews()).run("AAPL", angle_names=["fake"])
-    assert out["fake"]["status"] == "completed" and "news down" in out["fake"]["news_fetch_failed"]
+def test_a_failed_news_fetch_is_an_error_run_for_an_angle_that_reads_news_and_a_good_one_is_completed(tmp_path):
+    """It used to be saved as a completed run on an empty news list; that result then replaced the real one (chain C1)."""
+    r = _runner(str(tmp_path / "a"), price_client=_GoodPrice(), news_client=_BadNews())
+    out = r.run("AAPL", angle_names=["fake"])
+    assert out["fake"]["status"] == "error" and "news down" in out["fake"]["error"]
+    assert not r._run_log.has_existing_run("AAPL", "fake", None, None, granularity="1D")     # so it is retried later
     out = _runner(str(tmp_path / "b"), price_client=_GoodPrice()).run("AAPL", angle_names=["fake"])
-    assert "news_fetch_failed" not in out["fake"]
+    assert out["fake"]["status"] == "completed" and "news_fetch_failed" not in out["fake"]
+
+
+class _NoNewsMod:
+    @staticmethod
+    def compute(symbol, bars=None, news=None, from_ts=None, to_ts=None, time_format=None):
+        return pd.DataFrame([{"symbol": symbol, "n_bars": len(bars)}])
+
+
+def test_an_angle_that_does_not_read_news_is_not_stopped_by_a_news_outage(tmp_path):
+    r = _runner(str(tmp_path), price_client=_GoodPrice(), news_client=_BadNews())
+    r._import_compute = lambda name: _NoNewsMod
+    r._angles = [{"name": "fake", "spec": {"time_formats": ["1D"]}}]     # an angle that does not declare uses_news
+    out = r.run("AAPL", angle_names=["fake"])
+    assert out["fake"]["status"] == "completed" and out["fake"]["row_count"] == 1
+
+
+class _StatusOnlyMod:
+    """An angle that answers 'nothing to report' with one placeholder row, like news_price_causality without articles."""
+
+    @staticmethod
+    def compute(symbol, bars=None, news=None, from_ts=None, to_ts=None, time_format=None):
+        return pd.DataFrame([{"symbol": symbol, "type": "status", "event_count": 0}])
+
+
+class _RichMod:
+    @staticmethod
+    def compute(symbol, bars=None, news=None, from_ts=None, to_ts=None, time_format=None):
+        return pd.DataFrame([{"symbol": symbol, "type": "impact", "i": i} for i in range(5)])
+
+
+def test_a_placeholder_never_replaces_a_stored_result_that_has_real_rows(tmp_path):
+    """AAPL's news-price result fell from 1,123 rows to 1 on a later run, and the later run is the one that is read."""
+    r = _runner(str(tmp_path), price_client=_GoodPrice())
+    r._import_compute = lambda name: _RichMod
+    assert r.run("AAPL", angle_names=["fake"])["fake"]["row_count"] == 5
+    r._import_compute = lambda name: _StatusOnlyMod
+    r._run_log.has_existing_run = lambda *a, **k: False            # force a re-run of the same window
+    out = r.run("AAPL", angle_names=["fake"])
+    assert out["fake"]["row_count"] == 0                           # not written
+    latest = r._run_log.get_latest_run("AAPL", "fake", granularity="1D")
+    assert latest["row_count"] == 5
 
 
 class _PlaceholderMod:

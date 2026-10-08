@@ -242,7 +242,8 @@ def get_mappings_for_tickers(
     if conn is None:
         try:
             config = load_config()
-            conn = sqlite3.connect(config.db_path)
+            # the reference list lives in the central database in the per_ticker layout, in the shared one otherwise
+            conn = sqlite3.connect(config.central_db_path if config.layout == "per_ticker" else config.db_path)
             close_conn = True
         except Exception as exc:
             LOG.error("Failed to connect to SQLite in get_mappings_for_tickers: %s", exc)

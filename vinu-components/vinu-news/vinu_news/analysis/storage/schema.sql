@@ -112,3 +112,38 @@ CREATE TABLE IF NOT EXISTS ticker_reference (
     name    TEXT NOT NULL,
     aliases TEXT NOT NULL
 );
+
+-- Layer 4: facts about a story, computed once when it is first seen (facts, not verdicts)
+CREATE TABLE IF NOT EXISTS story_facts (
+    story_id           TEXT PRIMARY KEY,
+    primary_ticker     TEXT,
+    other_tickers_json TEXT NOT NULL DEFAULT '[]',
+    entities_json      TEXT NOT NULL DEFAULT '{}',
+    keywords_json      TEXT NOT NULL DEFAULT '[]',
+    event_tag          TEXT,
+    sentiment_score    REAL,
+    sentiment_method   TEXT,
+    computed_at        INTEGER NOT NULL
+);
+
+-- Layer 5: the table consumers read, one row per (ticker, story)
+CREATE TABLE IF NOT EXISTS ticker_news (
+    ticker           TEXT NOT NULL,
+    story_id         TEXT NOT NULL,
+    role             TEXT NOT NULL,
+    dominance        REAL NOT NULL DEFAULT 0,
+    lead_article_id  TEXT NOT NULL,
+    headline         TEXT NOT NULL,
+    published_at     INTEGER,
+    first_seen_at    INTEGER NOT NULL,
+    last_seen_at     INTEGER NOT NULL,
+    n_sources        INTEGER NOT NULL DEFAULT 1,
+    n_reports        INTEGER NOT NULL DEFAULT 1,
+    event_tag        TEXT,
+    sentiment_score  REAL,
+    sentiment_method TEXT,
+    updated_at       INTEGER NOT NULL,
+    PRIMARY KEY (ticker, story_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ticker_news_time ON ticker_news(ticker, published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ticker_news_story ON ticker_news(story_id);

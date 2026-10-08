@@ -53,7 +53,9 @@ class StorageBackend(Protocol):
 
     def clear_all_pending_ticker_fetch(self) -> None: ...
 
-    def persist_leads(self, leads: list[EnrichedArticle]) -> PersistResult: ...
+    def persist_leads(
+        self, leads: list[EnrichedArticle], duplicates: list[EnrichedArticle] | None = None
+    ) -> PersistResult: ...
 
     def get_latest(
         self,

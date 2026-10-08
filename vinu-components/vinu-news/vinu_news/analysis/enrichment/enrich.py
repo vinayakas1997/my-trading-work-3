@@ -19,6 +19,7 @@ from vinu_news.analysis.enrichment.summary_cleaner import clean_summary
 from vinu_news.analysis.enrichment.threat import classify_threat
 from vinu_news.analysis.enrichment.ticker_dominance import compute_dominance
 from vinu_news.analysis.enrichment.ticker_extractor import extract_tickers
+from vinu_news.analysis.storage.dedup import content_hash
 from vinu_news.analysis.storage.models import ArticleRecord, EnrichedArticle
 from vinu_news.analysis.storage.repository import parse_pub_date
 
@@ -147,6 +148,9 @@ def enrich_article(
         published_at=published_at,
         ingested_at=ingested_at,
         publish_time_is_estimated=publish_time_is_estimated,
+        content_hash=content_hash(headline, cleaned_summary),
+        first_seen_at=ingested_at,
+        last_seen_at=ingested_at,
     )
 
     if settings.ticker_dominance:

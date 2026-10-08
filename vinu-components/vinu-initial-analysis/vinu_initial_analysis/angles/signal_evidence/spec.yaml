@@ -27,3 +27,4 @@ outputs:
     vinu-research's signal_evidence tables, not this angle's own parquet
     storage, since they belong to a different symbol/schema shape
     (one row per trigger event, not one row per angle run).
+uses_news: true

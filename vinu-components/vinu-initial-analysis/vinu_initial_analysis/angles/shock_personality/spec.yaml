@@ -22,3 +22,4 @@ outputs:
 - column: angle_data
   type: dict
   description: Shock personality results with confidence intervals
+uses_news: true

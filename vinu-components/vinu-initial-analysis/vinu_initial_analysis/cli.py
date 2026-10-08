@@ -10,6 +10,7 @@ from pathlib import Path
 from vinu_infra.debug import setup_logging
 from vinu_initial_analysis.api import CorrelationAPI
 from vinu_initial_analysis.clients.news_client import NewsClient
+from vinu_initial_analysis.clients.news_snapshot import SnapshotNewsClient
 from vinu_initial_analysis.clients.price_client import PriceClient
 from vinu_initial_analysis.config import load_config
 from vinu_initial_analysis.quarters import last_completed_period_end
@@ -61,7 +62,7 @@ def compute_main(argv: list[str] | None = None) -> None:
     config = load_config()
     run_log = RunLog(config.runs_db_path)
     storage = AngleStorage(config.data_root, run_log)
-    news_client = NewsClient(config.news_api_url)
+    news_client = SnapshotNewsClient(NewsClient(config.news_api_url), config.data_root / "news_inputs")
     price_client = PriceClient(config.stock_api_url)
     runner = AngleRunner(storage, run_log, news_client=news_client, price_client=price_client)
     setup_logging("initial-analysis")
@@ -248,7 +249,7 @@ def main(argv: list[str] | None = None) -> None:
     config = load_config()
     run_log = RunLog(config.runs_db_path)
     storage = AngleStorage(config.data_root, run_log)
-    news_client = NewsClient(config.news_api_url)
+    news_client = SnapshotNewsClient(NewsClient(config.news_api_url), config.data_root / "news_inputs")
     price_client = PriceClient(config.stock_api_url)
     runner = AngleRunner(storage, run_log, news_client=news_client, price_client=price_client)
     setup_logging("initial-analysis")

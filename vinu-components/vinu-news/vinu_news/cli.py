@@ -159,6 +159,14 @@ def finbert_main(argv: list[str] | None = None) -> None:
 
     setup_logging("news-finbert", verbose=args.verbose)
 
+    from vinu_infra.model_policy import models_enabled
+
+    if not models_enabled():
+        # The models container is dormant by design. Trying to reach it crashed this worker on every start (and, once
+        # workers are supervised, would restart it forever); finishing cleanly is the right answer.
+        logging.info("[finbert] models are disabled (VINU_MODELS_ENABLED=false): nothing to score, worker not needed")
+        return
+
     def run_sweep() -> None:
         with NewsService() as service:
             while True:

@@ -101,7 +101,7 @@ def run_ingestion(
 
     if result.articles:
         with NewsRepository(db_path) as repo:
-            persist_result = persist_leads(repo, result.articles)
+            persist_result = persist_leads(repo, result.articles, result.duplicates)
             inserted = persist_result.inserted
             url_skipped = persist_result.url_skipped
             thread_matched_skipped = persist_result.thread_matched_skipped

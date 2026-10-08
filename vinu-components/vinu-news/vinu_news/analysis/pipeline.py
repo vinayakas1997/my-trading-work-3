@@ -21,6 +21,7 @@ class ProcessResult:
     duplicates_dropped: int
     post_process_applied: bool
     url_dedup_dropped: int
+    duplicates: list[EnrichedArticle] | None = None   # other reports of each cluster (layer 3)
 
 
 def process_batch(
@@ -43,6 +44,7 @@ def process_batch(
         duplicates_dropped=post_result.duplicates_dropped,
         post_process_applied=True,
         url_dedup_dropped=url_dedup_dropped,
+        duplicates=post_result.duplicates,
     )
 
 

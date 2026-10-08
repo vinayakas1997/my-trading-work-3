@@ -56,6 +56,10 @@ def ticker_news(
     response: Response,
     days: int = Query(default=7, ge=1, le=3650),
     limit: int = Query(default=50, ge=1, le=500),
+    reaction: bool = Query(
+        default=False,
+        description="Attach the 1h/1d price reaction. Slow (reads candles from stock-price per page) and read by nothing; opt-in.",
+    ),
     from_: int | None = Query(None, alias="from", description="Unix timestamp start"),
     to: int | None = Query(None, alias="to", description="Unix timestamp end"),
     as_of: int | None = Query(
@@ -73,9 +77,31 @@ def ticker_news(
     if clamped_to_as_of:
         response.headers["X-Clamped-To-As-Of"] = "true"
     if from_ is not None or to is not None:
-        rows = service.get_ticker_news(symbol, from_ts=from_, to_ts=to, limit=limit)
+        rows = service.get_ticker_news(symbol, from_ts=from_, to_ts=to, limit=limit, include_reaction=reaction)
     else:
-        rows = service.get_ticker_news(symbol, days=days, limit=limit)
+        rows = service.get_ticker_news(symbol, days=days, limit=limit, include_reaction=reaction)
+    return DataResponse(count=len(rows), data=rows)
+
+
+@router.get("/ticker-news/{symbol}", response_model=DataResponse)
+def ticker_stories(
+    symbol: str,
+    response: Response,
+    from_: int | None = Query(None, alias="from", description="Unix timestamp start (the story's publish time)"),
+    to: int | None = Query(None, alias="to", description="Unix timestamp end (the story's publish time)"),
+    as_of: int | None = Query(default=None, description="Replay boundary (unix seconds); caps `to`, same as /ticker/{symbol}"),
+    known_by: int | None = Query(default=None, description="Only stories this system had first seen by this time (stricter cut)"),
+    event_tag: str | None = Query(default=None),
+    min_sources: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> DataResponse:
+    """Layer 5: one row per (ticker, story) with the source tags and the facts (event tag, sentiment number and its method)."""
+    service = get_service()
+    to, clamped = clamp_to_as_of(to, as_of)
+    if clamped:
+        response.headers["X-Clamped-To-As-Of"] = "true"
+    rows = service.get_ticker_stories(symbol, from_ts=from_, to_ts=to, known_by=known_by, event_tag=event_tag,
+                                      min_sources=min_sources, limit=limit)
     return DataResponse(count=len(rows), data=rows)
 
 

@@ -37,6 +37,9 @@ class VinuConfig:
     storage: str
     db_path: Path
     database_url: str | None
+    layout: str            # per_ticker (one database per ticker, the default) | single (one shared database)
+    tickers_dir: Path
+    central_db_path: Path  # settings, watchlist, backfill state, source health (per_ticker layout)
     default_mode: str
     default_poll_interval_sec: int
     host: str
@@ -52,13 +55,20 @@ class VinuConfig:
 def load_config() -> VinuConfig:
     _ensure_dotenv_loaded()
     storage = os.environ.get("VINU_NEWS_STORAGE", "sqlite").lower()
-    db_path = require_data_root("NEWS") / "vinu_news.db"
+    root = require_data_root("NEWS")
+    db_path = root / "vinu_news.db"            # the legacy shared database; in per_ticker layout it is only the archive
+    layout = os.environ.get("VINU_NEWS_LAYOUT", "per_ticker").strip().lower()
+    if layout not in ("per_ticker", "single"):
+        raise ValueError(f"VINU_NEWS_LAYOUT must be per_ticker or single, got {layout!r}")
     shared_raw = os.environ.get("VINU_SHARED_WATCHLIST_PATH", "").strip()
     shared_path = Path(shared_raw) if shared_raw else None
     return VinuConfig(
         storage=storage,
         db_path=db_path,
         database_url=os.environ.get("VINU_NEWS_DATABASE_URL"),
+        layout=layout,
+        tickers_dir=root / "tickers",
+        central_db_path=root / "news_central.db",
         default_mode=os.environ.get("VINU_NEWS_MODE", DEFAULT_MODE).lower(),
         default_poll_interval_sec=int(
             os.environ.get("VINU_NEWS_POLL_INTERVAL_SEC", str(DEFAULT_POLL_INTERVAL_SEC))

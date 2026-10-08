@@ -221,6 +221,22 @@ def record_pnl_attribution(ticker: str, body: RecordPnlAttributionRequest) -> di
     return {"symbol": ticker.upper(), "run_id": run_id, "n_recorded": len(body.closed_positions)}
 
 
+@router.get("/news-inputs")
+def list_news_inputs():
+    """The frozen news copies the analysis reads (one per ticker and range): when each was built and how far it reaches."""
+    return {"snapshots": _get_svc().api.news_client.list_snapshots()}
+
+
+@router.delete("/news-inputs/{symbol}")
+def delete_news_inputs(symbol: str):
+    """Delete every frozen news copy of one ticker. Always safe: the next analysis rebuilds it from the live news store."""
+    try:
+        n = _get_svc().api.news_client.delete(symbol)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ticker": symbol.upper(), "ranges_removed": n}
+
+
 @router.get("/symbols")
 def list_symbols():
     svc = _get_svc()

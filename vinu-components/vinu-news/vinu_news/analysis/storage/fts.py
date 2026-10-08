@@ -33,9 +33,11 @@ def init_fts(conn: sqlite3.Connection) -> None:
         END
         """
     )
+    # Narrowed in layer 2: the seen counters change on every poll and must not re-index the text each time.
+    conn.execute("DROP TRIGGER IF EXISTS articles_fts_update")
     conn.execute(
         """
-        CREATE TRIGGER IF NOT EXISTS articles_fts_update AFTER UPDATE ON articles BEGIN
+        CREATE TRIGGER IF NOT EXISTS articles_fts_update AFTER UPDATE OF headline, summary ON articles BEGIN
             INSERT INTO articles_fts(articles_fts, rowid, headline, summary)
             VALUES ('delete', old.rowid, old.headline, old.summary);
             INSERT INTO articles_fts(rowid, headline, summary)

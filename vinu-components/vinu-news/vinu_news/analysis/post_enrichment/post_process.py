@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from vinu_news.analysis.config.settings_loader import get_settings
 from vinu_news.analysis.post_enrichment.cosine_dedup.cluster import cluster_articles
@@ -20,6 +20,8 @@ class PostProcessResult:
     clusters_found: int
     duplicates_dropped: int
     enriched_count: int
+    # the other reports of each cluster: same story, kept as raw rows below the lead (layer 3)
+    duplicates: list[EnrichedArticle] = field(default_factory=list)
 
 
 def post_process_batch(enriched: list[EnrichedArticle]) -> PostProcessResult:
@@ -52,9 +54,14 @@ def post_process_batch(enriched: list[EnrichedArticle]) -> PostProcessResult:
     clusters = cluster_articles(enriched, normalized_texts, entities_list)
     leads = select_leads(clusters)
 
+    lead_ids = {id(l) for l in leads}
+    duplicates = [m for g in clusters for m in g.members if id(m) not in lead_ids]
+    for m in duplicates:
+        m.article.is_lead = 0
     duplicates_dropped = len(enriched) - len(leads)
     return PostProcessResult(
         articles=leads,
+        duplicates=duplicates,
         clusters_found=len(clusters),
         duplicates_dropped=duplicates_dropped,
         enriched_count=len(enriched),

@@ -547,3 +547,56 @@ def test_the_test_harness_counts_failures_even_when_a_log_looks_binary_to_grep()
     """The agent-api run once logged 21 failures while the summary said 0: grep treated the log as binary and counted nothing."""
     text = (Path(__file__).resolve().parents[2] / "scripts" / "test_in_containers.sh").read_text(encoding="utf-8")
     assert "grep -acE" in text and 'grep -a "^###"' in text
+
+
+# --------------------------------------------------------------------------- background workers are supervised
+
+def _supervise_function() -> str:
+    text = (ROOT / "vinu-news" / "entrypoint.sh").read_text(encoding="utf-8")
+    m = re.search(r"^supervise\(\) \{.*?^\}", text, re.S | re.M)
+    assert m, "vinu-news/entrypoint.sh must define supervise()"
+    return m.group(0)
+
+
+def test_no_entrypoint_starts_a_bare_background_worker():
+    """After the news layer-2 deploy the ingest loop and the finbert worker died at start-up (database locked) and stayed
+    dead while the container reported healthy. Every `cmd &` in an entrypoint now goes through `supervise`."""
+    bare = []
+    for path in sorted(ROOT.glob("vinu-*/entrypoint.sh")):
+        text = path.read_text(encoding="utf-8")
+        for n, line in enumerate(text.splitlines(), 1):
+            if re.match(r"^[^#\s].*\s&$", line) and not line.startswith("supervise"):
+                bare.append(f"{path.parent.name}/entrypoint.sh:{n}: {line}")
+        if re.search(r"^supervise ", text, re.M):
+            assert "supervise()" in text, f"{path.parent.name} uses supervise without defining it"
+    assert not bare, "background workers not supervised:\n" + "\n".join(bare)
+
+
+def test_every_entrypoint_defines_the_same_supervise_function():
+    reference = _supervise_function()
+    for path in sorted(ROOT.glob("vinu-*/entrypoint.sh")):
+        text = path.read_text(encoding="utf-8")
+        if "supervise " in text:
+            assert reference in text, f"{path.parent.name}/entrypoint.sh has a different supervise()"
+
+
+def test_supervise_restarts_a_crashing_worker_and_stops_after_a_clean_exit(tmp_path):
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash not available")
+    counter = tmp_path / "runs"
+    cpath = counter.as_posix()
+    script = (
+        "set -e\n" + _supervise_function() + "\n"
+        f"supervise sh -c 'n=$(cat {cpath} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {cpath}; "
+        f"[ $n -ge 3 ] && exit 0 || exit 1'\n"
+        "wait\n"
+    )
+    done = subprocess.run([bash, "-c", script], env={"PATH": "/usr/bin:/bin:/usr/local/bin", "VINU_SUPERVISE_STEP": "0"},
+                          capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    assert counter.read_text().strip() == "3"            # crashed twice, restarted twice, third run exited cleanly and ended
+    assert done.stderr.count("restarting in") == 2 and "finished (exit 0)" in done.stderr

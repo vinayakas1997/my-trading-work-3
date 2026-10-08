@@ -121,6 +121,22 @@ def ingest_ticker_news(days: int = 7) -> dict:
     }
 
 
+@router.get("/tickers")
+def list_tickers() -> dict:
+    """Each ticker's own news database: what it holds (articles, stories, oldest and newest) and where its backfill stands."""
+    return {"layout": get_service().layout, "tickers": get_service().list_ticker_stores()}
+
+
+@router.delete("/tickers/{symbol}")
+def drop_ticker(symbol: str) -> dict:
+    """Delete one ticker's whole news dataset and mark its backfill pending again so it can be refilled."""
+    try:
+        removed = get_service().drop_ticker(symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ticker": symbol.upper(), "removed": removed, "backfill": "pending"}
+
+
 @router.get("/sources")
 def list_sources() -> dict:
     """Every news source (RSS feed or ticker-news API) with its state in plain words: ok, failing, off by the operator,
