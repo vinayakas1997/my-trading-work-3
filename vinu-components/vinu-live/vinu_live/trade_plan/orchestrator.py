@@ -119,7 +119,13 @@ def cooldown_active(book: Any) -> tuple[bool, str]:
         else:
             try:
                 cur = con.cursor()
-                cur.execute("SELECT realized_pnl, closed_at FROM closed_positions ORDER BY closed_at DESC LIMIT 10")
+                from vinu_infra.account_mode import current_account_mode
+
+                # only this stack's own money: paper losses must not lock a real account (and the reverse)
+                cur.execute(
+                    "SELECT realized_pnl, closed_at FROM closed_positions WHERE account_mode = ? "
+                    "ORDER BY closed_at DESC LIMIT 10", (current_account_mode(),),
+                )
                 rows = [{"realized_pnl": r[0], "closed_at": r[1]} for r in cur.fetchall()]
             finally:
                 con.close()

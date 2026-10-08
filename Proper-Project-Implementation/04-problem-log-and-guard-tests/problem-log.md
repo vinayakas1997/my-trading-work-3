@@ -395,6 +395,18 @@ Read `how-to-use-this-log.md` for the rules.
 - **Guard:** `vinu-live/tests/test_book_sync.py::test_a_position_the_broker_no_longer_holds_is_closed_in_the_book_and_frees_the_money`, `vinu-live/tests/test_book_sync.py::test_the_scheduler_syncs_the_book_even_in_a_cycle_with_nothing_to_trade`
 - **Status:** GUARDED (live suite 978 passed; the capital stays locked until the next cycle after a manual exit, which is the safe direction)
 
+### P61 The breaker measured losses against the 96,000 paper balance, so it could never trip on a 20-dollar account
+- **Seen:** (drill of the breaker, 2026-10-08) `breaker/engine.py` takes its percentage limits (daily loss 5 percent, leverage 2) of `portfolio_value`, which the scheduler filled with the Alpaca equity. On 96,000 a 5 percent daily loss is 4,800 dollars; the 20-dollar base can lose at most 20. It also counted every position in the paper account, not only the system's own.
+- **Fix:** `_check_breaker` in `vinu-live/vinu_live/scheduler.py`: with `VINU_REAL_CAPITAL` set, `portfolio_value` is the capital base, the positions checked are the book's own long positions, and the day's loss is realized today plus what the open positions are down since entry (a conservative stand-in for the day's move). Without a base nothing changes.
+- **Guard:** `vinu-live/tests/test_breaker_on_real_capital.py::test_a_loss_that_is_small_on_the_paper_balance_halts_a_twenty_dollar_account`, `vinu-live/tests/test_breaker_on_real_capital.py::test_only_the_systems_own_positions_count_not_the_rest_of_the_paper_account`
+- **Status:** GUARDED (not seen to trip live: the breaker only runs when there is something to trade and no strategy is ACTIVE yet, so the proof is at test level)
+
+### P62 The cooldown read losses of both money modes, and its docs said the scheduler's losses were invisible to it
+- **Seen:** `cooldown_active` in `vinu-live/vinu_live/trade_plan/orchestrator.py` read `closed_positions` with raw SQL and no `account_mode` filter, so paper losses could lock a real account. The scheduler's entry-guard docstring also said the scheduler writes no fills to the book, which stopped being true with P33.
+- **Fix:** the query filters by the stack's money mode; the docstring now says the cooldown and the symbol lockout see the scheduler's own losses (checked by test: three losing scheduler trades lock the symbol, a win ends the streak, two losses start the cooldown, the other mode's losses do not count).
+- **Guard:** `vinu-live/tests/test_loss_guards_on_scheduler_trades.py::test_losses_made_with_the_other_money_do_not_lock_this_stack`, `vinu-live/tests/test_loss_guards_on_scheduler_trades.py::test_three_losing_scheduler_trades_lock_the_symbol`
+- **Status:** GUARDED
+
 ---
 
 ## E. Open problems (found, not fixed)
@@ -421,6 +433,6 @@ Read `how-to-use-this-log.md` for the rules.
 | O18 | CLOSED. Fixed: P39. | | |
 | O19 | Recovery is automatic now (P44). Still open: why the model freezes (a 2,810-token prompt with thinking on; try capping thinking or `max_tokens`), and the task only exists on this PC | a freeze still costs up to 5 minutes plus the restart | find the cause in the model server's own log; reinstall the task on a new machine |
 | O20 | CLOSED. Fixed: P53 (no capital to unvalidated YAML strategies) and P58 (the allocator's dollars now size the daily allocation). | | |
-| O21 | The safety ledger holds only kill-switch events; the sequence diagram (D5) says more | docs and behaviour disagree | either log breaker, lockout and refusals there or correct the diagram |
+| O21 | CLOSED. The diagram was wrong, not the code: refusals go to the trade audit log (every order and refusal); the safety ledger is the hash-chained record of kill-switch halts and resumes, now tagged with the money mode. Diagram D5 and the audit row A15 corrected. | | |
 | O22 | CLOSED. Fixed: P54 (long-only mandate), P55 (scheduler keeps its own positions) and P60 (the book follows the broker). Shorts remain a later feature. | | |
 | O23 | Capital allocator, what is rough or missing: (1) the win/loss inputs are each strategy's daily simulator returns, not real trades; (2) Kelly fraction 0.25, reserve 0.4, position cap 0.25 are proposed defaults, not decisions; (3) no strategy has return history yet, so a funded plan has never been seen live; (4) whole shares only, so most stocks cost more than the free cash of 12 dollars; (5) reflection and research statistics are not split by money mode; (6) the old `VINU_PORTFOLIO_RESERVE_FRACTION` is not used while a capital base is set; (7) `manager_prompt.md` of the allocator team still shows 100000 in its example | a 20-dollar account may be unable to buy anything | decide the settings with the user; try fractional shares in regular hours only; split reflection results by mode |

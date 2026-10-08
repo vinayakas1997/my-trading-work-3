@@ -452,9 +452,9 @@ class LiveScheduler:
         a position always passes. Any error in here fails open (instructions
         returned untouched) so a guard bug can never stop an order.
 
-        Known limit: the cooldown reads the trade-plan book's closed
-        positions, and this path does not write its own fills to that book
-        (logic-audit A6), so on this path it reflects plan-path losses only."""
+        The cooldown and the symbol lockout read the book's closed positions, and this path writes its own fills there
+        (`_write_fill_to_book`), so they see this path's losses too. A position the book is cut back to match the broker
+        (book/sync.py) closes at zero P&L and is not counted as a loss."""
         if not self._config.scheduler_entry_guards_enabled or not instructions:
             return instructions, []
         try:
@@ -594,10 +594,19 @@ class LiveScheduler:
         leverage) still runs in full. A real, scoped gap, not hidden."""
         from vinu_live.book.positions import list_open_positions
 
+        from vinu_infra.account_mode import real_capital
+
         positions = list_open_positions(self._book)
         extra: dict[str, Any] = {}
         daily_pnl = daily_realized_pnl(self._book)
-        if self._config.scheduler_breaker_uses_broker_account:
+        # With a real-money base the limits are percentages of THAT money: 5 percent of the 96,000 paper balance is
+        # 4,800 dollars, which a 20-dollar account can never lose. The system's own positions (the book) are what count,
+        # not whatever else the paper account holds.
+        capital_base = real_capital()
+        if capital_base is not None:
+            portfolio_value = capital_base
+            extra["positions"] = [p for p in positions if p.side == "long"]
+        elif self._config.scheduler_breaker_uses_broker_account:
             # logic-audit A6: the account the scheduler actually trades, not the plan book.
             if broker_positions is not None:
                 positions = [
@@ -611,6 +620,10 @@ class LiveScheduler:
                     daily_pnl = account_pnl
         symbols = sorted({p.symbol for p in positions})
         prices = await self._fetch_prices([{"symbol": s} for s in symbols]) if symbols else {}
+        if capital_base is not None:
+            # today's loss on the base: realized today plus what the open positions are down since entry (a
+            # conservative stand-in for the day's move on positions held longer than a day)
+            daily_pnl += sum((prices[p.symbol] - p.avg_entry) * p.qty for p in extra["positions"] if prices.get(p.symbol))
         was_halted = self._breaker_state.halted
         limits = await self._maturity_scaled_limits()
         verdict, reason = check_limits(

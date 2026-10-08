@@ -148,7 +148,7 @@ sequenceDiagram
     AG->>PF: risk status and state (halt, tier, correlation)
     AG->>AG: size x session multiplier
     alt any check fails
-        AG-->>LV: refused with guard code, logged to safety ledger
+        AG-->>LV: refused with guard code, logged to the trade audit log
     else all pass
         AG->>AP: submit order (client_order_id)
         AP-->>AG: id, status pending_new, then new or accepted
@@ -267,7 +267,7 @@ Status: kill switch and halt TESTED, the gateway history PROVEN in use. Gap: no 
 | A12 degradation detection | D7 | |
 | A13 market memory (analogues) | D2, D6 | trend lifecycle rows feed the decision context |
 | A14 alternative data | D1 | only search trends, rest deferred |
-| A15 audit trail | D5, D7 | safety ledger, decision records |
+| A15 audit trail | D5, D7 | trade audit log (every order and refusal), safety ledger (kill-switch halts and resumes only, hash-chained, tagged with the money mode), decision records |
 | A16 post-trade learning | D7 | |
 | A17 architecture and metrics | D1 to D8 | whole chain |
 | A18 senior-trader rules (WAIT first, funnel, netting, kill switch) | D2, D4, D5, D6 | funnel D2, netting D4 |
