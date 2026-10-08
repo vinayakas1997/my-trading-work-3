@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from ..agent.tools import BaseTool
+from ..news_payload import article_date, news_articles
 
 logger = logging.getLogger(__name__)
 
@@ -487,17 +488,13 @@ class TradePlanTool(BaseTool):
     ) -> dict:
         try:
             resp = await client.get(
-                f"{base_url}/news/search",
-                params={"q": symbol, "limit": limit},
+                f"{base_url}/news/ticker/{symbol}",   # newest first; /news/search ranks by relevance and returned 2023 items
+                params={"days": 30, "limit": limit},
                 timeout=15.0,
             )
             if resp.status_code != 200:
                 return {"status": "unavailable"}
-            articles = resp.json()
-            if not articles:
-                return {"status": "no_articles"}
-            if isinstance(articles, dict):
-                articles = articles.get("results", articles.get("articles", []))
+            articles = news_articles(resp.json())
             if not articles:
                 return {"status": "no_articles"}
             return {"status": "available", "articles": articles}
@@ -940,7 +937,7 @@ class TradePlanTool(BaseTool):
         lines.append(f"|---|---|---|---|")
         for art in articles[:5]:
             headline = art.get("title", art.get("headline", "—"))
-            published = (art.get("published_at") or art.get("date") or "—")[:10]
+            published = article_date(art)
             sentiment = art.get("sentiment", "neutral")
             source = art.get("source", art.get("provider", "news"))
             lines.append(f"| {published} | {headline} | {sentiment} | {source} |")

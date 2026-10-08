@@ -74,7 +74,7 @@ async def test_sync_news_uses_the_news_prefix(store):
     client = _client({"data": []})
     with patch("httpx.AsyncClient", return_value=client):
         await SyncService(store, BASES).sync_news("AAPL")
-    assert _urls(client) == ["http://news-api:8080/news/search"]
+    assert _urls(client) == ["http://news-api:8080/news/ticker/AAPL"]
 
 
 @pytest.mark.asyncio

@@ -8,6 +8,7 @@ import httpx
 
 from vinu_infra.auth import internal_auth_headers as _internal_auth_headers
 
+from ..news_payload import article_date, news_articles
 from .unified_store import MemoryEntry, UnifiedMemoryStore, _now
 
 LOG = logging.getLogger(__name__)
@@ -354,22 +355,19 @@ class SyncService:
         try:
             async with httpx.AsyncClient(timeout=15.0, headers=_h()) as client:
                 resp = await client.get(
-                    f"{url}/news/search",
-                    params={"q": symbol, "limit": limit},
+                    f"{url}/news/ticker/{symbol}",   # newest first; /news/search ranks by relevance, not recency
+                    params={"days": 30, "limit": limit},
                 )
                 if resp.status_code != 200:
                     LOG.warning("sync_news: %s returned %d", url, resp.status_code)
                     return 0
-                articles = resp.json()
+                articles = news_articles(resp.json())
         except Exception as e:
             LOG.warning("sync_news: %s failed: %s", symbol, e)
             return 0
 
         if not articles:
             return 0
-
-        if isinstance(articles, dict):
-            articles = articles.get("results", articles.get("articles", []))
 
         entries: list[MemoryEntry] = []
         for i, art in enumerate(articles):
@@ -378,7 +376,7 @@ class SyncService:
             headline = art.get("title", art.get("headline", f"News {i}"))
             snippet = art.get("summary", art.get("snippet", ""))
             url_art = art.get("url", art.get("link", ""))
-            published = art.get("published_at", art.get("date", ""))
+            published = article_date(art)
             sentiment = art.get("sentiment", None)
             meta: dict[str, Any] = {"url": url_art, "published": published}
             if sentiment is not None:
